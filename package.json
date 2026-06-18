@@ -4,16 +4,22 @@
   "main": "index.ts",
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@supabase/supabase-js": "^2.108.2",
     "expo": "~54.0.0",
+    "expo-device": "~8.0.10",
+    "expo-notifications": "~0.32.17",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-svg": "15.12.1",
+    "react-native-url-polyfill": "^3.0.0",
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "supabase": "^2.106.0",
     "typescript": "~5.9.2"
   },
   "scripts": {
@@ -22,6 +28,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "typecheck:edge": "deno check supabase/functions/game-action/index.ts",
     "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs"
   },
   "private": true

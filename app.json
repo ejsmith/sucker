@@ -2,11 +2,13 @@
   "expo": {
     "name": "Sucker!",
     "slug": "sucker",
+    "scheme": "sucker",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
+      "bundleIdentifier": "com.ejsmith.sucker",
       "supportsTablet": true
     },
     "android": {
@@ -14,8 +16,16 @@
         "backgroundColor": "#D90000",
         "foregroundImage": "./assets/icon.png"
       },
+      "package": "com.ejsmith.sucker",
       "predictiveBackGestureEnabled": false
     },
+    "notification": {
+      "color": "#D90000",
+      "icon": "./assets/icon.png"
+    },
+    "plugins": [
+      "expo-notifications"
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     }

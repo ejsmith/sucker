@@ -34,6 +34,7 @@ export type GameState = {
   players: Player[];
   currentPlayerIndex: number;
   dice: Dice;
+  extraRollsAvailable: number;
   held: [boolean, boolean, boolean, boolean, boolean];
   rollNumber: number;
   phase: GamePhase;

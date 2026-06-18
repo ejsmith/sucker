@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { type ComponentRef, useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentRef, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -15,13 +15,40 @@ import {
 import {
   availableCategories,
   createGame,
+  maxAvailableRolls,
+  mulliganCurrentTurn,
+  purchaseExtraRoll,
   rollCurrentDice,
+  rollsRemaining,
+  scoreCategory,
   scoreCategoryForScorecard,
+  scoreCategories,
   scoreTurn,
+  scratchScoreBox,
+  suckerTokenCosts,
   toggleHold,
   totalScore,
 } from './src/game';
-import type { DieValue, ScoreCategory } from './src/game';
+import type { DieValue, GameState, ScoreCategory } from './src/game';
+import { isMultiplayerConfigured } from './src/multiplayer';
+import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
+import {
+  buyRemoteExtraRoll,
+  createGameAgainst,
+  getGame,
+  getTurn,
+  rollRemoteGame,
+  scoreRemoteCategory,
+  scratchRemoteCategory,
+  subscribeToGame,
+  toggleRemoteHold,
+  useRemoteSuckerBlocker,
+  useRemoteSuckerPunch,
+} from './src/multiplayer/games';
+import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
+import { supabase } from './src/multiplayer/supabase';
+import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
+import { getPhoneStageStyle } from './src/ui/phoneStage';
 import Svg, { Circle } from 'react-native-svg';
 
 type ViewRef = ComponentRef<typeof View>;
@@ -40,19 +67,65 @@ type ScoreFlyDie = {
   toX: number;
   toY: number;
 };
+type ScoreFlyNumber = {
+  fromX: number;
+  fromY: number;
+  id: string;
+  progress: Animated.Value;
+  toX: number;
+  toY: number;
+  value: number;
+};
 type RollingLaunch = {
   delay: number;
   duration: number;
-  lift: number;
+  fromX: number;
+  fromY: number;
+  midX: number;
+  midY: number;
   peakScale: number;
-  settleX: number;
-  skimX: number;
-  startY: number;
   side: 'left' | 'right';
   spin: number;
+  toX: number;
+  toY: number;
+};
+type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
+type RemoteActionHandlers = {
+  onExtraRoll: () => Promise<ReturnType<typeof createGame> | null>;
+  onRematch: () => Promise<ReturnType<typeof createGame> | null>;
+  onRoll: () => Promise<ReturnType<typeof createGame> | null>;
+  onScore: (category: ScoreCategory) => Promise<ReturnType<typeof createGame> | null>;
+  onScratch: (category: ScoreCategory) => Promise<ReturnType<typeof createGame> | null>;
+  onSuckerBlocker: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
+  onSuckerPunch: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
+  onToggleHold: (dieIndex: number) => Promise<ReturnType<typeof createGame> | null>;
+};
+type LocalPendingTurn = {
+  category: ScoreCategory;
+  dice: GameState['dice'];
+  hadSuckerBonus: boolean;
+  id: string;
+  puncherIndex?: number;
+  responderIndex: number;
+  score: number;
+  scorerIndex: number;
+  status: 'submitted' | 'punched';
+};
+type ComputerTurnResult = {
+  game: GameState;
+  message?: string | null;
+  pendingTurn: LocalPendingTurn | null;
+  scoreAnimation?: {
+    category: ScoreCategory;
+    dice: GameState['dice'];
+    hadSuckerBonus: boolean;
+    score: number;
+    scorerIndex: number;
+  };
 };
 
-const playerNames = ['You', 'Maya'];
+const playerNames = ['You', 'Computer'];
+const computerPlayerIndex = 1;
 const upperCategories: ScoreCategory[] = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'];
 const lowerCategories: ScoreCategory[] = [
   'threeOfAKind',
@@ -81,6 +154,10 @@ const categoryPipImages: Record<DieValue, ImageSourcePropType> = {
   5: require('./assets/dice/dieRed_pips5.png'),
   6: require('./assets/dice/dieRed_pips6.png'),
 };
+const suckerScorecardWordmarkImage = require('./assets/sucker-scorecard-wordmark.png');
+const suckerLobbyHeaderImage = require('./assets/sucker-lobby-header.png');
+const suckerGameBannerImage = require('./assets/sucker-game-header-clean.png');
+const suckerTokenImage = require('./assets/sucker-token.png');
 
 const backgroundDiePositions = [
   { left: 22, top: 8 },
@@ -91,46 +168,344 @@ const backgroundDiePositions = [
   { right: 10, top: '56%' },
 ] as const;
 
-const suckerOutlineOffsets = [
-  { x: -3, y: -1 },
-  { x: 3, y: -1 },
-  { x: -2, y: 0 },
-  { x: 2, y: 0 },
-  { x: -2, y: 2 },
-  { x: 2, y: 2 },
-  { x: 0, y: -3 },
-  { x: 0, y: 3 },
-] as const;
-
+const rollingDieBaseSize = 88;
+const computerThinkingDelayMs = 2400;
+const computerScorePreviewDelayMs = 0;
+const computerScoreAnimationDurationMs = 950;
 export default function App() {
-  const { width: screenWidth } = useWindowDimensions();
-  const [game, setGame] = useState(() => createGame(playerNames));
+  const [showLocalDemo, setShowLocalDemo] = useState(false);
+  const [remoteGameId, setRemoteGameId] = useState<string | null>(null);
+
+  if (isMultiplayerConfigured && remoteGameId) {
+    return <RemoteGameScreen gameId={remoteGameId} onExit={() => setRemoteGameId(null)} />;
+  }
+
+  if (isMultiplayerConfigured && !showLocalDemo) {
+    return <MultiplayerLobby onOpenGame={setRemoteGameId} onPlayLocalDemo={() => setShowLocalDemo(true)} />;
+  }
+
+  return <LocalGameScreen onExit={isMultiplayerConfigured ? () => setShowLocalDemo(false) : undefined} />;
+}
+
+function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const [activeGameId, setActiveGameId] = useState(gameId);
+  const [error, setError] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
+  const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRemoteBusy, setIsRemoteBusy] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadRemoteGame() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const [{ data: userData, error: userError }, nextGame] = await Promise.all([
+          supabase.auth.getUser(),
+          getGame(activeGameId),
+        ]);
+        if (userError) {
+          throw userError;
+        }
+        if (!userData.user) {
+          throw new Error('Sign in again to open this game.');
+        }
+        if (!isMounted) {
+          return;
+        }
+
+        setProfileId(userData.user.id);
+        setRemoteGame(nextGame);
+      } catch (loadError) {
+        if (isMounted) {
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load game.');
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadRemoteGame();
+    const unsubscribe = subscribeToGame(activeGameId, (nextGame) => {
+      if (isMounted) {
+        setRemoteGame(nextGame);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [activeGameId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const turnId = remoteGame?.last_turn_id;
+    if (!turnId) {
+      setRemoteLastTurn(null);
+      return;
+    }
+
+    void getTurn(turnId)
+      .then((turn) => {
+        if (isMounted) {
+          setRemoteLastTurn(turn);
+        }
+      })
+      .catch((turnError) => {
+        if (isMounted) {
+          setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
+          setRemoteLastTurn(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [remoteGame?.last_turn_id]);
+
+  async function runRemoteAction(action: () => Promise<{ game: RemoteGameRow }>) {
+    setIsRemoteBusy(true);
+    setError(null);
+    try {
+      const result = await action();
+      setRemoteGame(result.game);
+      return result.game.state;
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to update game.');
+      return null;
+    } finally {
+      setIsRemoteBusy(false);
+    }
+  }
+
+  if (isLoading || !remoteGame || !profileId) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="light" />
+        <View style={[styles.remoteLoadingScreen, getPhoneStageStyle(windowWidth, windowHeight)]}>
+          <Text style={styles.remoteLoadingTitle}>Loading Game</Text>
+          {error && <Text style={styles.remoteMessage}>{error}</Text>}
+          <Pressable onPress={onExit} style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}>
+            <Text style={styles.remoteBackButtonText}>Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const handlers: RemoteActionHandlers = {
+    onExtraRoll: () => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id)),
+    onRematch: async () => {
+      const opponent = remoteGame.state.players.find((player) => player.id !== profileId);
+      if (!opponent) {
+        setError('Unable to find opponent for rematch.');
+        return null;
+      }
+
+      return runRemoteAction(async () => {
+        const result = await createGameAgainst(opponent.id);
+        setActiveGameId(result.game.id);
+        return result;
+      });
+    },
+    onRoll: () => runRemoteAction(() => rollRemoteGame(remoteGame.id)),
+    onScore: (category) => runRemoteAction(() => scoreRemoteCategory(remoteGame.id, category)),
+    onScratch: (category) => runRemoteAction(() => scratchRemoteCategory(remoteGame.id, category)),
+    onSuckerBlocker: (turnId) => runRemoteAction(() => useRemoteSuckerBlocker(remoteGame.id, turnId)),
+    onSuckerPunch: (turnId) => runRemoteAction(() => useRemoteSuckerPunch(remoteGame.id, turnId)),
+    onToggleHold: (dieIndex) => runRemoteAction(() => toggleRemoteHold(remoteGame.id, dieIndex)),
+  };
+
+  return (
+    <LocalGameScreen
+      isRemoteBusy={isRemoteBusy}
+      myProfileId={profileId}
+      onExit={onExit}
+      remoteError={error}
+      remoteGame={remoteGame.state}
+      remoteHandlers={handlers}
+      remoteLastTurn={remoteLastTurn}
+      remoteLastTurnId={remoteGame.last_turn_id}
+      remoteStatus={remoteGame.status}
+    />
+  );
+}
+
+function LocalGameScreen({
+  isRemoteBusy = false,
+  myProfileId,
+  onExit,
+  remoteError,
+  remoteGame,
+  remoteHandlers,
+  remoteLastTurn,
+  remoteLastTurnId,
+  remoteStatus,
+}: {
+  isRemoteBusy?: boolean;
+  myProfileId?: string;
+  onExit?: () => void;
+  remoteError?: string | null;
+  remoteGame?: ReturnType<typeof createGame>;
+  remoteHandlers?: RemoteActionHandlers;
+  remoteLastTurn?: RemoteTurnRow | null;
+  remoteLastTurnId?: string | null;
+  remoteStatus?: RemoteGameStatus;
+}) {
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const [localGame, setLocalGame] = useState(() => createGame(playerNames));
+  const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
+  const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
+  const [showSuckerBlockedNotice, setShowSuckerBlockedNotice] = useState(false);
+  const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
+  const isRemoteGame = Boolean(remoteGame && remoteHandlers && myProfileId);
+  const [visibleRemoteGame, setVisibleRemoteGame] = useState(remoteGame ?? null);
   const [isRolling, setIsRolling] = useState(false);
+  const [isComputerThinking, setIsComputerThinking] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showStatsPage, setShowStatsPage] = useState(false);
+  const [isTokenMenuOpen, setIsTokenMenuOpen] = useState(false);
+  const [dismissedGameOverId, setDismissedGameOverId] = useState<string | null>(null);
+  const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [failedDiceImages, setFailedDiceImages] = useState<number[]>([]);
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
   const [selectedCategory, setSelectedCategory] = useState<ScoreCategory | null>(null);
+  const [isChoosingSuckerDeal, setIsChoosingSuckerDeal] = useState(false);
+  const [highlightCategory, setHighlightCategory] = useState<ScoreCategory | null>(null);
   const [isScoring, setIsScoring] = useState(false);
   const [scoreFlyDice, setScoreFlyDice] = useState<ScoreFlyDie[]>([]);
+  const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
+  const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
   const scoreBoxRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
   const opponentScoreRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
+  const recordedComputerGameIds = useRef<Set<string>>(new Set());
+  const lastRemotePunchNoticeId = useRef<string | null>(null);
+  const lastRemoteBlockNoticeId = useRef<string | null>(null);
+  const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
+  const visibleRemoteTurnId = useRef<string | null>(remoteLastTurnId ?? null);
+  const previousRemoteStatus = useRef<RemoteGameStatus | undefined>(remoteStatus);
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const bgFloat = useRef(new Animated.Value(0)).current;
   const selectedPulse = useRef(new Animated.Value(0)).current;
-  const currentPlayer = game.players[game.currentPlayerIndex];
+  const game = isRemoteGame ? visibleRemoteGame ?? remoteGame ?? localGame : localGame;
+  const myPlayerIndex = isRemoteGame ? Math.max(0, game.players.findIndex((player) => player.id === myProfileId)) : 0;
+  const opponentPlayerIndex = game.players.findIndex((_, index) => index !== myPlayerIndex);
+  const currentPlayer = game.players[game.currentPlayerIndex] ?? game.players[0];
+  const pendingTurn = isRemoteGame ? null : localPendingTurn;
+  const isMyRemoteTurn = !isRemoteGame || currentPlayer.id === myProfileId;
+  const isRemoteResponseTurn =
+    isRemoteGame && isMyRemoteTurn && (remoteStatus === 'response_window' || remoteStatus === 'blocked_response');
+  const isRemoteActionPlayable = !isRemoteGame || remoteStatus === 'active' || isRemoteResponseTurn;
+  const isComputerTurn = !isRemoteGame && game.currentPlayerIndex === computerPlayerIndex && game.phase !== 'complete';
   const openCategories = availableCategories(currentPlayer.scorecard);
-  const leader = useMemo(
-    () => [...game.players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard))[0],
-    [game.players],
-  );
-  const canRollVisually = game.phase !== 'complete' && game.rollNumber < 4;
-  const canRoll = canRollVisually && !isRolling && !isScoring;
-  const homePlayer = game.players[0];
-  const opponentPlayer = game.players[1];
-  const canPlaySelected = selectedCategory !== null && game.rollNumber > 0 && !isRolling && !isScoring;
+  const canRollVisually =
+    game.phase !== 'complete' &&
+    game.rollNumber < maxAvailableRolls(game) &&
+    !isComputerTurn &&
+    isMyRemoteTurn &&
+    isRemoteActionPlayable;
+  const canRoll = canRollVisually && !isRolling && !isScoring && !isRemoteBusy;
+  const homePlayer = game.players[myPlayerIndex] ?? game.players[0];
+  const opponentPlayer = game.players[opponentPlayerIndex] ?? game.players.find((player) => player.id !== homePlayer.id) ?? game.players[1];
+  const displayPlayers = [homePlayer, opponentPlayer];
+  const activePlayerViewIndex = currentPlayer.id === homePlayer.id ? 0 : 1;
+  const canPlaySelected =
+    selectedCategory !== null &&
+    !isChoosingSuckerDeal &&
+    game.rollNumber > 0 &&
+    !isRolling &&
+    !isScoring &&
+    !isComputerTurn &&
+    isMyRemoteTurn &&
+    isRemoteActionPlayable &&
+    !isRemoteBusy;
+  const canOpenTokenMenu =
+    game.phase !== 'complete' && !isRolling && !isScoring && !isComputerTurn && isMyRemoteTurn && !isRemoteBusy;
+  const myTokenCount = homePlayer.suckerTokens;
+  const canUseLocalExtraRoll =
+    !isRemoteGame && canOpenTokenMenu && game.rollNumber >= maxAvailableRolls(game) && myTokenCount >= suckerTokenCosts.extraRoll;
+  const canUseRemoteExtraRoll =
+    isRemoteGame &&
+    canOpenTokenMenu &&
+    isRemoteActionPlayable &&
+    game.rollNumber >= maxAvailableRolls(game) &&
+    myTokenCount >= suckerTokenCosts.extraRoll;
+  const canUseLocalMulligan =
+    !isRemoteGame && !pendingTurn && canOpenTokenMenu && game.rollNumber > 0 && myTokenCount >= suckerTokenCosts.mulligan;
+  const canStartSuckerDeal =
+    canOpenTokenMenu &&
+    !pendingTurn &&
+    game.rollNumber > 0 &&
+    openCategories.length > 0 &&
+    isRemoteActionPlayable;
+  const canUseLocalSuckerPunch =
+    !isRemoteGame &&
+    canOpenTokenMenu &&
+    pendingTurn?.status === 'submitted' &&
+    pendingTurn.responderIndex === myPlayerIndex &&
+    pendingTurn.scorerIndex !== myPlayerIndex &&
+    myTokenCount >= suckerTokenCosts.suckerPunch;
+  const canUseLocalSuckerBlocker =
+    !isRemoteGame &&
+    canOpenTokenMenu &&
+    pendingTurn?.status === 'punched' &&
+    pendingTurn.scorerIndex === myPlayerIndex &&
+    myTokenCount >= suckerTokenCosts.suckerBlocker;
+  const canUseRemoteSuckerPunch =
+    isRemoteGame &&
+    canOpenTokenMenu &&
+    remoteStatus === 'response_window' &&
+    Boolean(remoteLastTurnId) &&
+    myTokenCount >= suckerTokenCosts.suckerPunch;
+  const canUseRemoteSuckerBlocker =
+    isRemoteGame &&
+    canOpenTokenMenu &&
+    remoteStatus === 'blocked_response' &&
+    Boolean(remoteLastTurnId) &&
+    myTokenCount >= suckerTokenCosts.suckerBlocker;
+  const gameStageStyle = getPhoneStageStyle(windowWidth, windowHeight);
+  const standardRollsLeft = rollsRemaining(game);
+  const homeScore = totalScore(homePlayer.scorecard);
+  const opponentScore = totalScore(opponentPlayer.scorecard);
+  const isGameOver = game.phase === 'complete';
+  const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
+  const winnerName = homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
+  const gameOverTitle = winnerName ? (winnerName === 'You' ? 'You win!' : `${winnerName} wins!`) : 'Tie game!';
+  const remoteOpponentSuckerTurnNeedsReveal =
+    Boolean(
+      isRemoteGame &&
+        remoteGame &&
+        remoteLastTurn &&
+        remoteLastTurn.id === remoteLastTurnId &&
+        remoteLastTurn.player_id !== myProfileId &&
+        remoteLastTurn.score > 0 &&
+        isSuckerDice(remoteLastTurn.dice) &&
+        visibleRemoteTurnId.current !== remoteLastTurn.id &&
+        lastAnimatedRemoteScoreTurnId.current !== remoteLastTurn.id,
+    );
+  const remoteNextTurnIsMine =
+    Boolean(isRemoteGame && remoteGame && (remoteGame.phase === 'complete' || remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId));
+  const shouldHoldRemoteTurnReveal =
+    Boolean(
+      isRemoteGame &&
+        remoteGame &&
+        remoteNextTurnIsMine &&
+        remoteLastTurnId &&
+        visibleRemoteTurnId.current !== remoteLastTurnId &&
+        (remoteStatus === 'response_window' || remoteStatus === 'complete') &&
+        (!remoteLastTurn || remoteLastTurn.id !== remoteLastTurnId || remoteOpponentSuckerTurnNeedsReveal),
+    );
 
   useEffect(() => {
     const loops = [
@@ -172,39 +547,212 @@ export default function App() {
     return () => loops.forEach((loop) => loop.stop());
   }, [bgFloat, selectedPulse]);
 
-  function handleRoll() {
+  useEffect(() => {
+    if (isRemoteGame) {
+      return;
+    }
+
+    void refreshComputerStats();
+  }, [isRemoteGame]);
+
+  useEffect(() => {
+    if (isRemoteGame) {
+      return;
+    }
+
+    if (!isComputerTurn || isComputerThinking || isRolling || isScoring) {
+      return;
+    }
+
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setIsComputerThinking(true);
+    const timer = setTimeout(() => {
+      const result = playComputerTurn(game, pendingTurn);
+      void animateComputerTurnResult(result);
+    }, computerThinkingDelayMs);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [game, isComputerTurn, isRemoteGame, isRolling, isScoring, pendingTurn]);
+
+  useEffect(() => {
+    if (!showSuckerPunchNotice) {
+      return;
+    }
+
+    const timer = setTimeout(() => setShowSuckerPunchNotice(false), 1700);
+    return () => clearTimeout(timer);
+  }, [showSuckerPunchNotice]);
+
+  useEffect(() => {
+    if (!showSuckerBlockedNotice) {
+      return;
+    }
+
+    const timer = setTimeout(() => setShowSuckerBlockedNotice(false), 1700);
+    return () => clearTimeout(timer);
+  }, [showSuckerBlockedNotice]);
+
+  useEffect(() => {
+    if (!isRemoteGame || remoteStatus !== 'blocked_response' || !isMyRemoteTurn || !remoteLastTurnId) {
+      return;
+    }
+
+    if (lastRemotePunchNoticeId.current === remoteLastTurnId) {
+      return;
+    }
+
+    lastRemotePunchNoticeId.current = remoteLastTurnId;
+    setShowSuckerPunchNotice(true);
+  }, [isMyRemoteTurn, isRemoteGame, remoteLastTurnId, remoteStatus]);
+
+  useEffect(() => {
+    const previousStatus = previousRemoteStatus.current;
+    previousRemoteStatus.current = remoteStatus;
+
+    if (
+      !isRemoteGame ||
+      previousStatus !== 'blocked_response' ||
+      remoteStatus !== 'active' ||
+      !isMyRemoteTurn ||
+      !remoteLastTurnId ||
+      lastRemoteBlockNoticeId.current === remoteLastTurnId
+    ) {
+      return;
+    }
+
+    lastRemoteBlockNoticeId.current = remoteLastTurnId;
+    setShowSuckerBlockedNotice(true);
+  }, [isMyRemoteTurn, isRemoteGame, remoteLastTurnId, remoteStatus]);
+
+  useEffect(() => {
+    if (isRemoteGame) {
+      return;
+    }
+
+    if (game.phase !== 'complete' || recordedComputerGameIds.current.has(game.id)) {
+      return;
+    }
+
+    recordedComputerGameIds.current.add(game.id);
+    void recordComputerGameResult(game)
+      .then((nextStats) => {
+        if (nextStats) {
+          setComputerStats(nextStats);
+        }
+      })
+      .catch((statsError) => {
+        console.warn('Unable to record computer stats', statsError);
+      });
+  }, [game, isRemoteGame]);
+
+  useEffect(() => {
+    if (!isRemoteGame) {
+      setVisibleRemoteGame(null);
+      visibleRemoteTurnId.current = null;
+      return;
+    }
+
+    if (!isRolling && !isScoring && remoteGame && !shouldHoldRemoteTurnReveal) {
+      setVisibleRemoteGame(remoteGame);
+      visibleRemoteTurnId.current = remoteLastTurnId ?? null;
+    }
+  }, [isRemoteGame, isRolling, isScoring, remoteGame, remoteLastTurnId, shouldHoldRemoteTurnReveal]);
+
+  useEffect(() => {
+    if (!remoteOpponentSuckerTurnNeedsReveal || !remoteGame || !remoteLastTurn || isRolling || isScoring) {
+      return;
+    }
+
+    lastAnimatedRemoteScoreTurnId.current = remoteLastTurn.id;
+    void animateRemoteOpponentSuckerTurn(remoteGame, remoteLastTurn);
+  }, [isRolling, isScoring, remoteGame, remoteLastTurn, remoteOpponentSuckerTurnNeedsReveal]);
+
+  async function refreshComputerStats() {
+    try {
+      setComputerStats(await getComputerStats());
+    } catch (statsError) {
+      console.warn('Unable to load computer stats', statsError);
+    }
+  }
+
+  async function handleRoll() {
     if (!canRoll) {
       return;
     }
 
+    if (!isRemoteGame && pendingTurn) {
+      setLocalPendingTurn(null);
+      setShowSuckerPunchNotice(false);
+      setShowSuckerBlockedNotice(false);
+      setSuckerRollNoticeTitle(null);
+    }
+    setHighlightCategory(null);
+    setIsChoosingSuckerDeal(false);
+
+    const nextGame = isRemoteGame && remoteHandlers ? await remoteHandlers.onRoll() : rollCurrentDice(game);
+    await animateRollTo(nextGame);
+  }
+
+  async function animateRollTo(nextGame: ReturnType<typeof createGame> | null) {
     const rollingIndexes = game.held
       .map((held, index) => (held ? null : index))
       .filter((index): index is number => index !== null);
-    const nextGame = rollCurrentDice(game);
-    const finalDice = nextGame.dice;
-
-    setGame(nextGame);
     setIsRolling(true);
     setSelectedCategory(null);
-    setRollingDieIndexes(rollingIndexes);
-    const launchSide = Math.random() < 0.5 ? 'left' : 'right';
-    const launches = Object.fromEntries(
-      rollingIndexes.map((index) => [index, createRollingLaunch(index, launchSide)]),
-    ) as Partial<Record<number, RollingLaunch>>;
-    setRollingLaunches(launches);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
     setRollingFaces(game.dice);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
-    if (rollingIndexes.length === 0) {
+    if (!nextGame) {
       setIsRolling(false);
       return;
     }
+    const finalDice = nextGame.dice;
+
+    if (rollingIndexes.length === 0) {
+      if (isRemoteGame) {
+        setVisibleRemoteGame(nextGame);
+      } else {
+        setLocalGame(nextGame);
+      }
+      setIsRolling(false);
+      return;
+    }
+
+    const launchSide = Math.random() < 0.5 ? 'left' : 'right';
+    const [rollZoneRect, slotRects] = await Promise.all([
+      measureInWindow(rollZoneRef.current),
+      Promise.all(dieSlotRefs.current.map((ref) => measureInWindow(ref))),
+    ]);
+    const launches = Object.fromEntries(
+      rollingIndexes.map((index) => [
+        index,
+        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null),
+      ]),
+    ) as Partial<Record<number, RollingLaunch>>;
+    setRollingLaunches(launches);
+    setRollingDieIndexes(rollingIndexes);
 
     const scrambleTimer = setInterval(() => {
       setRollingFaces((faces) =>
         faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
       );
     }, 65);
+    const finalRevealDelay = Math.max(
+      0,
+      Math.max(...rollingIndexes.map((index) => {
+        const launch = launches[index] ?? defaultRollingLaunch;
+        return launch.delay + launch.duration;
+      })) - 150,
+    );
+    const finalRevealTimer = setTimeout(() => {
+      clearInterval(scrambleTimer);
+      setRollingFaces(finalDice);
+    }, finalRevealDelay);
 
     Animated.parallel(
       rollingIndexes.map((index) => {
@@ -224,7 +772,12 @@ export default function App() {
       }),
     ).start(() => {
       clearInterval(scrambleTimer);
-      setRollingFaces(finalDice);
+      clearTimeout(finalRevealTimer);
+      if (isRemoteGame) {
+        setVisibleRemoteGame(nextGame);
+      } else {
+        setLocalGame(nextGame);
+      }
       rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
       setRollingDieIndexes([]);
       setRollingLaunches({});
@@ -232,12 +785,302 @@ export default function App() {
     });
   }
 
+  function finishComputerTurnResult(result: ComputerTurnResult) {
+    setLocalGame(result.game);
+    setLocalPendingTurn(result.pendingTurn);
+    if (result.pendingTurn?.status === 'punched' && result.pendingTurn.scorerIndex === myPlayerIndex) {
+      setShowSuckerPunchNotice(true);
+    }
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
+    setIsComputerThinking(false);
+  }
+
+  async function animateComputerTurnResult(result: ComputerTurnResult) {
+    if (!result.scoreAnimation) {
+      finishComputerTurnResult(result);
+      return;
+    }
+
+    const { category, dice, hadSuckerBonus, score, scorerIndex } = result.scoreAnimation;
+    setLocalPendingTurn(null);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(category);
+
+    await wait(computerScorePreviewDelayMs);
+    if (scorerIndex !== myPlayerIndex && isSuckerDice(dice)) {
+      const scorerName = result.game.players[scorerIndex]?.name ?? 'Opponent';
+      setSuckerRollNoticeTitle(`${scorerName} rolled`);
+      await wait(1250);
+      setSuckerRollNoticeTitle(null);
+    }
+
+    const targetRef = scorerIndex === myPlayerIndex ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
+    const [screenRect, targetRect] = await Promise.all([
+      measureInWindow(screenRef.current),
+      measureInWindow(targetRef ?? null),
+    ]);
+
+    if (!screenRect || !targetRect) {
+      finishComputerTurnResult(result);
+      return;
+    }
+
+    const displayScore = displayScoreWithoutSuckerBonus(score, hadSuckerBonus) ?? score;
+    const startX = screenRect.width / 2 - 44;
+    const startY = screenRect.height * 0.44;
+    const endX = targetRect.x - screenRect.x + targetRect.width / 2 - 44;
+    const endY = targetRect.y - screenRect.y + targetRect.height / 2 - 24;
+    const flyingScore = {
+      fromX: startX,
+      fromY: startY,
+      id: `computer-score-${category}-${Date.now()}`,
+      progress: new Animated.Value(0),
+      toX: endX,
+      toY: endY,
+      value: displayScore,
+    };
+
+    setIsScoring(true);
+    setScoreFlyNumber(flyingScore);
+    requestAnimationFrame(() => {
+      Animated.timing(flyingScore.progress, {
+        toValue: 1,
+        duration: computerScoreAnimationDurationMs,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        setScoreFlyNumber(null);
+        setIsScoring(false);
+        finishComputerTurnResult(result);
+      });
+    });
+  }
+
+  async function animateRemoteOpponentSuckerTurn(nextRemoteGame: GameState, turn: RemoteTurnRow) {
+    const previousGame = visibleRemoteGame;
+    if (!previousGame) {
+      setVisibleRemoteGame(nextRemoteGame);
+      visibleRemoteTurnId.current = turn.id;
+      return;
+    }
+
+    const scorerIndex = previousGame.players.findIndex((player) => player.id === turn.player_id);
+    const scorer = previousGame.players[scorerIndex] ?? nextRemoteGame.players.find((player) => player.id === turn.player_id);
+    const hadSuckerBonus = scorer ? hasPreviewSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
+
+    setLocalPendingTurn(null);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(turn.category);
+    setSuckerRollNoticeTitle(`${scorer?.name ?? 'Opponent'} rolled`);
+    await wait(1250);
+    setSuckerRollNoticeTitle(null);
+
+    const [screenRect, targetRect] = await Promise.all([
+      measureInWindow(screenRef.current),
+      measureInWindow(opponentScoreRefs.current[turn.category] ?? null),
+    ]);
+
+    if (!screenRect || !targetRect) {
+      setVisibleRemoteGame(nextRemoteGame);
+      visibleRemoteTurnId.current = turn.id;
+      setHighlightCategory(null);
+      return;
+    }
+
+    const displayScore = displayScoreWithoutSuckerBonus(turn.score, hadSuckerBonus) ?? turn.score;
+    const flyingScore = {
+      fromX: screenRect.width / 2 - 44,
+      fromY: screenRect.height * 0.44,
+      id: `remote-score-${turn.id}`,
+      progress: new Animated.Value(0),
+      toX: targetRect.x - screenRect.x + targetRect.width / 2 - 44,
+      toY: targetRect.y - screenRect.y + targetRect.height / 2 - 24,
+      value: displayScore,
+    };
+
+    setIsScoring(true);
+    setScoreFlyNumber(flyingScore);
+    requestAnimationFrame(() => {
+      Animated.timing(flyingScore.progress, {
+        toValue: 1,
+        duration: computerScoreAnimationDurationMs,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        setScoreFlyNumber(null);
+        setIsScoring(false);
+        setVisibleRemoteGame(nextRemoteGame);
+        visibleRemoteTurnId.current = turn.id;
+        setHighlightCategory(null);
+      });
+    });
+  }
+
+  async function handleUseExtraRoll() {
+    if (!canUseLocalExtraRoll && !canUseRemoteExtraRoll) {
+      return;
+    }
+
+    setIsTokenMenuOpen(false);
+    if (isRemoteGame && remoteHandlers) {
+      await remoteHandlers.onExtraRoll();
+      return;
+    }
+
+    setLocalGame(purchaseExtraRoll(game));
+  }
+
+  function handleUseMulligan() {
+    if (!canUseLocalMulligan) {
+      return;
+    }
+
+    setIsTokenMenuOpen(false);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setLocalGame(mulliganCurrentTurn(game));
+  }
+
+  function handleStartSuckerDeal() {
+    if (!canStartSuckerDeal) {
+      return;
+    }
+
+    setIsTokenMenuOpen(false);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
+    setIsChoosingSuckerDeal(true);
+  }
+
+  async function handleSuckerDealTarget(category: ScoreCategory) {
+    if (!canStartSuckerDeal || !openCategories.includes(category)) {
+      return;
+    }
+
+    setIsChoosingSuckerDeal(false);
+
+    if (isRemoteGame && remoteHandlers) {
+      await remoteHandlers.onScratch(category);
+      return;
+    }
+
+    setLocalGame(scratchScoreBox(game, category));
+    setLocalPendingTurn(null);
+  }
+
+  async function handleUseSuckerPunch() {
+    if (canUseLocalSuckerPunch && pendingTurn) {
+      setIsTokenMenuOpen(false);
+      setSelectedCategory(null);
+      setIsChoosingSuckerDeal(false);
+      const punched = applyLocalSuckerPunch(game, pendingTurn, myPlayerIndex);
+      if (shouldComputerUseSuckerBlocker(punched.game, punched.pendingTurn)) {
+        const blockedGame = applyLocalSuckerBlocker(punched.game, punched.pendingTurn, computerPlayerIndex);
+        setLocalGame(blockedGame);
+        setLocalPendingTurn(null);
+        setShowSuckerBlockedNotice(true);
+        return;
+      }
+
+      const replayed = playComputerTurn(punched.game, null);
+      setLocalGame(punched.game);
+      setLocalPendingTurn(punched.pendingTurn);
+      setIsComputerThinking(true);
+      setTimeout(() => {
+        void animateComputerTurnResult(replayed);
+      }, computerThinkingDelayMs);
+      return;
+    }
+
+    if (!canUseRemoteSuckerPunch || !remoteHandlers || !remoteLastTurnId) {
+      return;
+    }
+
+    setIsTokenMenuOpen(false);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    await remoteHandlers.onSuckerPunch(remoteLastTurnId);
+  }
+
+  async function handleUseSuckerBlocker() {
+    if (canUseLocalSuckerBlocker && pendingTurn) {
+      setIsTokenMenuOpen(false);
+      setSelectedCategory(null);
+      setIsChoosingSuckerDeal(false);
+      const blockedGame = applyLocalSuckerBlocker(game, pendingTurn, myPlayerIndex);
+      setLocalGame(blockedGame);
+      setLocalPendingTurn(null);
+      setShowSuckerPunchNotice(false);
+      return;
+    }
+
+    if (!canUseRemoteSuckerBlocker || !remoteHandlers || !remoteLastTurnId) {
+      return;
+    }
+
+    setIsTokenMenuOpen(false);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    await remoteHandlers.onSuckerBlocker(remoteLastTurnId);
+  }
+
+  async function handleRematch() {
+    setDismissedGameOverId(null);
+    setIsMenuOpen(false);
+    setIsTokenMenuOpen(false);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
+    setShowSuckerPunchNotice(false);
+    setShowSuckerBlockedNotice(false);
+    setSuckerRollNoticeTitle(null);
+
+    if (isRemoteGame && remoteHandlers) {
+      await remoteHandlers.onRematch();
+      return;
+    }
+
+    setLocalPendingTurn(null);
+    recordedComputerGameIds.current.clear();
+    setLocalGame(createGame(playerNames));
+  }
+
+  function handleDismissGameOver() {
+    setDismissedGameOverId(game.id);
+  }
+
+  function commitLocalScore(category: ScoreCategory) {
+    const result = scoreLocalTurn(game, category);
+    setLocalGame(result.game);
+    setLocalPendingTurn(result.pendingTurn);
+  }
+
   function handleSelectCategory(category: ScoreCategory) {
-    if (game.rollNumber === 0 || isRolling || isScoring || !openCategories.includes(category)) {
+    if (isChoosingSuckerDeal) {
+      void handleSuckerDealTarget(category);
+      return;
+    }
+
+    if (
+      game.rollNumber === 0 ||
+      isRolling ||
+      isScoring ||
+      isComputerTurn ||
+      !isMyRemoteTurn ||
+      !isRemoteActionPlayable ||
+      !openCategories.includes(category)
+    ) {
       return;
     }
 
     setSelectedCategory(category);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
   }
 
   async function handlePlayScore() {
@@ -247,7 +1090,7 @@ export default function App() {
 
     const category = selectedCategory;
     const targetRef =
-      game.currentPlayerIndex === 0 ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
+      activePlayerViewIndex === 0 ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
     const [screenRect, targetRect, sourceRects] = await Promise.all([
       measureInWindow(screenRef.current),
       measureInWindow(targetRef ?? null),
@@ -255,8 +1098,13 @@ export default function App() {
     ]);
 
     if (!screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
-      setGame((state) => scoreTurn(state, category));
+      if (isRemoteGame && remoteHandlers) {
+        void remoteHandlers.onScore(category);
+      } else {
+        commitLocalScore(category);
+      }
       setSelectedCategory(null);
+      setIsChoosingSuckerDeal(false);
       return;
     }
 
@@ -300,36 +1148,76 @@ export default function App() {
       ).start(() => {
         setScoreFlyDice([]);
         setIsScoring(false);
-        setGame((state) => scoreTurn(state, category));
+        if (isRemoteGame && remoteHandlers) {
+          void remoteHandlers.onScore(category);
+        } else {
+          commitLocalScore(category);
+        }
         setSelectedCategory(null);
+        setIsChoosingSuckerDeal(false);
       });
     });
+  }
+
+  async function handleToggleHold(index: number) {
+    if (isRolling || isScoring || game.rollNumber === 0 || !isMyRemoteTurn || !isRemoteActionPlayable || isRemoteBusy) {
+      return;
+    }
+
+    if (isRemoteGame && remoteHandlers) {
+      await remoteHandlers.onToggleHold(index);
+      return;
+    }
+
+    setLocalGame((state) => toggleHold(state, index));
   }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
-      <View ref={screenRef} style={styles.screen}>
+      <View ref={screenRef} style={[styles.screen, gameStageStyle]}>
         <BackgroundDicePattern floatValue={bgFloat} />
         <View style={styles.topBar}>
-          <Text style={styles.backButton}>‹</Text>
-          <Text style={styles.appTitle}>Sucker!</Text>
-          <Text style={styles.turnText}>
-            {game.phase === 'complete'
-              ? `${leader.name} wins with ${totalScore(leader.scorecard)}`
-              : `${currentPlayer.name}'s turn`}
-          </Text>
-          <View style={styles.menuDots}>
-            <View style={styles.menuDot} />
-            <View style={styles.menuDot} />
-            <View style={styles.menuDot} />
+          <View pointerEvents="none" style={styles.topBarBannerClip}>
+            <Image source={suckerGameBannerImage} style={styles.topBarBannerImage} />
           </View>
+          <Pressable
+            disabled={!onExit}
+            onPress={onExit}
+            style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.backButtonText}>‹</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setIsMenuOpen((open) => !open)}
+            style={({ pressed }) => [styles.menuDotsButton, pressed && styles.pressed]}
+          >
+            <View style={styles.menuDots}>
+              <View style={styles.menuDot} />
+              <View style={styles.menuDot} />
+              <View style={styles.menuDot} />
+            </View>
+          </Pressable>
+          {isMenuOpen && (
+            <View style={styles.topMenu}>
+              <Pressable
+                onPress={() => {
+                  setIsMenuOpen(false);
+                  setShowStatsPage(true);
+                  void refreshComputerStats();
+                }}
+                style={({ pressed }) => [styles.topMenuItem, pressed && styles.pressed]}
+              >
+                <Text style={styles.topMenuText}>Stats</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
 
         <View style={styles.playerStrip}>
-          {game.players.map((player, index) => (
-            <View key={player.id} style={[styles.playerPill, index === game.currentPlayerIndex && styles.activePlayer]}>
-              <View style={[styles.avatar, index === game.currentPlayerIndex && styles.activeAvatar]}>
+          {displayPlayers.map((player, index) => (
+            <View key={player.id} style={[styles.playerPill, player.id === currentPlayer.id && styles.activePlayer]}>
+              <View style={[styles.avatar, player.id === currentPlayer.id && styles.activeAvatar]}>
                 <Text style={styles.avatarText}>{player.name.slice(0, 1)}</Text>
               </View>
               <Text style={styles.playerScore}>{totalScore(player.scorecard)}</Text>
@@ -340,7 +1228,6 @@ export default function App() {
             </View>
           ))}
         </View>
-
         <View style={styles.board}>
           {upperCategories.map((leftCategory, index) => (
             <ScorePair
@@ -348,12 +1235,22 @@ export default function App() {
               leftCategory={leftCategory}
               rightCategory={lowerCategories[index]}
               activePlayer={currentPlayer}
-              activePlayerIndex={game.currentPlayerIndex}
+              activePlayerIndex={activePlayerViewIndex}
               homePlayer={homePlayer}
               opponentPlayer={opponentPlayer}
               dice={game.dice}
-              canChoose={game.rollNumber > 0 && !isRolling && !isScoring}
+              canChoose={
+                game.rollNumber > 0 &&
+                !isRolling &&
+                !isScoring &&
+                !isComputerTurn &&
+                isMyRemoteTurn &&
+                isRemoteActionPlayable &&
+                !isRemoteBusy
+              }
               selectedCategory={selectedCategory}
+              isChoosingSuckerDeal={isChoosingSuckerDeal}
+              highlightCategory={highlightCategory}
               openCategories={openCategories}
               onSelect={handleSelectCategory}
               setOpponentScoreRef={(scoreCategoryName, node) => {
@@ -380,12 +1277,22 @@ export default function App() {
             <ScoreCell
               category="chance"
               activePlayer={currentPlayer}
-              activePlayerIndex={game.currentPlayerIndex}
+              activePlayerIndex={activePlayerViewIndex}
               homePlayer={homePlayer}
               opponentPlayer={opponentPlayer}
               dice={game.dice}
-              canChoose={game.rollNumber > 0 && !isRolling && !isScoring}
+              canChoose={
+                game.rollNumber > 0 &&
+                !isRolling &&
+                !isScoring &&
+                !isComputerTurn &&
+                isMyRemoteTurn &&
+                isRemoteActionPlayable &&
+                !isRemoteBusy
+              }
               selectedCategory={selectedCategory}
+              isChoosingSuckerDeal={isChoosingSuckerDeal}
+              highlightCategory={highlightCategory}
               openCategories={openCategories}
               onSelect={handleSelectCategory}
               setOpponentScoreRef={(scoreCategoryName, node) => {
@@ -399,17 +1306,18 @@ export default function App() {
           </View>
         </View>
 
-        <View style={styles.rollZone}>
+        <View ref={rollZoneRef} style={styles.rollZone}>
           <View style={styles.diceTray}>
             {game.dice.map((die, index) => {
               const isFlying = isRolling && rollingDieIndexes.includes(index);
               const showDie = game.rollNumber > 0 || isRolling;
+              const showSlotDie = showDie && !isFlying;
 
               return (
                 <View key={`die-${index}`} style={styles.dieMotion}>
                   <Pressable
-                    disabled={!showDie || isRolling || isScoring}
-                    onPress={() => setGame((state) => toggleHold(state, index))}
+                    disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteBusy}
+                    onPress={() => void handleToggleHold(index)}
                     ref={(node) => {
                       dieSlotRefs.current[index] = node;
                     }}
@@ -420,7 +1328,7 @@ export default function App() {
                       pressed && styles.pressed,
                     ]}
                   >
-                    {showDie && (
+                    {showSlotDie && (
                       <>
                         {failedDiceImages.includes(die) && <Text style={styles.dieFallback}>{die}</Text>}
                         <Image
@@ -447,44 +1355,46 @@ export default function App() {
               {rollingDieIndexes.map((index) => {
                 const face = rollingFaces[index];
                 const launch = rollingLaunches[index] ?? defaultRollingLaunch;
-                const trackWidth = Math.max((screenWidth - 16) / 5, 64);
-                const trackLeft = index * trackWidth;
-                const sideStartX =
-                  launch.side === 'left'
-                    ? -trackLeft - trackWidth - 34
-                    : screenWidth - trackLeft + 20;
                 const flyY = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.18, 0.42, 0.7, 1],
-                  outputRange: [launch.startY, -18 - launch.lift, -34 - launch.lift * 0.35, -7, 0],
+                  inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
+                  outputRange: [
+                    launch.fromY,
+                    launch.midY - 10,
+                    launch.midY,
+                    launch.toY - 12,
+                    launch.toY - 3,
+                    launch.toY,
+                  ],
                 });
                 const flyX = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.24, 0.5, 0.76, 1],
+                  inputRange: [0, 0.22, 0.5, 0.74, 0.9, 1],
                   outputRange: [
-                    sideStartX,
-                    sideStartX * 0.54,
-                    launch.skimX,
-                    launch.settleX,
-                    0,
+                    launch.fromX,
+                    launch.fromX * 0.62 + launch.midX * 0.38,
+                    launch.midX,
+                    launch.toX + (launch.side === 'left' ? -12 : 12),
+                    launch.toX + (launch.side === 'left' ? -4 : 4),
+                    launch.toX,
                   ],
                 });
                 const flyScale = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.25, 0.55, 0.82, 1],
-                  outputRange: [0.86 + index * 0.02, 1.18, launch.peakScale, 1.03, 0.72],
+                  inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
+                  outputRange: [0.86 + index * 0.02, 1.18, launch.peakScale, 1.02, 0.78, 0.72],
                 });
                 const flyRotate = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.2, 0.4, 0.62, 0.82, 1],
+                  inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
                   outputRange: [
                     `${launch.side === 'left' ? -28 : 28}deg`,
                     `${launch.spin}deg`,
                     `${-launch.spin * 0.72}deg`,
                     `${launch.spin * 0.46}deg`,
-                    `${-launch.spin * 0.22}deg`,
+                    `${-launch.spin * 0.14}deg`,
                     '0deg',
                   ],
                 });
                 const flyOpacity = diceAnimations[index].interpolate({
                   inputRange: [0, 0.76, 1],
-                  outputRange: [1, 1, 0],
+                  outputRange: [1, 1, 1],
                 });
 
                 return (
@@ -493,7 +1403,6 @@ export default function App() {
                     style={[
                       styles.rollingDieTrack,
                       {
-                        left: `${index * 20}%`,
                         opacity: flyOpacity,
                         transform: [{ translateX: flyX }, { translateY: flyY }, { rotate: flyRotate }, { scale: flyScale }],
                       },
@@ -514,37 +1423,116 @@ export default function App() {
           )}
 
           <View style={styles.controlsRow}>
-          <View style={styles.rollButtonWrap}>
-            <Pressable
-              disabled={!canRoll}
-              onPress={handleRoll}
-              style={({ pressed }) => [styles.rollButton, !canRoll && styles.disabledRollButton, pressed && styles.pressed]}
-            >
-              <View style={styles.buttonGloss} />
-              <Text style={styles.rollText}>ROLL</Text>
-              <View style={styles.rollMeters}>
-                {[0, 1, 2, 3].map((rollIndex) => (
-                  <View
-                    key={rollIndex}
-                    style={[styles.rollMeter, rollIndex < game.rollNumber && styles.rollMeterFilled]}
-                  >
-                    <Text style={styles.rollMeterText}>{rollIndex + 1}</Text>
-                  </View>
-                ))}
-              </View>
-            </Pressable>
-          </View>
+            <View style={styles.rollButtonWrap}>
+              <Pressable
+                disabled={!canRoll}
+                onPress={handleRoll}
+                style={({ pressed }) => [
+                  styles.rollButton,
+                  !canRoll && styles.disabledRollButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={styles.buttonGloss} />
+                <View style={styles.buttonInnerShade} />
+                <Text style={styles.rollText}>ROLL</Text>
+                <View style={styles.rollsLeftBadge}>
+                  <Text style={styles.rollsLeftNumber}>{standardRollsLeft}</Text>
+                  <Text style={styles.rollsLeftLabel}>LEFT</Text>
+                </View>
+              </Pressable>
+            </View>
 
-          <Pressable
-            disabled={!canPlaySelected}
-            onPress={handlePlayScore}
-            style={({ pressed }) => [styles.playButton, !canPlaySelected && styles.disabledButton, pressed && styles.pressed]}
-          >
-            <View style={styles.playGloss} />
-            <Text style={styles.playText}>PLAY</Text>
-          </Pressable>
+            <View style={styles.tokenButtonWrap}>
+              <Pressable
+                accessibilityLabel="Sucker token menu"
+                disabled={!canOpenTokenMenu}
+                onPress={() => setIsTokenMenuOpen(true)}
+                style={({ pressed }) => [
+                  styles.tokenButton,
+                  !canOpenTokenMenu && styles.disabledButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={styles.buttonInnerShade} />
+                <Image source={suckerTokenImage} style={styles.tokenButtonImage} />
+                <View style={styles.tokenCountBadge}>
+                  <Text style={styles.tokenCountText}>{myTokenCount}</Text>
+                </View>
+              </Pressable>
+            </View>
+
+            <View style={styles.playButtonWrap}>
+              <Pressable
+                disabled={!canPlaySelected}
+                onPress={handlePlayScore}
+                style={({ pressed }) => [
+                  styles.playButton,
+                  !canPlaySelected && styles.disabledButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={styles.playGloss} />
+                <View style={styles.buttonInnerShade} />
+                <Text style={styles.playText}>PLAY</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
+        {isTokenMenuOpen && (
+          <View style={styles.tokenMenuOverlay}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
+            <View style={styles.tokenMenuPanel}>
+              <View style={styles.tokenMenuHeader}>
+                <Image source={suckerTokenImage} style={styles.tokenMenuIcon} />
+                <View style={styles.tokenMenuHeaderText}>
+                  <Text style={styles.tokenMenuTitle}>Sucker Tokens</Text>
+                  <Text style={styles.tokenMenuSubtitle}>{myTokenCount} available</Text>
+                </View>
+                <Pressable onPress={() => setIsTokenMenuOpen(false)} style={styles.tokenMenuClose}>
+                  <Text style={styles.tokenMenuCloseText}>X</Text>
+                </Pressable>
+              </View>
+
+              <TokenMenuOption
+                cost={suckerTokenCosts.extraRoll}
+                description="Add one roll to the Roll button."
+                disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
+                label="Extra Roll"
+                onPress={() => void handleUseExtraRoll()}
+              />
+              <TokenMenuOption
+                cost={suckerTokenCosts.mulligan}
+                description="Discard this turn and start it over."
+                disabled={!canUseLocalMulligan}
+                label="Mulligan"
+                onPress={handleUseMulligan}
+              />
+              <TokenMenuOption
+                cost={0}
+                costLabel="+1"
+                description="Pick a score box to sacrifice for 0 and gain 1 token."
+                disabled={!canStartSuckerDeal}
+                label="Sucker Deal"
+                onPress={handleStartSuckerDeal}
+              />
+              <TokenMenuOption
+                cost={suckerTokenCosts.suckerPunch}
+                description={isRemoteGame ? 'Force your opponent to replay their latest turn.' : 'Force the computer to replay its latest turn.'}
+                disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
+                label="Sucker Punch"
+                onPress={() => void handleUseSuckerPunch()}
+              />
+              <TokenMenuOption
+                cost={suckerTokenCosts.suckerBlocker}
+                description={isRemoteGame ? 'Block the Sucker Punch and keep your score.' : 'Block the computer’s Sucker Punch and keep your score.'}
+                disabled={!canUseLocalSuckerBlocker && !canUseRemoteSuckerBlocker}
+                label="Block Sucker Punch"
+                onPress={() => void handleUseSuckerBlocker()}
+              />
+            </View>
+          </View>
+        )}
         {scoreFlyDice.length > 0 && (
           <View pointerEvents="none" style={styles.scoreDiceOverlay}>
             {scoreFlyDice.map((die, index) => {
@@ -595,6 +1583,111 @@ export default function App() {
             })}
           </View>
         )}
+        {scoreFlyNumber && (
+          <View pointerEvents="none" style={styles.scoreNumberOverlay}>
+            {(() => {
+              const translateX = scoreFlyNumber.progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, scoreFlyNumber.toX - scoreFlyNumber.fromX],
+              });
+              const translateY = scoreFlyNumber.progress.interpolate({
+                inputRange: [0, 0.24, 1],
+                outputRange: [0, -18, scoreFlyNumber.toY - scoreFlyNumber.fromY],
+              });
+              const scale = scoreFlyNumber.progress.interpolate({
+                inputRange: [0, 0.25, 1],
+                outputRange: [1.8, 2.05, 0.82],
+              });
+              const opacity = scoreFlyNumber.progress.interpolate({
+                inputRange: [0, 0.82, 1],
+                outputRange: [1, 1, 0.1],
+              });
+
+              return (
+                <Animated.View
+                  style={[
+                    styles.scoreFlyingNumber,
+                    {
+                      left: scoreFlyNumber.fromX,
+                      opacity,
+                      top: scoreFlyNumber.fromY,
+                      transform: [{ translateX }, { translateY }, { scale }],
+                    },
+                  ]}
+                >
+                  <Text style={styles.scoreFlyingNumberText}>{scoreFlyNumber.value}</Text>
+                </Animated.View>
+              );
+            })()}
+          </View>
+        )}
+        {showSuckerPunchNotice && (
+          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
+            <View style={styles.suckerPunchNotice}>
+              <Text style={styles.suckerPunchNoticeTitle}>You got</Text>
+              <Text style={styles.suckerPunchNoticeText}>Sucker Punched!</Text>
+            </View>
+          </View>
+        )}
+        {showSuckerBlockedNotice && (
+          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
+            <View style={styles.suckerPunchNotice}>
+              <Text style={styles.suckerPunchNoticeTitle}>Your punch was</Text>
+              <Text style={styles.suckerPunchNoticeText}>Blocked!</Text>
+            </View>
+          </View>
+        )}
+        {suckerRollNoticeTitle && (
+          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
+            <View style={[styles.suckerPunchNotice, styles.suckerRollNotice]}>
+              <Text style={styles.suckerPunchNoticeTitle}>{suckerRollNoticeTitle}</Text>
+              <Text style={styles.suckerPunchNoticeText}>Sucker!!</Text>
+            </View>
+          </View>
+        )}
+        {remoteError && (
+          <View pointerEvents="none" style={styles.remoteErrorNoticeOverlay}>
+            <Text style={styles.remoteErrorNoticeText}>{remoteError}</Text>
+          </View>
+        )}
+        {gameOverVisible && (
+          <View style={styles.gameOverOverlay}>
+            <View style={styles.gameOverPanel}>
+              <Text style={styles.gameOverEyebrow}>Game Over</Text>
+              <Text style={styles.gameOverTitle}>{gameOverTitle}</Text>
+              <View style={styles.gameOverScores}>
+                <View style={styles.gameOverScoreBox}>
+                  <Text style={styles.gameOverScoreName}>{homePlayer.name}</Text>
+                  <Text style={styles.gameOverScoreValue}>{homeScore}</Text>
+                </View>
+                <View style={styles.gameOverScoreBox}>
+                  <Text style={styles.gameOverScoreName}>{opponentPlayer.name}</Text>
+                  <Text style={styles.gameOverScoreValue}>{opponentScore}</Text>
+                </View>
+              </View>
+              <View style={styles.gameOverActions}>
+                <Pressable onPress={() => void handleRematch()} style={({ pressed }) => [styles.gameOverPrimaryButton, pressed && styles.pressed]}>
+                  <View style={styles.buttonGloss} />
+                  <View style={styles.buttonInnerShade} />
+                  <Text style={styles.gameOverPrimaryText}>Rematch</Text>
+                </Pressable>
+                <Pressable onPress={handleDismissGameOver} style={({ pressed }) => [styles.gameOverSecondaryButton, pressed && styles.pressed]}>
+                  <View style={styles.buttonInnerShade} />
+                  <Text style={styles.gameOverSecondaryText}>Not now</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        )}
+        {showStatsPage && (
+          <StatsPage
+            currentOpponentName={opponentPlayer.name}
+            currentScore={totalScore(homePlayer.scorecard)}
+            onClose={() => setShowStatsPage(false)}
+            opponentScore={totalScore(opponentPlayer.scorecard)}
+            stats={computerStats}
+          />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -604,6 +1697,43 @@ type PlayerView = ReturnType<typeof createGame>['players'][number];
 
 function upperSectionTotal(scorecard: PlayerView['scorecard']) {
   return upperCategories.reduce((sum, category) => sum + (scorecard[category] ?? 0), 0);
+}
+
+function TokenMenuOption({
+  cost,
+  costLabel,
+  description,
+  disabled = false,
+  label,
+  onPress,
+}: {
+  cost: number;
+  costLabel?: string;
+  description: string;
+  disabled?: boolean;
+  label: string;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.tokenOption,
+        disabled && styles.disabledTokenOption,
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.tokenOptionCost}>
+        <Image source={suckerTokenImage} style={styles.tokenOptionCostIcon} />
+        <Text style={styles.tokenOptionCostText}>{costLabel ?? cost}</Text>
+      </View>
+      <View style={styles.tokenOptionBody}>
+        <Text style={[styles.tokenOptionTitle, disabled && styles.disabledTokenOptionText]}>{label}</Text>
+        <Text style={[styles.tokenOptionDescription, disabled && styles.disabledTokenOptionText]}>{description}</Text>
+      </View>
+    </Pressable>
+  );
 }
 
 function BonusMeter({ total }: { total: number }) {
@@ -619,14 +1749,14 @@ function BonusMeter({ total }: { total: number }) {
     <View style={styles.bonusMeter}>
       <View style={styles.bonusMeterFace}>
         <Svg height={size} style={styles.bonusMeterSvg} width={size}>
-          <Circle cx={center} cy={center} fill="#E7B45C" r={radius} stroke="#8E4A25" strokeWidth={strokeWidth} />
+          <Circle cx={center} cy={center} fill="#E7A845" r={radius} stroke="#5A1308" strokeWidth={strokeWidth} />
           {progress > 0 && (
             <Circle
               cx={center}
               cy={center}
               fill="transparent"
               r={radius}
-              stroke="#65EFFF"
+              stroke="#F12D22"
               strokeDasharray={`${circumference} ${circumference}`}
               strokeDashoffset={circumference * (1 - progress)}
               strokeLinecap="round"
@@ -653,6 +1783,8 @@ type ScorePairProps = {
   dice: ReturnType<typeof createGame>['dice'];
   canChoose: boolean;
   selectedCategory: ScoreCategory | null;
+  isChoosingSuckerDeal: boolean;
+  highlightCategory: ScoreCategory | null;
   openCategories: ScoreCategory[];
   onSelect: (category: ScoreCategory) => void;
   setOpponentScoreRef: (category: ScoreCategory, node: ViewRef | null) => void;
@@ -682,6 +1814,8 @@ function ScoreCell({
   dice,
   canChoose,
   selectedCategory,
+  isChoosingSuckerDeal,
+  highlightCategory,
   openCategories,
   onSelect,
   setOpponentScoreRef,
@@ -694,22 +1828,33 @@ function ScoreCell({
   const locked = activeLockedScore !== null;
   const selectable = canChoose && openCategories.includes(category);
   const selected = selectedCategory === category;
-  const previewScore = selected && !locked ? scoreCategoryForScorecard(dice, category, activePlayer.scorecard) : null;
+  const highlighted = selected || highlightCategory === category || (isChoosingSuckerDeal && selectable);
+  const previewHasSuckerBonus = selected && !locked && hasPreviewSuckerBonus(dice, category, activePlayer.scorecard);
+  const previewScore =
+    selected && !locked
+      ? previewHasSuckerBonus
+        ? scoreCategory(dice, category)
+        : scoreCategoryForScorecard(dice, category, activePlayer.scorecard)
+      : null;
   const homePreviewScore = activePlayerIndex === 0 ? previewScore : null;
   const opponentPreviewScore = activePlayerIndex === 1 ? previewScore : null;
-  const homeSuckerBonus = (homePlayer.suckerBonusCategories ?? []).includes(category);
-  const opponentSuckerBonus = (opponentPlayer.suckerBonusCategories ?? []).includes(category);
+  const homeLockedSuckerBonus = (homePlayer.suckerBonusCategories ?? []).includes(category);
+  const opponentLockedSuckerBonus = (opponentPlayer.suckerBonusCategories ?? []).includes(category);
+  const homeSuckerBonus = homeLockedSuckerBonus || (activePlayerIndex === 0 && previewHasSuckerBonus);
+  const opponentSuckerBonus = opponentLockedSuckerBonus || (activePlayerIndex === 1 && previewHasSuckerBonus);
+  const homeDisplayScore = displayScoreWithoutSuckerBonus(homeLockedScore, homeLockedSuckerBonus);
+  const opponentDisplayScore = displayScoreWithoutSuckerBonus(opponentLockedScore, opponentLockedSuckerBonus);
   const scoreText =
-    homeLockedScore !== null ? String(homeLockedScore) : homePreviewScore !== null ? String(homePreviewScore) : '';
+    homeDisplayScore !== null ? String(homeDisplayScore) : homePreviewScore !== null ? String(homePreviewScore) : '';
   const opponentScoreText =
-    opponentLockedScore !== null
-      ? String(opponentLockedScore)
+    opponentDisplayScore !== null
+      ? String(opponentDisplayScore)
       : opponentPreviewScore !== null
         ? String(opponentPreviewScore)
         : '';
   const selectedScale = selectedPulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, selected ? 1.06 : 1],
+    outputRange: [1, highlighted ? 1.06 : 1],
   });
 
   return (
@@ -725,7 +1870,7 @@ function ScoreCell({
           style={[
             styles.categoryTile,
             category === 'sucker' && styles.suckerCategoryTile,
-            selected && styles.selectedCategoryTile,
+            highlighted && styles.selectedCategoryTile,
           ]}
         >
           <View style={styles.tileGloss} />
@@ -748,7 +1893,7 @@ function ScoreCell({
           style={({ pressed }) => [
             styles.scoreBox,
             homeLockedScore !== null && styles.lockedScoreBox,
-            selected && activePlayerIndex === 0 && styles.selectedScoreBox,
+            highlighted && activePlayerIndex === 0 && styles.selectedScoreBox,
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
           ]}
@@ -784,12 +1929,501 @@ function ScoreCell({
   );
 }
 
+function displayScoreWithoutSuckerBonus(score: number | null, hasSuckerBonus: boolean) {
+  if (score === null) {
+    return null;
+  }
+
+  return hasSuckerBonus ? Math.max(0, score - 50) : score;
+}
+
+function hasPreviewSuckerBonus(
+  dice: ReturnType<typeof createGame>['dice'],
+  category: ScoreCategory,
+  scorecard: PlayerView['scorecard'],
+) {
+  return category !== 'sucker' && scorecard.sucker !== null && dice.every((die) => die === dice[0]);
+}
+
+function isSuckerDice(dice: ReturnType<typeof createGame>['dice']) {
+  return dice.every((die) => die === dice[0]);
+}
+
 function SuckerBonusBadge({ compact = false }: { compact?: boolean }) {
   return (
     <View style={[styles.suckerBonusBadge, compact && styles.compactSuckerBonusBadge]}>
       <Text style={[styles.suckerBonusBadgeText, compact && styles.compactSuckerBonusBadgeText]}>+50</Text>
     </View>
   );
+}
+
+function scoreLocalTurn(game: GameState, category: ScoreCategory): ComputerTurnResult {
+  const scorerIndex = game.currentPlayerIndex;
+  const scorer = game.players[scorerIndex];
+  const score = scoreCategoryForScorecard(game.dice, category, scorer.scorecard);
+  const hadSuckerBonus = hasPreviewSuckerBonus(game.dice, category, scorer.scorecard);
+  const nextGame = scoreTurn(game, category);
+  const pendingTurn =
+    nextGame.phase === 'complete'
+      ? null
+      : {
+          category,
+          dice: game.dice,
+          hadSuckerBonus,
+          id: `${game.id}-${scorer.id}-${category}-${Date.now()}`,
+          responderIndex: nextGame.currentPlayerIndex,
+          score,
+          scorerIndex,
+          status: 'submitted' as const,
+        };
+
+  return {
+    game: nextGame,
+    pendingTurn,
+    scoreAnimation: {
+      category,
+      dice: game.dice,
+      hadSuckerBonus,
+      score,
+      scorerIndex,
+    },
+  };
+}
+
+function applyLocalSuckerPunch(
+  game: GameState,
+  pendingTurn: LocalPendingTurn,
+  puncherIndex: number,
+): { game: GameState; pendingTurn: LocalPendingTurn } {
+  const scorer = game.players[pendingTurn.scorerIndex];
+  const puncher = game.players[puncherIndex];
+  if (
+    pendingTurn.status !== 'submitted' ||
+    !scorer ||
+    !puncher ||
+    pendingTurn.scorerIndex === puncherIndex ||
+    puncher.suckerTokens < suckerTokenCosts.suckerPunch
+  ) {
+    return { game, pendingTurn };
+  }
+
+  const players = game.players.map((player, index) => {
+    if (index === pendingTurn.scorerIndex) {
+      return {
+        ...player,
+        scorecard: {
+          ...player.scorecard,
+          [pendingTurn.category]: null,
+        },
+        suckerBonusCategories: player.suckerBonusCategories.filter((category) => category !== pendingTurn.category),
+      };
+    }
+
+    if (index === puncherIndex) {
+      return {
+        ...player,
+        suckerTokens: Math.max(0, player.suckerTokens - suckerTokenCosts.suckerPunch),
+      };
+    }
+
+    return player;
+  });
+
+  return {
+    game: {
+      ...game,
+      currentPlayerIndex: pendingTurn.scorerIndex,
+      dice: [1, 1, 1, 1, 1],
+      extraRollsAvailable: 0,
+      held: [false, false, false, false, false],
+      phase: 'rolling' as const,
+      players,
+      rollNumber: 0,
+    },
+    pendingTurn: {
+      ...pendingTurn,
+      puncherIndex,
+      status: 'punched' as const,
+    },
+  };
+}
+
+function applyLocalSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn, blockerIndex: number): GameState {
+  const blocker = game.players[blockerIndex];
+  if (
+    pendingTurn.status !== 'punched' ||
+    pendingTurn.scorerIndex !== blockerIndex ||
+    !blocker ||
+    blocker.suckerTokens < suckerTokenCosts.suckerBlocker
+  ) {
+    return game;
+  }
+
+  const players = game.players.map((player, index) => {
+    if (index !== blockerIndex) {
+      return player;
+    }
+
+    const suckerBonusCategories =
+      pendingTurn.hadSuckerBonus && !player.suckerBonusCategories.includes(pendingTurn.category)
+        ? [...player.suckerBonusCategories, pendingTurn.category]
+        : player.suckerBonusCategories;
+
+    return {
+      ...player,
+      scorecard: {
+        ...player.scorecard,
+        [pendingTurn.category]: pendingTurn.score,
+      },
+      suckerBonusCategories,
+      suckerTokens: Math.max(0, player.suckerTokens - suckerTokenCosts.suckerBlocker),
+    };
+  });
+
+  const nextGame: GameState = {
+    ...game,
+    currentPlayerIndex: pendingTurn.responderIndex,
+    dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
+    held: [false, false, false, false, false],
+    phase: 'rolling',
+    players,
+    rollNumber: 0,
+  };
+
+  return nextGame;
+}
+
+function playComputerTurn(game: GameState, pendingTurn: LocalPendingTurn | null = null): ComputerTurnResult {
+  if (game.currentPlayerIndex !== computerPlayerIndex || game.phase === 'complete') {
+    return { game, pendingTurn };
+  }
+
+  if (pendingTurn?.status === 'submitted' && pendingTurn.responderIndex === computerPlayerIndex) {
+    if (shouldComputerUseSuckerPunch(game, pendingTurn)) {
+      const punched = applyLocalSuckerPunch(game, pendingTurn, computerPlayerIndex);
+      return {
+        game: punched.game,
+        message: 'Computer used Sucker Punch. Block it or replay the turn.',
+        pendingTurn: punched.pendingTurn,
+      };
+    }
+
+    pendingTurn = null;
+  }
+
+  if (pendingTurn?.status === 'punched' && pendingTurn.scorerIndex === computerPlayerIndex) {
+    if (shouldComputerUseSuckerBlocker(game, pendingTurn)) {
+      return {
+        game: applyLocalSuckerBlocker(game, pendingTurn, computerPlayerIndex),
+        message: 'Computer used Sucker Blocker. The score stands.',
+        pendingTurn: null,
+      };
+    }
+
+    pendingTurn = null;
+  }
+
+  let nextGame = {
+    ...game,
+    held: [false, false, false, false, false] as typeof game.held,
+  };
+  let mulligansUsed = 0;
+  let extraRollsBought = 0;
+
+  while (true) {
+    while (nextGame.rollNumber < maxAvailableRolls(nextGame)) {
+      nextGame = rollCurrentDice(nextGame);
+      const choice = getBestComputerCategoryChoice(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard);
+      if (shouldComputerStopRolling(nextGame, choice)) {
+        break;
+      }
+
+      const faceToChase = mostCommonDie(nextGame.dice);
+      nextGame = {
+        ...nextGame,
+        held: nextGame.dice.map((die) => die === faceToChase) as typeof game.held,
+      };
+    }
+
+    const computer = nextGame.players[computerPlayerIndex];
+    const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard);
+
+    if (shouldComputerUseMulligan(nextGame, choice, mulligansUsed)) {
+      nextGame = mulliganCurrentTurn(nextGame);
+      mulligansUsed += 1;
+      continue;
+    }
+
+    if (shouldComputerBuyExtraRoll(nextGame, choice, extraRollsBought)) {
+      nextGame = purchaseExtraRoll(nextGame);
+      extraRollsBought += 1;
+      continue;
+    }
+
+    break;
+  }
+
+  const category = chooseComputerCategory(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard);
+  return scoreLocalTurn(nextGame, category);
+}
+
+function chooseComputerCategory(dice: ReturnType<typeof createGame>['dice'], scorecard: ReturnType<typeof createGame>['players'][number]['scorecard']) {
+  return getBestComputerCategoryChoice(dice, scorecard).category;
+}
+
+function getBestComputerCategoryChoice(dice: GameState['dice'], scorecard: GameState['players'][number]['scorecard']) {
+  return availableCategories(scorecard)
+    .map((category) => ({
+      category,
+      score: scoreCategoryForScorecard(dice, category, scorecard),
+      priority: computerCategoryPriority(category),
+    }))
+    .sort((left, right) => right.score - left.score || right.priority - left.priority)[0];
+}
+
+function computerCategoryPriority(category: ScoreCategory) {
+  return scoreCategories.indexOf(category);
+}
+
+function shouldComputerUseSuckerPunch(game: GameState, pendingTurn: LocalPendingTurn) {
+  const computer = game.players[computerPlayerIndex];
+  if (!computer || computer.suckerTokens < suckerTokenCosts.suckerPunch) {
+    return false;
+  }
+
+  const playerScore = totalScore(game.players[0].scorecard);
+  const computerScore = totalScore(computer.scorecard);
+  return (
+    pendingTurn.score >= 35 ||
+    pendingTurn.category === 'sucker' ||
+    pendingTurn.category === 'largeStraight' ||
+    pendingTurn.hadSuckerBonus ||
+    (pendingTurn.score >= 25 && playerScore >= computerScore)
+  );
+}
+
+function shouldComputerUseSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn) {
+  const computer = game.players[computerPlayerIndex];
+  if (!computer || computer.suckerTokens < suckerTokenCosts.suckerBlocker) {
+    return false;
+  }
+
+  return (
+    pendingTurn.score >= 25 ||
+    pendingTurn.category === 'sucker' ||
+    pendingTurn.category === 'largeStraight' ||
+    pendingTurn.category === 'fullHouse' ||
+    pendingTurn.hadSuckerBonus
+  );
+}
+
+function shouldComputerStopRolling(
+  game: GameState,
+  choice: { category: ScoreCategory; priority: number; score: number },
+) {
+  if (choice.category === 'sucker' && choice.score >= 50) {
+    return true;
+  }
+  if (choice.category === 'largeStraight' && choice.score >= 40) {
+    return true;
+  }
+  if (choice.score >= 50) {
+    return true;
+  }
+
+  return game.rollNumber >= 2 && choice.score >= 30;
+}
+
+function shouldComputerBuyExtraRoll(
+  game: GameState,
+  choice: { category: ScoreCategory; priority: number; score: number },
+  extraRollsBought: number,
+) {
+  const computer = game.players[computerPlayerIndex];
+  if (
+    game.rollNumber < maxAvailableRolls(game) ||
+    !computer ||
+    computer.suckerTokens < suckerTokenCosts.extraRoll ||
+    extraRollsBought >= 2
+  ) {
+    return false;
+  }
+
+  const maxMatch = maxMatchingDice(game.dice);
+  if (maxMatch >= 4 && computer.scorecard.sucker === null) {
+    return true;
+  }
+
+  return extraRollsBought === 0 && computer.suckerTokens > suckerTokenCosts.mulligan && choice.score < 18;
+}
+
+function shouldComputerUseMulligan(
+  game: GameState,
+  choice: { category: ScoreCategory; priority: number; score: number },
+  mulligansUsed: number,
+) {
+  const computer = game.players[computerPlayerIndex];
+  if (!computer || computer.suckerTokens < suckerTokenCosts.mulligan || mulligansUsed > 0) {
+    return false;
+  }
+
+  return availableCategories(computer.scorecard).length > 5 && choice.score <= 8;
+}
+
+function mostCommonDie(dice: ReturnType<typeof createGame>['dice']) {
+  const counts = dice.reduce(
+    (nextCounts, die) => {
+      nextCounts[die] += 1;
+      return nextCounts;
+    },
+    { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } as Record<DieValue, number>,
+  );
+
+  return dice.reduce((best, die) => (counts[die] > counts[best] || (counts[die] === counts[best] && die > best) ? die : best), dice[0]);
+}
+
+function maxMatchingDice(dice: GameState['dice']) {
+  const counts = dice.reduce(
+    (nextCounts, die) => {
+      nextCounts[die] += 1;
+      return nextCounts;
+    },
+    { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } as Record<DieValue, number>,
+  );
+
+  return Math.max(...Object.values(counts));
+}
+
+function StatsPage({
+  currentOpponentName,
+  currentScore,
+  onClose,
+  opponentScore,
+  stats,
+}: {
+  currentOpponentName: string;
+  currentScore: number;
+  onClose: () => void;
+  opponentScore: number;
+  stats: ComputerStatsSnapshot;
+}) {
+  const hasStats = Boolean(stats && stats.games_played > 0);
+
+  return (
+    <View style={styles.statsOverlay}>
+      <View style={styles.statsHeader}>
+        <View>
+          <Text style={styles.statsEyebrow}>Stats</Text>
+          <Text style={styles.statsTitle}>Vs {currentOpponentName}</Text>
+        </View>
+        <Pressable onPress={onClose} style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}>
+          <Text style={styles.statsCloseText}>X</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.currentGameStatsCard}>
+        <Text style={styles.statsSectionTitle}>Current Game</Text>
+        <View style={styles.statsScoreRow}>
+          <StatBox label="You" value={String(currentScore)} />
+          <StatBox label={currentOpponentName} value={String(opponentScore)} />
+        </View>
+      </View>
+
+      {hasStats && stats ? (
+        <>
+          <View style={styles.statsGrid}>
+            <StatBox label="Record" value={`${stats.wins}-${stats.losses}`} />
+            <StatBox label="Games" value={String(stats.games_played)} />
+            <StatBox label="Your Avg" value={String(stats.average_score)} />
+            <StatBox label={`${currentOpponentName} Avg`} value={String(stats.computer_average_score ?? 0)} />
+            <StatBox label="Your High" value={String(stats.highest_score)} />
+            <StatBox label={`${currentOpponentName} High`} value={String(stats.computer_highest_score ?? 0)} />
+          </View>
+          <View style={styles.statsDetailCard}>
+            <View style={styles.statsComparisonHeader}>
+              <Text style={styles.statsSectionTitle}>Category Rates</Text>
+              <View style={styles.statsComparisonLabels}>
+                <Text style={styles.statsComparisonLabel}>You</Text>
+                <Text numberOfLines={1} style={styles.statsComparisonLabel}>
+                  {currentOpponentName}
+                </Text>
+              </View>
+            </View>
+            <StatsComparisonLine
+              label="Upper bonus"
+              opponentValue={formatStatsPct(stats.computer_upper_bonus_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.upper_bonus_games, stats.games_played)}
+            />
+            <StatsComparisonLine
+              label="Sucker"
+              opponentValue={formatStatsPct(stats.computer_sucker_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.sucker_games, stats.games_played)}
+            />
+            <StatsComparisonLine
+              label="3 of a kind"
+              opponentValue={formatStatsPct(stats.computer_three_of_a_kind_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.three_of_a_kind_games, stats.games_played)}
+            />
+            <StatsComparisonLine
+              label="4 of a kind"
+              opponentValue={formatStatsPct(stats.computer_four_of_a_kind_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.four_of_a_kind_games, stats.games_played)}
+            />
+            <StatsComparisonLine
+              label="Full house"
+              opponentValue={formatStatsPct(stats.computer_full_house_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.full_house_games, stats.games_played)}
+            />
+            <StatsComparisonLine
+              label="Small straight"
+              opponentValue={formatStatsPct(stats.computer_small_straight_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.small_straight_games, stats.games_played)}
+            />
+            <StatsComparisonLine
+              label="Large straight"
+              opponentValue={formatStatsPct(stats.computer_large_straight_games ?? 0, stats.games_played)}
+              value={formatStatsPct(stats.large_straight_games, stats.games_played)}
+            />
+          </View>
+        </>
+      ) : (
+        <View style={styles.statsEmptyCard}>
+          <Text style={styles.statsEmptyTitle}>No saved stats yet</Text>
+          <Text style={styles.statsEmptyBody}>Finish games against the computer while signed in to build your history.</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function StatBox({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statBox}>
+      <Text style={styles.statBoxValue}>{value}</Text>
+      <Text style={styles.statBoxLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function StatsComparisonLine({ label, opponentValue, value }: { label: string; opponentValue: string; value: string }) {
+  return (
+    <View style={styles.statsLine}>
+      <Text style={styles.statsLineLabel}>{label}</Text>
+      <View style={styles.statsComparisonValues}>
+        <Text style={styles.statsLineValue}>{value}</Text>
+        <Text style={styles.statsLineOpponentValue}>{opponentValue}</Text>
+      </View>
+    </View>
+  );
+}
+
+function formatStatsPct(count: number, gamesPlayed: number) {
+  if (gamesPlayed === 0) {
+    return '0%';
+  }
+
+  return `${Math.round((count / gamesPlayed) * 100)}%`;
 }
 
 function BackgroundDicePattern({ floatValue }: { floatValue: Animated.Value }) {
@@ -890,28 +2524,18 @@ function StraightIcon({ label, cardCount }: { label: string; cardCount: 3 | 4 })
 }
 
 function SuckerIcon() {
+  return <SuckerWordmark variant="tile" />;
+}
+
+function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
+  const isHeader = variant === 'header';
+
   return (
-    <View style={styles.suckerIcon}>
-      {suckerOutlineOffsets.map((offset) => (
-        <Text
-          adjustsFontSizeToFit
-          allowFontScaling={false}
-          key={`${offset.x}-${offset.y}`}
-          numberOfLines={1}
-          style={[
-            styles.suckerText,
-            styles.suckerTextOutline,
-            {
-              transform: [{ translateX: offset.x }, { translateY: offset.y }],
-            },
-          ]}
-        >
-          Sucker!
-        </Text>
-      ))}
-      <Text adjustsFontSizeToFit allowFontScaling={false} numberOfLines={1} style={styles.suckerText}>
-        Sucker!
-      </Text>
+    <View style={[styles.suckerWordmark, isHeader ? styles.headerSuckerWordmark : styles.tileSuckerWordmark]}>
+      <Image
+        source={isHeader ? suckerLobbyHeaderImage : suckerScorecardWordmarkImage}
+        style={styles.suckerWordmarkImage}
+      />
     </View>
   );
 }
@@ -922,30 +2546,62 @@ function rollDisplayDie(): DieValue {
 
 const defaultRollingLaunch: RollingLaunch = {
   delay: 0,
-  duration: 760,
-  lift: 16,
+  duration: 880,
+  fromX: -104,
+  fromY: 28,
+  midX: 72,
+  midY: -24,
   peakScale: 1.45,
-  settleX: 0,
-  skimX: 24,
-  startY: 18,
   side: 'left',
   spin: 110,
+  toX: 0,
+  toY: 0,
 };
 
-function createRollingLaunch(index: number, side: RollingLaunch['side']): RollingLaunch {
+function createRollingLaunch(
+  index: number,
+  side: RollingLaunch['side'],
+  rollZoneRect: MeasuredRect | null,
+  slotRect: MeasuredRect | null,
+): RollingLaunch {
   const direction = side === 'left' ? 1 : -1;
   const spreadRank = index - 2;
+  const fallbackSlotWidth = 64;
+  const fallbackGap = 8;
+  const fallbackToX = 8 + index * (fallbackSlotWidth + fallbackGap) + fallbackSlotWidth / 2 - rollingDieBaseSize / 2;
+  const fallbackToY = 35 - rollingDieBaseSize / 2;
+  const toX =
+    rollZoneRect && slotRect
+      ? slotRect.x - rollZoneRect.x + slotRect.width / 2 - rollingDieBaseSize / 2
+      : fallbackToX;
+  const toY =
+    rollZoneRect && slotRect
+      ? slotRect.y - rollZoneRect.y + slotRect.height / 2 - rollingDieBaseSize / 2
+      : fallbackToY;
+  const rollZoneWidth = rollZoneRect?.width ?? 393;
+  const fromX =
+    side === 'left'
+      ? -rollingDieBaseSize - 18 - Math.random() * 34
+      : rollZoneWidth + 18 + Math.random() * 34;
+  const fromY = toY + 18 + Math.random() * 22;
+  const travelDistance = Math.abs(toX - fromX);
+  const midApproachDistance = Math.min(120, Math.max(46, travelDistance * (0.24 + Math.random() * 0.1)));
+  const laneOffset = spreadRank * (4 + Math.random() * 5);
+  const midX = toX - direction * midApproachDistance + laneOffset;
+  const midY = Math.max(-rollingDieBaseSize * 0.28, toY - (42 + Math.random() * 38));
 
   return {
     delay: Math.round(Math.random() * 90 + index * (8 + Math.random() * 12)),
-    duration: Math.round(600 + Math.random() * 260),
-    lift: 8 + Math.random() * 30,
+    duration: Math.round(760 + Math.random() * 240),
+    fromX,
+    fromY,
+    midX,
+    midY,
     peakScale: 1.26 + Math.random() * 0.38,
-    settleX: direction * (6 + index * 5) + (Math.random() * 18 - 9),
-    skimX: direction * (18 + Math.random() * 56 + spreadRank * (5 + Math.random() * 5)),
-    startY: 12 + Math.random() * 22,
     side,
     spin: direction * (88 + Math.random() * 58),
+    toX,
+    toY,
   };
 }
 
@@ -967,78 +2623,163 @@ function measureInWindow(node: ViewRef | null): Promise<MeasuredRect | null> {
   });
 }
 
+function wait(duration: number) {
+  return new Promise((resolve) => setTimeout(resolve, duration));
+}
+
 const styles = StyleSheet.create({
   safeArea: {
+    alignItems: 'center',
+    backgroundColor: '#8F0000',
     flex: 1,
-    backgroundColor: '#086BAF',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
   screen: {
-    backgroundColor: '#086BAF',
-    flex: 1,
+    backgroundColor: '#8F0000',
     gap: 7,
     overflow: 'hidden',
     padding: 8,
     paddingBottom: 12,
   },
+  remoteBackButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 8,
+    borderWidth: 3,
+    height: 44,
+    justifyContent: 'center',
+    minWidth: 120,
+  },
+  remoteBackButtonText: {
+    color: '#210505',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  remoteLoadingScreen: {
+    alignItems: 'center',
+    backgroundColor: '#8F0000',
+    flex: 1,
+    gap: 12,
+    justifyContent: 'center',
+    padding: 16,
+  },
+  remoteLoadingTitle: {
+    color: '#FFD329',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  remoteMessage: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
   backgroundPattern: {
     ...StyleSheet.absoluteFillObject,
-    opacity: 0.22,
+    opacity: 0.18,
   },
   backgroundDie: {
     height: 64,
     opacity: 0.45,
     position: 'absolute',
     resizeMode: 'contain',
-    tintColor: '#2B8FDD',
+    tintColor: '#FFB000',
     width: 64,
   },
   topBar: {
     alignItems: 'center',
-    backgroundColor: '#123D69',
-    borderBottomColor: '#6FB6E8',
-    borderBottomWidth: 2,
-    borderRadius: 8,
+    backgroundColor: '#8F0000',
+    borderColor: '#FFB000',
+    borderRadius: 10,
+    borderWidth: 2,
     justifyContent: 'center',
-    minHeight: 54,
+    minHeight: 58,
+    overflow: 'visible',
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
+    position: 'relative',
+    zIndex: 60,
+  },
+  topBarBannerClip: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 8,
+    overflow: 'hidden',
+    zIndex: 1,
+  },
+  topBarBannerImage: {
+    height: '100%',
+    resizeMode: 'stretch',
+    width: '100%',
   },
   backButton: {
-    color: '#FFF9D8',
+    alignItems: 'center',
+    height: 48,
+    justifyContent: 'center',
+    left: 6,
+    position: 'absolute',
+    top: -1,
+    width: 48,
+    zIndex: 25,
+  },
+  backButtonText: {
+    color: '#FFF0A6',
     fontSize: 54,
     fontWeight: '900',
-    left: 16,
     lineHeight: 54,
-    position: 'absolute',
-    textShadowColor: '#061C2C',
+    textShadowColor: '#050505',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
   },
   menuDots: {
-    gap: 4,
-    position: 'absolute',
-    right: 18,
+    alignItems: 'center',
+    gap: 3,
+    justifyContent: 'center',
   },
   menuDot: {
-    backgroundColor: '#FFF9D8',
-    borderColor: '#061C2C',
-    borderRadius: 8,
+    backgroundColor: '#FFF0A6',
+    borderColor: '#050505',
+    borderRadius: 4,
     borderWidth: 1,
-    height: 13,
-    width: 13,
+    height: 7,
+    width: 7,
   },
-  appTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
+  menuDotsButton: {
+    alignItems: 'center',
+    height: 32,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 10,
+    top: 11,
+    width: 32,
+    zIndex: 25,
+  },
+  topMenu: {
+    backgroundColor: '#FFF3C2',
+    borderColor: '#210505',
+    borderRadius: 8,
+    borderWidth: 2,
+    elevation: 12,
+    minWidth: 188,
+    padding: 4,
+    position: 'absolute',
+    right: 8,
+    top: 46,
+    zIndex: 30,
+  },
+  topMenuItem: {
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  topMenuText: {
+    color: '#210505',
+    fontSize: 13,
     fontWeight: '900',
   },
-  turnText: {
-    color: '#BDEBFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
   playerStrip: {
-    backgroundColor: '#0B304C',
+    backgroundColor: '#1B0505',
     borderRadius: 8,
     flexDirection: 'row',
     overflow: 'hidden',
@@ -1048,18 +2789,19 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 66,
     justifyContent: 'center',
+    overflow: 'hidden',
     paddingLeft: 70,
     paddingRight: 8,
   },
   activePlayer: {
-    backgroundColor: '#559CF0',
+    backgroundColor: '#B91510',
   },
   playerScore: {
     color: '#FFFFFF',
     fontSize: 22,
     fontWeight: '900',
     lineHeight: 24,
-    textShadowColor: '#061C2C',
+    textShadowColor: '#050505',
     textShadowOffset: { width: 1, height: 2 },
     textShadowRadius: 0,
   },
@@ -1070,17 +2812,17 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   tokenText: {
-    color: '#FFE35F',
+    color: '#FFD329',
     fontSize: 10,
     fontWeight: '900',
   },
   avatar: {
     alignItems: 'center',
-    backgroundColor: '#0A2741',
-    borderColor: '#FFE9A6',
+    backgroundColor: '#160303',
+    borderColor: '#FFD329',
     borderRadius: 27,
     borderWidth: 3,
-    height: 54,
+    height: 52,
     justifyContent: 'center',
     left: 10,
     position: 'absolute',
@@ -1088,7 +2830,7 @@ const styles = StyleSheet.create({
     width: 54,
   },
   activeAvatar: {
-    backgroundColor: '#F5C86E',
+    backgroundColor: '#FFD76A',
   },
   avatarText: {
     color: '#FFFFFF',
@@ -1096,15 +2838,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   board: {
-    backgroundColor: '#F0BB5E',
-    borderColor: '#11334B',
+    backgroundColor: '#F3B84A',
+    borderColor: '#210505',
     borderRadius: 18,
     borderWidth: 3,
     flex: 0.94,
     overflow: 'hidden',
   },
   boardRow: {
-    borderBottomColor: '#F7D77C',
+    borderBottomColor: '#FFE083',
     borderBottomWidth: 1,
     flex: 1,
     flexDirection: 'row',
@@ -1128,12 +2870,12 @@ const styles = StyleSheet.create({
   },
   categoryTile: {
     alignItems: 'center',
-    backgroundColor: '#EF423D',
-    borderColor: '#FFF7E8',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFF3C2',
     borderRadius: 12,
     borderWidth: 3,
     justifyContent: 'center',
-    shadowColor: '#7B3B1E',
+    shadowColor: '#5A1308',
     shadowOffset: { width: 3, height: 4 },
     shadowOpacity: 0.5,
     shadowRadius: 0,
@@ -1142,7 +2884,7 @@ const styles = StyleSheet.create({
     width: 56,
   },
   selectedCategoryTile: {
-    borderColor: '#79E5FF',
+    borderColor: '#FFD329',
   },
   suckerCategoryTile: {
     overflow: 'visible',
@@ -1187,12 +2929,12 @@ const styles = StyleSheet.create({
   },
   scoreBox: {
     alignItems: 'center',
-    backgroundColor: '#FFF9D8',
-    borderColor: '#B6732D',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
     borderRadius: 12,
     borderWidth: 3,
     justifyContent: 'center',
-    shadowColor: '#8D4E20',
+    shadowColor: '#5A1308',
     shadowOffset: { width: 3, height: 5 },
     shadowOpacity: 0.5,
     shadowRadius: 0,
@@ -1213,17 +2955,17 @@ const styles = StyleSheet.create({
     width: 44,
   },
   lockedScoreBox: {
-    backgroundColor: '#FFE89A',
+    backgroundColor: '#FFE08A',
   },
   selectedScoreBox: {
-    borderColor: '#58E7FF',
+    borderColor: '#FFD329',
     borderWidth: 3,
   },
   zeroPreviewScoreBox: {
-    backgroundColor: '#F1D6B8',
+    backgroundColor: '#F7D09B',
   },
   scoreBoxText: {
-    color: '#8D4E20',
+    color: '#7A220D',
     fontSize: 32,
     fontWeight: '900',
     includeFontPadding: false,
@@ -1231,7 +2973,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   opponentScoreText: {
-    color: '#A95E21',
+    color: '#A24B13',
     fontSize: 32,
     fontWeight: '900',
     includeFontPadding: false,
@@ -1240,12 +2982,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   previewScoreText: {
-    color: '#0E6C8A',
+    color: '#7A1208',
   },
   suckerBonusBadge: {
     alignItems: 'center',
-    backgroundColor: '#D93D4E',
-    borderBottomColor: '#8A2430',
+    backgroundColor: '#F12D22',
+    borderBottomColor: '#7A1208',
     borderBottomWidth: 2,
     borderRadius: 2,
     height: 19,
@@ -1268,7 +3010,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
     lineHeight: 17,
-    textShadowColor: '#8A2430',
+    textShadowColor: '#7A1208',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 0,
   },
@@ -1291,18 +3033,18 @@ const styles = StyleSheet.create({
     width: 67,
   },
   bonusSmall: {
-    color: '#A95E21',
+    color: '#9A3F0C',
     fontSize: 10,
     fontWeight: '900',
     lineHeight: 10,
     textTransform: 'uppercase',
   },
   bonusBig: {
-    color: '#FFE35F',
+    color: '#FFD329',
     fontSize: 28,
     fontWeight: '900',
     lineHeight: 30,
-    textShadowColor: '#7A401D',
+    textShadowColor: '#5A1308',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
   },
@@ -1326,7 +3068,7 @@ const styles = StyleSheet.create({
     top: 0,
   },
   bonusMeterText: {
-    color: '#A95E21',
+    color: '#8A2D0A',
     fontSize: 10,
     fontWeight: '900',
     lineHeight: 12,
@@ -1350,25 +3092,25 @@ const styles = StyleSheet.create({
   },
   dieSlot: {
     alignItems: 'center',
-    backgroundColor: '#11384C',
-    borderColor: '#59BCE8',
+    backgroundColor: '#210505',
+    borderColor: '#7A220D',
     borderRadius: 12,
     borderWidth: 3,
     height: '100%',
     justifyContent: 'center',
-    shadowColor: '#63CBFF',
+    shadowColor: '#050505',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 4,
+    shadowOpacity: 0.4,
+    shadowRadius: 2,
     width: '100%',
   },
   settlingDieSlot: {
     opacity: 0.55,
   },
   heldDie: {
-    backgroundColor: '#DDF2C9',
-    borderColor: '#78D86D',
-    shadowColor: '#B9FF74',
+    backgroundColor: '#FFF0A6',
+    borderColor: '#FFD329',
+    shadowColor: '#FFD329',
     shadowOpacity: 1,
     shadowRadius: 6,
   },
@@ -1398,8 +3140,9 @@ const styles = StyleSheet.create({
     height: 88,
     justifyContent: 'center',
     position: 'absolute',
+    left: 0,
     top: 0,
-    width: '20%',
+    width: 88,
   },
   rollingDieImage: {
     height: 88,
@@ -1422,6 +3165,373 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
     width: '100%',
   },
+  scoreNumberOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 25,
+  },
+  scoreFlyingNumber: {
+    alignItems: 'center',
+    height: 52,
+    justifyContent: 'center',
+    position: 'absolute',
+    width: 88,
+  },
+  scoreFlyingNumberText: {
+    color: '#7A220D',
+    fontSize: 42,
+    fontWeight: '900',
+    includeFontPadding: false,
+    lineHeight: 48,
+    textAlign: 'center',
+    textShadowColor: '#FFF3C2',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  suckerPunchNoticeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    zIndex: 85,
+  },
+  suckerPunchNotice: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 14,
+    borderWidth: 4,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.45,
+    shadowRadius: 0,
+    transform: [{ rotate: '-2deg' }],
+  },
+  suckerRollNotice: {
+    paddingHorizontal: 26,
+    paddingVertical: 18,
+    transform: [{ rotate: '2deg' }],
+  },
+  suckerPunchNoticeTitle: {
+    color: '#FFF3C2',
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 20,
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+    textTransform: 'uppercase',
+  },
+  suckerPunchNoticeText: {
+    color: '#FFD329',
+    fontSize: 25,
+    fontWeight: '900',
+    lineHeight: 29,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  remoteErrorNoticeOverlay: {
+    alignItems: 'center',
+    left: 10,
+    position: 'absolute',
+    right: 10,
+    top: 116,
+    zIndex: 88,
+  },
+  remoteErrorNoticeText: {
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 2,
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    textAlign: 'center',
+  },
+  gameOverOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 0, 0, 0.68)',
+    justifyContent: 'center',
+    padding: 14,
+    zIndex: 96,
+  },
+  gameOverPanel: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 14,
+    borderWidth: 4,
+    gap: 10,
+    padding: 14,
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 0,
+    width: '100%',
+  },
+  gameOverEyebrow: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  gameOverTitle: {
+    color: '#FFD329',
+    fontSize: 30,
+    fontWeight: '900',
+    lineHeight: 34,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  gameOverScores: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  gameOverScoreBox: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderRadius: 9,
+    borderWidth: 2,
+    flex: 1,
+    paddingVertical: 8,
+  },
+  gameOverScoreName: {
+    color: '#8F3B10',
+    fontSize: 12,
+    fontWeight: '900',
+    maxWidth: '100%',
+  },
+  gameOverScoreValue: {
+    color: '#210505',
+    fontSize: 30,
+    fontWeight: '900',
+    lineHeight: 34,
+  },
+  gameOverActions: {
+    flexDirection: 'row',
+    gap: 8,
+    height: 54,
+    width: '100%',
+  },
+  gameOverPrimaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 10,
+    borderWidth: 3,
+    flex: 1,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  gameOverPrimaryText: {
+    color: '#210505',
+    fontSize: 20,
+    fontWeight: '900',
+    textShadowColor: '#FFF3C2',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  gameOverSecondaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 10,
+    borderWidth: 3,
+    flex: 1,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  gameOverSecondaryText: {
+    color: '#FFD329',
+    fontSize: 20,
+    fontWeight: '900',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  statsCloseButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  statsCloseText: {
+    color: '#FFF3C2',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  statsDetailCard: {
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 6,
+    padding: 10,
+    width: '100%',
+  },
+  statsEmptyBody: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  statsEmptyCard: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 5,
+    padding: 14,
+    width: '100%',
+  },
+  statsEmptyTitle: {
+    color: '#FFD329',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  statsEyebrow: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    width: '100%',
+  },
+  statsComparisonHeader: {
+    gap: 4,
+  },
+  statsComparisonLabel: {
+    color: '#FFF3C2',
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '900',
+    opacity: 0.9,
+    textAlign: 'right',
+    textTransform: 'uppercase',
+  },
+  statsComparisonLabels: {
+    flexDirection: 'row',
+    gap: 10,
+    marginLeft: 132,
+  },
+  statsComparisonValues: {
+    flexDirection: 'row',
+    gap: 10,
+    minWidth: 116,
+  },
+  statsHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  statsLine: {
+    alignItems: 'center',
+    borderBottomColor: '#5A1308',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: 5,
+  },
+  statsLineLabel: {
+    color: '#FFF3C2',
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  statsLineOpponentValue: {
+    color: '#FFF3C2',
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '900',
+    opacity: 0.9,
+    textAlign: 'right',
+  },
+  statsLineValue: {
+    color: '#FFD329',
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  statsOverlay: {
+    backgroundColor: '#8F0000',
+    bottom: 0,
+    gap: 10,
+    left: 0,
+    padding: 14,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 100,
+  },
+  statsScoreRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  statsSectionTitle: {
+    color: '#FFD329',
+    fontSize: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  statsTitle: {
+    color: '#FFF3C2',
+    fontSize: 30,
+    fontWeight: '900',
+    lineHeight: 34,
+  },
+  statBox: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderRadius: 8,
+    borderWidth: 2,
+    flex: 1,
+    minWidth: '46%',
+    paddingVertical: 8,
+  },
+  statBoxLabel: {
+    color: '#8F3B10',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  statBoxValue: {
+    color: '#210505',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  currentGameStatsCard: {
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 8,
+    padding: 10,
+    width: '100%',
+  },
   flyingDieFallback: {
     color: '#FFFFFF',
     fontSize: 36,
@@ -1431,27 +3541,195 @@ const styles = StyleSheet.create({
   },
   rollButton: {
     alignItems: 'center',
-    backgroundColor: '#7BF1F0',
-    borderBottomColor: '#0A3856',
-    borderColor: '#B7FFFF',
-    borderRadius: 8,
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 10,
     borderWidth: 3,
     flexDirection: 'row',
-    flex: 1,
-    height: 56,
+    height: 60,
     justifyContent: 'center',
     overflow: 'hidden',
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
   },
   disabledRollButton: {
     opacity: 0.55,
   },
   controlsRow: {
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: 8,
-    height: 58,
+    height: 64,
+    paddingBottom: 4,
   },
   rollButtonWrap: {
+    borderRadius: 10,
     flex: 2,
+    height: 60,
+  },
+  tokenButtonWrap: {
+    borderRadius: 10,
+    height: 60,
+    width: 60,
+  },
+  tokenButton: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderWidth: 3,
+    height: 60,
+    justifyContent: 'center',
+    overflow: 'visible',
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
+  },
+  tokenButtonImage: {
+    height: 44,
+    resizeMode: 'contain',
+    width: 44,
+  },
+  tokenCountBadge: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFF3C2',
+    borderRadius: 11,
+    borderWidth: 2,
+    height: 22,
+    justifyContent: 'center',
+    minWidth: 22,
+    paddingHorizontal: 4,
+    position: 'absolute',
+    right: -7,
+    top: -8,
+  },
+  tokenCountText: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 14,
+  },
+  tokenMenuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 0, 0, 0.56)',
+    justifyContent: 'flex-end',
+    padding: 12,
+    zIndex: 90,
+  },
+  tokenMenuPanel: {
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 12,
+    borderWidth: 3,
+    gap: 8,
+    padding: 10,
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.45,
+    shadowRadius: 0,
+    width: '100%',
+  },
+  tokenMenuHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 2,
+  },
+  tokenMenuIcon: {
+    height: 46,
+    resizeMode: 'contain',
+    width: 46,
+  },
+  tokenMenuHeaderText: {
+    flex: 1,
+  },
+  tokenMenuTitle: {
+    color: '#FFD329',
+    fontSize: 20,
+    fontWeight: '900',
+    lineHeight: 23,
+  },
+  tokenMenuSubtitle: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  tokenMenuClose: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  tokenMenuCloseText: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  tokenOption: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderRadius: 9,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 9,
+    minHeight: 58,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  disabledTokenOption: {
+    opacity: 0.48,
+  },
+  tokenOptionCost: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 23,
+    borderWidth: 2,
+    height: 46,
+    justifyContent: 'center',
+    width: 46,
+  },
+  tokenOptionCostIcon: {
+    height: 36,
+    opacity: 0.92,
+    resizeMode: 'contain',
+    width: 36,
+  },
+  tokenOptionCostText: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '900',
+    position: 'absolute',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  tokenOptionBody: {
+    flex: 1,
+  },
+  tokenOptionTitle: {
+    color: '#210505',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  tokenOptionDescription: {
+    color: '#7A220D',
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 14,
+  },
+  disabledTokenOptionText: {
+    color: '#7A5A45',
   },
   buttonGloss: {
     backgroundColor: '#FFFFFF',
@@ -1462,49 +3740,67 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
   },
+  buttonInnerShade: {
+    backgroundColor: '#5A1308',
+    bottom: 0,
+    height: 9,
+    left: 0,
+    opacity: 0.18,
+    position: 'absolute',
+    right: 0,
+  },
   rollText: {
-    color: '#15266F',
+    color: '#210505',
     fontSize: 30,
     fontWeight: '900',
-    textShadowColor: '#FFFFFF',
+    textShadowColor: '#FFF3C2',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
   },
-  rollMeters: {
-    flexDirection: 'row',
-    gap: 6,
-    marginLeft: 14,
-  },
-  rollMeter: {
+  rollsLeftBadge: {
     alignItems: 'center',
-    backgroundColor: '#49BFCE',
-    borderColor: '#6EE5F0',
-    borderRadius: 3,
-    borderWidth: 1,
-    height: 24,
+    backgroundColor: '#E8B552',
+    borderColor: '#9A3F0C',
+    borderRadius: 5,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 3,
+    height: 30,
     justifyContent: 'center',
-    opacity: 0.65,
-    width: 24,
+    marginLeft: 12,
+    minWidth: 58,
+    paddingHorizontal: 7,
   },
-  rollMeterFilled: {
-    backgroundColor: '#E9FBFF',
-    opacity: 1,
-  },
-  rollMeterText: {
-    color: '#1A3B82',
-    fontSize: 16,
+  rollsLeftNumber: {
+    color: '#7A220D',
+    fontSize: 18,
     fontWeight: '900',
+    lineHeight: 20,
+  },
+  rollsLeftLabel: {
+    color: '#7A220D',
+    fontSize: 9,
+    fontWeight: '900',
+    lineHeight: 11,
   },
   playButton: {
     alignItems: 'center',
-    backgroundColor: '#76D330',
-    borderBottomColor: '#1D4E0F',
-    borderColor: '#B8FF6C',
-    borderRadius: 8,
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 10,
     borderWidth: 3,
-    flex: 1,
+    height: 60,
     justifyContent: 'center',
     overflow: 'hidden',
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
+  },
+  playButtonWrap: {
+    borderRadius: 10,
+    flex: 1,
+    height: 60,
   },
   playGloss: {
     backgroundColor: '#FFFFFF',
@@ -1516,10 +3812,10 @@ const styles = StyleSheet.create({
     top: 0,
   },
   playText: {
-    color: '#FFFFFF',
+    color: '#FFD329',
     fontSize: 28,
     fontWeight: '900',
-    textShadowColor: '#1B2A14',
+    textShadowColor: '#050505',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
   },
@@ -1548,7 +3844,7 @@ const styles = StyleSheet.create({
     width: 32,
   },
   houseDoor: {
-    backgroundColor: '#EF423D',
+    backgroundColor: '#F12D22',
     height: 11,
     width: 8,
   },
@@ -1578,7 +3874,7 @@ const styles = StyleSheet.create({
     width: 17,
   },
   fanCardCorner: {
-    backgroundColor: '#EF423D',
+    backgroundColor: '#F12D22',
     borderRadius: 2,
     height: 4,
     left: 3,
@@ -1600,29 +3896,24 @@ const styles = StyleSheet.create({
   largeStraightLabel: {
     transform: [{ translateY: 1 }],
   },
-  suckerIcon: {
+  suckerWordmark: {
     alignItems: 'center',
-    height: 30,
     justifyContent: 'center',
-    transform: [{ rotate: '-6deg' }],
-    width: 78,
+    position: 'relative',
   },
-  suckerText: {
-    color: '#FFD329',
-    fontSize: 19,
-    fontWeight: '900',
-    letterSpacing: 0,
-    lineHeight: 21,
-    position: 'absolute',
-    textAlign: 'center',
-    textShadowColor: '#D88F00',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 0,
-    width: 82,
+  headerSuckerWordmark: {
+    height: 48,
+    marginTop: -1,
+    width: 242,
   },
-  suckerTextOutline: {
-    color: '#111111',
-    textShadowOffset: { width: 0, height: 0 },
+  tileSuckerWordmark: {
+    height: 24,
+    width: 68,
+  },
+  suckerWordmarkImage: {
+    height: '100%',
+    resizeMode: 'contain',
+    width: '100%',
   },
   disabledButton: {
     opacity: 0.55,

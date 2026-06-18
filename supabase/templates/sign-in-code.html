@@ -1,0 +1,13 @@
+<h2>Your Sucker! sign-in code</h2>
+
+<p>Enter this code in Sucker! to finish signing in:</p>
+
+<p style="font-size: 32px; font-weight: 800; letter-spacing: 6px; margin: 24px 0;">
+  {{ .Token }}
+</p>
+
+<p>This code expires soon and can only be used once.</p>
+
+<p>If the code does not work, you can also use this sign-in link:</p>
+
+<p><a href="{{ .ConfirmationURL }}">Sign in to Sucker!</a></p>

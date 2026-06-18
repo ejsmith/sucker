@@ -33,6 +33,13 @@ export const categoryLabels: Record<ScoreCategory, string> = {
 };
 
 export const maxRollsPerTurn = 4;
+export const startingSuckerTokens = 8;
+export const suckerTokenCosts = {
+  extraRoll: 1,
+  mulligan: 3,
+  suckerBlocker: 2,
+  suckerPunch: 4,
+} as const;
 
 const upperValues = {
   ones: 1,
@@ -56,7 +63,7 @@ export function createGame(playerNames: string[]): GameState {
   const players: Player[] = playerNames.map((name, index) => ({
     id: `player-${index + 1}`,
     name,
-    suckerTokens: 1,
+    suckerTokens: startingSuckerTokens,
     suckerBonusCategories: [],
     scorecard: createEmptyScorecard(),
   }));
@@ -66,6 +73,7 @@ export function createGame(playerNames: string[]): GameState {
     players,
     currentPlayerIndex: 0,
     dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
     held: [false, false, false, false, false],
     rollNumber: 0,
     phase: 'rolling',
@@ -77,7 +85,7 @@ export function availableCategories(scorecard: Scorecard): ScoreCategory[] {
 }
 
 export function rollCurrentDice(game: GameState, random = Math.random): GameState {
-  if (game.phase === 'complete' || game.rollNumber >= maxRollsPerTurn) {
+  if (game.phase === 'complete' || game.rollNumber >= maxAvailableRolls(game)) {
     return game;
   }
 
@@ -109,8 +117,25 @@ export function scoreTurn(game: GameState, category: ScoreCategory): GameState {
 
   const turnScore = scoreCategoryForScorecard(game.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus = hasExtraSuckerBonus(game.dice, category, currentPlayer.scorecard);
-  const earnedSuckerToken = isSuckerRoll(game.dice) && turnScore > 0;
+  return applyScore(game, category, turnScore, extraSuckerBonus, turnScore === 0 ? 1 : 0);
+}
 
+export function scratchScoreBox(game: GameState, category: ScoreCategory): GameState {
+  const currentPlayer = game.players[game.currentPlayerIndex];
+  if (currentPlayer.scorecard[category] !== null || game.rollNumber === 0 || game.phase === 'complete') {
+    return game;
+  }
+
+  return applyScore(game, category, 0, false, 1);
+}
+
+function applyScore(
+  game: GameState,
+  category: ScoreCategory,
+  turnScore: number,
+  extraSuckerBonus: boolean,
+  tokenDelta: number,
+): GameState {
   const players = game.players.map((player, index) => {
     if (index !== game.currentPlayerIndex) {
       return player;
@@ -118,10 +143,10 @@ export function scoreTurn(game: GameState, category: ScoreCategory): GameState {
 
     return {
       ...player,
-      suckerTokens: player.suckerTokens + (earnedSuckerToken ? 1 : 0),
       suckerBonusCategories: extraSuckerBonus
         ? [...(player.suckerBonusCategories ?? []), category]
         : (player.suckerBonusCategories ?? []),
+      suckerTokens: Math.max(0, player.suckerTokens + tokenDelta),
       scorecard: {
         ...player.scorecard,
         [category]: turnScore,
@@ -136,9 +161,58 @@ export function scoreTurn(game: GameState, category: ScoreCategory): GameState {
     players,
     currentPlayerIndex: complete ? game.currentPlayerIndex : (game.currentPlayerIndex + 1) % game.players.length,
     dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
     held: [false, false, false, false, false],
     rollNumber: 0,
     phase: complete ? 'complete' : 'rolling',
+  };
+}
+
+export function maxAvailableRolls(game: Pick<GameState, 'extraRollsAvailable'>): number {
+  return maxRollsPerTurn + Math.max(0, game.extraRollsAvailable ?? 0);
+}
+
+export function rollsRemaining(game: Pick<GameState, 'extraRollsAvailable' | 'rollNumber'>): number {
+  return Math.max(0, maxAvailableRolls(game) - game.rollNumber);
+}
+
+export function purchaseExtraRoll(game: GameState): GameState {
+  const currentPlayer = game.players[game.currentPlayerIndex];
+  if (
+    game.phase === 'complete' ||
+    game.rollNumber < maxAvailableRolls(game) ||
+    !currentPlayer ||
+    currentPlayer.suckerTokens < suckerTokenCosts.extraRoll
+  ) {
+    return game;
+  }
+
+  return {
+    ...game,
+    extraRollsAvailable: Math.max(0, game.extraRollsAvailable ?? 0) + 1,
+    players: updateCurrentPlayerTokens(game, -suckerTokenCosts.extraRoll),
+  };
+}
+
+export function mulliganCurrentTurn(game: GameState): GameState {
+  const currentPlayer = game.players[game.currentPlayerIndex];
+  if (
+    game.phase === 'complete' ||
+    game.rollNumber === 0 ||
+    !currentPlayer ||
+    currentPlayer.suckerTokens < suckerTokenCosts.mulligan
+  ) {
+    return game;
+  }
+
+  return {
+    ...game,
+    dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
+    held: [false, false, false, false, false],
+    phase: 'rolling',
+    players: updateCurrentPlayerTokens(game, -suckerTokenCosts.mulligan),
+    rollNumber: 0,
   };
 }
 
@@ -191,6 +265,17 @@ export function upperBonus(scorecard: Scorecard): number {
 
 function rollDie(random: () => number): DieValue {
   return (Math.floor(random() * 6) + 1) as DieValue;
+}
+
+function updateCurrentPlayerTokens(game: GameState, delta: number): Player[] {
+  return game.players.map((player, index) =>
+    index === game.currentPlayerIndex
+      ? {
+          ...player,
+          suckerTokens: Math.max(0, player.suckerTokens + delta),
+        }
+      : player,
+  );
 }
 
 function countDice(dice: Dice): Record<DieValue, number> {

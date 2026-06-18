@@ -47,7 +47,7 @@ create table public.game_players (
   game_id uuid not null references public.games(id) on delete cascade,
   player_id uuid not null references public.profiles(id) on delete cascade,
   seat_index integer not null check (seat_index in (0, 1)),
-  sucker_tokens integer not null default 8 check (sucker_tokens >= 0),
+  sucker_tokens integer not null default 1 check (sucker_tokens >= 0),
   final_score integer,
   upper_bonus_awarded boolean not null default false,
   joined_at timestamptz not null default now(),
@@ -92,11 +92,9 @@ create table public.turn_actions (
       'create_game',
       'create_invite',
       'accept_invite',
-      'extra_roll',
       'roll',
       'toggle_hold',
       'score_category',
-      'scratch_category',
       'pass_response',
       'mulligan',
       'sucker_punch',
@@ -176,34 +174,6 @@ create table public.head_to_head_stats (
   check (player_id <> opponent_id)
 );
 
-create table public.computer_stats (
-  profile_id uuid primary key references public.profiles(id) on delete cascade,
-  games_played integer not null default 0,
-  wins integer not null default 0,
-  losses integer not null default 0,
-  highest_score integer not null default 0,
-  total_score integer not null default 0,
-  average_score numeric(8, 2) not null default 0,
-  computer_highest_score integer not null default 0,
-  computer_total_score integer not null default 0,
-  computer_average_score numeric(8, 2) not null default 0,
-  computer_upper_bonus_games integer not null default 0,
-  computer_sucker_games integer not null default 0,
-  computer_three_of_a_kind_games integer not null default 0,
-  computer_four_of_a_kind_games integer not null default 0,
-  computer_full_house_games integer not null default 0,
-  computer_small_straight_games integer not null default 0,
-  computer_large_straight_games integer not null default 0,
-  upper_bonus_games integer not null default 0,
-  sucker_games integer not null default 0,
-  three_of_a_kind_games integer not null default 0,
-  four_of_a_kind_games integer not null default 0,
-  full_house_games integer not null default 0,
-  small_straight_games integer not null default 0,
-  large_straight_games integer not null default 0,
-  updated_at timestamptz not null default now()
-);
-
 create or replace view public.head_to_head_stat_rates as
 select
   player_id,
@@ -256,123 +226,6 @@ create trigger push_tokens_touch_updated_at
 before update on public.push_tokens
 for each row execute function public.touch_updated_at();
 
-create trigger computer_stats_touch_updated_at
-before update on public.computer_stats
-for each row execute function public.touch_updated_at();
-
-create or replace function public.record_computer_game_result(
-  player_score integer,
-  computer_score integer,
-  upper_bonus_awarded boolean,
-  scored_sucker boolean,
-  scored_three_of_a_kind boolean,
-  scored_four_of_a_kind boolean,
-  scored_full_house boolean,
-  scored_small_straight boolean,
-  scored_large_straight boolean,
-  computer_upper_bonus_awarded boolean,
-  computer_scored_sucker boolean,
-  computer_scored_three_of_a_kind boolean,
-  computer_scored_four_of_a_kind boolean,
-  computer_scored_full_house boolean,
-  computer_scored_small_straight boolean,
-  computer_scored_large_straight boolean
-)
-returns public.computer_stats
-language plpgsql
-security invoker
-set search_path = public
-as $$
-declare
-  current_profile_id uuid := auth.uid();
-  result public.computer_stats;
-begin
-  if current_profile_id is null then
-    raise exception 'Not authenticated';
-  end if;
-
-  insert into public.computer_stats (
-    profile_id,
-    games_played,
-    wins,
-    losses,
-    highest_score,
-    total_score,
-    average_score,
-    upper_bonus_games,
-    sucker_games,
-    three_of_a_kind_games,
-    four_of_a_kind_games,
-    full_house_games,
-    small_straight_games,
-    large_straight_games,
-    computer_highest_score,
-    computer_total_score,
-    computer_average_score,
-    computer_upper_bonus_games,
-    computer_sucker_games,
-    computer_three_of_a_kind_games,
-    computer_four_of_a_kind_games,
-    computer_full_house_games,
-    computer_small_straight_games,
-    computer_large_straight_games
-  )
-  values (
-    current_profile_id,
-    1,
-    case when player_score > computer_score then 1 else 0 end,
-    case when player_score < computer_score then 1 else 0 end,
-    greatest(player_score, 0),
-    greatest(player_score, 0),
-    greatest(player_score, 0),
-    case when upper_bonus_awarded then 1 else 0 end,
-    case when scored_sucker then 1 else 0 end,
-    case when scored_three_of_a_kind then 1 else 0 end,
-    case when scored_four_of_a_kind then 1 else 0 end,
-    case when scored_full_house then 1 else 0 end,
-    case when scored_small_straight then 1 else 0 end,
-    case when scored_large_straight then 1 else 0 end,
-    greatest(computer_score, 0),
-    greatest(computer_score, 0),
-    greatest(computer_score, 0),
-    case when computer_upper_bonus_awarded then 1 else 0 end,
-    case when computer_scored_sucker then 1 else 0 end,
-    case when computer_scored_three_of_a_kind then 1 else 0 end,
-    case when computer_scored_four_of_a_kind then 1 else 0 end,
-    case when computer_scored_full_house then 1 else 0 end,
-    case when computer_scored_small_straight then 1 else 0 end,
-    case when computer_scored_large_straight then 1 else 0 end
-  )
-  on conflict (profile_id) do update set
-    games_played = public.computer_stats.games_played + 1,
-    wins = public.computer_stats.wins + excluded.wins,
-    losses = public.computer_stats.losses + excluded.losses,
-    highest_score = greatest(public.computer_stats.highest_score, excluded.highest_score),
-    total_score = public.computer_stats.total_score + excluded.total_score,
-    average_score = round((public.computer_stats.total_score + excluded.total_score)::numeric / (public.computer_stats.games_played + 1), 2),
-    upper_bonus_games = public.computer_stats.upper_bonus_games + excluded.upper_bonus_games,
-    sucker_games = public.computer_stats.sucker_games + excluded.sucker_games,
-    three_of_a_kind_games = public.computer_stats.three_of_a_kind_games + excluded.three_of_a_kind_games,
-    four_of_a_kind_games = public.computer_stats.four_of_a_kind_games + excluded.four_of_a_kind_games,
-    full_house_games = public.computer_stats.full_house_games + excluded.full_house_games,
-    small_straight_games = public.computer_stats.small_straight_games + excluded.small_straight_games,
-    large_straight_games = public.computer_stats.large_straight_games + excluded.large_straight_games,
-    computer_highest_score = greatest(public.computer_stats.computer_highest_score, excluded.computer_highest_score),
-    computer_total_score = public.computer_stats.computer_total_score + excluded.computer_total_score,
-    computer_average_score = round((public.computer_stats.computer_total_score + excluded.computer_total_score)::numeric / (public.computer_stats.games_played + 1), 2),
-    computer_upper_bonus_games = public.computer_stats.computer_upper_bonus_games + excluded.computer_upper_bonus_games,
-    computer_sucker_games = public.computer_stats.computer_sucker_games + excluded.computer_sucker_games,
-    computer_three_of_a_kind_games = public.computer_stats.computer_three_of_a_kind_games + excluded.computer_three_of_a_kind_games,
-    computer_four_of_a_kind_games = public.computer_stats.computer_four_of_a_kind_games + excluded.computer_four_of_a_kind_games,
-    computer_full_house_games = public.computer_stats.computer_full_house_games + excluded.computer_full_house_games,
-    computer_small_straight_games = public.computer_stats.computer_small_straight_games + excluded.computer_small_straight_games,
-    computer_large_straight_games = public.computer_stats.computer_large_straight_games + excluded.computer_large_straight_games
-  returning * into result;
-
-  return result;
-end;
-$$;
-
 create or replace function public.is_game_participant(target_game_id uuid, target_profile_id uuid)
 returns boolean
 language sql
@@ -421,7 +274,6 @@ alter table public.token_events enable row level security;
 alter table public.push_tokens enable row level security;
 alter table public.game_player_results enable row level security;
 alter table public.head_to_head_stats enable row level security;
-alter table public.computer_stats enable row level security;
 
 create policy "Profiles are readable to authenticated users"
 on public.profiles for select
@@ -495,33 +347,3 @@ create policy "Users can read their own matchup stats"
 on public.head_to_head_stats for select
 to authenticated
 using ((select auth.uid()) = player_id);
-
-create policy "Users can read reciprocal matchup stats"
-on public.head_to_head_stats for select
-to authenticated
-using ((select auth.uid()) = opponent_id);
-
-create policy "Users can manage their own computer stats"
-on public.computer_stats for all
-to authenticated
-using ((select auth.uid()) = profile_id)
-with check ((select auth.uid()) = profile_id);
-
-grant execute on function public.record_computer_game_result(
-  integer,
-  integer,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean,
-  boolean
-) to authenticated;
