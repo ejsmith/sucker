@@ -9,7 +9,6 @@ add constraint turn_actions_action_type_check check (
     'accept_invite',
     'extra_roll',
     'roll',
-    'toggle_hold',
     'score_category',
     'scratch_category',
     'pass_response',

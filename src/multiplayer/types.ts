@@ -45,25 +45,24 @@ export type MultiplayerAction =
   | {
       type: 'extra_roll';
       gameId: string;
+      held?: GameState['held'];
     }
   | {
       type: 'roll';
       gameId: string;
-    }
-  | {
-      type: 'toggle_hold';
-      gameId: string;
-      dieIndex: number;
+      held?: GameState['held'];
     }
   | {
       type: 'score_category';
       gameId: string;
       category: ScoreCategory;
+      held?: GameState['held'];
     }
   | {
       type: 'scratch_category';
       gameId: string;
       category: ScoreCategory;
+      held?: GameState['held'];
     }
   | {
       type: 'pass_response';

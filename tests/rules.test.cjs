@@ -136,6 +136,7 @@ test('extra roll spends a token and adds one roll after available rolls are used
   for (let i = 0; i < maxRollsPerTurn; i += 1) {
     game = rollDeterministic(game);
   }
+  game = toggleHold(toggleHold(game, 0), 2);
 
   const purchased = purchaseExtraRoll(game);
 
@@ -143,12 +144,13 @@ test('extra roll spends a token and adds one roll after available rolls are used
   assert.equal(rollsRemaining(purchased), 1);
   assert.equal(purchased.players[0].suckerTokens, startingSuckerTokens - suckerTokenCosts.extraRoll);
   assert.deepEqual(purchased.dice, game.dice);
+  assert.deepEqual(purchased.held, game.held);
 
   const next = require('../.build/src/game').rollCurrentDice(purchased, () => 0.99);
 
   assert.equal(next.rollNumber, 5);
   assert.equal(rollsRemaining(next), 0);
-  assert.deepEqual(next.dice, [6, 6, 6, 6, 6]);
+  assert.deepEqual(next.dice, [game.dice[0], 6, game.dice[2], 6, 6]);
 });
 
 test('mulligan spends tokens and resets the current turn', () => {

@@ -75,7 +75,7 @@ create table public.turns (
   held boolean[] not null check (array_length(held, 1) = 5),
   category text not null,
   score integer not null,
-  roll_count integer not null check (roll_count between 1 and 4),
+  roll_count integer not null check (roll_count >= 1),
   status text not null default 'submitted' check (status in ('submitted', 'punched', 'blocked', 'mulliganed', 'finalized')),
   created_at timestamptz not null default now(),
   finalized_at timestamptz,
@@ -94,7 +94,6 @@ create table public.turn_actions (
       'accept_invite',
       'extra_roll',
       'roll',
-      'toggle_hold',
       'score_category',
       'scratch_category',
       'pass_response',
@@ -422,6 +421,21 @@ alter table public.push_tokens enable row level security;
 alter table public.game_player_results enable row level security;
 alter table public.head_to_head_stats enable row level security;
 alter table public.computer_stats enable row level security;
+
+alter table public.games replica identity full;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'games'
+  ) then
+    alter publication supabase_realtime add table public.games;
+  end if;
+end $$;
 
 create policy "Profiles are readable to authenticated users"
 on public.profiles for select

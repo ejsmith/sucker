@@ -6,6 +6,7 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 
 - Use `docs/game-design-spec-v2.md` as the gameplay source of truth.
 - Follow existing code patterns in `App.tsx`, `src/game`, `src/multiplayer`, and `supabase`.
+- Keep platform-neutral game/database types in `shared/` when they must be used by both Expo and Supabase Edge Functions.
 - Do not invent new gameplay rules from Yahtzee memory when the Sucker spec says otherwise.
 
 ## Current Gameplay Constants
@@ -37,6 +38,7 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
   - `npm run typecheck`
   - `npm run typecheck:edge`
   - `npm run test`
+  - `npm run test:edge`
 
 ## Visual And UX Rules
 

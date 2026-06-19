@@ -29,6 +29,16 @@ import {
   toggleHold,
   totalScore,
 } from './src/game';
+import {
+  applyLocalSuckerBlocker,
+  applyLocalSuckerPunch,
+  computerPlayerIndex,
+  playComputerTurn,
+  scoreLocalTurn,
+  shouldComputerUseSuckerBlocker,
+  type ComputerTurnResult,
+  type LocalPendingTurn,
+} from './src/game/computer';
 import type { DieValue, GameState, ScoreCategory } from './src/game';
 import { isMultiplayerConfigured } from './src/multiplayer';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
@@ -41,7 +51,6 @@ import {
   scoreRemoteCategory,
   scratchRemoteCategory,
   subscribeToGame,
-  toggleRemoteHold,
   useRemoteSuckerBlocker,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
@@ -89,43 +98,31 @@ type RollingLaunch = {
   toX: number;
   toY: number;
 };
+function concealActiveOpponentDice(game: GameState, myProfileId?: string | null): GameState {
+  const currentPlayerId = game.players[game.currentPlayerIndex]?.id;
+  if (!myProfileId || game.phase === 'complete' || currentPlayerId === myProfileId || game.rollNumber === 0) {
+    return game;
+  }
+
+  return {
+    ...game,
+    dice: [1, 1, 1, 1, 1],
+    held: [false, false, false, false, false],
+    rollNumber: 0,
+    phase: 'rolling',
+  };
+}
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type RemoteActionHandlers = {
-  onExtraRoll: () => Promise<ReturnType<typeof createGame> | null>;
+  onExtraRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onRematch: () => Promise<ReturnType<typeof createGame> | null>;
-  onRoll: () => Promise<ReturnType<typeof createGame> | null>;
-  onScore: (category: ScoreCategory) => Promise<ReturnType<typeof createGame> | null>;
-  onScratch: (category: ScoreCategory) => Promise<ReturnType<typeof createGame> | null>;
+  onRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
+  onScore: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
+  onScratch: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerBlocker: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerPunch: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
-  onToggleHold: (dieIndex: number) => Promise<ReturnType<typeof createGame> | null>;
 };
-type LocalPendingTurn = {
-  category: ScoreCategory;
-  dice: GameState['dice'];
-  hadSuckerBonus: boolean;
-  id: string;
-  puncherIndex?: number;
-  responderIndex: number;
-  score: number;
-  scorerIndex: number;
-  status: 'submitted' | 'punched';
-};
-type ComputerTurnResult = {
-  game: GameState;
-  message?: string | null;
-  pendingTurn: LocalPendingTurn | null;
-  scoreAnimation?: {
-    category: ScoreCategory;
-    dice: GameState['dice'];
-    hadSuckerBonus: boolean;
-    score: number;
-    scorerIndex: number;
-  };
-};
-
 const playerNames = ['You', 'Computer'];
-const computerPlayerIndex = 1;
 const upperCategories: ScoreCategory[] = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'];
 const lowerCategories: ScoreCategory[] = [
   'threeOfAKind',
@@ -194,6 +191,8 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   const [profileId, setProfileId] = useState<string | null>(null);
   const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
   const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
+  const [remoteLastTurnLoadFailedId, setRemoteLastTurnLoadFailedId] = useState<string | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
 
@@ -232,11 +231,19 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     }
 
     void loadRemoteGame();
-    const unsubscribe = subscribeToGame(activeGameId, (nextGame) => {
-      if (isMounted) {
-        setRemoteGame(nextGame);
-      }
-    });
+    const unsubscribe = subscribeToGame(
+      activeGameId,
+      (nextGame) => {
+        if (isMounted) {
+          setRemoteGame(nextGame);
+        }
+      },
+      (status) => {
+        if (isMounted) {
+          setIsRealtimeConnected(status === 'SUBSCRIBED');
+        }
+      },
+    );
 
     return () => {
       isMounted = false;
@@ -249,18 +256,21 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     const turnId = remoteGame?.last_turn_id;
     if (!turnId) {
       setRemoteLastTurn(null);
+      setRemoteLastTurnLoadFailedId(null);
       return;
     }
 
     void getTurn(turnId)
       .then((turn) => {
         if (isMounted) {
+          setRemoteLastTurnLoadFailedId(null);
           setRemoteLastTurn(turn);
         }
       })
       .catch((turnError) => {
         if (isMounted) {
           setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
+          setRemoteLastTurnLoadFailedId(turnId);
           setRemoteLastTurn(null);
         }
       });
@@ -269,6 +279,24 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
       isMounted = false;
     };
   }, [remoteGame?.last_turn_id]);
+
+  useEffect(() => {
+    if (!remoteGame || isRealtimeConnected) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void getGame(activeGameId)
+        .then((nextGame) => {
+          setRemoteGame(nextGame);
+        })
+        .catch((pollError) => {
+          setError(pollError instanceof Error ? pollError.message : 'Unable to refresh game.');
+        });
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [activeGameId, isRealtimeConnected, remoteGame]);
 
   async function runRemoteAction(action: () => Promise<{ game: RemoteGameRow }>) {
     setIsRemoteBusy(true);
@@ -301,7 +329,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   }
 
   const handlers: RemoteActionHandlers = {
-    onExtraRoll: () => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id)),
+    onExtraRoll: (held) => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id, held)),
     onRematch: async () => {
       const opponent = remoteGame.state.players.find((player) => player.id !== profileId);
       if (!opponent) {
@@ -315,12 +343,11 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
         return result;
       });
     },
-    onRoll: () => runRemoteAction(() => rollRemoteGame(remoteGame.id)),
-    onScore: (category) => runRemoteAction(() => scoreRemoteCategory(remoteGame.id, category)),
-    onScratch: (category) => runRemoteAction(() => scratchRemoteCategory(remoteGame.id, category)),
+    onRoll: (held) => runRemoteAction(() => rollRemoteGame(remoteGame.id, held)),
+    onScore: (category, held) => runRemoteAction(() => scoreRemoteCategory(remoteGame.id, category, held)),
+    onScratch: (category, held) => runRemoteAction(() => scratchRemoteCategory(remoteGame.id, category, held)),
     onSuckerBlocker: (turnId) => runRemoteAction(() => useRemoteSuckerBlocker(remoteGame.id, turnId)),
     onSuckerPunch: (turnId) => runRemoteAction(() => useRemoteSuckerPunch(remoteGame.id, turnId)),
-    onToggleHold: (dieIndex) => runRemoteAction(() => toggleRemoteHold(remoteGame.id, dieIndex)),
   };
 
   return (
@@ -332,6 +359,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
       remoteGame={remoteGame.state}
       remoteHandlers={handlers}
       remoteLastTurn={remoteLastTurn}
+      remoteLastTurnLoadFailedId={remoteLastTurnLoadFailedId}
       remoteLastTurnId={remoteGame.last_turn_id}
       remoteStatus={remoteGame.status}
     />
@@ -346,6 +374,7 @@ function LocalGameScreen({
   remoteGame,
   remoteHandlers,
   remoteLastTurn,
+  remoteLastTurnLoadFailedId,
   remoteLastTurnId,
   remoteStatus,
 }: {
@@ -356,6 +385,7 @@ function LocalGameScreen({
   remoteGame?: ReturnType<typeof createGame>;
   remoteHandlers?: RemoteActionHandlers;
   remoteLastTurn?: RemoteTurnRow | null;
+  remoteLastTurnLoadFailedId?: string | null;
   remoteLastTurnId?: string | null;
   remoteStatus?: RemoteGameStatus;
 }) {
@@ -366,7 +396,9 @@ function LocalGameScreen({
   const [showSuckerBlockedNotice, setShowSuckerBlockedNotice] = useState(false);
   const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
   const isRemoteGame = Boolean(remoteGame && remoteHandlers && myProfileId);
-  const [visibleRemoteGame, setVisibleRemoteGame] = useState(remoteGame ?? null);
+  const [visibleRemoteGame, setVisibleRemoteGame] = useState(
+    remoteGame ? concealActiveOpponentDice(remoteGame, myProfileId) : null,
+  );
   const [isRolling, setIsRolling] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -384,6 +416,7 @@ function LocalGameScreen({
   const [isScoring, setIsScoring] = useState(false);
   const [scoreFlyDice, setScoreFlyDice] = useState<ScoreFlyDie[]>([]);
   const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
+  const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
   const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
@@ -393,6 +426,7 @@ function LocalGameScreen({
   const lastRemotePunchNoticeId = useRef<string | null>(null);
   const lastRemoteBlockNoticeId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
+  const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRemoteTurnId = useRef<string | null>(remoteLastTurnId ?? null);
   const previousRemoteStatus = useRef<RemoteGameStatus | undefined>(remoteStatus);
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
@@ -482,15 +516,14 @@ function LocalGameScreen({
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
   const winnerName = homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
   const gameOverTitle = winnerName ? (winnerName === 'You' ? 'You win!' : `${winnerName} wins!`) : 'Tie game!';
-  const remoteOpponentSuckerTurnNeedsReveal =
+  const remoteOpponentTurnNeedsReveal =
     Boolean(
       isRemoteGame &&
         remoteGame &&
         remoteLastTurn &&
         remoteLastTurn.id === remoteLastTurnId &&
         remoteLastTurn.player_id !== myProfileId &&
-        remoteLastTurn.score > 0 &&
-        isSuckerDice(remoteLastTurn.dice) &&
+        revealingRemoteTurnId !== remoteLastTurn.id &&
         visibleRemoteTurnId.current !== remoteLastTurn.id &&
         lastAnimatedRemoteScoreTurnId.current !== remoteLastTurn.id,
     );
@@ -503,8 +536,14 @@ function LocalGameScreen({
         remoteNextTurnIsMine &&
         remoteLastTurnId &&
         visibleRemoteTurnId.current !== remoteLastTurnId &&
+        remoteLastTurnLoadFailedId !== remoteLastTurnId &&
         (remoteStatus === 'response_window' || remoteStatus === 'complete') &&
-        (!remoteLastTurn || remoteLastTurn.id !== remoteLastTurnId || remoteOpponentSuckerTurnNeedsReveal),
+        (
+          !remoteLastTurn ||
+          remoteLastTurn.id !== remoteLastTurnId ||
+          remoteOpponentTurnNeedsReveal ||
+          revealingRemoteTurnId === remoteLastTurnId
+        ),
     );
 
   useEffect(() => {
@@ -546,6 +585,26 @@ function LocalGameScreen({
     loops.forEach((loop) => loop.start());
     return () => loops.forEach((loop) => loop.stop());
   }, [bgFloat, selectedPulse]);
+
+  useEffect(() => {
+    return () => {
+      if (suckerRollNoticeTimer.current) {
+        clearTimeout(suckerRollNoticeTimer.current);
+      }
+    };
+  }, []);
+
+  function showSuckerRollBanner(title: string) {
+    if (suckerRollNoticeTimer.current) {
+      clearTimeout(suckerRollNoticeTimer.current);
+    }
+
+    setSuckerRollNoticeTitle(title);
+    suckerRollNoticeTimer.current = setTimeout(() => {
+      setSuckerRollNoticeTitle(null);
+      suckerRollNoticeTimer.current = null;
+    }, 1250);
+  }
 
   useEffect(() => {
     if (isRemoteGame) {
@@ -596,7 +655,14 @@ function LocalGameScreen({
   }, [showSuckerBlockedNotice]);
 
   useEffect(() => {
-    if (!isRemoteGame || remoteStatus !== 'blocked_response' || !isMyRemoteTurn || !remoteLastTurnId) {
+    if (
+      !isRemoteGame ||
+      remoteStatus !== 'blocked_response' ||
+      !remoteLastTurnId ||
+      !remoteLastTurn ||
+      remoteLastTurn.id !== remoteLastTurnId ||
+      remoteLastTurn.player_id !== myProfileId
+    ) {
       return;
     }
 
@@ -606,17 +672,18 @@ function LocalGameScreen({
 
     lastRemotePunchNoticeId.current = remoteLastTurnId;
     setShowSuckerPunchNotice(true);
-  }, [isMyRemoteTurn, isRemoteGame, remoteLastTurnId, remoteStatus]);
+  }, [isRemoteGame, myProfileId, remoteLastTurn, remoteLastTurnId, remoteStatus]);
 
   useEffect(() => {
     const previousStatus = previousRemoteStatus.current;
     previousRemoteStatus.current = remoteStatus;
+    const serverCurrentPlayerId = remoteGame?.players[remoteGame.currentPlayerIndex]?.id;
 
     if (
       !isRemoteGame ||
       previousStatus !== 'blocked_response' ||
       remoteStatus !== 'active' ||
-      !isMyRemoteTurn ||
+      serverCurrentPlayerId !== myProfileId ||
       !remoteLastTurnId ||
       lastRemoteBlockNoticeId.current === remoteLastTurnId
     ) {
@@ -625,7 +692,7 @@ function LocalGameScreen({
 
     lastRemoteBlockNoticeId.current = remoteLastTurnId;
     setShowSuckerBlockedNotice(true);
-  }, [isMyRemoteTurn, isRemoteGame, remoteLastTurnId, remoteStatus]);
+  }, [isRemoteGame, myProfileId, remoteGame, remoteLastTurnId, remoteStatus]);
 
   useEffect(() => {
     if (isRemoteGame) {
@@ -656,19 +723,19 @@ function LocalGameScreen({
     }
 
     if (!isRolling && !isScoring && remoteGame && !shouldHoldRemoteTurnReveal) {
-      setVisibleRemoteGame(remoteGame);
+      setVisibleRemoteGame(concealActiveOpponentDice(remoteGame, myProfileId));
       visibleRemoteTurnId.current = remoteLastTurnId ?? null;
     }
-  }, [isRemoteGame, isRolling, isScoring, remoteGame, remoteLastTurnId, shouldHoldRemoteTurnReveal]);
+  }, [isRemoteGame, isRolling, isScoring, myProfileId, remoteGame, remoteLastTurnId, shouldHoldRemoteTurnReveal]);
 
   useEffect(() => {
-    if (!remoteOpponentSuckerTurnNeedsReveal || !remoteGame || !remoteLastTurn || isRolling || isScoring) {
+    if (!remoteOpponentTurnNeedsReveal || !remoteGame || !remoteLastTurn || isRolling || isScoring) {
       return;
     }
 
-    lastAnimatedRemoteScoreTurnId.current = remoteLastTurn.id;
-    void animateRemoteOpponentSuckerTurn(remoteGame, remoteLastTurn);
-  }, [isRolling, isScoring, remoteGame, remoteLastTurn, remoteOpponentSuckerTurnNeedsReveal]);
+    setRevealingRemoteTurnId(remoteLastTurn.id);
+    void animateRemoteOpponentScoreTurn(remoteGame, remoteLastTurn);
+  }, [isRolling, isScoring, remoteGame, remoteLastTurn, remoteOpponentTurnNeedsReveal]);
 
   async function refreshComputerStats() {
     try {
@@ -692,8 +759,120 @@ function LocalGameScreen({
     setHighlightCategory(null);
     setIsChoosingSuckerDeal(false);
 
-    const nextGame = isRemoteGame && remoteHandlers ? await remoteHandlers.onRoll() : rollCurrentDice(game);
-    await animateRollTo(nextGame);
+    if (isRemoteGame && remoteHandlers) {
+      await animateRemoteRoll(remoteHandlers.onRoll(game.held));
+      return;
+    }
+
+    await animateRollTo(rollCurrentDice(game));
+  }
+
+  async function animateRemoteRoll(nextGamePromise: Promise<ReturnType<typeof createGame> | null>) {
+    const rollingIndexes = game.held
+      .map((held, index) => (held ? null : index))
+      .filter((index): index is number => index !== null);
+    const animationStartedAt = Date.now();
+
+    setIsRolling(true);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
+    setRollingFaces(game.dice);
+    rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
+
+    let scrambleTimer: ReturnType<typeof setInterval> | null = null;
+
+    try {
+      if (rollingIndexes.length === 0) {
+        const nextGame = await nextGamePromise;
+        if (nextGame) {
+          setVisibleRemoteGame(nextGame);
+          if (isSuckerDice(nextGame.dice)) {
+            showSuckerRollBanner('You rolled');
+          }
+        }
+        return;
+      }
+
+      const launchSide = Math.random() < 0.5 ? 'left' : 'right';
+      const [rollZoneRect, slotRects] = await Promise.all([
+        measureInWindow(rollZoneRef.current),
+        Promise.all(dieSlotRefs.current.map((ref) => measureInWindow(ref))),
+      ]);
+      const launches = Object.fromEntries(
+        rollingIndexes.map((index) => [
+          index,
+          createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null),
+        ]),
+      ) as Partial<Record<number, RollingLaunch>>;
+      setRollingLaunches(launches);
+      setRollingDieIndexes(rollingIndexes);
+
+      scrambleTimer = setInterval(() => {
+        setRollingFaces((faces) =>
+          faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
+        );
+      }, 65);
+      const finalRevealAt = Math.max(
+        0,
+        Math.max(...rollingIndexes.map((index) => {
+          const launch = launches[index] ?? defaultRollingLaunch;
+          return launch.delay + launch.duration;
+        })) - 150,
+      );
+      const revealFinalDice = nextGamePromise.then((nextGame) => {
+        if (!nextGame) {
+          return null;
+        }
+
+        const elapsed = Date.now() - animationStartedAt;
+        const waitMs = Math.max(0, finalRevealAt - elapsed);
+
+        return new Promise<ReturnType<typeof createGame>>((resolve) => {
+          setTimeout(() => {
+            if (scrambleTimer) {
+              clearInterval(scrambleTimer);
+              scrambleTimer = null;
+            }
+            setRollingFaces(nextGame.dice);
+            resolve(nextGame);
+          }, waitMs);
+        });
+      });
+      const animationDone = new Promise<void>((resolve) => {
+        Animated.parallel(
+          rollingIndexes.map((index) => {
+            const launch = launches[index] ?? defaultRollingLaunch;
+
+            return Animated.sequence([
+              Animated.delay(launch.delay),
+              Animated.timing(diceAnimations[index], {
+                toValue: 1,
+                duration: launch.duration,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+              }),
+            ]);
+          }),
+        ).start(() => resolve());
+      });
+
+      const [nextGame] = await Promise.all([revealFinalDice, animationDone]);
+      if (nextGame) {
+        setVisibleRemoteGame(nextGame);
+        if (isSuckerDice(nextGame.dice)) {
+          showSuckerRollBanner('You rolled');
+        }
+      }
+    } finally {
+      if (scrambleTimer) {
+        clearInterval(scrambleTimer);
+      }
+      rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
+      setRollingDieIndexes([]);
+      setRollingLaunches({});
+      setIsRolling(false);
+    }
   }
 
   async function animateRollTo(nextGame: ReturnType<typeof createGame> | null) {
@@ -718,6 +897,9 @@ function LocalGameScreen({
         setVisibleRemoteGame(nextGame);
       } else {
         setLocalGame(nextGame);
+      }
+      if (isSuckerDice(finalDice)) {
+        showSuckerRollBanner('You rolled');
       }
       setIsRolling(false);
       return;
@@ -777,6 +959,9 @@ function LocalGameScreen({
         setVisibleRemoteGame(nextGame);
       } else {
         setLocalGame(nextGame);
+      }
+      if (isSuckerDice(finalDice)) {
+        showSuckerRollBanner('You rolled');
       }
       rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
       setRollingDieIndexes([]);
@@ -859,11 +1044,13 @@ function LocalGameScreen({
     });
   }
 
-  async function animateRemoteOpponentSuckerTurn(nextRemoteGame: GameState, turn: RemoteTurnRow) {
+  async function animateRemoteOpponentScoreTurn(nextRemoteGame: GameState, turn: RemoteTurnRow) {
     const previousGame = visibleRemoteGame;
     if (!previousGame) {
       setVisibleRemoteGame(nextRemoteGame);
       visibleRemoteTurnId.current = turn.id;
+      lastAnimatedRemoteScoreTurnId.current = turn.id;
+      setRevealingRemoteTurnId(null);
       return;
     }
 
@@ -875,9 +1062,11 @@ function LocalGameScreen({
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(turn.category);
-    setSuckerRollNoticeTitle(`${scorer?.name ?? 'Opponent'} rolled`);
-    await wait(1250);
-    setSuckerRollNoticeTitle(null);
+    if (turn.score > 0 && isSuckerDice(turn.dice)) {
+      setSuckerRollNoticeTitle(`${scorer?.name ?? 'Opponent'} rolled`);
+      await wait(1250);
+      setSuckerRollNoticeTitle(null);
+    }
 
     const [screenRect, targetRect] = await Promise.all([
       measureInWindow(screenRef.current),
@@ -887,6 +1076,8 @@ function LocalGameScreen({
     if (!screenRect || !targetRect) {
       setVisibleRemoteGame(nextRemoteGame);
       visibleRemoteTurnId.current = turn.id;
+      lastAnimatedRemoteScoreTurnId.current = turn.id;
+      setRevealingRemoteTurnId(null);
       setHighlightCategory(null);
       return;
     }
@@ -915,6 +1106,8 @@ function LocalGameScreen({
         setIsScoring(false);
         setVisibleRemoteGame(nextRemoteGame);
         visibleRemoteTurnId.current = turn.id;
+        lastAnimatedRemoteScoreTurnId.current = turn.id;
+        setRevealingRemoteTurnId(null);
         setHighlightCategory(null);
       });
     });
@@ -927,7 +1120,7 @@ function LocalGameScreen({
 
     setIsTokenMenuOpen(false);
     if (isRemoteGame && remoteHandlers) {
-      await remoteHandlers.onExtraRoll();
+      await remoteHandlers.onExtraRoll(game.held);
       return;
     }
 
@@ -965,7 +1158,7 @@ function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
 
     if (isRemoteGame && remoteHandlers) {
-      await remoteHandlers.onScratch(category);
+      await remoteHandlers.onScratch(category, game.held);
       return;
     }
 
@@ -1099,7 +1292,7 @@ function LocalGameScreen({
 
     if (!screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
       if (isRemoteGame && remoteHandlers) {
-        void remoteHandlers.onScore(category);
+        void remoteHandlers.onScore(category, game.held);
       } else {
         commitLocalScore(category);
       }
@@ -1149,7 +1342,7 @@ function LocalGameScreen({
         setScoreFlyDice([]);
         setIsScoring(false);
         if (isRemoteGame && remoteHandlers) {
-          void remoteHandlers.onScore(category);
+          void remoteHandlers.onScore(category, game.held);
         } else {
           commitLocalScore(category);
         }
@@ -1165,7 +1358,7 @@ function LocalGameScreen({
     }
 
     if (isRemoteGame && remoteHandlers) {
-      await remoteHandlers.onToggleHold(index);
+      setVisibleRemoteGame(toggleHold(game, index));
       return;
     }
 
@@ -1957,344 +2150,6 @@ function SuckerBonusBadge({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function scoreLocalTurn(game: GameState, category: ScoreCategory): ComputerTurnResult {
-  const scorerIndex = game.currentPlayerIndex;
-  const scorer = game.players[scorerIndex];
-  const score = scoreCategoryForScorecard(game.dice, category, scorer.scorecard);
-  const hadSuckerBonus = hasPreviewSuckerBonus(game.dice, category, scorer.scorecard);
-  const nextGame = scoreTurn(game, category);
-  const pendingTurn =
-    nextGame.phase === 'complete'
-      ? null
-      : {
-          category,
-          dice: game.dice,
-          hadSuckerBonus,
-          id: `${game.id}-${scorer.id}-${category}-${Date.now()}`,
-          responderIndex: nextGame.currentPlayerIndex,
-          score,
-          scorerIndex,
-          status: 'submitted' as const,
-        };
-
-  return {
-    game: nextGame,
-    pendingTurn,
-    scoreAnimation: {
-      category,
-      dice: game.dice,
-      hadSuckerBonus,
-      score,
-      scorerIndex,
-    },
-  };
-}
-
-function applyLocalSuckerPunch(
-  game: GameState,
-  pendingTurn: LocalPendingTurn,
-  puncherIndex: number,
-): { game: GameState; pendingTurn: LocalPendingTurn } {
-  const scorer = game.players[pendingTurn.scorerIndex];
-  const puncher = game.players[puncherIndex];
-  if (
-    pendingTurn.status !== 'submitted' ||
-    !scorer ||
-    !puncher ||
-    pendingTurn.scorerIndex === puncherIndex ||
-    puncher.suckerTokens < suckerTokenCosts.suckerPunch
-  ) {
-    return { game, pendingTurn };
-  }
-
-  const players = game.players.map((player, index) => {
-    if (index === pendingTurn.scorerIndex) {
-      return {
-        ...player,
-        scorecard: {
-          ...player.scorecard,
-          [pendingTurn.category]: null,
-        },
-        suckerBonusCategories: player.suckerBonusCategories.filter((category) => category !== pendingTurn.category),
-      };
-    }
-
-    if (index === puncherIndex) {
-      return {
-        ...player,
-        suckerTokens: Math.max(0, player.suckerTokens - suckerTokenCosts.suckerPunch),
-      };
-    }
-
-    return player;
-  });
-
-  return {
-    game: {
-      ...game,
-      currentPlayerIndex: pendingTurn.scorerIndex,
-      dice: [1, 1, 1, 1, 1],
-      extraRollsAvailable: 0,
-      held: [false, false, false, false, false],
-      phase: 'rolling' as const,
-      players,
-      rollNumber: 0,
-    },
-    pendingTurn: {
-      ...pendingTurn,
-      puncherIndex,
-      status: 'punched' as const,
-    },
-  };
-}
-
-function applyLocalSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn, blockerIndex: number): GameState {
-  const blocker = game.players[blockerIndex];
-  if (
-    pendingTurn.status !== 'punched' ||
-    pendingTurn.scorerIndex !== blockerIndex ||
-    !blocker ||
-    blocker.suckerTokens < suckerTokenCosts.suckerBlocker
-  ) {
-    return game;
-  }
-
-  const players = game.players.map((player, index) => {
-    if (index !== blockerIndex) {
-      return player;
-    }
-
-    const suckerBonusCategories =
-      pendingTurn.hadSuckerBonus && !player.suckerBonusCategories.includes(pendingTurn.category)
-        ? [...player.suckerBonusCategories, pendingTurn.category]
-        : player.suckerBonusCategories;
-
-    return {
-      ...player,
-      scorecard: {
-        ...player.scorecard,
-        [pendingTurn.category]: pendingTurn.score,
-      },
-      suckerBonusCategories,
-      suckerTokens: Math.max(0, player.suckerTokens - suckerTokenCosts.suckerBlocker),
-    };
-  });
-
-  const nextGame: GameState = {
-    ...game,
-    currentPlayerIndex: pendingTurn.responderIndex,
-    dice: [1, 1, 1, 1, 1],
-    extraRollsAvailable: 0,
-    held: [false, false, false, false, false],
-    phase: 'rolling',
-    players,
-    rollNumber: 0,
-  };
-
-  return nextGame;
-}
-
-function playComputerTurn(game: GameState, pendingTurn: LocalPendingTurn | null = null): ComputerTurnResult {
-  if (game.currentPlayerIndex !== computerPlayerIndex || game.phase === 'complete') {
-    return { game, pendingTurn };
-  }
-
-  if (pendingTurn?.status === 'submitted' && pendingTurn.responderIndex === computerPlayerIndex) {
-    if (shouldComputerUseSuckerPunch(game, pendingTurn)) {
-      const punched = applyLocalSuckerPunch(game, pendingTurn, computerPlayerIndex);
-      return {
-        game: punched.game,
-        message: 'Computer used Sucker Punch. Block it or replay the turn.',
-        pendingTurn: punched.pendingTurn,
-      };
-    }
-
-    pendingTurn = null;
-  }
-
-  if (pendingTurn?.status === 'punched' && pendingTurn.scorerIndex === computerPlayerIndex) {
-    if (shouldComputerUseSuckerBlocker(game, pendingTurn)) {
-      return {
-        game: applyLocalSuckerBlocker(game, pendingTurn, computerPlayerIndex),
-        message: 'Computer used Sucker Blocker. The score stands.',
-        pendingTurn: null,
-      };
-    }
-
-    pendingTurn = null;
-  }
-
-  let nextGame = {
-    ...game,
-    held: [false, false, false, false, false] as typeof game.held,
-  };
-  let mulligansUsed = 0;
-  let extraRollsBought = 0;
-
-  while (true) {
-    while (nextGame.rollNumber < maxAvailableRolls(nextGame)) {
-      nextGame = rollCurrentDice(nextGame);
-      const choice = getBestComputerCategoryChoice(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard);
-      if (shouldComputerStopRolling(nextGame, choice)) {
-        break;
-      }
-
-      const faceToChase = mostCommonDie(nextGame.dice);
-      nextGame = {
-        ...nextGame,
-        held: nextGame.dice.map((die) => die === faceToChase) as typeof game.held,
-      };
-    }
-
-    const computer = nextGame.players[computerPlayerIndex];
-    const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard);
-
-    if (shouldComputerUseMulligan(nextGame, choice, mulligansUsed)) {
-      nextGame = mulliganCurrentTurn(nextGame);
-      mulligansUsed += 1;
-      continue;
-    }
-
-    if (shouldComputerBuyExtraRoll(nextGame, choice, extraRollsBought)) {
-      nextGame = purchaseExtraRoll(nextGame);
-      extraRollsBought += 1;
-      continue;
-    }
-
-    break;
-  }
-
-  const category = chooseComputerCategory(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard);
-  return scoreLocalTurn(nextGame, category);
-}
-
-function chooseComputerCategory(dice: ReturnType<typeof createGame>['dice'], scorecard: ReturnType<typeof createGame>['players'][number]['scorecard']) {
-  return getBestComputerCategoryChoice(dice, scorecard).category;
-}
-
-function getBestComputerCategoryChoice(dice: GameState['dice'], scorecard: GameState['players'][number]['scorecard']) {
-  return availableCategories(scorecard)
-    .map((category) => ({
-      category,
-      score: scoreCategoryForScorecard(dice, category, scorecard),
-      priority: computerCategoryPriority(category),
-    }))
-    .sort((left, right) => right.score - left.score || right.priority - left.priority)[0];
-}
-
-function computerCategoryPriority(category: ScoreCategory) {
-  return scoreCategories.indexOf(category);
-}
-
-function shouldComputerUseSuckerPunch(game: GameState, pendingTurn: LocalPendingTurn) {
-  const computer = game.players[computerPlayerIndex];
-  if (!computer || computer.suckerTokens < suckerTokenCosts.suckerPunch) {
-    return false;
-  }
-
-  const playerScore = totalScore(game.players[0].scorecard);
-  const computerScore = totalScore(computer.scorecard);
-  return (
-    pendingTurn.score >= 35 ||
-    pendingTurn.category === 'sucker' ||
-    pendingTurn.category === 'largeStraight' ||
-    pendingTurn.hadSuckerBonus ||
-    (pendingTurn.score >= 25 && playerScore >= computerScore)
-  );
-}
-
-function shouldComputerUseSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn) {
-  const computer = game.players[computerPlayerIndex];
-  if (!computer || computer.suckerTokens < suckerTokenCosts.suckerBlocker) {
-    return false;
-  }
-
-  return (
-    pendingTurn.score >= 25 ||
-    pendingTurn.category === 'sucker' ||
-    pendingTurn.category === 'largeStraight' ||
-    pendingTurn.category === 'fullHouse' ||
-    pendingTurn.hadSuckerBonus
-  );
-}
-
-function shouldComputerStopRolling(
-  game: GameState,
-  choice: { category: ScoreCategory; priority: number; score: number },
-) {
-  if (choice.category === 'sucker' && choice.score >= 50) {
-    return true;
-  }
-  if (choice.category === 'largeStraight' && choice.score >= 40) {
-    return true;
-  }
-  if (choice.score >= 50) {
-    return true;
-  }
-
-  return game.rollNumber >= 2 && choice.score >= 30;
-}
-
-function shouldComputerBuyExtraRoll(
-  game: GameState,
-  choice: { category: ScoreCategory; priority: number; score: number },
-  extraRollsBought: number,
-) {
-  const computer = game.players[computerPlayerIndex];
-  if (
-    game.rollNumber < maxAvailableRolls(game) ||
-    !computer ||
-    computer.suckerTokens < suckerTokenCosts.extraRoll ||
-    extraRollsBought >= 2
-  ) {
-    return false;
-  }
-
-  const maxMatch = maxMatchingDice(game.dice);
-  if (maxMatch >= 4 && computer.scorecard.sucker === null) {
-    return true;
-  }
-
-  return extraRollsBought === 0 && computer.suckerTokens > suckerTokenCosts.mulligan && choice.score < 18;
-}
-
-function shouldComputerUseMulligan(
-  game: GameState,
-  choice: { category: ScoreCategory; priority: number; score: number },
-  mulligansUsed: number,
-) {
-  const computer = game.players[computerPlayerIndex];
-  if (!computer || computer.suckerTokens < suckerTokenCosts.mulligan || mulligansUsed > 0) {
-    return false;
-  }
-
-  return availableCategories(computer.scorecard).length > 5 && choice.score <= 8;
-}
-
-function mostCommonDie(dice: ReturnType<typeof createGame>['dice']) {
-  const counts = dice.reduce(
-    (nextCounts, die) => {
-      nextCounts[die] += 1;
-      return nextCounts;
-    },
-    { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } as Record<DieValue, number>,
-  );
-
-  return dice.reduce((best, die) => (counts[die] > counts[best] || (counts[die] === counts[best] && die > best) ? die : best), dice[0]);
-}
-
-function maxMatchingDice(dice: GameState['dice']) {
-  const counts = dice.reduce(
-    (nextCounts, die) => {
-      nextCounts[die] += 1;
-      return nextCounts;
-    },
-    { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } as Record<DieValue, number>,
-  );
-
-  return Math.max(...Object.values(counts));
-}
-
 function StatsPage({
   currentOpponentName,
   currentScore,
@@ -2952,7 +2807,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     height: 56,
     justifyContent: 'center',
-    width: 44,
+    marginLeft: -2,
+    width: 54,
   },
   lockedScoreBox: {
     backgroundColor: '#FFE08A',

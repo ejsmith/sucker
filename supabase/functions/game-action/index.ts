@@ -29,11 +29,20 @@ type Action =
   | { type: "create_game"; opponentProfileId: string }
   | { type: "create_invite" }
   | { type: "accept_invite"; inviteCode: string }
-  | { type: "extra_roll"; gameId: string }
-  | { type: "roll"; gameId: string }
-  | { type: "toggle_hold"; dieIndex: number; gameId: string }
-  | { type: "score_category"; category: ScoreCategory; gameId: string }
-  | { type: "scratch_category"; category: ScoreCategory; gameId: string }
+  | { type: "extra_roll"; gameId: string; held?: GameState["held"] }
+  | { type: "roll"; gameId: string; held?: GameState["held"] }
+  | {
+    type: "score_category";
+    category: ScoreCategory;
+    gameId: string;
+    held?: GameState["held"];
+  }
+  | {
+    type: "scratch_category";
+    category: ScoreCategory;
+    gameId: string;
+    held?: GameState["held"];
+  }
   | { type: "pass_response"; gameId: string }
   | { type: "mulligan"; gameId: string }
   | { type: "sucker_punch"; gameId: string; turnId: string }
@@ -97,7 +106,7 @@ async function applyAction(admin: DbClient, actorId: string, action: Action) {
         actorId,
         action.gameId,
         action.type,
-        (state) => rollGame(state, actorId),
+        (state) => rollGame(state, actorId, action.held),
       );
     case "extra_roll":
       return mutateGame(
@@ -105,20 +114,25 @@ async function applyAction(admin: DbClient, actorId: string, action: Action) {
         actorId,
         action.gameId,
         action.type,
-        (state) => purchaseExtraRoll(state, actorId),
+        (state) => purchaseExtraRoll(state, actorId, action.held),
       );
-    case "toggle_hold":
-      return mutateGame(
+    case "score_category":
+      return scoreRemoteTurn(
         admin,
         actorId,
         action.gameId,
-        action.type,
-        (state) => toggleHold(state, actorId, action.dieIndex),
+        action.category,
+        false,
+        action.held,
       );
-    case "score_category":
-      return scoreRemoteTurn(admin, actorId, action.gameId, action.category);
     case "scratch_category":
-      return scratchRemoteScoreBox(admin, actorId, action.gameId, action.category);
+      return scratchRemoteScoreBox(
+        admin,
+        actorId,
+        action.gameId,
+        action.category,
+        action.held,
+      );
     case "pass_response":
       return passResponse(admin, actorId, action.gameId);
     case "mulligan":
@@ -374,7 +388,12 @@ async function mutateGame(
     throw error;
   }
 
-  await syncGamePlayers(admin, gameId, nextState, nextState.phase === "complete");
+  await syncGamePlayers(
+    admin,
+    gameId,
+    nextState,
+    nextState.phase === "complete",
+  );
   await insertAction(admin, gameId, actorId, actionType, {});
   return { game: data };
 }
@@ -385,6 +404,7 @@ async function scoreRemoteTurn(
   gameId: string,
   category: ScoreCategory,
   scratch = false,
+  submittedHeld?: GameState["held"],
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
   const state = game.state;
@@ -398,14 +418,13 @@ async function scoreRemoteTurn(
     throw new Error("That score box is already filled.");
   }
 
+  const turnHeld = normalizeHeld(submittedHeld, state.held);
   const turnIndex = countCompletedScores(state) + 1;
-  const turnScore = scratch
-    ? 0
-    : scoreCategoryForScorecard(
-      state.dice,
-      category,
-      currentPlayer.scorecard,
-    );
+  const turnScore = scratch ? 0 : scoreCategoryForScorecard(
+    state.dice,
+    category,
+    currentPlayer.scorecard,
+  );
   const extraSuckerBonus = !scratch && category !== "sucker" &&
     currentPlayer.scorecard.sucker !== null && isSuckerRoll(state.dice);
   const tokenDelta = turnScore === 0 ? 1 : 0;
@@ -455,7 +474,7 @@ async function scoreRemoteTurn(
       category,
       dice: state.dice,
       game_id: gameId,
-      held: state.held,
+      held: turnHeld,
       player_id: actorId,
       roll_count: state.rollNumber,
       score: turnScore,
@@ -501,12 +520,18 @@ async function scoreRemoteTurn(
       .eq("player_id", player.id);
   }
 
-  await insertAction(admin, gameId, actorId, scratch ? "scratch_category" : "score_category", {
-    category,
-    scratched: scratch,
-    score: turnScore,
-    turnId: turn.id,
-  });
+  await insertAction(
+    admin,
+    gameId,
+    actorId,
+    scratch ? "scratch_category" : "score_category",
+    {
+      category,
+      scratched: scratch,
+      score: turnScore,
+      turnId: turn.id,
+    },
+  );
 
   if (complete) {
     await writeCompletedGameStats(admin, gameId, players, winner?.id ?? null);
@@ -525,8 +550,9 @@ function scratchRemoteScoreBox(
   actorId: string,
   gameId: string,
   category: ScoreCategory,
+  held?: GameState["held"],
 ) {
-  return scoreRemoteTurn(admin, actorId, gameId, category, true);
+  return scoreRemoteTurn(admin, actorId, gameId, category, true, held);
 }
 
 async function passResponse(admin: DbClient, actorId: string, gameId: string) {
@@ -944,28 +970,47 @@ function createGameState(
   };
 }
 
-function rollGame(state: GameState, actorId: string): GameState {
+function rollGame(
+  state: GameState,
+  actorId: string,
+  submittedHeld?: GameState["held"],
+): GameState {
   assertCurrentPlayer(state, actorId);
-  if (state.phase === "complete" || state.rollNumber >= maxAvailableRolls(state)) {
+  if (
+    state.phase === "complete" || state.rollNumber >= maxAvailableRolls(state)
+  ) {
     throw new Error("No rolls remaining.");
   }
 
+  const held = state.rollNumber === 0
+    ? [false, false, false, false, false] as GameState["held"]
+    : normalizeHeld(submittedHeld, state.held);
+
   return {
     ...state,
+    held,
     dice: state.dice.map((
       die,
       index,
-    ) => (state.held[index] ? die : rollDie())) as Dice,
+    ) => (held[index] ? die : rollDie(cryptoRandom))) as Dice,
     phase: "scoring",
     rollNumber: state.rollNumber + 1,
   };
 }
 
-function purchaseExtraRoll(state: GameState, actorId: string): GameState {
+function purchaseExtraRoll(
+  state: GameState,
+  actorId: string,
+  submittedHeld?: GameState["held"],
+): GameState {
   assertCurrentPlayer(state, actorId);
   const player = findPlayer(state, actorId);
-  if (state.phase === "complete" || state.rollNumber < maxAvailableRolls(state)) {
-    throw new Error("Extra Roll is available after you use every available roll.");
+  if (
+    state.phase === "complete" || state.rollNumber < maxAvailableRolls(state)
+  ) {
+    throw new Error(
+      "Extra Roll is available after you use every available roll.",
+    );
   }
   if (player.suckerTokens < suckerTokenCosts.extraRoll) {
     throw new Error(
@@ -976,26 +1021,37 @@ function purchaseExtraRoll(state: GameState, actorId: string): GameState {
   return {
     ...updatePlayerTokens(state, actorId, -suckerTokenCosts.extraRoll),
     extraRollsAvailable: Math.max(0, state.extraRollsAvailable ?? 0) + 1,
+    held: normalizeHeld(submittedHeld, state.held),
   };
 }
 
-function maxAvailableRolls(state: Pick<GameState, "extraRollsAvailable">): number {
+function maxAvailableRolls(
+  state: Pick<GameState, "extraRollsAvailable">,
+): number {
   return maxRollsPerTurn + Math.max(0, state.extraRollsAvailable ?? 0);
 }
 
-function toggleHold(
-  state: GameState,
-  actorId: string,
-  dieIndex: number,
-): GameState {
-  assertCurrentPlayer(state, actorId);
-  if (state.rollNumber === 0 || dieIndex < 0 || dieIndex > 4) {
-    throw new Error("That die cannot be held right now.");
+function normalizeHeld(
+  submittedHeld: GameState["held"] | undefined,
+  fallback: GameState["held"],
+): GameState["held"] {
+  if (!submittedHeld) {
+    return fallback;
+  }
+  if (
+    submittedHeld.length !== 5 ||
+    submittedHeld.some((held) => typeof held !== "boolean")
+  ) {
+    throw new Error("Invalid held dice.");
   }
 
-  const held = [...state.held] as GameState["held"];
-  held[dieIndex] = !held[dieIndex];
-  return { ...state, held };
+  return [...submittedHeld] as GameState["held"];
+}
+
+function cryptoRandom(): number {
+  const values = new Uint32Array(1);
+  crypto.getRandomValues(values);
+  return values[0] / (0xffffffff + 1);
 }
 
 function assertCurrentPlayer(state: GameState, actorId: string) {

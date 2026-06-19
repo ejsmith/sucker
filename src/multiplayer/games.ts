@@ -61,24 +61,20 @@ export async function createGameAgainst(opponentProfileId: string) {
   });
 }
 
-export async function rollRemoteGame(gameId: string) {
-  return applyMultiplayerAction({ gameId, type: 'roll' });
+export async function rollRemoteGame(gameId: string, held: GameState['held']) {
+  return applyMultiplayerAction({ gameId, held, type: 'roll' });
 }
 
-export async function buyRemoteExtraRoll(gameId: string) {
-  return applyMultiplayerAction({ gameId, type: 'extra_roll' });
+export async function buyRemoteExtraRoll(gameId: string, held: GameState['held']) {
+  return applyMultiplayerAction({ gameId, held, type: 'extra_roll' });
 }
 
-export async function toggleRemoteHold(gameId: string, dieIndex: number) {
-  return applyMultiplayerAction({ dieIndex, gameId, type: 'toggle_hold' });
+export async function scoreRemoteCategory(gameId: string, category: ScoreCategory, held: GameState['held']) {
+  return applyMultiplayerAction({ category, gameId, held, type: 'score_category' });
 }
 
-export async function scoreRemoteCategory(gameId: string, category: ScoreCategory) {
-  return applyMultiplayerAction({ category, gameId, type: 'score_category' });
-}
-
-export async function scratchRemoteCategory(gameId: string, category: ScoreCategory) {
-  return applyMultiplayerAction({ category, gameId, type: 'scratch_category' });
+export async function scratchRemoteCategory(gameId: string, category: ScoreCategory, held: GameState['held']) {
+  return applyMultiplayerAction({ category, gameId, held, type: 'scratch_category' });
 }
 
 export async function passRemoteResponse(gameId: string) {
@@ -97,7 +93,11 @@ export async function useRemoteSuckerBlocker(gameId: string, turnId: string) {
   return applyMultiplayerAction({ gameId, turnId, type: 'sucker_blocker' });
 }
 
-export function subscribeToGame(gameId: string, onChange: (game: ReturnType<typeof toRemoteGameRow>) => void) {
+export function subscribeToGame(
+  gameId: string,
+  onChange: (game: ReturnType<typeof toRemoteGameRow>) => void,
+  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+) {
   const channel = supabase
     .channel(`game:${gameId}`)
     .on(
@@ -114,7 +114,9 @@ export function subscribeToGame(gameId: string, onChange: (game: ReturnType<type
         }
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      onStatus?.(status);
+    });
 
   return () => {
     void supabase.removeChannel(channel);
