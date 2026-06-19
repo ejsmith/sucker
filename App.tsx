@@ -166,6 +166,7 @@ const backgroundDiePositions = [
 const computerThinkingDelayMs = 2400;
 const computerScorePreviewDelayMs = 0;
 const computerScoreAnimationDurationMs = 950;
+const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
 export default function App() {
   const [showLocalDemo, setShowLocalDemo] = useState(false);
   const [remoteGameId, setRemoteGameId] = useState<string | null>(null);
@@ -555,6 +556,10 @@ function LocalGameScreen({
   );
 
   useEffect(() => {
+    if (disableE2EAnimations) {
+      return;
+    }
+
     const loops = [
       Animated.loop(
         Animated.sequence([
@@ -1449,7 +1454,7 @@ function LocalGameScreen({
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
-      <View ref={screenRef} style={[styles.screen, gameStageStyle]}>
+      <View ref={screenRef} style={[styles.screen, gameStageStyle]} testID="game-screen">
         <BackgroundDicePattern floatValue={bgFloat} />
         <View style={styles.topBar}>
           <View pointerEvents="none" style={styles.topBarBannerClip}>
@@ -1581,7 +1586,7 @@ function LocalGameScreen({
         </View>
 
         <View ref={rollZoneRef} style={styles.rollZone}>
-          <View style={styles.diceTray}>
+          <View style={styles.diceTray} testID="dice-tray">
             {game.dice.map((die, index) => {
               const isFlying = isRolling && rollingDieIndexes.includes(index);
               const showDie = game.rollNumber > 0 || isRolling;
@@ -1771,7 +1776,11 @@ function LocalGameScreen({
                   <Text style={styles.tokenMenuTitle}>Sucker Tokens</Text>
                   <Text style={styles.tokenMenuSubtitle}>{myTokenCount} available</Text>
                 </View>
-                <Pressable onPress={() => setIsTokenMenuOpen(false)} style={styles.tokenMenuClose}>
+                <Pressable
+                  onPress={() => setIsTokenMenuOpen(false)}
+                  style={styles.tokenMenuClose}
+                  testID="token-menu-close-button"
+                >
                   <Text style={styles.tokenMenuCloseText}>X</Text>
                 </Pressable>
               </View>
@@ -1951,7 +1960,7 @@ function LocalGameScreen({
           </View>
         )}
         {gameOverVisible && (
-          <View style={styles.gameOverOverlay}>
+          <View style={styles.gameOverOverlay} testID="game-over-overlay">
             <View style={styles.gameOverPanel}>
               <Pressable
                 accessibilityLabel="Close game over"

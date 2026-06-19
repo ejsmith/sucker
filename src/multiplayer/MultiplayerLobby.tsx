@@ -56,7 +56,9 @@ export function MultiplayerLobby({
   function renderShell(children: ReactNode) {
     return (
       <View style={lobbyStyles.stageHost}>
-        <View style={[lobbyStyles.shell, shellStyle]}>{children}</View>
+        <View style={[lobbyStyles.shell, shellStyle]} testID="multiplayer-lobby-shell">
+          {children}
+        </View>
       </View>
     );
   }

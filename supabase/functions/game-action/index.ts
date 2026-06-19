@@ -1205,7 +1205,7 @@ function rollGame(state: GameState, actorId: string, submittedHeld?: GameState['
   return {
     ...state,
     held,
-    dice: state.dice.map((die, index) => (held[index] ? die : rollDie(cryptoRandom))) as Dice,
+    dice: state.dice.map((die, index) => (held[index] ? die : rollDie(edgeRollRandom))) as Dice,
     phase: 'scoring',
     rollNumber: state.rollNumber + 1,
   };
@@ -1247,6 +1247,15 @@ function cryptoRandom(): number {
   const values = new Uint32Array(1);
   crypto.getRandomValues(values);
   return values[0] / (0xffffffff + 1);
+}
+
+function edgeRollRandom(): number {
+  const fixedDie = Number(Deno.env.get('SUCKER_E2E_FIXED_DIE'));
+  if (Number.isInteger(fixedDie) && fixedDie >= 1 && fixedDie <= 6) {
+    return (fixedDie - 1) / 6;
+  }
+
+  return cryptoRandom();
 }
 
 function assertCurrentPlayer(state: GameState, actorId: string) {
