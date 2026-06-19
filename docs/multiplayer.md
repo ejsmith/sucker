@@ -115,6 +115,47 @@ Reserved for the next slice:
 - Native device QA for foreground/background push delivery.
 - App Store and Play Store build setup.
 
+## Multiplayer Validation
+
+Fast local gate for ordinary changes:
+
+```sh
+npm run typecheck
+npm run typecheck:edge
+npm run test
+npm run test:edge
+```
+
+Server-authoritative multiplayer gate:
+
+```sh
+npm run test:integration:supabase
+```
+
+Web UI multiplayer gate at the mobile viewport:
+
+```sh
+npm run test:e2e:web
+```
+
+Keep a small manual/staging pass for behavior that depends on native devices,
+hosted Supabase, or production link infrastructure:
+
+- Hosted Supabase deploy smoke: apply migrations, deploy `game-action`, create
+  two staging users, create/accept an invite, play one turn each, and confirm
+  `games`, `turns`, `turn_actions`, token events, and head-to-head stats update.
+- Push notifications: verify foreground, background, and terminated app delivery
+  on iOS and Android devices for turn handoff, Sucker Punch, Sucker Blocker, and
+  game-over events.
+- Native deep links: verify `sucker://invite/<INVITE_CODE>` and
+  `https://sucker.games/invite/<INVITE_CODE>` open the app and prefill/join the
+  invite from a cold start.
+- Background/foreground recovery: leave a game mid-turn, resume from the app
+  switcher and from a notification, and confirm realtime state catches up without
+  duplicating actions.
+- Store-build smoke: run one invite game on TestFlight/internal Android builds
+  against staging Supabase before promoting a release.
+
 ## Email Code Sign-In
 
 The app is wired for Supabase email OTP codes with `verifyOtp`. To make hosted
