@@ -27,18 +27,18 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - `package.json` currently uses Expo `~54.0.0`; use the matching Expo version docs only when the task depends on Expo-specific APIs, configuration, build behavior, or compatibility.
 - Do not check Expo docs for ordinary app code, styling, animation, or game-logic changes.
 - Multiplayer uses Supabase client code in `src/multiplayer`, SQL migrations in `supabase/migrations`, and Edge Functions in `supabase/functions`.
-- Do not introduce a separate Deno app runtime. Supabase Edge Functions may use their normal Supabase runtime.
+- Use Deno tasks for local app commands and validation; Expo still runs through the Expo CLI.
+- Supabase Edge Functions use their normal Supabase Deno runtime.
 
 ## Development Loop
 
 - Prefer hot reload. Do not restart the dev server unless it died, dependencies/config changed, or Metro is stale.
-- Local web command: `npm run web -- --port 8081`.
+- Local web command: `deno task web --port 8081`.
 - Use an iPhone-sized browser viewport for UI checks: `393 x 852`.
 - For code validation run:
-  - `npm run typecheck`
-  - `npm run typecheck:edge`
-  - `npm run test`
-  - `npm run test:edge`
+  - `deno task check`
+  - `deno task test`
+  - `deno task test:edge`
 
 ## Visual And UX Rules
 

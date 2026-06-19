@@ -58,7 +58,7 @@ import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
 import { supabase } from './src/multiplayer/supabase';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
 import { getPhoneStageStyle } from './src/ui/phoneStage';
-import Svg, { Circle } from 'react-native-svg';
+import { Circle, Svg } from 'react-native-svg';
 
 type ViewRef = ComponentRef<typeof View>;
 type MeasuredRect = {

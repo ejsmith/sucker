@@ -1,0 +1,23 @@
+{
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "prepare:deno": "deno install && deno run -A scripts/patch-metro-for-deno.ts",
+    "start": "deno task prepare:deno && DENO_DIR=.deno-cache deno run -A npm:expo@~54.0.0 start",
+    "android": "deno task prepare:deno && DENO_DIR=.deno-cache deno run -A npm:expo@~54.0.0 start --android",
+    "ios": "deno task prepare:deno && DENO_DIR=.deno-cache deno run -A npm:expo@~54.0.0 start --ios",
+    "web": "deno task prepare:deno && DENO_DIR=.deno-cache deno run -A npm:expo@~54.0.0 start --web",
+    "check": "deno task check:app && deno task check:edge && deno task check:tests",
+    "check:app": "deno check --unstable-sloppy-imports App.tsx index.ts src shared",
+    "check:edge": "DENO_NO_PACKAGE_JSON=1 deno check --no-config supabase/functions/game-action/index.ts",
+    "check:tests": "DENO_NO_PACKAGE_JSON=1 deno check --no-config tests/rules.test.ts supabase/functions/_shared/game.ts supabase/functions/_shared/database.types.ts supabase/functions/_shared/game.test.ts",
+    "test": "DENO_NO_PACKAGE_JSON=1 deno test --no-config tests supabase/functions",
+    "test:edge": "DENO_NO_PACKAGE_JSON=1 deno test --no-config supabase/functions",
+    "validate": "deno task check && deno task test"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "lib": ["deno.window", "dom", "dom.iterable", "esnext"],
+    "strict": true
+  }
+}
