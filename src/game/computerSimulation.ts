@@ -1,5 +1,12 @@
 import { availableCategories, createGame, totalScore, type GameState } from './index';
-import { computerPlayerIndex, defaultComputerStrategy, playComputerTurn, type ComputerStrategyConfig } from './computer';
+import {
+  computerPlayerIndex,
+  defaultComputerStrategy,
+  playAutomatedTurn,
+  playComputerTurn,
+  type ComputerStrategyConfig,
+  type LocalPendingTurn,
+} from './computer';
 
 export type ComputerSimulationOptions = {
   gameCount?: number;
@@ -13,6 +20,17 @@ export type ComputerSimulationResult = {
   highScore: number;
   lowScore: number;
   scores: number[];
+};
+
+export type ComputerHeadToHeadResult = {
+  averageMargin: number;
+  averageOpponentScore: number;
+  averageScore: number;
+  gameCount: number;
+  losses: number;
+  ties: number;
+  winRate: number;
+  wins: number;
 };
 
 export function measureComputerStrategy(options: ComputerSimulationOptions = {}): ComputerSimulationResult {
@@ -57,6 +75,75 @@ export function simulateComputerScore(seed = 1, strategy: ComputerStrategyConfig
   }
 
   return totalScore(game.players[computerPlayerIndex].scorecard);
+}
+
+export function measureComputerHeadToHead({
+  candidateStrategy,
+  gameCount = 1000,
+  opponentStrategy = defaultComputerStrategy,
+  seed = 1,
+}: {
+  candidateStrategy: ComputerStrategyConfig;
+  gameCount?: number;
+  opponentStrategy?: ComputerStrategyConfig;
+  seed?: number;
+}): ComputerHeadToHeadResult {
+  let candidateScoreTotal = 0;
+  let opponentScoreTotal = 0;
+  let wins = 0;
+  let losses = 0;
+  let ties = 0;
+
+  for (let index = 0; index < gameCount; index += 1) {
+    const result = simulateComputerHeadToHead(seed + index, candidateStrategy, opponentStrategy);
+    candidateScoreTotal += result.candidateScore;
+    opponentScoreTotal += result.opponentScore;
+
+    if (result.candidateScore > result.opponentScore) {
+      wins += 1;
+    } else if (result.candidateScore < result.opponentScore) {
+      losses += 1;
+    } else {
+      ties += 1;
+    }
+  }
+
+  const averageScore = candidateScoreTotal / gameCount;
+  const averageOpponentScore = opponentScoreTotal / gameCount;
+
+  return {
+    averageMargin: averageScore - averageOpponentScore,
+    averageOpponentScore,
+    averageScore,
+    gameCount,
+    losses,
+    ties,
+    winRate: wins / gameCount,
+    wins,
+  };
+}
+
+export function simulateComputerHeadToHead(
+  seed = 1,
+  candidateStrategy: ComputerStrategyConfig = defaultComputerStrategy,
+  opponentStrategy: ComputerStrategyConfig = defaultComputerStrategy,
+): { candidateScore: number; opponentScore: number } {
+  const random = createSeededRandom(seed);
+  let game = createGame(['Opponent', 'Candidate']);
+  let pendingTurn: LocalPendingTurn | null = null;
+
+  while (game.phase !== 'complete') {
+    const activePlayerIndex = game.currentPlayerIndex;
+    const strategy = activePlayerIndex === computerPlayerIndex ? candidateStrategy : opponentStrategy;
+    const result = playAutomatedTurn(game, activePlayerIndex, pendingTurn, random, strategy);
+    game = result.game;
+    pendingTurn = result.pendingTurn;
+  }
+
+  return {
+    candidateScore: totalScore(game.players[computerPlayerIndex].scorecard),
+    opponentScore: totalScore(game.players[0].scorecard),
+  };
 }
 
 export function createSeededRandom(seed: number): () => number {

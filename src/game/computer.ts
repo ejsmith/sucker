@@ -47,6 +47,11 @@ export type ComputerStrategyConfig = {
   extraRollMaxScore: number;
   madeCategoryBonuses: Partial<Record<ScoreCategory, number>>;
   mulliganMaxScore: number;
+  suckerBlockerMinScore: number;
+  suckerPunchComebackMinCategories: number;
+  suckerPunchComebackMinScore: number;
+  suckerPunchMinScore: number;
+  suckerPunchReserveTokens: number;
   stopScoreThreshold: number;
   suckerCategoryBonus: number;
   upperPressureHoldMultiplier: number;
@@ -64,7 +69,12 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
     smallStraight: 5,
     threeOfAKind: 1,
   },
-  mulliganMaxScore: 18,
+  mulliganMaxScore: 12,
+  suckerBlockerMinScore: 20,
+  suckerPunchComebackMinCategories: 8,
+  suckerPunchComebackMinScore: 30,
+  suckerPunchMinScore: 50,
+  suckerPunchReserveTokens: 0,
   stopScoreThreshold: 35,
   suckerCategoryBonus: 8,
   upperPressureHoldMultiplier: 1.5,
@@ -217,13 +227,23 @@ export function playComputerTurn(
   random: () => number = Math.random,
   strategy: ComputerStrategyConfig = defaultComputerStrategy,
 ): ComputerTurnResult {
-  if (game.currentPlayerIndex !== computerPlayerIndex || game.phase === 'complete') {
+  return playAutomatedTurn(game, computerPlayerIndex, pendingTurn, random, strategy);
+}
+
+export function playAutomatedTurn(
+  game: GameState,
+  automatedPlayerIndex: number,
+  pendingTurn: LocalPendingTurn | null = null,
+  random: () => number = Math.random,
+  strategy: ComputerStrategyConfig = defaultComputerStrategy,
+): ComputerTurnResult {
+  if (game.currentPlayerIndex !== automatedPlayerIndex || game.phase === 'complete') {
     return { game, pendingTurn };
   }
 
-  if (pendingTurn?.status === 'submitted' && pendingTurn.responderIndex === computerPlayerIndex) {
-    if (shouldComputerUseSuckerPunch(game, pendingTurn)) {
-      const punched = applyLocalSuckerPunch(game, pendingTurn, computerPlayerIndex);
+  if (pendingTurn?.status === 'submitted' && pendingTurn.responderIndex === automatedPlayerIndex) {
+    if (shouldAutomatedUseSuckerPunch(game, pendingTurn, automatedPlayerIndex, strategy)) {
+      const punched = applyLocalSuckerPunch(game, pendingTurn, automatedPlayerIndex);
       return {
         game: punched.game,
         message: 'Computer used Sucker Punch. Block it or replay the turn.',
@@ -234,10 +254,10 @@ export function playComputerTurn(
     pendingTurn = null;
   }
 
-  if (pendingTurn?.status === 'punched' && pendingTurn.scorerIndex === computerPlayerIndex) {
-    if (shouldComputerUseSuckerBlocker(game, pendingTurn)) {
+  if (pendingTurn?.status === 'punched' && pendingTurn.scorerIndex === automatedPlayerIndex) {
+    if (shouldAutomatedUseSuckerBlocker(game, pendingTurn, automatedPlayerIndex, strategy)) {
       return {
-        game: applyLocalSuckerBlocker(game, pendingTurn, computerPlayerIndex),
+        game: applyLocalSuckerBlocker(game, pendingTurn, automatedPlayerIndex),
         message: 'Computer used Sucker Blocker. The score stands.',
         pendingTurn: null,
       };
@@ -258,29 +278,29 @@ export function playComputerTurn(
       nextGame = rollCurrentDice(nextGame, random);
       const choice = getBestComputerCategoryChoice(
         nextGame.dice,
-        nextGame.players[computerPlayerIndex].scorecard,
+        nextGame.players[automatedPlayerIndex].scorecard,
         strategy,
       );
-      if (shouldComputerStopRolling(nextGame, choice, strategy)) {
+      if (shouldComputerStopRolling(nextGame, automatedPlayerIndex, choice, strategy)) {
         break;
       }
 
       nextGame = {
         ...nextGame,
-        held: chooseComputerHeldDice(nextGame, strategy),
+        held: chooseComputerHeldDice(nextGame, automatedPlayerIndex, strategy),
       };
     }
 
-    const computer = nextGame.players[computerPlayerIndex];
+    const computer = nextGame.players[automatedPlayerIndex];
     const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard, strategy);
 
-    if (shouldComputerUseMulligan(nextGame, choice, mulligansUsed, strategy)) {
+    if (shouldComputerUseMulligan(nextGame, automatedPlayerIndex, choice, mulligansUsed, strategy)) {
       nextGame = mulliganCurrentTurn(nextGame);
       mulligansUsed += 1;
       continue;
     }
 
-    if (shouldComputerBuyExtraRoll(nextGame, choice, extraRollsBought, strategy)) {
+    if (shouldComputerBuyExtraRoll(nextGame, automatedPlayerIndex, choice, extraRollsBought, strategy)) {
       nextGame = purchaseExtraRoll(nextGame);
       extraRollsBought += 1;
       continue;
@@ -289,7 +309,7 @@ export function playComputerTurn(
     break;
   }
 
-  const category = chooseComputerCategory(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard, strategy);
+  const category = chooseComputerCategory(nextGame.dice, nextGame.players[automatedPlayerIndex].scorecard, strategy);
   return scoreLocalTurn(nextGame, category);
 }
 
@@ -398,40 +418,69 @@ function upperBonusPressure(scorecard: GameState['players'][number]['scorecard']
   return scoredUpperTotal + remainingTarget >= 63;
 }
 
-function shouldComputerUseSuckerPunch(game: GameState, pendingTurn: LocalPendingTurn) {
-  const computer = game.players[computerPlayerIndex];
+export function shouldComputerUseSuckerPunch(
+  game: GameState,
+  pendingTurn: LocalPendingTurn,
+  strategy: ComputerStrategyConfig = defaultComputerStrategy,
+) {
+  return shouldAutomatedUseSuckerPunch(game, pendingTurn, computerPlayerIndex, strategy);
+}
+
+function shouldAutomatedUseSuckerPunch(
+  game: GameState,
+  pendingTurn: LocalPendingTurn,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+) {
+  const computer = game.players[automatedPlayerIndex];
   if (!computer || computer.suckerTokens < suckerTokenCosts.suckerPunch) {
     return false;
   }
 
-  const playerScore = totalScore(game.players[0].scorecard);
+  const opponent = game.players[pendingTurn.scorerIndex];
+  const playerScore = opponent ? totalScore(opponent.scorecard) : 0;
   const computerScore = totalScore(computer.scorecard);
-  return (
-    pendingTurn.score >= 35 ||
-    pendingTurn.category === 'sucker' ||
-    pendingTurn.category === 'largeStraight' ||
-    pendingTurn.hadSuckerBonus ||
-    (pendingTurn.score >= 25 && playerScore >= computerScore)
-  );
+  const scorer = game.players[pendingTurn.scorerIndex];
+  const scoredCategories = scorer.scorecard
+    ? scoreCategories.filter((category) => scorer.scorecard[category] !== null).length
+    : 0;
+  const tokenBalanceAfterPunch = computer.suckerTokens - suckerTokenCosts.suckerPunch;
+  const canKeepBlockerReserve = tokenBalanceAfterPunch >= strategy.suckerPunchReserveTokens;
+  const isPremiumTurn = pendingTurn.hadSuckerBonus || (pendingTurn.category === 'sucker' && pendingTurn.score >= strategy.suckerPunchMinScore);
+  const isLateComebackSwing =
+    scoredCategories >= strategy.suckerPunchComebackMinCategories &&
+    playerScore > computerScore &&
+    pendingTurn.score >= strategy.suckerPunchComebackMinScore;
+
+  return (isPremiumTurn || isLateComebackSwing) && (canKeepBlockerReserve || pendingTurn.hadSuckerBonus);
 }
 
 export function shouldComputerUseSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn) {
-  const computer = game.players[computerPlayerIndex];
+  return shouldAutomatedUseSuckerBlocker(game, pendingTurn, computerPlayerIndex, defaultComputerStrategy);
+}
+
+function shouldAutomatedUseSuckerBlocker(
+  game: GameState,
+  pendingTurn: LocalPendingTurn,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+) {
+  const computer = game.players[automatedPlayerIndex];
   if (!computer || computer.suckerTokens < suckerTokenCosts.suckerBlocker) {
     return false;
   }
 
   return (
-    pendingTurn.score >= 25 ||
+    pendingTurn.score >= strategy.suckerBlockerMinScore ||
     pendingTurn.category === 'sucker' ||
     pendingTurn.category === 'largeStraight' ||
-    pendingTurn.category === 'fullHouse' ||
     pendingTurn.hadSuckerBonus
   );
 }
 
 function shouldComputerStopRolling(
   game: GameState,
+  automatedPlayerIndex: number,
   choice: { category: ScoreCategory; priority: number; score: number },
   strategy: ComputerStrategyConfig,
 ) {
@@ -447,8 +496,8 @@ function shouldComputerStopRolling(
 
   if (
     choice.category === 'smallStraight' &&
-    game.players[computerPlayerIndex].scorecard.largeStraight === null &&
-    scoreCategoryForScorecard(game.dice, 'largeStraight', game.players[computerPlayerIndex].scorecard) < 40
+    game.players[automatedPlayerIndex].scorecard.largeStraight === null &&
+    scoreCategoryForScorecard(game.dice, 'largeStraight', game.players[automatedPlayerIndex].scorecard) < 40
   ) {
     return game.rollNumber >= maxAvailableRolls(game);
   }
@@ -458,11 +507,12 @@ function shouldComputerStopRolling(
 
 function shouldComputerBuyExtraRoll(
   game: GameState,
+  automatedPlayerIndex: number,
   choice: { category: ScoreCategory; priority: number; score: number },
   extraRollsBought: number,
   strategy: ComputerStrategyConfig,
 ) {
-  const computer = game.players[computerPlayerIndex];
+  const computer = game.players[automatedPlayerIndex];
   if (
     game.rollNumber < maxAvailableRolls(game) ||
     !computer ||
@@ -482,11 +532,12 @@ function shouldComputerBuyExtraRoll(
 
 function shouldComputerUseMulligan(
   game: GameState,
+  automatedPlayerIndex: number,
   choice: { category: ScoreCategory; priority: number; score: number },
   mulligansUsed: number,
   strategy: ComputerStrategyConfig,
 ) {
-  const computer = game.players[computerPlayerIndex];
+  const computer = game.players[automatedPlayerIndex];
   if (!computer || computer.suckerTokens < suckerTokenCosts.mulligan || mulligansUsed > 0) {
     return false;
   }
@@ -494,8 +545,12 @@ function shouldComputerUseMulligan(
   return availableCategories(computer.scorecard).length > 5 && choice.score <= strategy.mulliganMaxScore;
 }
 
-function chooseComputerHeldDice(game: GameState, strategy: ComputerStrategyConfig): GameState['held'] {
-  const computer = game.players[computerPlayerIndex];
+function chooseComputerHeldDice(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+): GameState['held'] {
+  const computer = game.players[automatedPlayerIndex];
   const scorecard = computer.scorecard;
   const dice = game.dice;
   const openCategories = availableCategories(scorecard);
