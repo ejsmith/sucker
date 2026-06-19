@@ -23,14 +23,15 @@
     "typescript": "~5.9.2"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
-    "typecheck": "tsc --noEmit",
-    "typecheck:edge": "deno check supabase/functions/game-action/index.ts",
-    "test:edge": "deno test supabase/functions",
-    "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs"
+    "start": "deno task start",
+    "android": "deno task android",
+    "ios": "deno task ios",
+    "web": "deno task web",
+    "typecheck": "deno task check:app",
+    "typecheck:edge": "deno task check:edge",
+    "test:edge": "deno task test:edge",
+    "test": "deno task test",
+    "validate": "deno task validate"
   },
   "private": true
 }
