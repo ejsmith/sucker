@@ -358,7 +358,9 @@ export function MultiplayerLobby({
           </Pressable>
           {generatedInviteCode && (
             <View style={lobbyStyles.inviteLinkBlock}>
-              <Text style={lobbyStyles.inviteCode}>{generatedInviteCode}</Text>
+              <Text style={lobbyStyles.inviteCode} testID="generated-invite-code">
+                {generatedInviteCode}
+              </Text>
               <Text selectable style={lobbyStyles.inviteLinkText}>
                 {getInviteLink(generatedInviteCode)}
               </Text>

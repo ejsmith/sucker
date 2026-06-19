@@ -2213,6 +2213,7 @@ function ScoreCell({
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
           ]}
+          testID={`home-score-box-${category}`}
         >
           {homeSuckerBonus && <SuckerBonusBadge />}
           <Text
@@ -2230,6 +2231,7 @@ function ScoreCell({
         onPress={() => onSelect(category)}
         ref={(node) => setOpponentScoreRef(category, node)}
         style={styles.opponentScoreWrap}
+        testID={`opponent-score-box-${category}`}
       >
         {opponentSuckerBonus && <SuckerBonusBadge compact />}
         <Text
