@@ -1711,6 +1711,7 @@ function LocalGameScreen({
                   !canRoll && styles.disabledRollButton,
                   pressed && styles.pressed,
                 ]}
+                testID="roll-button"
               >
                 <View style={styles.buttonGloss} />
                 <View style={styles.buttonInnerShade} />
@@ -1732,6 +1733,7 @@ function LocalGameScreen({
                   !canOpenTokenMenu && styles.disabledButton,
                   pressed && styles.pressed,
                 ]}
+                testID="token-menu-button"
               >
                 <View style={styles.buttonInnerShade} />
                 <Image source={suckerTokenImage} style={styles.tokenButtonImage} />
@@ -1750,6 +1752,7 @@ function LocalGameScreen({
                   !canPlaySelected && styles.disabledButton,
                   pressed && styles.pressed,
                 ]}
+                testID="play-score-button"
               >
                 <View style={styles.playGloss} />
                 <View style={styles.buttonInnerShade} />
@@ -1759,7 +1762,7 @@ function LocalGameScreen({
           </View>
         </View>
         {isTokenMenuOpen && (
-          <View style={styles.tokenMenuOverlay}>
+          <View style={styles.tokenMenuOverlay} testID="token-menu-overlay">
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
             <View style={styles.tokenMenuPanel}>
               <View style={styles.tokenMenuHeader}>
@@ -1779,6 +1782,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
                 label="Extra Roll"
                 onPress={() => void handleUseExtraRoll()}
+                testID="token-option-extra-roll"
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.mulligan}
@@ -1786,6 +1790,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalMulligan}
                 label="Mulligan"
                 onPress={handleUseMulligan}
+                testID="token-option-mulligan"
               />
               <TokenMenuOption
                 cost={0}
@@ -1794,6 +1799,7 @@ function LocalGameScreen({
                 disabled={!canStartSuckerDeal}
                 label="Sucker Deal"
                 onPress={handleStartSuckerDeal}
+                testID="token-option-sucker-deal"
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.suckerPunch}
@@ -1805,6 +1811,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
                 label="Sucker Punch"
                 onPress={() => void handleUseSuckerPunch()}
+                testID="token-option-sucker-punch"
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.suckerBlocker}
@@ -1816,6 +1823,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalSuckerBlocker && !canUseRemoteSuckerBlocker}
                 label="Block Sucker Punch"
                 onPress={() => void handleUseSuckerBlocker()}
+                testID="token-option-sucker-blocker"
               />
             </View>
           </View>
@@ -2011,6 +2019,7 @@ function TokenMenuOption({
   disabled = false,
   label,
   onPress,
+  testID,
 }: {
   cost: number;
   costLabel?: string;
@@ -2018,12 +2027,14 @@ function TokenMenuOption({
   disabled?: boolean;
   label: string;
   onPress?: () => void;
+  testID?: string;
 }) {
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.tokenOption, disabled && styles.disabledTokenOption, pressed && styles.pressed]}
+      testID={testID}
     >
       <View style={styles.tokenOptionCost}>
         <Image source={suckerTokenImage} style={styles.tokenOptionCostIcon} />
