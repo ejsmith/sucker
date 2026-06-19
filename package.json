@@ -30,7 +30,9 @@
     "typecheck": "tsc --noEmit",
     "typecheck:edge": "deno check supabase/functions/game-action/index.ts",
     "test:edge": "deno test supabase/functions",
-    "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs"
+    "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs",
+    "simulate:computer": "tsc --project tsconfig.rules.json && node scripts/simulate-computer.cjs",
+    "tournament:computer": "tsc --project tsconfig.rules.json && node scripts/tournament-computer.cjs"
   },
   "private": true
 }

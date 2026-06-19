@@ -42,6 +42,36 @@ export type ComputerTurnResult = {
   };
 };
 
+export type ComputerStrategyConfig = {
+  chanceEarlyPenalty: number;
+  extraRollMaxScore: number;
+  madeCategoryBonuses: Partial<Record<ScoreCategory, number>>;
+  mulliganMaxScore: number;
+  stopScoreThreshold: number;
+  suckerCategoryBonus: number;
+  upperPressureHoldMultiplier: number;
+  upperPressureScratchCostBonus: number;
+  upperShortfallPenalty: number;
+};
+
+export const defaultComputerStrategy: ComputerStrategyConfig = {
+  chanceEarlyPenalty: 8,
+  extraRollMaxScore: 20,
+  madeCategoryBonuses: {
+    fourOfAKind: 4,
+    fullHouse: 6,
+    largeStraight: 10,
+    smallStraight: 5,
+    threeOfAKind: 1,
+  },
+  mulliganMaxScore: 18,
+  stopScoreThreshold: 35,
+  suckerCategoryBonus: 8,
+  upperPressureHoldMultiplier: 1.5,
+  upperPressureScratchCostBonus: 4,
+  upperShortfallPenalty: 0.9,
+};
+
 export function scoreLocalTurn(game: GameState, category: ScoreCategory): ComputerTurnResult {
   const scorerIndex = game.currentPlayerIndex;
   const scorer = game.players[scorerIndex];
@@ -181,7 +211,12 @@ export function applyLocalSuckerBlocker(
   };
 }
 
-export function playComputerTurn(game: GameState, pendingTurn: LocalPendingTurn | null = null): ComputerTurnResult {
+export function playComputerTurn(
+  game: GameState,
+  pendingTurn: LocalPendingTurn | null = null,
+  random: () => number = Math.random,
+  strategy: ComputerStrategyConfig = defaultComputerStrategy,
+): ComputerTurnResult {
   if (game.currentPlayerIndex !== computerPlayerIndex || game.phase === 'complete') {
     return { game, pendingTurn };
   }
@@ -220,29 +255,32 @@ export function playComputerTurn(game: GameState, pendingTurn: LocalPendingTurn 
 
   while (true) {
     while (nextGame.rollNumber < maxAvailableRolls(nextGame)) {
-      nextGame = rollCurrentDice(nextGame);
-      const choice = getBestComputerCategoryChoice(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard);
-      if (shouldComputerStopRolling(nextGame, choice)) {
+      nextGame = rollCurrentDice(nextGame, random);
+      const choice = getBestComputerCategoryChoice(
+        nextGame.dice,
+        nextGame.players[computerPlayerIndex].scorecard,
+        strategy,
+      );
+      if (shouldComputerStopRolling(nextGame, choice, strategy)) {
         break;
       }
 
-      const faceToChase = mostCommonDie(nextGame.dice);
       nextGame = {
         ...nextGame,
-        held: nextGame.dice.map((die) => die === faceToChase) as typeof game.held,
+        held: chooseComputerHeldDice(nextGame, strategy),
       };
     }
 
     const computer = nextGame.players[computerPlayerIndex];
-    const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard);
+    const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard, strategy);
 
-    if (shouldComputerUseMulligan(nextGame, choice, mulligansUsed)) {
+    if (shouldComputerUseMulligan(nextGame, choice, mulligansUsed, strategy)) {
       nextGame = mulliganCurrentTurn(nextGame);
       mulligansUsed += 1;
       continue;
     }
 
-    if (shouldComputerBuyExtraRoll(nextGame, choice, extraRollsBought)) {
+    if (shouldComputerBuyExtraRoll(nextGame, choice, extraRollsBought, strategy)) {
       nextGame = purchaseExtraRoll(nextGame);
       extraRollsBought += 1;
       continue;
@@ -251,26 +289,113 @@ export function playComputerTurn(game: GameState, pendingTurn: LocalPendingTurn 
     break;
   }
 
-  const category = chooseComputerCategory(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard);
+  const category = chooseComputerCategory(nextGame.dice, nextGame.players[computerPlayerIndex].scorecard, strategy);
   return scoreLocalTurn(nextGame, category);
 }
 
-function chooseComputerCategory(dice: GameState['dice'], scorecard: GameState['players'][number]['scorecard']) {
-  return getBestComputerCategoryChoice(dice, scorecard).category;
+function chooseComputerCategory(
+  dice: GameState['dice'],
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+) {
+  return getBestComputerCategoryChoice(dice, scorecard, strategy).category;
 }
 
-function getBestComputerCategoryChoice(dice: GameState['dice'], scorecard: GameState['players'][number]['scorecard']) {
+type ComputerCategoryChoice = {
+  category: ScoreCategory;
+  priority: number;
+  score: number;
+  value: number;
+};
+
+function getBestComputerCategoryChoice(
+  dice: GameState['dice'],
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+) {
   return availableCategories(scorecard)
     .map((category) => ({
       category,
       score: scoreCategoryForScorecard(dice, category, scorecard),
+      value: computerCategoryValue(dice, category, scorecard, strategy),
       priority: computerCategoryPriority(category),
     }))
-    .sort((left, right) => right.score - left.score || right.priority - left.priority)[0];
+    .sort((left, right) => right.value - left.value || right.score - left.score || right.priority - left.priority)[0];
 }
 
 function computerCategoryPriority(category: ScoreCategory) {
   return scoreCategories.indexOf(category);
+}
+
+function computerCategoryValue(
+  dice: GameState['dice'],
+  category: ScoreCategory,
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+) {
+  const score = scoreCategoryForScorecard(dice, category, scorecard);
+  if (score === 0) {
+    return -computerCategoryOpportunityCost(category, scorecard, strategy);
+  }
+
+  if (category === 'chance') {
+    return score - (availableCategories(scorecard).length > 4 ? strategy.chanceEarlyPenalty : 0);
+  }
+
+  if (category === 'sucker') {
+    return score + strategy.suckerCategoryBonus;
+  }
+
+  if (isUpperCategory(category)) {
+    const target = upperCategoryTarget(category);
+    return score - Math.max(0, target - score) * strategy.upperShortfallPenalty;
+  }
+
+  return score + (strategy.madeCategoryBonuses[category] ?? 0);
+}
+
+function computerCategoryOpportunityCost(
+  category: ScoreCategory,
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+) {
+  if (category === 'ones') {
+    return upperBonusPressure(scorecard) ? 8 : 2;
+  }
+  if (category === 'twos') {
+    return upperBonusPressure(scorecard) ? 10 : 4;
+  }
+  if (category === 'threes') {
+    return upperBonusPressure(scorecard) ? 12 : 7;
+  }
+  if (category === 'chance') {
+    return 18;
+  }
+  if (isUpperCategory(category)) {
+    return upperBonusPressure(scorecard)
+      ? upperCategoryTarget(category) + strategy.upperPressureScratchCostBonus
+      : upperCategoryTarget(category);
+  }
+
+  return {
+    threeOfAKind: 18,
+    fourOfAKind: 24,
+    fullHouse: 23,
+    smallStraight: 20,
+    largeStraight: 32,
+    sucker: 45,
+  }[category];
+}
+
+function upperBonusPressure(scorecard: GameState['players'][number]['scorecard']) {
+  const openUpperCategories = upperCategories.filter((category) => scorecard[category] === null);
+  if (openUpperCategories.length === 0) {
+    return false;
+  }
+
+  const scoredUpperTotal = upperCategories.reduce((total, category) => total + (scorecard[category] ?? 0), 0);
+  const remainingTarget = openUpperCategories.reduce((total, category) => total + upperCategoryTarget(category), 0);
+  return scoredUpperTotal + remainingTarget >= 63;
 }
 
 function shouldComputerUseSuckerPunch(game: GameState, pendingTurn: LocalPendingTurn) {
@@ -308,6 +433,7 @@ export function shouldComputerUseSuckerBlocker(game: GameState, pendingTurn: Loc
 function shouldComputerStopRolling(
   game: GameState,
   choice: { category: ScoreCategory; priority: number; score: number },
+  strategy: ComputerStrategyConfig,
 ) {
   if (choice.category === 'sucker' && choice.score >= 50) {
     return true;
@@ -319,13 +445,22 @@ function shouldComputerStopRolling(
     return true;
   }
 
-  return game.rollNumber >= 2 && choice.score >= 30;
+  if (
+    choice.category === 'smallStraight' &&
+    game.players[computerPlayerIndex].scorecard.largeStraight === null &&
+    scoreCategoryForScorecard(game.dice, 'largeStraight', game.players[computerPlayerIndex].scorecard) < 40
+  ) {
+    return game.rollNumber >= maxAvailableRolls(game);
+  }
+
+  return game.rollNumber >= 3 && choice.score >= strategy.stopScoreThreshold;
 }
 
 function shouldComputerBuyExtraRoll(
   game: GameState,
   choice: { category: ScoreCategory; priority: number; score: number },
   extraRollsBought: number,
+  strategy: ComputerStrategyConfig,
 ) {
   const computer = game.players[computerPlayerIndex];
   if (
@@ -342,45 +477,159 @@ function shouldComputerBuyExtraRoll(
     return true;
   }
 
-  return extraRollsBought === 0 && computer.suckerTokens > suckerTokenCosts.mulligan && choice.score < 18;
+  return extraRollsBought === 0 && computer.suckerTokens > suckerTokenCosts.mulligan && choice.score < strategy.extraRollMaxScore;
 }
 
 function shouldComputerUseMulligan(
   game: GameState,
   choice: { category: ScoreCategory; priority: number; score: number },
   mulligansUsed: number,
+  strategy: ComputerStrategyConfig,
 ) {
   const computer = game.players[computerPlayerIndex];
   if (!computer || computer.suckerTokens < suckerTokenCosts.mulligan || mulligansUsed > 0) {
     return false;
   }
 
-  return availableCategories(computer.scorecard).length > 5 && choice.score <= 8;
+  return availableCategories(computer.scorecard).length > 5 && choice.score <= strategy.mulliganMaxScore;
 }
 
-function mostCommonDie(dice: GameState['dice']) {
-  const counts = dice.reduce(
-    (nextCounts, die) => {
-      nextCounts[die] += 1;
-      return nextCounts;
-    },
-    { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } as Record<DieValue, number>,
-  );
+function chooseComputerHeldDice(game: GameState, strategy: ComputerStrategyConfig): GameState['held'] {
+  const computer = game.players[computerPlayerIndex];
+  const scorecard = computer.scorecard;
+  const dice = game.dice;
+  const openCategories = availableCategories(scorecard);
 
-  return dice.reduce(
-    (best, die) => (counts[die] > counts[best] || (counts[die] === counts[best] && die > best) ? die : best),
-    dice[0],
-  );
+  if (openCategories.includes('largeStraight')) {
+    const largeStraightHold = bestStraightHold(dice, 5);
+    if (countHeld(largeStraightHold) >= 4) {
+      return largeStraightHold;
+    }
+  }
+
+  if (openCategories.includes('smallStraight')) {
+    const smallStraightHold = bestStraightHold(dice, 4);
+    if (countHeld(smallStraightHold) >= 3) {
+      return smallStraightHold;
+    }
+  }
+
+  if (openCategories.includes('fullHouse')) {
+    const fullHouseHold = bestFullHouseHold(dice);
+    if (countHeld(fullHouseHold) >= 3) {
+      return fullHouseHold;
+    }
+  }
+
+  const faceToChase = bestFaceToChase(dice, scorecard, strategy);
+  return dice.map((die) => die === faceToChase) as GameState['held'];
+}
+
+function bestFaceToChase(
+  dice: GameState['dice'],
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+) {
+  const counts = countDice(dice);
+  return dice.reduce((best, die) => {
+    const bestScore = faceChaseValue(best, counts[best], scorecard, strategy);
+    const nextScore = faceChaseValue(die, counts[die], scorecard, strategy);
+    return nextScore > bestScore ? die : best;
+  }, dice[0]);
+}
+
+function faceChaseValue(
+  face: DieValue,
+  count: number,
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+) {
+  const upperCategory = upperCategoryForFace(face);
+  const upperOpen = scorecard[upperCategory] === null;
+  const upperValue = upperOpen
+    ? face * Math.min(4, count + 1) * (upperBonusPressure(scorecard) ? strategy.upperPressureHoldMultiplier : 1)
+    : 0;
+  const kindValue =
+    (scorecard.sucker === null ? 18 : 0) +
+    (scorecard.fourOfAKind === null ? 8 : 0) +
+    (scorecard.threeOfAKind === null ? 4 : 0);
+  return count * 10 + face * 0.2 + upperValue + (count >= 2 ? kindValue : 0);
+}
+
+function bestStraightHold(dice: GameState['dice'], length: 4 | 5): GameState['held'] {
+  const runs = length === 4 ? straightRuns.small : straightRuns.large;
+  return runs
+    .map((run) => holdUniqueFaces(dice, run))
+    .sort((left, right) => countHeld(right) - countHeld(left))[0];
+}
+
+function bestFullHouseHold(dice: GameState['dice']): GameState['held'] {
+  const counts = countDice(dice);
+  const keepFaces = Object.entries(counts)
+    .filter(([, count]) => count >= 2)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 2)
+    .map(([face]) => Number(face) as DieValue);
+
+  if (keepFaces.length === 0) {
+    return [false, false, false, false, false];
+  }
+
+  return dice.map((die) => keepFaces.includes(die)) as GameState['held'];
+}
+
+function holdUniqueFaces(dice: GameState['dice'], faces: readonly DieValue[]): GameState['held'] {
+  const heldFaces = new Set<DieValue>();
+  return dice.map((die) => {
+    if (!faces.includes(die) || heldFaces.has(die)) {
+      return false;
+    }
+
+    heldFaces.add(die);
+    return true;
+  }) as GameState['held'];
+}
+
+function countHeld(held: GameState['held']) {
+  return held.filter(Boolean).length;
 }
 
 function maxMatchingDice(dice: GameState['dice']) {
-  const counts = dice.reduce(
+  return Math.max(...Object.values(countDice(dice)));
+}
+
+function countDice(dice: GameState['dice']): Record<DieValue, number> {
+  return dice.reduce(
     (nextCounts, die) => {
       nextCounts[die] += 1;
       return nextCounts;
     },
     { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } as Record<DieValue, number>,
   );
+}
 
-  return Math.max(...Object.values(counts));
+const upperCategories = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'] as const;
+
+const straightRuns = {
+  small: [
+    [1, 2, 3, 4],
+    [2, 3, 4, 5],
+    [3, 4, 5, 6],
+  ],
+  large: [
+    [1, 2, 3, 4, 5],
+    [2, 3, 4, 5, 6],
+  ],
+} as const satisfies Record<string, readonly (readonly DieValue[])[]>;
+
+function isUpperCategory(category: ScoreCategory): category is (typeof upperCategories)[number] {
+  return upperCategories.includes(category as (typeof upperCategories)[number]);
+}
+
+function upperCategoryForFace(face: DieValue): (typeof upperCategories)[number] {
+  return upperCategories[face - 1];
+}
+
+function upperCategoryTarget(category: (typeof upperCategories)[number]) {
+  return (upperCategories.indexOf(category) + 1) * 3;
 }
