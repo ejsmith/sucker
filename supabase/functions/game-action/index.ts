@@ -720,7 +720,7 @@ async function scoreRemoteTurn(
   }
 
   const turnHeld = normalizeHeld(submittedHeld, state.held);
-  const turnIndex = countCompletedScores(state) + 1;
+  const turnIndex = await loadNextTurnIndex(admin, gameId);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus =
     !scratch && category !== 'sucker' && currentPlayer.scorecard.sucker !== null && isSuckerRoll(state.dice);
@@ -1056,6 +1056,22 @@ async function loadTurn(admin: DbClient, turnId: string): Promise<TurnRow> {
   return turn;
 }
 
+async function loadNextTurnIndex(admin: DbClient, gameId: string) {
+  const { data: latestTurn, error } = await admin
+    .from('turns')
+    .select('turn_index')
+    .eq('game_id', gameId)
+    .order('turn_index', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return (latestTurn?.turn_index ?? 0) + 1;
+}
+
 async function syncGamePlayers(admin: DbClient, gameId: string, state: GameState, complete: boolean) {
   for (const player of state.players) {
     await admin
@@ -1237,13 +1253,6 @@ function assertCurrentPlayer(state: GameState, actorId: string) {
   if (state.players[state.currentPlayerIndex]?.id !== actorId) {
     throw new Error('It is not your turn.');
   }
-}
-
-function countCompletedScores(state: GameState): number {
-  return state.players.reduce(
-    (total, player) => total + scoreCategories.filter((category) => player.scorecard[category] !== null).length,
-    0,
-  );
 }
 
 async function writeCompletedGameStats(admin: DbClient, gameId: string, players: Player[], winnerId: string | null) {
