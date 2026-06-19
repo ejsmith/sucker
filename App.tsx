@@ -69,6 +69,13 @@ import {
   wait,
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
+import {
+  buildExtraRollActionPayload,
+  buildRollActionPayload,
+  buildSuckerPunchActionPayload,
+  type SuckerStatAction,
+  type SuckerStatTurn,
+} from './shared/stats';
 import Svg, { Circle } from 'react-native-svg';
 
 type ScoreFlyDie = {
@@ -413,6 +420,8 @@ function LocalGameScreen({
   const scoreBoxRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
   const opponentScoreRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
   const recordedComputerGameIds = useRef<Set<string>>(new Set());
+  const localSuckerStatActions = useRef<SuckerStatAction[]>([]);
+  const localSuckerStatTurns = useRef<SuckerStatTurn[]>([]);
   const lastRemotePunchNoticeId = useRef<string | null>(null);
   const lastRemoteBlockNoticeId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
@@ -703,7 +712,7 @@ function LocalGameScreen({
     }
 
     recordedComputerGameIds.current.add(game.id);
-    void recordComputerGameResult(game)
+    void recordComputerGameResult(game, localSuckerStatActions.current, localSuckerStatTurns.current)
       .then((nextStats) => {
         if (nextStats) {
           setComputerStats(nextStats);
@@ -744,6 +753,37 @@ function LocalGameScreen({
     }
   }
 
+  function recordLocalAction(action_type: SuckerStatAction['action_type'], actor_id: string, payload?: unknown) {
+    localSuckerStatActions.current.push({ action_type, actor_id, payload });
+  }
+
+  function recordLocalScoreTurn(result: ComputerTurnResult) {
+    const animation = result.scoreAnimation;
+    if (!animation) {
+      return;
+    }
+
+    const scorer = result.game.players[animation.scorerIndex];
+    if (!scorer) {
+      return;
+    }
+
+    localSuckerStatTurns.current.push({
+      category: animation.category,
+      player_id: scorer.id,
+      score: animation.score,
+      status: result.game.phase === 'complete' ? 'finalized' : (result.pendingTurn?.status ?? 'submitted'),
+      turn_id: result.pendingTurn?.id ?? `local-turn-${localSuckerStatTurns.current.length + 1}`,
+      turn_index: localSuckerStatTurns.current.length + 1,
+    });
+  }
+
+  function updateLocalScoreTurnStatus(turnId: string, status: NonNullable<SuckerStatTurn['status']>) {
+    localSuckerStatTurns.current = localSuckerStatTurns.current.map((turn) =>
+      turn.turn_id === turnId ? { ...turn, status } : turn,
+    );
+  }
+
   async function handleRoll() {
     if (!canRoll) {
       return;
@@ -763,7 +803,9 @@ function LocalGameScreen({
       return;
     }
 
-    await animateRollTo(rollCurrentDice(game));
+    const nextGame = rollCurrentDice(game);
+    recordLocalAction('roll', homePlayer.id, buildRollActionPayload(nextGame.dice));
+    await animateRollTo(nextGame);
   }
 
   async function animateRemoteRoll(nextGamePromise: Promise<ReturnType<typeof createGame> | null>) {
@@ -973,6 +1015,15 @@ function LocalGameScreen({
   }
 
   function finishComputerTurnResult(result: ComputerTurnResult) {
+    recordLocalScoreTurn(result);
+    if (result.pendingTurn?.status === 'punched' && result.pendingTurn.puncherIndex !== undefined) {
+      const puncher = result.game.players[result.pendingTurn.puncherIndex];
+      const scorer = result.game.players[result.pendingTurn.scorerIndex];
+      if (puncher && scorer) {
+        recordLocalAction('sucker_punch', puncher.id, buildSuckerPunchActionPayload(scorer.id));
+        updateLocalScoreTurnStatus(result.pendingTurn.id, 'punched');
+      }
+    }
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
     if (result.pendingTurn?.status === 'punched' && result.pendingTurn.scorerIndex === myPlayerIndex) {
@@ -1128,6 +1179,7 @@ function LocalGameScreen({
       return;
     }
 
+    recordLocalAction('extra_roll', homePlayer.id, buildExtraRollActionPayload(game, homePlayer.id));
     setLocalGame(purchaseExtraRoll(game));
   }
 
@@ -1139,6 +1191,7 @@ function LocalGameScreen({
     setIsTokenMenuOpen(false);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
+    recordLocalAction('mulligan', homePlayer.id);
     setLocalGame(mulliganCurrentTurn(game));
   }
 
@@ -1167,6 +1220,14 @@ function LocalGameScreen({
     }
 
     setLocalGame(scratchScoreBox(game, category));
+    localSuckerStatTurns.current.push({
+      category,
+      player_id: currentPlayer.id,
+      score: 0,
+      status: 'submitted',
+      turn_id: `local-turn-${localSuckerStatTurns.current.length + 1}`,
+      turn_index: localSuckerStatTurns.current.length + 1,
+    });
     setLocalPendingTurn(null);
   }
 
@@ -1175,9 +1236,15 @@ function LocalGameScreen({
       setIsTokenMenuOpen(false);
       setSelectedCategory(null);
       setIsChoosingSuckerDeal(false);
+      const scorer = game.players[pendingTurn.scorerIndex];
+      if (scorer) {
+        recordLocalAction('sucker_punch', homePlayer.id, buildSuckerPunchActionPayload(scorer.id));
+      }
       const punched = applyLocalSuckerPunch(game, pendingTurn, myPlayerIndex);
+      updateLocalScoreTurnStatus(pendingTurn.id, 'punched');
       if (shouldComputerUseSuckerBlocker(punched.game, punched.pendingTurn)) {
         const blockedGame = applyLocalSuckerBlocker(punched.game, punched.pendingTurn, computerPlayerIndex);
+        updateLocalScoreTurnStatus(pendingTurn.id, 'blocked');
         setLocalGame(blockedGame);
         setLocalPendingTurn(null);
         setShowSuckerBlockedNotice(true);
@@ -1209,7 +1276,9 @@ function LocalGameScreen({
       setIsTokenMenuOpen(false);
       setSelectedCategory(null);
       setIsChoosingSuckerDeal(false);
+      recordLocalAction('sucker_blocker', homePlayer.id);
       const blockedGame = applyLocalSuckerBlocker(game, pendingTurn, myPlayerIndex);
+      updateLocalScoreTurnStatus(pendingTurn.id, 'blocked');
       setLocalGame(blockedGame);
       setLocalPendingTurn(null);
       setShowSuckerPunchNotice(false);
@@ -1244,7 +1313,14 @@ function LocalGameScreen({
 
     setLocalPendingTurn(null);
     recordedComputerGameIds.current.clear();
+    localSuckerStatActions.current = [];
+    localSuckerStatTurns.current = [];
     setLocalGame(createGame(playerNames));
+  }
+
+  function handleCloseGameOver() {
+    setDismissedGameOverId(game.id);
+    onExit?.();
   }
 
   function handleDismissGameOver() {
@@ -1253,6 +1329,7 @@ function LocalGameScreen({
 
   function commitLocalScore(category: ScoreCategory) {
     const result = scoreLocalTurn(game, category);
+    recordLocalScoreTurn(result);
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
   }
@@ -1868,6 +1945,13 @@ function LocalGameScreen({
         {gameOverVisible && (
           <View style={styles.gameOverOverlay}>
             <View style={styles.gameOverPanel}>
+              <Pressable
+                accessibilityLabel="Close game over"
+                onPress={handleCloseGameOver}
+                style={({ pressed }) => [styles.gameOverCloseButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.gameOverCloseText}>×</Text>
+              </Pressable>
               <Text style={styles.gameOverEyebrow}>Game Over</Text>
               <Text style={styles.gameOverTitle}>{gameOverTitle}</Text>
               <View style={styles.gameOverScores}>
@@ -2941,6 +3025,30 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 0,
     width: '100%',
+  },
+  gameOverCloseButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 18,
+    borderWidth: 2,
+    height: 36,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    width: 36,
+    zIndex: 2,
+  },
+  gameOverCloseText: {
+    color: '#FFD329',
+    fontSize: 24,
+    fontWeight: '900',
+    lineHeight: 28,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
   },
   gameOverEyebrow: {
     color: '#FFF3C2',

@@ -40,6 +40,10 @@ supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
 
 Never put the service role key in the mobile app.
 
+The `game-action` function also sends Expo push notifications directly through
+Expo's push API after successful server-authoritative game actions. No extra
+secret is required for the current Expo push flow.
+
 ## App Environment
 
 Copy `.env.example` to `.env.local`:
@@ -86,7 +90,7 @@ Implemented:
 - Profile update helper.
 - Remote game list/get helpers.
 - Realtime subscription helper for `games`.
-- Push token registration helper.
+- Push token registration helper and Edge Function push sending.
 - Profile search helper.
 - Invite-code helpers.
 - Head-to-head stat lookup helper.
@@ -95,8 +99,10 @@ Implemented:
   - creating invite-code games
   - accepting invite codes
   - rolling dice
-  - toggling held dice
+  - accepting local held dice when rolls/scores are submitted
   - scoring a category
+  - scratching a category for a Sucker Token
+  - Extra Roll
   - Mulligan
   - Sucker Punch
   - Sucker Blocker
@@ -105,27 +111,34 @@ Implemented:
 
 Reserved for the next slice:
 
-- Friend search and invitation UI.
-- Auth/profile screens.
-- Replacing local demo game state in `App.tsx` with remote game state.
-- Push notification sending from an Edge Function after state changes.
+- Production universal/app-link hosting for `sucker.games/invite/<INVITE_CODE>`.
+- Native device QA for foreground/background push delivery.
+- App Store and Play Store build setup.
 
 ## Email Code Sign-In
 
-The app is wired for Supabase email OTP codes with `verifyOtp`. Hosted Supabase
-projects on the default/free email provider may still send the stock magic-link
-email because template edits are blocked by Supabase on that provider.
+The app is wired for Supabase email OTP codes with `verifyOtp`. To make hosted
+emails show a code instead of the stock magic-link copy:
 
-To make emails show a code, configure a custom SMTP provider in Supabase, then
-use the magic-link template from `supabase/templates/sign-in-code.html`. The
-important variable is:
+1. Configure a custom SMTP provider in Supabase Auth.
+2. Open Supabase Dashboard -> Authentication -> Emails -> Magic Link.
+3. Set the subject to `Your Sucker! sign-in code`.
+4. Paste the contents of `supabase/templates/sign-in-code.html`.
+
+The important template variable is:
 
 ```html
 {{ .Token }}
 ```
 
 Keep `{{ .ConfirmationURL }}` in the template as a fallback for users who prefer
-tapping a link.
+tapping a link. The app accepts both code entry and the fallback auth callback.
+
+Hosted redirect allow-list values should include:
+
+- `sucker://auth/callback`
+- `https://sucker.games/auth/callback`
+- local Expo/web development URLs as needed
 
 ## App Store Build Path
 

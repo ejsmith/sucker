@@ -1,8 +1,13 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { computerPlayerIndex, shouldComputerUseSuckerPunch } = require('../.build/src/game/computer');
-const { createGame } = require('../.build/src/game');
+const {
+  computerPlayerIndex,
+  defaultComputerStrategy,
+  playComputerTurn,
+  shouldComputerUseSuckerPunch,
+} = require('../.build/src/game/computer');
+const { createGame, startingSuckerTokens } = require('../.build/src/game');
 const {
   createComputerStrategyCandidates,
   runComputerStrategyTournament,
@@ -17,8 +22,8 @@ test('computer strategy clears a strong 1000-game average', () => {
   const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
 
   assert.equal(result.gameCount, 1000);
-  assert.equal(Number(result.averageScore.toFixed(3)), 286.091);
-  assert.equal(result.lowScore, 129);
+  assert.equal(Number(result.averageScore.toFixed(3)), 278.217);
+  assert.equal(result.lowScore, 121);
   assert.equal(result.highScore, 534);
 });
 
@@ -56,6 +61,53 @@ test('computer can sucker punch late comeback swings', () => {
   const game = createLateSubmittedPlayerTurn('largeStraight', 40);
 
   assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40)), true);
+});
+
+test('computer takes a cheap sucker deal instead of early low chance', () => {
+  const noTokenSpendStrategy = {
+    ...defaultComputerStrategy,
+    extraRollMaxScore: -1,
+    mulliganMaxScore: -1,
+  };
+  const game = {
+    ...createGame(['Player', 'Computer']),
+    currentPlayerIndex: computerPlayerIndex,
+    dice: [1, 1, 2, 3, 5],
+    phase: 'scoring',
+    rollNumber: 4,
+  };
+
+  const result = playComputerTurn(game, null, Math.random, noTokenSpendStrategy);
+  const computer = result.game.players[computerPlayerIndex];
+
+  assert.equal(computer.scorecard.ones, 0);
+  assert.equal(computer.scorecard.chance, null);
+  assert.equal(computer.suckerTokens, startingSuckerTokens + 1);
+  assert.equal(result.pendingTurn, null);
+});
+
+test('computer gains a token from a cheap sucker deal when starting below full', () => {
+  const noTokenSpendStrategy = {
+    ...defaultComputerStrategy,
+    extraRollMaxScore: -1,
+    mulliganMaxScore: -1,
+  };
+  const game = {
+    ...createGame(['Player', 'Computer']),
+    currentPlayerIndex: computerPlayerIndex,
+    dice: [1, 1, 2, 3, 5],
+    phase: 'scoring',
+    players: createGame(['Player', 'Computer']).players.map((player, index) =>
+      index === computerPlayerIndex ? { ...player, suckerTokens: 7 } : player,
+    ),
+    rollNumber: 4,
+  };
+
+  const result = playComputerTurn(game, null, Math.random, noTokenSpendStrategy);
+  const computer = result.game.players[computerPlayerIndex];
+
+  assert.equal(computer.scorecard.ones, 0);
+  assert.equal(computer.suckerTokens, 8);
 });
 
 function createSubmittedPlayerTurn(category, score) {

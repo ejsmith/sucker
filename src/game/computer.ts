@@ -8,6 +8,7 @@ import {
   scoreCategories,
   scoreCategoryForScorecard,
   scoreTurn,
+  scratchScoreBox,
   suckerTokenCosts,
   totalScore,
   type DieValue,
@@ -52,6 +53,9 @@ export type ComputerStrategyConfig = {
   suckerPunchComebackMinScore: number;
   suckerPunchMinScore: number;
   suckerPunchReserveTokens: number;
+  suckerDealChanceMaxScore: number;
+  suckerDealMaxSacrificeScore: number;
+  suckerDealMinOpenCategories: number;
   stopScoreThreshold: number;
   suckerCategoryBonus: number;
   upperPressureHoldMultiplier: number;
@@ -75,6 +79,9 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
   suckerPunchComebackMinScore: 30,
   suckerPunchMinScore: 50,
   suckerPunchReserveTokens: 0,
+  suckerDealChanceMaxScore: 20,
+  suckerDealMaxSacrificeScore: 3,
+  suckerDealMinOpenCategories: 8,
   stopScoreThreshold: 35,
   suckerCategoryBonus: 8,
   upperPressureHoldMultiplier: 1.5,
@@ -110,6 +117,23 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
       dice: game.dice,
       hadSuckerBonus,
       score,
+      scorerIndex,
+    },
+  };
+}
+
+export function scratchLocalTurn(game: GameState, category: ScoreCategory): ComputerTurnResult {
+  const scorerIndex = game.currentPlayerIndex;
+  const nextGame = scratchScoreBox(game, category);
+
+  return {
+    game: nextGame,
+    pendingTurn: null,
+    scoreAnimation: {
+      category,
+      dice: game.dice,
+      hadSuckerBonus: false,
+      score: 0,
       scorerIndex,
     },
   };
@@ -293,6 +317,10 @@ export function playAutomatedTurn(
 
     const computer = nextGame.players[automatedPlayerIndex];
     const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard, strategy);
+    const suckerDealCategory = chooseSuckerDealCategory(nextGame, automatedPlayerIndex, choice, strategy);
+    if (suckerDealCategory) {
+      break;
+    }
 
     if (shouldComputerUseMulligan(nextGame, automatedPlayerIndex, choice, mulligansUsed, strategy)) {
       nextGame = mulliganCurrentTurn(nextGame);
@@ -309,16 +337,57 @@ export function playAutomatedTurn(
     break;
   }
 
-  const category = chooseComputerCategory(nextGame.dice, nextGame.players[automatedPlayerIndex].scorecard, strategy);
-  return scoreLocalTurn(nextGame, category);
+  const action = chooseComputerFinalAction(nextGame, automatedPlayerIndex, strategy);
+  return action.type === 'scratch'
+    ? scratchLocalTurn(nextGame, action.category)
+    : scoreLocalTurn(nextGame, action.category);
 }
 
-function chooseComputerCategory(
-  dice: GameState['dice'],
-  scorecard: GameState['players'][number]['scorecard'],
+function chooseComputerFinalAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+): { category: ScoreCategory; type: 'score' | 'scratch' } {
+  const scorecard = game.players[automatedPlayerIndex].scorecard;
+  const choice = getBestComputerCategoryChoice(game.dice, scorecard, strategy);
+  const suckerDealCategory = chooseSuckerDealCategory(game, automatedPlayerIndex, choice, strategy);
+
+  if (suckerDealCategory) {
+    return { category: suckerDealCategory, type: 'scratch' };
+  }
+
+  return { category: choice.category, type: 'score' };
+}
+
+function chooseSuckerDealCategory(
+  game: GameState,
+  automatedPlayerIndex: number,
+  choice: ComputerCategoryChoice,
   strategy: ComputerStrategyConfig,
 ) {
-  return getBestComputerCategoryChoice(dice, scorecard, strategy).category;
+  const scorecard = game.players[automatedPlayerIndex].scorecard;
+  if (
+    choice.category !== 'chance' ||
+    choice.score > strategy.suckerDealChanceMaxScore ||
+    availableCategories(scorecard).length < strategy.suckerDealMinOpenCategories
+  ) {
+    return null;
+  }
+
+  return (
+    suckerDealCategories
+      .filter((category) => scorecard[category] === null)
+      .map((category) => ({
+        category,
+        score: scoreCategoryForScorecard(game.dice, category, scorecard),
+      }))
+      .filter((candidate) => candidate.score <= strategy.suckerDealMaxSacrificeScore)
+      .sort(
+        (left, right) =>
+          left.score - right.score ||
+          suckerDealCategories.indexOf(left.category) - suckerDealCategories.indexOf(right.category),
+      )[0]?.category ?? null
+  );
 }
 
 type ComputerCategoryChoice = {
@@ -668,6 +737,7 @@ function countDice(dice: GameState['dice']): Record<DieValue, number> {
 }
 
 const upperCategories = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'] as const;
+const suckerDealCategories = ['ones', 'twos', 'threes'] as const;
 
 const straightRuns = {
   small: [

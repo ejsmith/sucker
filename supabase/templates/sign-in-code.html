@@ -1,11 +1,29 @@
-<h2>Your Sucker! sign-in code</h2>
+<div style="font-family: Arial, sans-serif; line-height: 1.4; max-width: 520px">
+  <h2 style="margin: 0 0 16px">Your Sucker! sign-in code</h2>
 
-<p>Enter this code in Sucker! to finish signing in:</p>
+  <p style="margin: 0 0 16px">Enter this code in Sucker! to finish signing in:</p>
 
-<p style="font-size: 32px; font-weight: 800; letter-spacing: 6px; margin: 24px 0">{{ .Token }}</p>
+  <p
+    style="
+      background: #fff2b3;
+      border: 2px solid #d90000;
+      border-radius: 12px;
+      color: #250000;
+      display: inline-block;
+      font-size: 36px;
+      font-weight: 900;
+      letter-spacing: 8px;
+      margin: 8px 0 20px;
+      padding: 14px 18px;
+    "
+  >
+    {{ .Token }}
+  </p>
 
-<p>This code expires soon and can only be used once.</p>
+  <p style="margin: 0 0 16px">This code expires soon and can only be used once.</p>
 
-<p>If the code does not work, you can also use this sign-in link:</p>
-
-<p><a href="{{ .ConfirmationURL }}">Sign in to Sucker!</a></p>
+  <p style="color: #6b3b00; font-size: 13px; margin: 0">
+    If the code does not work, use this fallback link:
+    <a href="{{ .ConfirmationURL }}">Sign in to Sucker!</a>
+  </p>
+</div>

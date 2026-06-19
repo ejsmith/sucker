@@ -187,6 +187,12 @@ export type Database = {
       head_to_head_stats: {
         Row: {
           average_score: number;
+          average_sucker_tokens_leftover: number;
+          average_sucker_tokens_spent: number;
+          blowout_losses: number;
+          blowout_wins: number;
+          comeback_wins: number;
+          extra_rolls_used: number;
           forced_rerolls: number;
           four_of_a_kind_games: number;
           full_house_games: number;
@@ -200,8 +206,12 @@ export type Database = {
           small_straight_games: number;
           sucker_blockers_used: number;
           sucker_games: number;
+          sucker_hunt_misses: number;
+          sucker_hunts: number;
           sucker_punches_received: number;
           sucker_punches_used: number;
+          sucker_tokens_leftover: number;
+          sucker_tokens_spent: number;
           three_of_a_kind_games: number;
           total_score: number;
           upper_bonus_games: number;
@@ -214,6 +224,11 @@ export type Database = {
       computer_stats: {
         Row: {
           average_score: number;
+          average_sucker_tokens_leftover: number;
+          average_sucker_tokens_spent: number;
+          blowout_losses: number;
+          blowout_wins: number;
+          comeback_wins: number;
           computer_average_score: number;
           computer_four_of_a_kind_games: number;
           computer_full_house_games: number;
@@ -224,15 +239,23 @@ export type Database = {
           computer_three_of_a_kind_games: number;
           computer_total_score: number;
           computer_upper_bonus_games: number;
+          extra_rolls_used: number;
           four_of_a_kind_games: number;
           full_house_games: number;
           games_played: number;
           highest_score: number;
           large_straight_games: number;
           losses: number;
+          mulligans_used: number;
           profile_id: string;
           small_straight_games: number;
           sucker_games: number;
+          sucker_blockers_used: number;
+          sucker_punches_used: number;
+          sucker_hunt_misses: number;
+          sucker_hunts: number;
+          sucker_tokens_leftover: number;
+          sucker_tokens_spent: number;
           three_of_a_kind_games: number;
           total_score: number;
           updated_at: string;
@@ -241,6 +264,11 @@ export type Database = {
         };
         Insert: {
           average_score?: number;
+          average_sucker_tokens_leftover?: number;
+          average_sucker_tokens_spent?: number;
+          blowout_losses?: number;
+          blowout_wins?: number;
+          comeback_wins?: number;
           computer_average_score?: number;
           computer_four_of_a_kind_games?: number;
           computer_full_house_games?: number;
@@ -251,15 +279,23 @@ export type Database = {
           computer_three_of_a_kind_games?: number;
           computer_total_score?: number;
           computer_upper_bonus_games?: number;
+          extra_rolls_used?: number;
           four_of_a_kind_games?: number;
           full_house_games?: number;
           games_played?: number;
           highest_score?: number;
           large_straight_games?: number;
           losses?: number;
+          mulligans_used?: number;
           profile_id: string;
           small_straight_games?: number;
           sucker_games?: number;
+          sucker_blockers_used?: number;
+          sucker_punches_used?: number;
+          sucker_hunt_misses?: number;
+          sucker_hunts?: number;
+          sucker_tokens_leftover?: number;
+          sucker_tokens_spent?: number;
           three_of_a_kind_games?: number;
           total_score?: number;
           upper_bonus_games?: number;
@@ -267,6 +303,11 @@ export type Database = {
         };
         Update: {
           average_score?: number;
+          average_sucker_tokens_leftover?: number;
+          average_sucker_tokens_spent?: number;
+          blowout_losses?: number;
+          blowout_wins?: number;
+          comeback_wins?: number;
           computer_average_score?: number;
           computer_four_of_a_kind_games?: number;
           computer_full_house_games?: number;
@@ -277,14 +318,22 @@ export type Database = {
           computer_three_of_a_kind_games?: number;
           computer_total_score?: number;
           computer_upper_bonus_games?: number;
+          extra_rolls_used?: number;
           four_of_a_kind_games?: number;
           full_house_games?: number;
           games_played?: number;
           highest_score?: number;
           large_straight_games?: number;
           losses?: number;
+          mulligans_used?: number;
           small_straight_games?: number;
           sucker_games?: number;
+          sucker_blockers_used?: number;
+          sucker_punches_used?: number;
+          sucker_hunt_misses?: number;
+          sucker_hunts?: number;
+          sucker_tokens_leftover?: number;
+          sucker_tokens_spent?: number;
           three_of_a_kind_games?: number;
           total_score?: number;
           upper_bonus_games?: number;
@@ -294,6 +343,12 @@ export type Database = {
       head_to_head_stat_rates: {
         Row: {
           average_score: number;
+          average_sucker_tokens_leftover: number;
+          average_sucker_tokens_spent: number;
+          blowout_losses: number;
+          blowout_wins: number;
+          comeback_wins: number;
+          extra_rolls_used: number;
           forced_rerolls: number;
           four_of_a_kind_pct: number;
           full_house_pct: number;
@@ -306,8 +361,11 @@ export type Database = {
           player_id: string;
           small_straight_pct: number;
           sucker_blockers_used: number;
+          sucker_hunt_misses: number;
+          sucker_hunts: number;
           sucker_pct: number;
           sucker_punches_received: number;
+          sucker_punches_used: number;
           three_of_a_kind_pct: number;
           upper_bonus_pct: number;
           wins: number;
@@ -328,6 +386,9 @@ export type Database = {
           computer_scored_three_of_a_kind: boolean;
           computer_score: number;
           computer_upper_bonus_awarded: boolean;
+          comeback_wins: number;
+          extra_rolls_used: number;
+          mulligans_used: number;
           player_score: number;
           scored_four_of_a_kind: boolean;
           scored_full_house: boolean;
@@ -335,6 +396,12 @@ export type Database = {
           scored_small_straight: boolean;
           scored_sucker: boolean;
           scored_three_of_a_kind: boolean;
+          sucker_blockers_used: number;
+          sucker_hunt_misses: number;
+          sucker_hunts: number;
+          sucker_punches_used: number;
+          sucker_tokens_leftover: number;
+          sucker_tokens_spent: number;
           upper_bonus_awarded: boolean;
         };
         Returns: Database['public']['Tables']['computer_stats']['Row'];

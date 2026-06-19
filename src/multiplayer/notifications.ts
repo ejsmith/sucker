@@ -4,6 +4,16 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
 export async function registerPushToken(profileId: string) {
   if (!Device.isDevice || (Platform.OS !== 'ios' && Platform.OS !== 'android')) {
     return null;

@@ -34,7 +34,7 @@ export function MultiplayerLobby({
   onPlayLocalDemo: () => void;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
-  const { endSession, error, isLoading, profile, saveProfile, sendSignInLink, session, verifySignInCode } =
+  const { endSession, error, isLoading, profile, saveProfile, sendSignInCode, session, verifySignInCode } =
     useMultiplayerSession();
   const [email, setEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -132,10 +132,10 @@ export function MultiplayerLobby({
   async function handleSendCode() {
     const normalizedEmail = email.trim();
     await runAction(async () => {
-      await sendSignInLink(normalizedEmail);
+      await sendSignInCode(normalizedEmail);
       setSentCodeEmail(normalizedEmail);
       setLoginCode('');
-      setMessage('Check your email. Enter the code if shown, or use the sign-in link.');
+      setMessage('Check your email for your 6-digit Sucker! code.');
     });
   }
 
@@ -597,6 +597,26 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
           Straights {formatPct(stats.small_straight_games + stats.large_straight_games, stats.games_played)}
         </Text>
       </View>
+      <View style={lobbyStyles.statRow}>
+        <Text style={lobbyStyles.statLine}>Extra rolls {stats.extra_rolls_used ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>Mulligans {stats.mulligans_used ?? 0}</Text>
+      </View>
+      <View style={lobbyStyles.statRow}>
+        <Text style={lobbyStyles.statLine}>Blowouts {stats.blowout_wins ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>Comebacks {stats.comeback_wins ?? 0}</Text>
+      </View>
+      <View style={lobbyStyles.statRow}>
+        <Text style={lobbyStyles.statLine}>Punches {stats.sucker_punches_used ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>Blocks {stats.sucker_blockers_used ?? 0}</Text>
+      </View>
+      <View style={lobbyStyles.statRow}>
+        <Text style={lobbyStyles.statLine}>Hunts {stats.sucker_hunts ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>Misses {stats.sucker_hunt_misses ?? 0}</Text>
+      </View>
+      <View style={lobbyStyles.statRow}>
+        <Text style={lobbyStyles.statLine}>Avg used {formatNumber(stats.average_sucker_tokens_spent ?? 0)}</Text>
+        <Text style={lobbyStyles.statLine}>Avg left {formatNumber(stats.average_sucker_tokens_leftover ?? 0)}</Text>
+      </View>
     </View>
   );
 }
@@ -664,6 +684,10 @@ function formatPct(count: number, gamesPlayed: number) {
   }
 
   return `${Math.round((count / gamesPlayed) * 100)}%`;
+}
+
+function formatNumber(value: number) {
+  return Number(value).toFixed(2).replace(/\.00$/, '');
 }
 
 function getInviteLink(inviteCode: string) {

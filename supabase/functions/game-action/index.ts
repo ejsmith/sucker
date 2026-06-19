@@ -20,11 +20,34 @@ import {
   totalScore,
   upperBonus,
 } from '../_shared/game.ts';
+import {
+  buildCompletedPlayerStats,
+  buildExtraRollActionPayload,
+  buildRollActionPayload,
+  buildSuckerPunchActionPayload,
+  type SuckerStatAction,
+  type SuckerStatTurn,
+} from '../_shared/stats.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 type ActionType = Database['public']['Tables']['turn_actions']['Insert']['action_type'];
+type ActionResult = {
+  game?: GameRow;
+  inviteCode?: string;
+  notificationProfileIds?: string[];
+};
+type NotificationContent = {
+  body: string;
+  title: string;
+};
+type PushTokenRow = Pick<Database['public']['Tables']['push_tokens']['Row'], 'expo_push_token' | 'profile_id'>;
+type EdgeRuntimeGlobal = typeof globalThis & {
+  EdgeRuntime?: {
+    waitUntil: (promise: Promise<unknown>) => void;
+  };
+};
 
 type Action =
   | { type: 'create_game'; opponentProfileId: string }
@@ -48,13 +71,6 @@ type Action =
   | { type: 'mulligan'; gameId: string }
   | { type: 'sucker_punch'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
-
-type ActionResult = {
-  game: GameRow;
-  dice?: Dice;
-  inviteCode?: string;
-  notificationProfileIds?: string[];
-};
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -90,7 +106,7 @@ Deno.serve(async (request) => {
     }
 
     const result = await applyAction(admin, user.id, action);
-    await sendActionNotifications(admin, user.id, action, result);
+    queueActionNotifications(admin, user.id, action, result);
     return json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected multiplayer error';
@@ -107,10 +123,22 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
     case 'accept_invite':
       return acceptInvite(admin, actorId, action.inviteCode);
     case 'roll':
-      return mutateGame(admin, actorId, action.gameId, action.type, (state) => rollGame(state, actorId, action.held));
+      return mutateGame(
+        admin,
+        actorId,
+        action.gameId,
+        action.type,
+        (state) => rollGame(state, actorId, action.held),
+        (_state, nextState) => buildRollActionPayload(nextState.dice),
+      );
     case 'extra_roll':
-      return mutateGame(admin, actorId, action.gameId, action.type, (state) =>
-        purchaseExtraRoll(state, actorId, action.held),
+      return mutateGame(
+        admin,
+        actorId,
+        action.gameId,
+        action.type,
+        (state) => purchaseExtraRoll(state, actorId, action.held),
+        (state) => buildExtraRollActionPayload(state, actorId),
       );
     case 'score_category':
       return scoreRemoteTurn(admin, actorId, action.gameId, action.category, false, action.held);
@@ -129,74 +157,235 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
   }
 }
 
-async function sendActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
-  const profileIds = [...new Set(result.notificationProfileIds ?? [])].filter((profileId) => profileId !== actorId);
-  if (profileIds.length === 0) {
+function queueActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
+  const task = sendActionNotifications(admin, actorId, action, result).catch((notificationError) => {
+    console.error('Unable to send action notifications', notificationError);
+  });
+  const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
+
+  if (edgeRuntime) {
+    edgeRuntime.waitUntil(task);
     return;
   }
 
-  const { data: tokens, error } = await admin
+  void task;
+}
+
+async function sendActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
+  const game = result.game;
+  const profileIds = result.notificationProfileIds?.filter((profileId) => profileId !== actorId);
+  if (!game || !profileIds?.length) {
+    return;
+  }
+
+  const uniqueProfileIds = [...new Set(profileIds)];
+  const { data: pushTokens, error } = await admin
     .from('push_tokens')
     .select('expo_push_token, profile_id')
-    .in('profile_id', profileIds);
+    .in('profile_id', uniqueProfileIds);
 
   if (error) {
-    console.warn('Unable to load push tokens', error);
+    console.error('Unable to load push tokens', error);
     return;
   }
-  if (!tokens || tokens.length === 0) {
+  if (!pushTokens?.length) {
     return;
   }
 
-  const messages = tokens.map((token) => ({
-    body: notificationBody(action, result.game),
-    data: { gameId: result.game.id },
-    sound: 'default',
-    title: 'Sucker!',
-    to: token.expo_push_token,
-  }));
-
-  try {
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      body: JSON.stringify(messages),
-      headers: {
-        Accept: 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      console.warn('Expo push request failed', response.status, await response.text());
+  const latestTurn = game.last_turn_id
+    ? await loadTurn(admin, game.last_turn_id).catch((turnError) => {
+        console.error('Unable to load latest turn for notification', turnError);
+        return null;
+      })
+    : null;
+  const tokens = pushTokens as PushTokenRow[];
+  const messages = tokens.flatMap((pushToken) => {
+    const content = buildNotificationContent(action, game, latestTurn, actorId, pushToken.profile_id);
+    if (!content) {
+      return [];
     }
-  } catch (pushError) {
-    console.warn('Unable to send push notifications', pushError);
+
+    return [
+      {
+        body: content.body,
+        data: {
+          actionType: action.type,
+          gameId: game.id,
+        },
+        sound: 'default',
+        title: content.title,
+        to: pushToken.expo_push_token,
+      },
+    ];
+  });
+
+  if (!messages.length) {
+    return;
+  }
+
+  for (const chunk of chunkArray(messages, 100)) {
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        body: JSON.stringify(chunk),
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        console.error('Expo push send failed', response.status, await response.text());
+      }
+    } catch (pushError) {
+      console.error('Expo push send failed', pushError);
+    }
   }
 }
 
-function notificationBody(action: Action, game: GameRow) {
+function buildNotificationContent(
+  action: Action,
+  game: GameRow,
+  latestTurn: TurnRow | null,
+  actorId: string,
+  recipientId: string,
+): NotificationContent | null {
+  const actor = game.state.players.find((player) => player.id === actorId);
+  const actorName = actor?.name ?? 'Your opponent';
+
+  if (game.status === 'complete') {
+    return buildGameOverNotification(game, recipientId);
+  }
+
   switch (action.type) {
     case 'create_game':
-      return 'A friend started a game with you.';
+      return {
+        body: `${actorName} started a game with you.`,
+        title: 'New Sucker! game',
+      };
     case 'accept_invite':
-      return 'Your invite was accepted.';
+      return {
+        body: `${actorName} joined your Sucker! game.`,
+        title: 'Invite accepted',
+      };
     case 'score_category':
     case 'scratch_category':
-    case 'roll':
-    case 'extra_roll':
-      return game.status === 'complete' ? 'Your game is complete.' : 'It is your turn.';
+      return buildTurnSubmittedNotification(action, actorName, latestTurn);
     case 'sucker_punch':
-      return 'You got Sucker Punched.';
+      return {
+        body: `${actorName} forced you to replay your last turn.`,
+        title: 'You got Sucker Punched!',
+      };
     case 'sucker_blocker':
-      return 'Your Sucker Punch was blocked.';
-    case 'create_invite':
-    case 'pass_response':
-    case 'mulligan':
-      return 'Your game was updated.';
+      return {
+        body: `${actorName} blocked your Sucker Punch.`,
+        title: 'Sucker Punch blocked!',
+      };
     default:
-      return assertNever(action);
+      return null;
   }
+}
+
+function buildTurnSubmittedNotification(
+  action: Extract<Action, { type: 'score_category' } | { type: 'scratch_category' }>,
+  actorName: string,
+  latestTurn: TurnRow | null,
+): NotificationContent {
+  if (latestTurn && isSuckerRoll(toDice(latestTurn.dice))) {
+    return {
+      body: `${actorName} rolled a SUCKER!`,
+      title: 'SUCKER!!',
+    };
+  }
+
+  if (action.type === 'scratch_category') {
+    return {
+      body: `${actorName} scratched ${formatScoreCategory(action.category)}.`,
+      title: 'Your turn',
+    };
+  }
+
+  const scoreText = latestTurn ? ` for ${latestTurn.score}` : '';
+  return {
+    body: `${actorName} played ${formatScoreCategory(action.category)}${scoreText}.`,
+    title: 'Your turn',
+  };
+}
+
+function buildGameOverNotification(game: GameRow, recipientId: string): NotificationContent {
+  const scores = game.state.players.map((player) => ({
+    player,
+    score: totalScore(player.scorecard),
+  }));
+  const topScore = Math.max(...scores.map((score) => score.score));
+  const winners = scores.filter((score) => score.score === topScore);
+  const recipientScore = scores.find((score) => score.player.id === recipientId)?.score ?? 0;
+
+  if (winners.length > 1) {
+    return {
+      body: `Final score: ${topScore}-${topScore}.`,
+      title: 'Game tied!',
+    };
+  }
+
+  const winner = winners[0];
+  if (winner.player.id === recipientId) {
+    return {
+      body: `Final score: ${winner.score}-${getOpponentScore(scores, recipientId)}.`,
+      title: 'You win!',
+    };
+  }
+
+  return {
+    body: `Final score: ${recipientScore}-${winner.score}.`,
+    title: `${winner.player.name} wins!`,
+  };
+}
+
+function getOpponentScore(scores: Array<{ player: Player; score: number }>, playerId: string) {
+  return scores.find((score) => score.player.id !== playerId)?.score ?? 0;
+}
+
+function formatScoreCategory(category: ScoreCategory) {
+  switch (category) {
+    case 'ones':
+      return 'Ones';
+    case 'twos':
+      return 'Twos';
+    case 'threes':
+      return 'Threes';
+    case 'fours':
+      return 'Fours';
+    case 'fives':
+      return 'Fives';
+    case 'sixes':
+      return 'Sixes';
+    case 'threeOfAKind':
+      return '3x';
+    case 'fourOfAKind':
+      return '4x';
+    case 'fullHouse':
+      return 'Full House';
+    case 'smallStraight':
+      return 'Small Straight';
+    case 'largeStraight':
+      return 'Large Straight';
+    case 'sucker':
+      return 'Sucker';
+    case 'chance':
+      return 'Chance';
+    default:
+      return assertNever(category);
+  }
+}
+
+function chunkArray<T>(items: T[], chunkSize: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
 }
 
 function toAction(value: unknown): Action {
@@ -485,6 +674,7 @@ async function mutateGame(
   gameId: string,
   actionType: ActionType,
   mutate: (state: GameState) => GameState,
+  createPayload: (state: GameState, nextState: GameState) => Record<string, unknown> = () => ({}),
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
   const nextState = mutate(game.state);
@@ -505,7 +695,7 @@ async function mutateGame(
   }
 
   await syncGamePlayers(admin, gameId, nextState, nextState.phase === 'complete');
-  await insertAction(admin, gameId, actorId, actionType, {});
+  await insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState));
   return { game: data };
 }
 
@@ -765,7 +955,7 @@ async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string,
   await syncGamePlayers(admin, gameId, nextState, false);
   await insertAction(admin, gameId, actorId, 'sucker_punch', {
     turnId: turn.id,
-    targetPlayerId: turn.player_id,
+    ...buildSuckerPunchActionPayload(turn.player_id),
   });
 
   return { game: updatedGame, notificationProfileIds: [turn.player_id] };
@@ -1059,7 +1249,7 @@ function countCompletedScores(state: GameState): number {
 async function writeCompletedGameStats(admin: DbClient, gameId: string, players: Player[], winnerId: string | null) {
   for (const player of players) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
-    const result = buildResult(gameId, player, opponent.id, winnerId);
+    const result = await buildResult(admin, gameId, player, opponent, players, winnerId);
     await admin.from('game_player_results').upsert(result);
     const { data: existing, error } = await admin
       .from('head_to_head_stats')
@@ -1089,6 +1279,21 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         full_house_games: result.full_house_count > 0 ? 1 : 0,
         small_straight_games: result.small_straight_count > 0 ? 1 : 0,
         large_straight_games: result.large_straight_count > 0 ? 1 : 0,
+        blowout_losses: result.blowout_loss,
+        blowout_wins: result.blowout_win,
+        comeback_wins: result.comeback_win,
+        extra_rolls_used: result.extra_rolls_used,
+        mulligans_used: result.mulligans_used,
+        sucker_hunt_misses: result.sucker_hunt_misses,
+        sucker_hunts: result.sucker_hunts,
+        sucker_punches_used: result.sucker_punches_used,
+        sucker_punches_received: result.sucker_punches_received,
+        sucker_blockers_used: result.sucker_blockers_used,
+        forced_rerolls: result.forced_rerolls,
+        sucker_tokens_spent: result.sucker_tokens_spent,
+        average_sucker_tokens_spent: result.sucker_tokens_spent,
+        sucker_tokens_leftover: result.sucker_tokens_leftover,
+        average_sucker_tokens_leftover: result.sucker_tokens_leftover,
       });
       continue;
     }
@@ -1104,9 +1309,28 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         games_played: gamesPlayed,
         highest_score: Math.max(existing.highest_score, result.final_score),
         large_straight_games: existing.large_straight_games + (result.large_straight_count > 0 ? 1 : 0),
+        blowout_losses: existing.blowout_losses + result.blowout_loss,
+        blowout_wins: existing.blowout_wins + result.blowout_win,
+        comeback_wins: existing.comeback_wins + result.comeback_win,
         losses: existing.losses + (result.won ? 0 : 1),
+        extra_rolls_used: existing.extra_rolls_used + result.extra_rolls_used,
+        forced_rerolls: existing.forced_rerolls + result.forced_rerolls,
+        mulligans_used: existing.mulligans_used + result.mulligans_used,
+        sucker_hunt_misses: existing.sucker_hunt_misses + result.sucker_hunt_misses,
+        sucker_hunts: existing.sucker_hunts + result.sucker_hunts,
         small_straight_games: existing.small_straight_games + (result.small_straight_count > 0 ? 1 : 0),
+        sucker_blockers_used: existing.sucker_blockers_used + result.sucker_blockers_used,
         sucker_games: existing.sucker_games + (result.sucker_count > 0 ? 1 : 0),
+        sucker_punches_received: existing.sucker_punches_received + result.sucker_punches_received,
+        sucker_punches_used: existing.sucker_punches_used + result.sucker_punches_used,
+        sucker_tokens_leftover: existing.sucker_tokens_leftover + result.sucker_tokens_leftover,
+        average_sucker_tokens_leftover: Number(
+          ((existing.sucker_tokens_leftover + result.sucker_tokens_leftover) / gamesPlayed).toFixed(2),
+        ),
+        sucker_tokens_spent: existing.sucker_tokens_spent + result.sucker_tokens_spent,
+        average_sucker_tokens_spent: Number(
+          ((existing.sucker_tokens_spent + result.sucker_tokens_spent) / gamesPlayed).toFixed(2),
+        ),
         three_of_a_kind_games: existing.three_of_a_kind_games + (result.three_of_a_kind_count > 0 ? 1 : 0),
         total_score: totalScoreValue,
         upper_bonus_games: existing.upper_bonus_games + (result.upper_bonus_awarded ? 1 : 0),
@@ -1117,21 +1341,56 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
   }
 }
 
-function buildResult(gameId: string, player: Player, opponentId: string, winnerId: string | null) {
-  return {
-    final_score: totalScore(player.scorecard),
-    four_of_a_kind_count: player.scorecard.fourOfAKind !== null && player.scorecard.fourOfAKind > 0 ? 1 : 0,
-    full_house_count: player.scorecard.fullHouse !== null && player.scorecard.fullHouse > 0 ? 1 : 0,
-    game_id: gameId,
-    large_straight_count: player.scorecard.largeStraight !== null && player.scorecard.largeStraight > 0 ? 1 : 0,
-    opponent_id: opponentId,
-    player_id: player.id,
-    small_straight_count: player.scorecard.smallStraight !== null && player.scorecard.smallStraight > 0 ? 1 : 0,
-    sucker_count: player.scorecard.sucker !== null && player.scorecard.sucker > 0 ? 1 : 0,
-    three_of_a_kind_count: player.scorecard.threeOfAKind !== null && player.scorecard.threeOfAKind > 0 ? 1 : 0,
-    upper_bonus_awarded: upperBonus(player.scorecard) > 0,
-    won: player.id === winnerId,
-  };
+async function buildResult(
+  admin: DbClient,
+  gameId: string,
+  player: Player,
+  opponent: Player,
+  players: Player[],
+  winnerId: string | null,
+) {
+  const [actions, turns] = await Promise.all([
+    loadSuckerStatActions(admin, gameId),
+    loadSuckerStatTurns(admin, gameId),
+  ]);
+
+  return buildCompletedPlayerStats({
+    actions,
+    gameId,
+    opponent,
+    player,
+    players,
+    turns,
+    winnerId,
+  });
+}
+
+async function loadSuckerStatTurns(admin: DbClient, gameId: string) {
+  const { data: turns, error } = await admin
+    .from('turns')
+    .select('category, player_id, score, status, turn_index')
+    .eq('game_id', gameId)
+    .order('turn_index', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (turns ?? []) as SuckerStatTurn[];
+}
+
+async function loadSuckerStatActions(admin: DbClient, gameId: string) {
+  const { data: actions, error } = await admin
+    .from('turn_actions')
+    .select('action_type, actor_id, payload')
+    .eq('game_id', gameId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (actions ?? []) as SuckerStatAction[];
 }
 
 async function insertAction(

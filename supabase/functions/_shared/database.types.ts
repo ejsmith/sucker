@@ -78,7 +78,11 @@ type TokenEventsTable = {
 };
 
 type GamePlayerResult = {
+  blowout_loss?: number;
+  blowout_win?: number;
+  comeback_win?: number;
   completed_at?: string;
+  extra_rolls_used?: number;
   final_score: number;
   forced_rerolls?: number;
   four_of_a_kind_count?: number;
@@ -91,8 +95,12 @@ type GamePlayerResult = {
   small_straight_count?: number;
   sucker_blockers_used?: number;
   sucker_count?: number;
+  sucker_hunt_misses?: number;
+  sucker_hunts?: number;
   sucker_punches_received?: number;
   sucker_punches_used?: number;
+  sucker_tokens_leftover?: number;
+  sucker_tokens_spent?: number;
   three_of_a_kind_count?: number;
   upper_bonus_awarded: boolean;
   won: boolean;
@@ -111,6 +119,12 @@ type HeadToHeadStatsTable = {
   Row: HeadToHeadStats;
   Insert: {
     average_score?: number;
+    average_sucker_tokens_leftover?: number;
+    average_sucker_tokens_spent?: number;
+    blowout_losses?: number;
+    blowout_wins?: number;
+    comeback_wins?: number;
+    extra_rolls_used?: number;
     forced_rerolls?: number;
     four_of_a_kind_games?: number;
     full_house_games?: number;
@@ -124,8 +138,12 @@ type HeadToHeadStatsTable = {
     small_straight_games?: number;
     sucker_blockers_used?: number;
     sucker_games?: number;
+    sucker_hunt_misses?: number;
+    sucker_hunts?: number;
     sucker_punches_received?: number;
     sucker_punches_used?: number;
+    sucker_tokens_leftover?: number;
+    sucker_tokens_spent?: number;
     three_of_a_kind_games?: number;
     total_score?: number;
     upper_bonus_games?: number;

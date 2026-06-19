@@ -23,7 +23,7 @@ export function useMultiplayerSession() {
   const [profile, setProfile] = useState<Profile>(null);
   const [session, setSession] = useState<Session | null>(null);
   const lastHandledAuthUrl = useRef<string | null>(null);
-  const lastRegisteredPushProfileId = useRef<string | null>(null);
+  const pushRegisteredProfileId = useRef<string | null>(null);
 
   const refreshProfile = useCallback(async () => {
     if (!isMultiplayerConfigured) {
@@ -32,6 +32,13 @@ export function useMultiplayerSession() {
 
     const nextProfile = await getMyProfile();
     setProfile(nextProfile);
+    if (nextProfile && pushRegisteredProfileId.current !== nextProfile.id) {
+      pushRegisteredProfileId.current = nextProfile.id;
+      void registerPushToken(nextProfile.id).catch((pushError) => {
+        console.warn('Unable to register push token', pushError);
+        pushRegisteredProfileId.current = null;
+      });
+    }
     return nextProfile;
   }, []);
 
@@ -123,18 +130,7 @@ export function useMultiplayerSession() {
     };
   }, [refreshProfile]);
 
-  useEffect(() => {
-    if (!profile || lastRegisteredPushProfileId.current === profile.id) {
-      return;
-    }
-
-    lastRegisteredPushProfileId.current = profile.id;
-    void registerPushToken(profile.id).catch((pushError) => {
-      console.warn('Unable to register push token', pushError);
-    });
-  }, [profile]);
-
-  async function sendSignInLink(email: string) {
+  async function sendSignInCode(email: string) {
     setError(null);
     setIsLoading(true);
     try {
@@ -195,7 +191,7 @@ export function useMultiplayerSession() {
     profile,
     refreshProfile,
     saveProfile,
-    sendSignInLink,
+    sendSignInCode,
     session,
     verifySignInCode,
   };

@@ -94,6 +94,22 @@ export function StatsPage({
               value={formatStatsPct(stats.large_straight_games, stats.games_played)}
             />
           </View>
+          <View style={styles.statsDetailCard}>
+            <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
+            <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
+            <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
+            <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
+            <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
+            <StatsValueLine label="Sucker punches" value={String(stats.sucker_punches_used ?? 0)} />
+            <StatsValueLine label="Blocks" value={String(stats.sucker_blockers_used ?? 0)} />
+            <StatsValueLine label="Sucker hunts" value={String(stats.sucker_hunts ?? 0)} />
+            <StatsValueLine label="Hunt misses" value={String(stats.sucker_hunt_misses ?? 0)} />
+            <StatsValueLine label="Avg tokens used" value={formatStatNumber(stats.average_sucker_tokens_spent ?? 0)} />
+            <StatsValueLine
+              label="Avg tokens left"
+              value={formatStatNumber(stats.average_sucker_tokens_leftover ?? 0)}
+            />
+          </View>
         </>
       ) : (
         <View style={styles.statsEmptyCard}>
@@ -128,12 +144,25 @@ function StatsComparisonLine({ label, opponentValue, value }: { label: string; o
   );
 }
 
+function StatsValueLine({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statsLine}>
+      <Text style={styles.statsLineLabel}>{label}</Text>
+      <Text style={styles.statsLineValue}>{value}</Text>
+    </View>
+  );
+}
+
 function formatStatsPct(count: number, gamesPlayed: number) {
   if (gamesPlayed === 0) {
     return '0%';
   }
 
   return `${Math.round((count / gamesPlayed) * 100)}%`;
+}
+
+function formatStatNumber(value: number) {
+  return Number(value).toFixed(2).replace(/\.00$/, '');
 }
 
 const styles = StyleSheet.create({
