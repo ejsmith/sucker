@@ -272,12 +272,20 @@ export function isSuckerRoll(dice: Dice): boolean {
   return dice.every((die) => die === dice[0]);
 }
 
-export function toDice(values: number[]): Dice {
-  if (values.length !== 5 || values.some((value) => value < 1 || value > 6)) {
+export function toDice(values: unknown): Dice {
+  if (!Array.isArray(values) || values.length !== 5 || values.some((value) => !isDieValue(value))) {
     throw new Error('Stored turn has invalid dice.');
   }
 
   return values as Dice;
+}
+
+export function toHeldDice(values: unknown): GameState['held'] {
+  if (!Array.isArray(values) || values.length !== 5 || values.some((value) => typeof value !== 'boolean')) {
+    throw new Error('Stored game has invalid held dice.');
+  }
+
+  return values as GameState['held'];
 }
 
 export function toScoreCategory(value: string): ScoreCategory {
@@ -286,6 +294,27 @@ export function toScoreCategory(value: string): ScoreCategory {
   }
 
   return value as ScoreCategory;
+}
+
+export function toGameState(value: unknown): GameState {
+  const game = toRecord(value, 'Stored game state is invalid.');
+  const players = toArray(game.players, 'Stored game has invalid players.').map(toPlayer);
+  const currentPlayerIndex = toNonNegativeInteger(game.currentPlayerIndex, 'Stored game has invalid current player.');
+
+  if (players.length === 0 || currentPlayerIndex >= players.length) {
+    throw new Error('Stored game has invalid current player.');
+  }
+
+  return {
+    currentPlayerIndex,
+    dice: toDice(game.dice),
+    extraRollsAvailable: toNonNegativeInteger(game.extraRollsAvailable, 'Stored game has invalid extra rolls.'),
+    held: toHeldDice(game.held),
+    id: toString(game.id, 'Stored game has invalid id.'),
+    phase: toGamePhase(game.phase),
+    players,
+    rollNumber: toNonNegativeInteger(game.rollNumber, 'Stored game has invalid roll number.'),
+  };
 }
 
 function applyScore(
@@ -374,6 +403,79 @@ function hasStraight(dice: Dice, length: 4 | 5): boolean {
 
 function sumDice(dice: Dice): number {
   return dice.reduce((sum, die) => sum + die, 0);
+}
+
+function toPlayer(value: unknown): Player {
+  const player = toRecord(value, 'Stored game has invalid player.');
+
+  return {
+    id: toString(player.id, 'Stored game has invalid player id.'),
+    name: toString(player.name, 'Stored game has invalid player name.'),
+    scorecard: toScorecard(player.scorecard),
+    suckerBonusCategories: toArray(player.suckerBonusCategories, 'Stored game has invalid sucker bonuses.').map(
+      (category) => toScoreCategory(toString(category, 'Stored game has invalid sucker bonus category.')),
+    ),
+    suckerTokens: toNonNegativeInteger(player.suckerTokens, 'Stored game has invalid token count.'),
+  };
+}
+
+function toScorecard(value: unknown): Scorecard {
+  const storedScorecard = toRecord(value, 'Stored game has invalid scorecard.');
+  const scorecard = createEmptyScorecard();
+
+  for (const category of scoreCategories) {
+    const score = storedScorecard[category];
+    if (score !== null && (typeof score !== 'number' || !Number.isInteger(score) || score < 0)) {
+      throw new Error(`Stored game has invalid score for ${category}.`);
+    }
+    scorecard[category] = score;
+  }
+
+  return scorecard;
+}
+
+function toGamePhase(value: unknown): GamePhase {
+  if (value !== 'rolling' && value !== 'scoring' && value !== 'complete') {
+    throw new Error('Stored game has invalid phase.');
+  }
+
+  return value;
+}
+
+function toRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(message);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function toArray(value: unknown, message: string): unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(message);
+  }
+
+  return value;
+}
+
+function toString(value: unknown, message: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(message);
+  }
+
+  return value;
+}
+
+function toNonNegativeInteger(value: unknown, message: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new Error(message);
+  }
+
+  return value;
+}
+
+function isDieValue(value: unknown): value is DieValue {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 6;
 }
 
 function assertNever(value: never): never {

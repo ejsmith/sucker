@@ -1,7 +1,7 @@
-import type { Database as AppDatabase } from "../../../shared/database.types.ts";
-import type { GameState } from "./game.ts";
+import type { Database as AppDatabase } from '../../../shared/database.types.ts';
+import type { GameState } from './game.ts';
 
-type AppTables = AppDatabase["public"]["Tables"];
+type AppTables = AppDatabase['public']['Tables'];
 type Replace<Base, Patch> = Omit<Base, keyof Patch> & Patch;
 type WithRelationships<Table> = Table & { Relationships: [] };
 type WithRelationshipsMap<Tables> = {
@@ -9,27 +9,27 @@ type WithRelationshipsMap<Tables> = {
 };
 
 type GameTable = Replace<
-  WithRelationships<AppTables["games"]>,
+  WithRelationships<AppTables['games']>,
   {
-    Row: Replace<AppTables["games"]["Row"], { state: GameState }>;
-    Insert: Replace<AppTables["games"]["Insert"], { state: GameState }>;
-    Update: Replace<AppTables["games"]["Update"], { state?: GameState }>;
+    Row: Replace<AppTables['games']['Row'], { state: GameState }>;
+    Insert: Replace<AppTables['games']['Insert'], { state: GameState }>;
+    Update: Replace<AppTables['games']['Update'], { state?: GameState }>;
   }
 >;
 
 type ActionType =
-  | "create_game"
-  | "create_invite"
-  | "accept_invite"
-  | "extra_roll"
-  | "roll"
-  | "score_category"
-  | "scratch_category"
-  | "pass_response"
-  | "mulligan"
-  | "sucker_punch"
-  | "sucker_blocker"
-  | "taunt";
+  | 'create_game'
+  | 'create_invite'
+  | 'accept_invite'
+  | 'extra_roll'
+  | 'roll'
+  | 'score_category'
+  | 'scratch_category'
+  | 'pass_response'
+  | 'mulligan'
+  | 'sucker_punch'
+  | 'sucker_blocker'
+  | 'taunt';
 
 type TurnActionTable = {
   Row: {
@@ -53,11 +53,7 @@ type TurnActionTable = {
   Relationships: [];
 };
 
-type TokenEventType =
-  | "earned_sucker"
-  | "mulligan"
-  | "sucker_punch"
-  | "sucker_blocker";
+type TokenEventType = 'earned_sucker' | 'mulligan' | 'sucker_punch' | 'sucker_blocker';
 
 type TokenEventsTable = {
   Row: {
@@ -109,7 +105,7 @@ type GamePlayerResultsTable = {
   Relationships: [];
 };
 
-type HeadToHeadStats = AppTables["head_to_head_stats"]["Row"];
+type HeadToHeadStats = AppTables['head_to_head_stats']['Row'];
 
 type HeadToHeadStatsTable = {
   Row: HeadToHeadStats;
@@ -135,9 +131,7 @@ type HeadToHeadStatsTable = {
     upper_bonus_games?: number;
     wins?: number;
   };
-  Update: Partial<
-    Omit<HeadToHeadStats, "opponent_id" | "player_id" | "updated_at">
-  >;
+  Update: Partial<Omit<HeadToHeadStats, 'opponent_id' | 'player_id' | 'updated_at'>>;
   Relationships: [];
 };
 
@@ -156,7 +150,7 @@ export type Database = Replace<
   AppDatabase,
   {
     public: Replace<
-      AppDatabase["public"],
+      AppDatabase['public'],
       {
         Tables: EdgeTables;
         CompositeTypes: Record<string, never>;

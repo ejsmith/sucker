@@ -1,12 +1,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const {
-  computerPlayerIndex,
-  shouldComputerUseSuckerPunch,
-} = require('../.build/src/game/computer');
+const { computerPlayerIndex, shouldComputerUseSuckerPunch } = require('../.build/src/game/computer');
 const { createGame } = require('../.build/src/game');
-const { createComputerStrategyCandidates, runComputerStrategyTournament } = require('../.build/src/game/computerTournament');
+const {
+  createComputerStrategyCandidates,
+  runComputerStrategyTournament,
+} = require('../.build/src/game/computerTournament');
 const { measureComputerStrategy, simulateComputerScore } = require('../.build/src/game/computerSimulation');
 
 test('computer score simulation is deterministic for a seed', () => {

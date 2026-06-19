@@ -21,7 +21,7 @@ export type RemoteTurnRow = {
   dice: Dice;
   finalized_at: string | null;
   game_id: string;
-  held: boolean[];
+  held: GameState['held'];
   id: string;
   player_id: string;
   roll_count: number;

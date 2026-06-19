@@ -1,16 +1,13 @@
 import { supabase } from './supabase';
 import type { Database } from './database.types';
 import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
-import { scoreCategories, type Dice, type GameState, type ScoreCategory } from '../game';
+import { scoreCategories, type GameState, type ScoreCategory, toDice, toGameState, toHeldDice } from '../game';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 
 export async function listMyGames() {
-  const { data, error } = await supabase
-    .from('games')
-    .select('*')
-    .order('updated_at', { ascending: false });
+  const { data, error } = await supabase.from('games').select('*').order('updated_at', { ascending: false });
 
   if (error) {
     throw error;
@@ -131,7 +128,7 @@ function toRemoteGameRow(row: GameRow) {
     current_player_id: row.current_player_id,
     id: row.id,
     last_turn_id: row.last_turn_id,
-    state: row.state as unknown as GameState,
+    state: toGameState(row.state),
     status: row.status,
     updated_at: row.updated_at,
     winner_id: row.winner_id,
@@ -145,7 +142,7 @@ function toRemoteTurnRow(row: TurnRow): RemoteTurnRow {
     dice: toDice(row.dice),
     finalized_at: row.finalized_at,
     game_id: row.game_id,
-    held: row.held,
+    held: toHeldDice(row.held),
     id: row.id,
     player_id: row.player_id,
     roll_count: row.roll_count,
@@ -153,14 +150,6 @@ function toRemoteTurnRow(row: TurnRow): RemoteTurnRow {
     status: row.status,
     turn_index: row.turn_index,
   };
-}
-
-function toDice(values: number[]): Dice {
-  if (values.length !== 5 || values.some((value) => value < 1 || value > 6)) {
-    throw new Error('Stored turn has invalid dice.');
-  }
-
-  return values as Dice;
 }
 
 function toScoreCategory(value: string): ScoreCategory {

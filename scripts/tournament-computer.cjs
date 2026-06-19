@@ -1,4 +1,7 @@
-const { createComputerStrategyCandidates, runComputerStrategyTournament } = require('../.build/src/game/computerTournament');
+const {
+  createComputerStrategyCandidates,
+  runComputerStrategyTournament,
+} = require('../.build/src/game/computerTournament');
 
 const candidates = createComputerStrategyCandidates();
 const result = runComputerStrategyTournament({ candidates });

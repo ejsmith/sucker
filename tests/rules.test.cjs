@@ -9,6 +9,8 @@ const {
   scratchScoreBox,
   toggleHold,
   totalScore,
+  toGameState,
+  toHeldDice,
   upperBonus,
   maxRollsPerTurn,
   mulliganCurrentTurn,
@@ -188,6 +190,20 @@ test('upper bonus is included in total score', () => {
 
   assert.equal(upperBonus(scorecard), 35);
   assert.equal(totalScore(scorecard), 98);
+});
+
+test('stored game state is validated before use', () => {
+  const game = createGame(['Erin', 'Sam']);
+
+  assert.deepEqual(toGameState(game), game);
+  assert.throws(() => toGameState({ ...game, dice: [1, 2, 3] }), /invalid dice/);
+  assert.throws(() => toGameState({ ...game, currentPlayerIndex: 3 }), /invalid current player/);
+});
+
+test('stored held dice must be a five boolean tuple', () => {
+  assert.deepEqual(toHeldDice([true, false, true, false, true]), [true, false, true, false, true]);
+  assert.throws(() => toHeldDice([true, false]), /invalid held dice/);
+  assert.throws(() => toHeldDice([true, false, true, false, 1]), /invalid held dice/);
 });
 
 function rollDeterministic(game) {

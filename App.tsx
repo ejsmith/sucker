@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { type ComponentRef, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -58,15 +58,18 @@ import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
 import { supabase } from './src/multiplayer/supabase';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
 import { getPhoneStageStyle } from './src/ui/phoneStage';
+import {
+  createRollingLaunch,
+  defaultRollingLaunch,
+  measureInWindow,
+  rollDisplayDie,
+  type MeasuredRect,
+  type RollingLaunch,
+  type ViewRef,
+  wait,
+} from './src/ui/rollAnimation';
 import Svg, { Circle } from 'react-native-svg';
 
-type ViewRef = ComponentRef<typeof View>;
-type MeasuredRect = {
-  height: number;
-  width: number;
-  x: number;
-  y: number;
-};
 type ScoreFlyDie = {
   face: DieValue;
   fromX: number;
@@ -84,19 +87,6 @@ type ScoreFlyNumber = {
   toX: number;
   toY: number;
   value: number;
-};
-type RollingLaunch = {
-  delay: number;
-  duration: number;
-  fromX: number;
-  fromY: number;
-  midX: number;
-  midY: number;
-  peakScale: number;
-  side: 'left' | 'right';
-  spin: number;
-  toX: number;
-  toY: number;
 };
 function concealActiveOpponentDice(game: GameState, myProfileId?: string | null): GameState {
   const currentPlayerId = game.players[game.currentPlayerIndex]?.id;
@@ -165,7 +155,6 @@ const backgroundDiePositions = [
   { right: 10, top: '56%' },
 ] as const;
 
-const rollingDieBaseSize = 88;
 const computerThinkingDelayMs = 2400;
 const computerScorePreviewDelayMs = 0;
 const computerScoreAnimationDurationMs = 950;
@@ -432,8 +421,13 @@ function LocalGameScreen({
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const bgFloat = useRef(new Animated.Value(0)).current;
   const selectedPulse = useRef(new Animated.Value(0)).current;
-  const game = isRemoteGame ? visibleRemoteGame ?? remoteGame ?? localGame : localGame;
-  const myPlayerIndex = isRemoteGame ? Math.max(0, game.players.findIndex((player) => player.id === myProfileId)) : 0;
+  const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
+  const myPlayerIndex = isRemoteGame
+    ? Math.max(
+        0,
+        game.players.findIndex((player) => player.id === myProfileId),
+      )
+    : 0;
   const opponentPlayerIndex = game.players.findIndex((_, index) => index !== myPlayerIndex);
   const currentPlayer = game.players[game.currentPlayerIndex] ?? game.players[0];
   const pendingTurn = isRemoteGame ? null : localPendingTurn;
@@ -451,7 +445,8 @@ function LocalGameScreen({
     isRemoteActionPlayable;
   const canRoll = canRollVisually && !isRolling && !isScoring && !isRemoteBusy;
   const homePlayer = game.players[myPlayerIndex] ?? game.players[0];
-  const opponentPlayer = game.players[opponentPlayerIndex] ?? game.players.find((player) => player.id !== homePlayer.id) ?? game.players[1];
+  const opponentPlayer =
+    game.players[opponentPlayerIndex] ?? game.players.find((player) => player.id !== homePlayer.id) ?? game.players[1];
   const displayPlayers = [homePlayer, opponentPlayer];
   const activePlayerViewIndex = currentPlayer.id === homePlayer.id ? 0 : 1;
   const canPlaySelected =
@@ -468,7 +463,10 @@ function LocalGameScreen({
     game.phase !== 'complete' && !isRolling && !isScoring && !isComputerTurn && isMyRemoteTurn && !isRemoteBusy;
   const myTokenCount = homePlayer.suckerTokens;
   const canUseLocalExtraRoll =
-    !isRemoteGame && canOpenTokenMenu && game.rollNumber >= maxAvailableRolls(game) && myTokenCount >= suckerTokenCosts.extraRoll;
+    !isRemoteGame &&
+    canOpenTokenMenu &&
+    game.rollNumber >= maxAvailableRolls(game) &&
+    myTokenCount >= suckerTokenCosts.extraRoll;
   const canUseRemoteExtraRoll =
     isRemoteGame &&
     canOpenTokenMenu &&
@@ -476,13 +474,13 @@ function LocalGameScreen({
     game.rollNumber >= maxAvailableRolls(game) &&
     myTokenCount >= suckerTokenCosts.extraRoll;
   const canUseLocalMulligan =
-    !isRemoteGame && !pendingTurn && canOpenTokenMenu && game.rollNumber > 0 && myTokenCount >= suckerTokenCosts.mulligan;
-  const canStartSuckerDeal =
-    canOpenTokenMenu &&
+    !isRemoteGame &&
     !pendingTurn &&
+    canOpenTokenMenu &&
     game.rollNumber > 0 &&
-    openCategories.length > 0 &&
-    isRemoteActionPlayable;
+    myTokenCount >= suckerTokenCosts.mulligan;
+  const canStartSuckerDeal =
+    canOpenTokenMenu && !pendingTurn && game.rollNumber > 0 && openCategories.length > 0 && isRemoteActionPlayable;
   const canUseLocalSuckerPunch =
     !isRemoteGame &&
     canOpenTokenMenu &&
@@ -514,37 +512,37 @@ function LocalGameScreen({
   const opponentScore = totalScore(opponentPlayer.scorecard);
   const isGameOver = game.phase === 'complete';
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
-  const winnerName = homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
+  const winnerName =
+    homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
   const gameOverTitle = winnerName ? (winnerName === 'You' ? 'You win!' : `${winnerName} wins!`) : 'Tie game!';
-  const remoteOpponentTurnNeedsReveal =
-    Boolean(
-      isRemoteGame &&
-        remoteGame &&
-        remoteLastTurn &&
-        remoteLastTurn.id === remoteLastTurnId &&
-        remoteLastTurn.player_id !== myProfileId &&
-        revealingRemoteTurnId !== remoteLastTurn.id &&
-        visibleRemoteTurnId.current !== remoteLastTurn.id &&
-        lastAnimatedRemoteScoreTurnId.current !== remoteLastTurn.id,
-    );
-  const remoteNextTurnIsMine =
-    Boolean(isRemoteGame && remoteGame && (remoteGame.phase === 'complete' || remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId));
-  const shouldHoldRemoteTurnReveal =
-    Boolean(
-      isRemoteGame &&
-        remoteGame &&
-        remoteNextTurnIsMine &&
-        remoteLastTurnId &&
-        visibleRemoteTurnId.current !== remoteLastTurnId &&
-        remoteLastTurnLoadFailedId !== remoteLastTurnId &&
-        (remoteStatus === 'response_window' || remoteStatus === 'complete') &&
-        (
-          !remoteLastTurn ||
-          remoteLastTurn.id !== remoteLastTurnId ||
-          remoteOpponentTurnNeedsReveal ||
-          revealingRemoteTurnId === remoteLastTurnId
-        ),
-    );
+  const remoteOpponentTurnNeedsReveal = Boolean(
+    isRemoteGame &&
+    remoteGame &&
+    remoteLastTurn &&
+    remoteLastTurn.id === remoteLastTurnId &&
+    remoteLastTurn.player_id !== myProfileId &&
+    revealingRemoteTurnId !== remoteLastTurn.id &&
+    visibleRemoteTurnId.current !== remoteLastTurn.id &&
+    lastAnimatedRemoteScoreTurnId.current !== remoteLastTurn.id,
+  );
+  const remoteNextTurnIsMine = Boolean(
+    isRemoteGame &&
+    remoteGame &&
+    (remoteGame.phase === 'complete' || remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId),
+  );
+  const shouldHoldRemoteTurnReveal = Boolean(
+    isRemoteGame &&
+    remoteGame &&
+    remoteNextTurnIsMine &&
+    remoteLastTurnId &&
+    visibleRemoteTurnId.current !== remoteLastTurnId &&
+    remoteLastTurnLoadFailedId !== remoteLastTurnId &&
+    (remoteStatus === 'response_window' || remoteStatus === 'complete') &&
+    (!remoteLastTurn ||
+      remoteLastTurn.id !== remoteLastTurnId ||
+      remoteOpponentTurnNeedsReveal ||
+      revealingRemoteTurnId === remoteLastTurnId),
+  );
 
   useEffect(() => {
     const loops = [
@@ -809,16 +807,19 @@ function LocalGameScreen({
       setRollingDieIndexes(rollingIndexes);
 
       scrambleTimer = setInterval(() => {
-        setRollingFaces((faces) =>
-          faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
+        setRollingFaces(
+          (faces) =>
+            faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
         );
       }, 65);
       const finalRevealAt = Math.max(
         0,
-        Math.max(...rollingIndexes.map((index) => {
-          const launch = launches[index] ?? defaultRollingLaunch;
-          return launch.delay + launch.duration;
-        })) - 150,
+        Math.max(
+          ...rollingIndexes.map((index) => {
+            const launch = launches[index] ?? defaultRollingLaunch;
+            return launch.delay + launch.duration;
+          }),
+        ) - 150,
       );
       const revealFinalDice = nextGamePromise.then((nextGame) => {
         if (!nextGame) {
@@ -920,16 +921,18 @@ function LocalGameScreen({
     setRollingDieIndexes(rollingIndexes);
 
     const scrambleTimer = setInterval(() => {
-      setRollingFaces((faces) =>
-        faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
+      setRollingFaces(
+        (faces) => faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
       );
     }, 65);
     const finalRevealDelay = Math.max(
       0,
-      Math.max(...rollingIndexes.map((index) => {
-        const launch = launches[index] ?? defaultRollingLaunch;
-        return launch.delay + launch.duration;
-      })) - 150,
+      Math.max(
+        ...rollingIndexes.map((index) => {
+          const launch = launches[index] ?? defaultRollingLaunch;
+          return launch.delay + launch.duration;
+        }),
+      ) - 150,
     );
     const finalRevealTimer = setTimeout(() => {
       clearInterval(scrambleTimer);
@@ -940,8 +943,7 @@ function LocalGameScreen({
       rollingIndexes.map((index) => {
         const launch = launches[index] ?? defaultRollingLaunch;
 
-        return (
-        Animated.sequence([
+        return Animated.sequence([
           Animated.delay(launch.delay),
           Animated.timing(diceAnimations[index], {
             toValue: 1,
@@ -949,8 +951,7 @@ function LocalGameScreen({
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
-        ])
-        );
+        ]);
       }),
     ).start(() => {
       clearInterval(scrambleTimer);
@@ -1002,7 +1003,8 @@ function LocalGameScreen({
       setSuckerRollNoticeTitle(null);
     }
 
-    const targetRef = scorerIndex === myPlayerIndex ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
+    const targetRef =
+      scorerIndex === myPlayerIndex ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
     const [screenRect, targetRect] = await Promise.all([
       measureInWindow(screenRef.current),
       measureInWindow(targetRef ?? null),
@@ -1055,7 +1057,8 @@ function LocalGameScreen({
     }
 
     const scorerIndex = previousGame.players.findIndex((player) => player.id === turn.player_id);
-    const scorer = previousGame.players[scorerIndex] ?? nextRemoteGame.players.find((player) => player.id === turn.player_id);
+    const scorer =
+      previousGame.players[scorerIndex] ?? nextRemoteGame.players.find((player) => player.id === turn.player_id);
     const hadSuckerBonus = scorer ? hasPreviewSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
 
     setLocalPendingTurn(null);
@@ -1597,7 +1600,12 @@ function LocalGameScreen({
                       styles.rollingDieTrack,
                       {
                         opacity: flyOpacity,
-                        transform: [{ translateX: flyX }, { translateY: flyY }, { rotate: flyRotate }, { scale: flyScale }],
+                        transform: [
+                          { translateX: flyX },
+                          { translateY: flyY },
+                          { rotate: flyRotate },
+                          { scale: flyScale },
+                        ],
                       },
                     ]}
                   >
@@ -1711,14 +1719,22 @@ function LocalGameScreen({
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.suckerPunch}
-                description={isRemoteGame ? 'Force your opponent to replay their latest turn.' : 'Force the computer to replay its latest turn.'}
+                description={
+                  isRemoteGame
+                    ? 'Force your opponent to replay their latest turn.'
+                    : 'Force the computer to replay its latest turn.'
+                }
                 disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
                 label="Sucker Punch"
                 onPress={() => void handleUseSuckerPunch()}
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.suckerBlocker}
-                description={isRemoteGame ? 'Block the Sucker Punch and keep your score.' : 'Block the computer’s Sucker Punch and keep your score.'}
+                description={
+                  isRemoteGame
+                    ? 'Block the Sucker Punch and keep your score.'
+                    : 'Block the computer’s Sucker Punch and keep your score.'
+                }
                 disabled={!canUseLocalSuckerBlocker && !canUseRemoteSuckerBlocker}
                 label="Block Sucker Punch"
                 onPress={() => void handleUseSuckerBlocker()}
@@ -1747,7 +1763,12 @@ function LocalGameScreen({
               });
               const rotate = die.progress.interpolate({
                 inputRange: [0, 0.35, 0.72, 1],
-                outputRange: ['0deg', index % 2 === 0 ? '18deg' : '-18deg', index % 2 === 0 ? '-10deg' : '10deg', '0deg'],
+                outputRange: [
+                  '0deg',
+                  index % 2 === 0 ? '18deg' : '-18deg',
+                  index % 2 === 0 ? '-10deg' : '10deg',
+                  '0deg',
+                ],
               });
 
               return (
@@ -1859,12 +1880,18 @@ function LocalGameScreen({
                 </View>
               </View>
               <View style={styles.gameOverActions}>
-                <Pressable onPress={() => void handleRematch()} style={({ pressed }) => [styles.gameOverPrimaryButton, pressed && styles.pressed]}>
+                <Pressable
+                  onPress={() => void handleRematch()}
+                  style={({ pressed }) => [styles.gameOverPrimaryButton, pressed && styles.pressed]}
+                >
                   <View style={styles.buttonGloss} />
                   <View style={styles.buttonInnerShade} />
                   <Text style={styles.gameOverPrimaryText}>Rematch</Text>
                 </Pressable>
-                <Pressable onPress={handleDismissGameOver} style={({ pressed }) => [styles.gameOverSecondaryButton, pressed && styles.pressed]}>
+                <Pressable
+                  onPress={handleDismissGameOver}
+                  style={({ pressed }) => [styles.gameOverSecondaryButton, pressed && styles.pressed]}
+                >
                   <View style={styles.buttonInnerShade} />
                   <Text style={styles.gameOverSecondaryText}>Not now</Text>
                 </Pressable>
@@ -1911,11 +1938,7 @@ function TokenMenuOption({
     <Pressable
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.tokenOption,
-        disabled && styles.disabledTokenOption,
-        pressed && styles.pressed,
-      ]}
+      style={({ pressed }) => [styles.tokenOption, disabled && styles.disabledTokenOption, pressed && styles.pressed]}
     >
       <View style={styles.tokenOptionCost}>
         <Image source={suckerTokenImage} style={styles.tokenOptionCostIcon} />
@@ -1989,7 +2012,11 @@ function ScorePair(props: ScorePairProps) {
   return (
     <View style={styles.boardRow}>
       <ScoreCell category={props.leftCategory} {...props} />
-      {props.rightCategory ? <ScoreCell category={props.rightCategory} {...props} /> : <View style={styles.scorePair} />}
+      {props.rightCategory ? (
+        <ScoreCell category={props.rightCategory} {...props} />
+      ) : (
+        <View style={styles.scorePair} />
+      )}
     </View>
   );
 }
@@ -2245,7 +2272,9 @@ function StatsPage({
       ) : (
         <View style={styles.statsEmptyCard}>
           <Text style={styles.statsEmptyTitle}>No saved stats yet</Text>
-          <Text style={styles.statsEmptyBody}>Finish games against the computer while signed in to build your history.</Text>
+          <Text style={styles.statsEmptyBody}>
+            Finish games against the computer while signed in to build your history.
+          </Text>
         </View>
       )}
     </View>
@@ -2393,93 +2422,6 @@ function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
       />
     </View>
   );
-}
-
-function rollDisplayDie(): DieValue {
-  return (Math.floor(Math.random() * 6) + 1) as DieValue;
-}
-
-const defaultRollingLaunch: RollingLaunch = {
-  delay: 0,
-  duration: 880,
-  fromX: -104,
-  fromY: 28,
-  midX: 72,
-  midY: -24,
-  peakScale: 1.45,
-  side: 'left',
-  spin: 110,
-  toX: 0,
-  toY: 0,
-};
-
-function createRollingLaunch(
-  index: number,
-  side: RollingLaunch['side'],
-  rollZoneRect: MeasuredRect | null,
-  slotRect: MeasuredRect | null,
-): RollingLaunch {
-  const direction = side === 'left' ? 1 : -1;
-  const spreadRank = index - 2;
-  const fallbackSlotWidth = 64;
-  const fallbackGap = 8;
-  const fallbackToX = 8 + index * (fallbackSlotWidth + fallbackGap) + fallbackSlotWidth / 2 - rollingDieBaseSize / 2;
-  const fallbackToY = 35 - rollingDieBaseSize / 2;
-  const toX =
-    rollZoneRect && slotRect
-      ? slotRect.x - rollZoneRect.x + slotRect.width / 2 - rollingDieBaseSize / 2
-      : fallbackToX;
-  const toY =
-    rollZoneRect && slotRect
-      ? slotRect.y - rollZoneRect.y + slotRect.height / 2 - rollingDieBaseSize / 2
-      : fallbackToY;
-  const rollZoneWidth = rollZoneRect?.width ?? 393;
-  const fromX =
-    side === 'left'
-      ? -rollingDieBaseSize - 18 - Math.random() * 34
-      : rollZoneWidth + 18 + Math.random() * 34;
-  const fromY = toY + 18 + Math.random() * 22;
-  const travelDistance = Math.abs(toX - fromX);
-  const midApproachDistance = Math.min(120, Math.max(46, travelDistance * (0.24 + Math.random() * 0.1)));
-  const laneOffset = spreadRank * (4 + Math.random() * 5);
-  const midX = toX - direction * midApproachDistance + laneOffset;
-  const midY = Math.max(-rollingDieBaseSize * 0.28, toY - (42 + Math.random() * 38));
-
-  return {
-    delay: Math.round(Math.random() * 90 + index * (8 + Math.random() * 12)),
-    duration: Math.round(760 + Math.random() * 240),
-    fromX,
-    fromY,
-    midX,
-    midY,
-    peakScale: 1.26 + Math.random() * 0.38,
-    side,
-    spin: direction * (88 + Math.random() * 58),
-    toX,
-    toY,
-  };
-}
-
-function measureInWindow(node: ViewRef | null): Promise<MeasuredRect | null> {
-  return new Promise((resolve) => {
-    if (!node) {
-      resolve(null);
-      return;
-    }
-
-    node.measureInWindow((x, y, width, height) => {
-      if (width === 0 || height === 0) {
-        resolve(null);
-        return;
-      }
-
-      resolve({ height, width, x, y });
-    });
-  });
-}
-
-function wait(duration: number) {
-  return new Promise((resolve) => setTimeout(resolve, duration));
 }
 
 const styles = StyleSheet.create({

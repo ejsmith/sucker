@@ -1,1 +1,1 @@
-export * from "../../../shared/game.ts";
+export * from '../../../shared/game.ts';

@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -16,7 +17,12 @@ export async function registerPushToken(profileId: string) {
     return null;
   }
 
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  const projectId = getExpoProjectId();
+  if (!projectId) {
+    throw new Error('Expo project ID is required to register push notifications.');
+  }
+
+  const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   const { data, error } = await supabase
     .from('push_tokens')
     .upsert(
@@ -38,4 +44,8 @@ export async function registerPushToken(profileId: string) {
   }
 
   return data;
+}
+
+function getExpoProjectId() {
+  return Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
 }

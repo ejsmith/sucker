@@ -332,7 +332,7 @@ function getBestComputerCategoryChoice(
   dice: GameState['dice'],
   scorecard: GameState['players'][number]['scorecard'],
   strategy: ComputerStrategyConfig,
-) {
+): ComputerCategoryChoice {
   return availableCategories(scorecard)
     .map((category) => ({
       category,
@@ -446,7 +446,9 @@ function shouldAutomatedUseSuckerPunch(
     : 0;
   const tokenBalanceAfterPunch = computer.suckerTokens - suckerTokenCosts.suckerPunch;
   const canKeepBlockerReserve = tokenBalanceAfterPunch >= strategy.suckerPunchReserveTokens;
-  const isPremiumTurn = pendingTurn.hadSuckerBonus || (pendingTurn.category === 'sucker' && pendingTurn.score >= strategy.suckerPunchMinScore);
+  const isPremiumTurn =
+    pendingTurn.hadSuckerBonus ||
+    (pendingTurn.category === 'sucker' && pendingTurn.score >= strategy.suckerPunchMinScore);
   const isLateComebackSwing =
     scoredCategories >= strategy.suckerPunchComebackMinCategories &&
     playerScore > computerScore &&
@@ -527,7 +529,11 @@ function shouldComputerBuyExtraRoll(
     return true;
   }
 
-  return extraRollsBought === 0 && computer.suckerTokens > suckerTokenCosts.mulligan && choice.score < strategy.extraRollMaxScore;
+  return (
+    extraRollsBought === 0 &&
+    computer.suckerTokens > suckerTokenCosts.mulligan &&
+    choice.score < strategy.extraRollMaxScore
+  );
 }
 
 function shouldComputerUseMulligan(
@@ -613,9 +619,7 @@ function faceChaseValue(
 
 function bestStraightHold(dice: GameState['dice'], length: 4 | 5): GameState['held'] {
   const runs = length === 4 ? straightRuns.small : straightRuns.large;
-  return runs
-    .map((run) => holdUniqueFaces(dice, run))
-    .sort((left, right) => countHeld(right) - countHeld(left))[0];
+  return runs.map((run) => holdUniqueFaces(dice, run)).sort((left, right) => countHeld(right) - countHeld(left))[0];
 }
 
 function bestFullHouseHold(dice: GameState['dice']): GameState['held'] {

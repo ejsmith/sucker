@@ -1,5 +1,17 @@
 import { type ReactNode, useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Linking,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { getComputerStats } from './computerStats';
 import { createGameAgainst, listMyGames } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
@@ -22,16 +34,8 @@ export function MultiplayerLobby({
   onPlayLocalDemo: () => void;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
-  const {
-    endSession,
-    error,
-    isLoading,
-    profile,
-    saveProfile,
-    sendSignInLink,
-    session,
-    verifySignInCode,
-  } = useMultiplayerSession();
+  const { endSession, error, isLoading, profile, saveProfile, sendSignInLink, session, verifySignInCode } =
+    useMultiplayerSession();
   const [email, setEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [sentCodeEmail, setSentCodeEmail] = useState<string | null>(null);
@@ -198,7 +202,11 @@ export function MultiplayerLobby({
         </Pressable>
         {isCodeSent && (
           <View style={lobbyStyles.loginLinksRow}>
-            <Pressable disabled={isLoading} onPress={() => void handleSendCode()} style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}>
+            <Pressable
+              disabled={isLoading}
+              onPress={() => void handleSendCode()}
+              style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
+            >
               <Text style={lobbyStyles.localLinkText}>Resend code</Text>
             </Pressable>
             <Pressable
@@ -214,7 +222,10 @@ export function MultiplayerLobby({
             </Pressable>
           </View>
         )}
-        <Pressable onPress={onPlayLocalDemo} style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}>
+        <Pressable
+          onPress={onPlayLocalDemo}
+          style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
+        >
           <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
         </Pressable>
         {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
@@ -223,225 +234,264 @@ export function MultiplayerLobby({
   }
 
   const profileId = profile?.id ?? session.user.id;
-  const activeGames = sortActiveGames(games.filter((game) => game.status !== 'complete'), profileId);
+  const activeGames = sortActiveGames(
+    games.filter((game) => game.status !== 'complete'),
+    profileId,
+  );
   const playerName = profile?.display_name ?? session.user.email ?? 'player';
 
   if (page === 'startFriend') {
     return renderShell(
-        <ScrollView contentContainerStyle={lobbyStyles.scrollContent} showsVerticalScrollIndicator={false} style={lobbyStyles.scroll}>
-          <SuckerLobbyTitle />
-          <ScreenHeader title="Start With Friend" onBack={() => setPage('games')} />
+      <ScrollView
+        contentContainerStyle={lobbyStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <ScreenHeader title="Start With Friend" onBack={() => setPage('games')} />
 
-          <View style={lobbyStyles.panel}>
-            <Text style={lobbyStyles.sectionTitle}>Find By Username</Text>
-            <View style={lobbyStyles.row}>
-              <TextInput
-                autoCapitalize="none"
-                onChangeText={setQuery}
-                placeholder="Username or name"
-                placeholderTextColor="#8A4B12"
-                style={[lobbyStyles.input, lobbyStyles.flexInput]}
-                value={query}
-              />
-              <Pressable
-                disabled={isBusy || query.trim().length < 2}
-                onPress={() => void handleSearchProfiles()}
-                style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
-              >
-                <Text style={lobbyStyles.smallButtonText}>Find</Text>
-              </Pressable>
-            </View>
-            {searchResults.slice(0, 5).map((result) => (
-              <View key={result.id} style={lobbyStyles.resultRow}>
-                <View style={lobbyStyles.avatarSmall}>
-                  <Text style={lobbyStyles.avatarSmallText}>{result.display_name.slice(0, 1).toUpperCase()}</Text>
-                </View>
-                <View style={lobbyStyles.resultTextBlock}>
-                  <Text numberOfLines={1} style={lobbyStyles.resultName}>
-                    {result.display_name}
-                  </Text>
-                  {result.username && (
-                    <Text numberOfLines={1} style={lobbyStyles.resultUsername}>
-                      @{result.username}
-                    </Text>
-                  )}
-                </View>
-                <Pressable
-                  disabled={isBusy}
-                  onPress={() =>
-                    void runAction(async () => {
-                      await createGameAgainst(result.id);
-                      await refreshGames();
-                      setMessage(`Game started with ${result.display_name}.`);
-                      setPage('games');
-                    })
-                  }
-                  style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
-                >
-                  <Text style={lobbyStyles.smallButtonText}>Play</Text>
-                </Pressable>
-              </View>
-            ))}
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Find By Username</Text>
+          <View style={lobbyStyles.row}>
+            <TextInput
+              autoCapitalize="none"
+              onChangeText={setQuery}
+              placeholder="Username or name"
+              placeholderTextColor="#8A4B12"
+              style={[lobbyStyles.input, lobbyStyles.flexInput]}
+              value={query}
+            />
+            <Pressable
+              disabled={isBusy || query.trim().length < 2}
+              onPress={() => void handleSearchProfiles()}
+              style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
+            >
+              <Text style={lobbyStyles.smallButtonText}>Find</Text>
+            </Pressable>
           </View>
-
-          <View style={lobbyStyles.panel}>
-            <Text style={lobbyStyles.sectionTitle}>Join By Invite Code</Text>
-            <View style={lobbyStyles.row}>
-              <TextInput
-                autoCapitalize="characters"
-                onChangeText={setInviteCode}
-                placeholder="Invite code"
-                placeholderTextColor="#8A4B12"
-                style={[lobbyStyles.input, lobbyStyles.flexInput]}
-                value={inviteCode}
-              />
+          {searchResults.slice(0, 5).map((result) => (
+            <View key={result.id} style={lobbyStyles.resultRow}>
+              <View style={lobbyStyles.avatarSmall}>
+                <Text style={lobbyStyles.avatarSmallText}>{result.display_name.slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={lobbyStyles.resultTextBlock}>
+                <Text numberOfLines={1} style={lobbyStyles.resultName}>
+                  {result.display_name}
+                </Text>
+                {result.username && (
+                  <Text numberOfLines={1} style={lobbyStyles.resultUsername}>
+                    @{result.username}
+                  </Text>
+                )}
+              </View>
               <Pressable
-                disabled={isBusy || inviteCode.trim().length === 0}
+                disabled={isBusy}
                 onPress={() =>
                   void runAction(async () => {
-                    await acceptInviteCode(inviteCode);
-                    setInviteCode('');
+                    await createGameAgainst(result.id);
                     await refreshGames();
-                    setMessage('Invite accepted.');
+                    setMessage(`Game started with ${result.display_name}.`);
                     setPage('games');
                   })
                 }
                 style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
               >
-                <Text style={lobbyStyles.smallButtonText}>Join</Text>
+                <Text style={lobbyStyles.smallButtonText}>Play</Text>
               </Pressable>
             </View>
-          </View>
-
-          <View style={lobbyStyles.panel}>
-            <Text style={lobbyStyles.sectionTitle}>Create Invite Link</Text>
-            <Pressable
-              disabled={isBusy}
-              onPress={() =>
-                void runAction(async () => {
-                  const result = await createInviteGame();
-                  setGeneratedInviteCode(result.inviteCode ?? null);
-                  await refreshGames();
-                })
-              }
-              style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
-            >
-              <Text style={lobbyStyles.secondaryButtonText}>Create Link</Text>
-            </Pressable>
-            {generatedInviteCode && (
-              <View style={lobbyStyles.inviteLinkBlock}>
-                <Text style={lobbyStyles.inviteCode}>{generatedInviteCode}</Text>
-                <Text selectable style={lobbyStyles.inviteLinkText}>
-                  {getInviteLink(generatedInviteCode)}
-                </Text>
-                <Pressable onPress={() => void shareInviteLink()} style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}>
-                  <Text style={lobbyStyles.primaryButtonText}>Share Invite</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-
-          {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
-          {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
-        </ScrollView>,
-    );
-  }
-
-  if (page === 'profile') {
-    return renderShell(
-        <ScrollView contentContainerStyle={lobbyStyles.scrollContent} showsVerticalScrollIndicator={false} style={lobbyStyles.scroll}>
-          <SuckerLobbyTitle />
-          <ScreenHeader title="Profile" onBack={() => setPage('games')} />
-
-          <View style={lobbyStyles.panel}>
-            <Text style={lobbyStyles.sectionTitle}>Player Info</Text>
-            <TextInput
-              onChangeText={setDisplayName}
-              placeholder="Display name"
-              placeholderTextColor="#8A4B12"
-              style={lobbyStyles.input}
-              value={displayName}
-            />
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={setUsername}
-              placeholder="Username"
-              placeholderTextColor="#8A4B12"
-              style={lobbyStyles.input}
-              value={username}
-            />
-            <Pressable
-              disabled={isBusy || displayName.trim().length === 0}
-              onPress={() =>
-                void runAction(async () => {
-                  await saveProfile({
-                    displayName: displayName.trim(),
-                    username: username.trim() || null,
-                  });
-                  setMessage('Profile saved.');
-                })
-              }
-              style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
-            >
-              <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
-            </Pressable>
-          </View>
-
-          <ComputerStatsCard stats={computerStats} />
-
-          <Pressable onPress={() => void endSession()} style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}>
-            <Text style={lobbyStyles.signOutText}>Sign Out</Text>
-          </Pressable>
-          {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
-          {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
-        </ScrollView>,
-    );
-  }
-
-  return renderShell(
-      <ScrollView contentContainerStyle={lobbyStyles.scrollContent} showsVerticalScrollIndicator={false} style={lobbyStyles.scroll}>
-        <SuckerLobbyTitle />
-        <View style={lobbyStyles.topBar}>
-          <View>
-            <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
-            <Text style={lobbyStyles.subtleText}>{activeGames.length} active {activeGames.length === 1 ? 'game' : 'games'}</Text>
-          </View>
-          <Pressable onPress={() => setPage('profile')} style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}>
-            <Text style={lobbyStyles.signOutText}>Profile</Text>
-          </Pressable>
+          ))}
         </View>
 
         <View style={lobbyStyles.panel}>
-          <View style={lobbyStyles.panelHeader}>
-            <Text style={lobbyStyles.sectionTitle}>Games</Text>
-            <Pressable onPress={() => void refreshGames()} style={({ pressed }) => [lobbyStyles.refreshButton, pressed && lobbyStyles.pressed]}>
-              <Text style={lobbyStyles.refreshText}>Refresh</Text>
+          <Text style={lobbyStyles.sectionTitle}>Join By Invite Code</Text>
+          <View style={lobbyStyles.row}>
+            <TextInput
+              autoCapitalize="characters"
+              onChangeText={setInviteCode}
+              placeholder="Invite code"
+              placeholderTextColor="#8A4B12"
+              style={[lobbyStyles.input, lobbyStyles.flexInput]}
+              value={inviteCode}
+            />
+            <Pressable
+              disabled={isBusy || inviteCode.trim().length === 0}
+              onPress={() =>
+                void runAction(async () => {
+                  await acceptInviteCode(inviteCode);
+                  setInviteCode('');
+                  await refreshGames();
+                  setMessage('Invite accepted.');
+                  setPage('games');
+                })
+              }
+              style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
+            >
+              <Text style={lobbyStyles.smallButtonText}>Join</Text>
             </Pressable>
           </View>
-          {activeGames.length === 0 ? (
-            <View style={lobbyStyles.emptyState}>
-              <Text style={lobbyStyles.emptyTitle}>No games yet</Text>
-              <Text style={lobbyStyles.emptyBody}>Start one with a friend or play the computer.</Text>
-            </View>
-          ) : (
-            activeGames.map((game) => (
-              <GameListItem game={game} key={game.id} now={now} onOpenGame={onOpenGame} profileId={profileId} />
-            ))
-          )}
         </View>
 
-        <View style={lobbyStyles.actionGrid}>
-          <Pressable onPress={() => setPage('startFriend')} style={({ pressed }) => [lobbyStyles.primaryButton, lobbyStyles.actionButton, pressed && lobbyStyles.pressed]}>
-            <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Create Invite Link</Text>
+          <Pressable
+            disabled={isBusy}
+            onPress={() =>
+              void runAction(async () => {
+                const result = await createInviteGame();
+                setGeneratedInviteCode(result.inviteCode ?? null);
+                await refreshGames();
+              })
+            }
+            style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
+          >
+            <Text style={lobbyStyles.secondaryButtonText}>Create Link</Text>
           </Pressable>
-          <Pressable onPress={onPlayLocalDemo} style={({ pressed }) => [lobbyStyles.secondaryButton, lobbyStyles.actionButton, pressed && lobbyStyles.pressed]}>
-            <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
-          </Pressable>
+          {generatedInviteCode && (
+            <View style={lobbyStyles.inviteLinkBlock}>
+              <Text style={lobbyStyles.inviteCode}>{generatedInviteCode}</Text>
+              <Text selectable style={lobbyStyles.inviteLinkText}>
+                {getInviteLink(generatedInviteCode)}
+              </Text>
+              <Pressable
+                onPress={() => void shareInviteLink()}
+                style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+              >
+                <Text style={lobbyStyles.primaryButtonText}>Share Invite</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
         {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
       </ScrollView>,
+    );
+  }
+
+  if (page === 'profile') {
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={lobbyStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <ScreenHeader title="Profile" onBack={() => setPage('games')} />
+
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Player Info</Text>
+          <TextInput
+            onChangeText={setDisplayName}
+            placeholder="Display name"
+            placeholderTextColor="#8A4B12"
+            style={lobbyStyles.input}
+            value={displayName}
+          />
+          <TextInput
+            autoCapitalize="none"
+            onChangeText={setUsername}
+            placeholder="Username"
+            placeholderTextColor="#8A4B12"
+            style={lobbyStyles.input}
+            value={username}
+          />
+          <Pressable
+            disabled={isBusy || displayName.trim().length === 0}
+            onPress={() =>
+              void runAction(async () => {
+                await saveProfile({
+                  displayName: displayName.trim(),
+                  username: username.trim() || null,
+                });
+                setMessage('Profile saved.');
+              })
+            }
+            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+          >
+            <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
+          </Pressable>
+        </View>
+
+        <ComputerStatsCard stats={computerStats} />
+
+        <Pressable
+          onPress={() => void endSession()}
+          style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+        >
+          <Text style={lobbyStyles.signOutText}>Sign Out</Text>
+        </Pressable>
+        {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
+        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>,
+    );
+  }
+
+  return renderShell(
+    <ScrollView
+      contentContainerStyle={lobbyStyles.scrollContent}
+      showsVerticalScrollIndicator={false}
+      style={lobbyStyles.scroll}
+    >
+      <SuckerLobbyTitle />
+      <View style={lobbyStyles.topBar}>
+        <View>
+          <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
+          <Text style={lobbyStyles.subtleText}>
+            {activeGames.length} active {activeGames.length === 1 ? 'game' : 'games'}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => setPage('profile')}
+          style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+        >
+          <Text style={lobbyStyles.signOutText}>Profile</Text>
+        </Pressable>
+      </View>
+
+      <View style={lobbyStyles.panel}>
+        <View style={lobbyStyles.panelHeader}>
+          <Text style={lobbyStyles.sectionTitle}>Games</Text>
+          <Pressable
+            onPress={() => void refreshGames()}
+            style={({ pressed }) => [lobbyStyles.refreshButton, pressed && lobbyStyles.pressed]}
+          >
+            <Text style={lobbyStyles.refreshText}>Refresh</Text>
+          </Pressable>
+        </View>
+        {activeGames.length === 0 ? (
+          <View style={lobbyStyles.emptyState}>
+            <Text style={lobbyStyles.emptyTitle}>No games yet</Text>
+            <Text style={lobbyStyles.emptyBody}>Start one with a friend or play the computer.</Text>
+          </View>
+        ) : (
+          activeGames.map((game) => (
+            <GameListItem game={game} key={game.id} now={now} onOpenGame={onOpenGame} profileId={profileId} />
+          ))
+        )}
+      </View>
+
+      <View style={lobbyStyles.actionGrid}>
+        <Pressable
+          onPress={() => setPage('startFriend')}
+          style={({ pressed }) => [lobbyStyles.primaryButton, lobbyStyles.actionButton, pressed && lobbyStyles.pressed]}
+        >
+          <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
+        </Pressable>
+        <Pressable
+          onPress={onPlayLocalDemo}
+          style={({ pressed }) => [
+            lobbyStyles.secondaryButton,
+            lobbyStyles.actionButton,
+            pressed && lobbyStyles.pressed,
+          ]}
+        >
+          <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
+        </Pressable>
+      </View>
+
+      {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
+      {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+    </ScrollView>,
   );
 }
 
@@ -476,12 +526,19 @@ function GameListItem({
   const isMyTurn = game.current_player_id === profileId;
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
-  const waitText = game.status === 'inviting' ? `Open invite for ${formatElapsed(now, game.updated_at)}` : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
+  const waitText =
+    game.status === 'inviting'
+      ? `Open invite for ${formatElapsed(now, game.updated_at)}`
+      : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
 
   return (
     <Pressable
       onPress={() => onOpenGame(game.id)}
-      style={({ pressed }) => [lobbyStyles.gameCard, isMyTurn && lobbyStyles.gameCardMyTurn, pressed && lobbyStyles.pressed]}
+      style={({ pressed }) => [
+        lobbyStyles.gameCard,
+        isMyTurn && lobbyStyles.gameCardMyTurn,
+        pressed && lobbyStyles.pressed,
+      ]}
     >
       <View style={lobbyStyles.gameCardTop}>
         <View style={lobbyStyles.avatarLarge}>
@@ -536,7 +593,9 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
       </View>
       <View style={lobbyStyles.statRow}>
         <Text style={lobbyStyles.statLine}>Full {formatPct(stats.full_house_games, stats.games_played)}</Text>
-        <Text style={lobbyStyles.statLine}>Straights {formatPct(stats.small_straight_games + stats.large_straight_games, stats.games_played)}</Text>
+        <Text style={lobbyStyles.statLine}>
+          Straights {formatPct(stats.small_straight_games + stats.large_straight_games, stats.games_played)}
+        </Text>
       </View>
     </View>
   );

@@ -6,11 +6,11 @@ Sucker! is a head-to-head asynchronous mobile dice game inspired by classic five
 
 The game introduces a second resource system called Sucker Tokens, forcing players to balance:
 
-* Scoring points
-* Managing tokens
-* Attacking opponents
-* Defending themselves
-* Sacrificing categories for tactical advantages
+- Scoring points
+- Managing tokens
+- Attacking opponents
+- Defending themselves
+- Sacrificing categories for tactical advantages
 
 The goal is to create a game that feels familiar while adding meaningful player interaction and strategic decision-making.
 
@@ -20,16 +20,16 @@ Game Format
 
 Players
 
-* Exactly 2 players
-* Asynchronous play
-* One active turn at a time
-* Push notifications for turn events
+- Exactly 2 players
+- Asynchronous play
+- One active turn at a time
+- Push notifications for turn events
 
 Dice
 
-* 5 six-sided dice
-* Up to 4 rolls per turn
-* Players may hold and release dice between rolls
+- 5 six-sided dice
+- Up to 4 rolls per turn
+- Players may hold and release dice between rolls
 
 Objective
 
@@ -43,22 +43,22 @@ The scorecard follows traditional Yahtzee-style categories.
 
 Upper Section
 
-* Ones
-* Twos
-* Threes
-* Fours
-* Fives
-* Sixes
+- Ones
+- Twos
+- Threes
+- Fours
+- Fives
+- Sixes
 
 Lower Section
 
-* Three of a Kind
-* Four of a Kind
-* Full House
-* Small Straight
-* Large Straight
-* Chance
-* Sucker
+- Three of a Kind
+- Four of a Kind
+- Full House
+- Small Straight
+- Large Straight
+- Chance
+- Sucker
 
 ⸻
 
@@ -70,16 +70,16 @@ A Sucker occurs when all five dice show the same value.
 
 Examples:
 
-* 1-1-1-1-1
-* 6-6-6-6-6
+- 1-1-1-1-1
+- 6-6-6-6-6
 
 Rewards
 
 When a player rolls a Sucker:
 
-* Scores the Sucker category normally
-* Triggers Sucker animation
-* Triggers optional taunt message
+- Scores the Sucker category normally
+- Triggers Sucker animation
+- Triggers optional taunt message
 
 Suckers do NOT award tokens.
 
@@ -111,9 +111,9 @@ Tokens are a limited strategic resource.
 
 Players must decide whether to spend tokens:
 
-* Improving their own rolls
-* Defending against attacks
-* Attacking opponents
+- Improving their own rolls
+- Defending against attacks
+- Attacking opponents
 
 ⸻
 
@@ -157,10 +157,10 @@ Discard the entire turn and replay it from the beginning.
 
 Rules
 
-* Original turn is completely removed
-* All previous rolls are discarded
-* Player starts a fresh turn
-* Receives 4 standard rolls again
+- Original turn is completely removed
+- All previous rolls are discarded
+- Player starts a fresh turn
+- Receives 4 standard rolls again
 
 ⸻
 
@@ -174,10 +174,10 @@ Force the opponent to replay their most recently completed turn.
 
 Rules
 
-* Can only target the opponent’s immediately previous turn
-* Cannot target older turns
-* Original score is removed
-* Opponent must replay the turn
+- Can only target the opponent’s immediately previous turn
+- Cannot target older turns
+- Original score is removed
+- Opponent must replay the turn
 
 Timing
 
@@ -197,9 +197,9 @@ Cancel a Sucker Punch.
 
 Rules
 
-* May only be used in response to a Sucker Punch
-* Original turn result remains intact
-* Consumes 2 tokens
+- May only be used in response to a Sucker Punch
+- Original turn result remains intact
+- Consumes 2 tokens
 
 ⸻
 
@@ -223,8 +223,8 @@ Player has no realistic chance of achieving Large Straight.
 
 Instead of continuing to pursue it:
 
-* Scratch Large Straight
-* Gain 1 Sucker Token
+- Scratch Large Straight
+- Gain 1 Sucker Token
 
 Design Intent
 
@@ -255,10 +255,10 @@ After a turn is submitted:
 
 1. Opponent receives notification
 2. Opponent may:
-    * Accept result
-    * Use Sucker Punch
+   - Accept result
+   - Use Sucker Punch
 3. If Sucker Punch is used:
-    * Defender may use Sucker Blocker
+   - Defender may use Sucker Blocker
 4. Turn becomes finalized
 
 ⸻
@@ -269,22 +269,22 @@ Examples:
 
 Turn Events
 
-* Your turn.
-* Opponent completed their turn.
-* Opponent rolled a SUCKER!
+- Your turn.
+- Opponent completed their turn.
+- Opponent rolled a SUCKER!
 
 Attack Events
 
-* You were Sucker Punched!
-* Sucker Punch successful.
-* Sucker Blocker activated.
-* Sucker Punch blocked.
+- You were Sucker Punched!
+- Sucker Punch successful.
+- Sucker Blocker activated.
+- Sucker Punch blocked.
 
 Game Events
 
-* Opponent scratched Large Straight.
-* Opponent purchased an extra roll.
-* Game complete.
+- Opponent scratched Large Straight.
+- Opponent purchased an extra roll.
+- Game complete.
 
 ⸻
 
@@ -294,21 +294,21 @@ The game intentionally supports multiple viable playstyles.
 
 Score Maximizer
 
-* Conserves tokens
-* Focuses on scorecard efficiency
-* Rarely scratches categories
+- Conserves tokens
+- Focuses on scorecard efficiency
+- Rarely scratches categories
 
 Tactical Player
 
-* Scratches categories
-* Uses frequent extra rolls
-* Builds toward Sucker Punch opportunities
+- Scratches categories
+- Uses frequent extra rolls
+- Builds toward Sucker Punch opportunities
 
 Defensive Player
 
-* Maintains token reserves
-* Prioritizes Sucker Blockers
-* Minimizes risk
+- Maintains token reserves
+- Prioritizes Sucker Blockers
+- Minimizes risk
 
 ⸻
 

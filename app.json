@@ -23,9 +23,7 @@
       "color": "#D90000",
       "icon": "./assets/icon.png"
     },
-    "plugins": [
-      "expo-notifications"
-    ],
+    "plugins": ["expo-notifications"],
     "web": {
       "favicon": "./assets/favicon.png"
     }
