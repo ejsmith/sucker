@@ -9,6 +9,14 @@ export async function registerPushToken(profileId: string) {
     return null;
   }
 
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      importance: Notifications.AndroidImportance.MAX,
+      name: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+    });
+  }
+
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   const finalStatus =
     existingStatus === 'granted' ? existingStatus : (await Notifications.requestPermissionsAsync()).status;

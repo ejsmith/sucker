@@ -10,6 +10,7 @@ import {
   upsertProfile,
   verifyEmailCode,
 } from './auth';
+import { registerPushToken } from './notifications';
 import { getMyProfile } from './profiles';
 import { isMultiplayerConfigured, supabase } from './supabase';
 import type { ProfileInput } from './types';
@@ -22,6 +23,7 @@ export function useMultiplayerSession() {
   const [profile, setProfile] = useState<Profile>(null);
   const [session, setSession] = useState<Session | null>(null);
   const lastHandledAuthUrl = useRef<string | null>(null);
+  const lastRegisteredPushProfileId = useRef<string | null>(null);
 
   const refreshProfile = useCallback(async () => {
     if (!isMultiplayerConfigured) {
@@ -120,6 +122,17 @@ export function useMultiplayerSession() {
       subscription.unsubscribe();
     };
   }, [refreshProfile]);
+
+  useEffect(() => {
+    if (!profile || lastRegisteredPushProfileId.current === profile.id) {
+      return;
+    }
+
+    lastRegisteredPushProfileId.current = profile.id;
+    void registerPushToken(profile.id).catch((pushError) => {
+      console.warn('Unable to register push token', pushError);
+    });
+  }, [profile]);
 
   async function sendSignInLink(email: string) {
     setError(null);

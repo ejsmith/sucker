@@ -49,6 +49,13 @@ type Action =
   | { type: 'sucker_punch'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 
+type ActionResult = {
+  game: GameRow;
+  dice?: Dice;
+  inviteCode?: string;
+  notificationProfileIds?: string[];
+};
+
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Origin': '*',
@@ -83,6 +90,7 @@ Deno.serve(async (request) => {
     }
 
     const result = await applyAction(admin, user.id, action);
+    await sendActionNotifications(admin, user.id, action, result);
     return json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected multiplayer error';
@@ -90,7 +98,7 @@ Deno.serve(async (request) => {
   }
 });
 
-async function applyAction(admin: DbClient, actorId: string, action: Action) {
+async function applyAction(admin: DbClient, actorId: string, action: Action): Promise<ActionResult> {
   switch (action.type) {
     case 'create_game':
       return createRemoteGame(admin, actorId, action.opponentProfileId);
@@ -116,6 +124,76 @@ async function applyAction(admin: DbClient, actorId: string, action: Action) {
       return suckerPunchTurn(admin, actorId, action.gameId, action.turnId);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
+    default:
+      return assertNever(action);
+  }
+}
+
+async function sendActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
+  const profileIds = [...new Set(result.notificationProfileIds ?? [])].filter((profileId) => profileId !== actorId);
+  if (profileIds.length === 0) {
+    return;
+  }
+
+  const { data: tokens, error } = await admin
+    .from('push_tokens')
+    .select('expo_push_token, profile_id')
+    .in('profile_id', profileIds);
+
+  if (error) {
+    console.warn('Unable to load push tokens', error);
+    return;
+  }
+  if (!tokens || tokens.length === 0) {
+    return;
+  }
+
+  const messages = tokens.map((token) => ({
+    body: notificationBody(action, result.game),
+    data: { gameId: result.game.id },
+    sound: 'default',
+    title: 'Sucker!',
+    to: token.expo_push_token,
+  }));
+
+  try {
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      body: JSON.stringify(messages),
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      console.warn('Expo push request failed', response.status, await response.text());
+    }
+  } catch (pushError) {
+    console.warn('Unable to send push notifications', pushError);
+  }
+}
+
+function notificationBody(action: Action, game: GameRow) {
+  switch (action.type) {
+    case 'create_game':
+      return 'A friend started a game with you.';
+    case 'accept_invite':
+      return 'Your invite was accepted.';
+    case 'score_category':
+    case 'scratch_category':
+    case 'roll':
+    case 'extra_roll':
+      return game.status === 'complete' ? 'Your game is complete.' : 'It is your turn.';
+    case 'sucker_punch':
+      return 'You got Sucker Punched.';
+    case 'sucker_blocker':
+      return 'Your Sucker Punch was blocked.';
+    case 'create_invite':
+    case 'pass_response':
+    case 'mulligan':
+      return 'Your game was updated.';
     default:
       return assertNever(action);
   }
