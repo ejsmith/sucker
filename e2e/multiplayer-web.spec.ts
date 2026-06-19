@@ -73,7 +73,14 @@ test('two players can create an invite and play turns through the web UI', async
   await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
 
   await openGameFromLobby(bobPage, gameId);
-  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png');
+  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png', {
+    mask: [
+      bobPage.getByTestId('dice-tray'),
+      bobPage.getByTestId('opponent-score-box-ones'),
+      bobPage.getByTestId('player-strip'),
+      bobPage.getByTestId('section-bonus-panel'),
+    ],
+  });
   await expect(bobPage.getByTestId('roll-button')).toBeEnabled();
   await bobPage.getByTestId('roll-button').click();
   await expect(bobPage.getByTestId('home-score-box-twos')).toBeVisible();
@@ -95,9 +102,11 @@ test('two players can create an invite and play turns through the web UI', async
   expect(state.players.find((player) => player.id === alice.id)?.scorecard.ones).toEqual(expect.any(Number));
   expect(state.players.find((player) => player.id === bob.id)?.scorecard.twos).toEqual(expect.any(Number));
 
-  await completeGameForScreenshot(gameId);
+  await completeGameForScreenshot(gameId, bob.id);
   await expect(bobPage.getByTestId('game-over-overlay')).toBeVisible();
-  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('game-over.png');
+  await expect(bobPage.getByTestId('game-over-panel')).toHaveScreenshot('game-over.png', {
+    mask: [bobPage.getByTestId('game-over-home-score'), bobPage.getByTestId('game-over-opponent-score')],
+  });
 });
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
@@ -217,7 +226,7 @@ async function loadActionTypes(gameId: string) {
   return (data ?? []).map((action) => action.action_type);
 }
 
-async function completeGameForScreenshot(gameId: string) {
+async function completeGameForScreenshot(gameId: string, winnerPlayerId: string) {
   const game = await loadGame(gameId);
   const state = game.state as {
     players: Array<{
@@ -237,7 +246,10 @@ async function completeGameForScreenshot(gameId: string) {
     players: state.players.map((player) => ({
       ...player,
       scorecard: Object.fromEntries(
-        scoreCategories.map((category) => [category, player.scorecard[category] ?? 0]),
+        scoreCategories.map((category) => [
+          category,
+          player.id === winnerPlayerId && category === 'chance' ? 1 : (player.scorecard[category] ?? 0),
+        ]),
       ) as Record<(typeof scoreCategories)[number], number>,
     })),
     rollNumber: 0,
@@ -250,7 +262,7 @@ async function completeGameForScreenshot(gameId: string) {
       current_player_id: null,
       state: completedState,
       status: 'complete',
-      winner_id: state.players[0]?.id ?? null,
+      winner_id: winnerPlayerId,
     })
     .eq('id', gameId);
   assertNoError(error);
@@ -258,7 +270,11 @@ async function completeGameForScreenshot(gameId: string) {
   for (const player of completedState.players) {
     const { error: playerError } = await admin
       .from('game_players')
-      .update({ final_score: 0, sucker_tokens: player.suckerTokens, upper_bonus_awarded: false })
+      .update({
+        final_score: player.id === winnerPlayerId ? 1 : 0,
+        sucker_tokens: player.suckerTokens,
+        upper_bonus_awarded: false,
+      })
       .eq('game_id', gameId)
       .eq('player_id', player.id);
     assertNoError(playerError);

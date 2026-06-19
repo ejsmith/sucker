@@ -1493,7 +1493,7 @@ function LocalGameScreen({
           )}
         </View>
 
-        <View style={styles.playerStrip}>
+        <View style={styles.playerStrip} testID="player-strip">
           {displayPlayers.map((player, index) => (
             <View key={player.id} style={[styles.playerPill, player.id === currentPlayer.id && styles.activePlayer]}>
               <View style={[styles.avatar, player.id === currentPlayer.id && styles.activeAvatar]}>
@@ -1543,7 +1543,7 @@ function LocalGameScreen({
           ))}
 
           <View style={styles.boardRow}>
-            <View style={styles.bonusPanel}>
+            <View style={styles.bonusPanel} testID="section-bonus-panel">
               <View style={styles.bonusContent}>
                 <View style={styles.bonusTextBlock}>
                   <Text style={styles.bonusSmall}>Section{'\n'}Bonus</Text>
@@ -1961,7 +1961,7 @@ function LocalGameScreen({
         )}
         {gameOverVisible && (
           <View style={styles.gameOverOverlay} testID="game-over-overlay">
-            <View style={styles.gameOverPanel}>
+            <View style={styles.gameOverPanel} testID="game-over-panel">
               <Pressable
                 accessibilityLabel="Close game over"
                 onPress={handleCloseGameOver}
@@ -1972,11 +1972,11 @@ function LocalGameScreen({
               <Text style={styles.gameOverEyebrow}>Game Over</Text>
               <Text style={styles.gameOverTitle}>{gameOverTitle}</Text>
               <View style={styles.gameOverScores}>
-                <View style={styles.gameOverScoreBox}>
+                <View style={styles.gameOverScoreBox} testID="game-over-home-score">
                   <Text style={styles.gameOverScoreName}>{homePlayer.name}</Text>
                   <Text style={styles.gameOverScoreValue}>{homeScore}</Text>
                 </View>
-                <View style={styles.gameOverScoreBox}>
+                <View style={styles.gameOverScoreBox} testID="game-over-opponent-score">
                   <Text style={styles.gameOverScoreName}>{opponentPlayer.name}</Text>
                   <Text style={styles.gameOverScoreValue}>{opponentScore}</Text>
                 </View>
