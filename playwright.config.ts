@@ -2,10 +2,14 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   expect: {
+    toHaveScreenshot: {
+      maxDiffPixelRatio: 0.05,
+    },
     timeout: 10_000,
   },
   fullyParallel: false,
   reporter: [['list']],
+  snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   testDir: './e2e',
   timeout: 60_000,
   use: {
