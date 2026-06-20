@@ -33,7 +33,7 @@ SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
   supabase functions serve game-action --no-verify-jwt &
 functions_pid=$!
 
-npm run web -- --port 8081 &
+BROWSER=none npm run web -- --port 8081 &
 expo_pid=$!
 
 cleanup() {
