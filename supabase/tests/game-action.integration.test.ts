@@ -30,6 +30,7 @@ const functionUrl = `${supabaseUrl}/functions/v1/game-action`;
 const admin = createClient<Database>(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
+const supabaseClients: DbClient[] = [admin];
 const falseHeld = [false, false, false, false, false] as GameState['held'];
 
 Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', async () => {
@@ -224,6 +225,16 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   );
 });
 
+Deno.test({
+  name: 'cleanup Supabase clients',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await Promise.all(supabaseClients.map((client) => client.removeAllChannels()));
+    supabaseClients.forEach((client) => client.auth.stopAutoRefresh());
+  },
+});
+
 async function scratchAndPass(gameId: string, actor: TestUser, responder: TestUser, category: ScoreCategory) {
   await invokeGameAction(actor, { gameId, held: falseHeld, type: 'roll' });
   const scratched = (
@@ -269,6 +280,7 @@ async function createUsers(prefix: string, displayNames: string[]) {
     const client = createClient<Database>(supabaseUrl, anonKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+    supabaseClients.push(client);
     const { data: signedIn, error: signInError } = await client.auth.signInWithPassword({ email, password });
     assertNoError(signInError);
     if (!signedIn.session) {
