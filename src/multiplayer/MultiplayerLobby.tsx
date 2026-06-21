@@ -56,7 +56,9 @@ export function MultiplayerLobby({
   function renderShell(children: ReactNode) {
     return (
       <View style={lobbyStyles.stageHost}>
-        <View style={[lobbyStyles.shell, shellStyle]}>{children}</View>
+        <View style={[lobbyStyles.shell, shellStyle]} testID="multiplayer-lobby-shell">
+          {children}
+        </View>
       </View>
     );
   }
@@ -177,6 +179,7 @@ export function MultiplayerLobby({
           placeholder="Email"
           placeholderTextColor="#8A4B12"
           style={lobbyStyles.input}
+          testID="login-email-input"
           value={email}
         />
         {isCodeSent && (
@@ -189,6 +192,7 @@ export function MultiplayerLobby({
             placeholder="Sign-in code"
             placeholderTextColor="#8A4B12"
             style={[lobbyStyles.input, lobbyStyles.codeInput]}
+            testID="login-code-input"
             textContentType="oneTimeCode"
             value={loginCode}
           />
@@ -197,6 +201,7 @@ export function MultiplayerLobby({
           disabled={isLoading || (isCodeSent ? loginCode.trim().length < 6 : email.trim().length === 0)}
           onPress={() => void (isCodeSent ? handleVerifyCode() : handleSendCode())}
           style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+          testID={isCodeSent ? 'verify-code-button' : 'send-code-button'}
         >
           <Text style={lobbyStyles.primaryButtonText}>{isCodeSent ? 'Verify Code' : 'Send Code'}</Text>
         </Pressable>
@@ -225,6 +230,7 @@ export function MultiplayerLobby({
         <Pressable
           onPress={onPlayLocalDemo}
           style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
+          testID="play-computer-button"
         >
           <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
         </Pressable>
@@ -259,12 +265,14 @@ export function MultiplayerLobby({
               placeholder="Username or name"
               placeholderTextColor="#8A4B12"
               style={[lobbyStyles.input, lobbyStyles.flexInput]}
+              testID="profile-search-input"
               value={query}
             />
             <Pressable
               disabled={isBusy || query.trim().length < 2}
               onPress={() => void handleSearchProfiles()}
               style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
+              testID="profile-search-button"
             >
               <Text style={lobbyStyles.smallButtonText}>Find</Text>
             </Pressable>
@@ -295,6 +303,7 @@ export function MultiplayerLobby({
                   })
                 }
                 style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
+                testID={`profile-play-${result.id}`}
               >
                 <Text style={lobbyStyles.smallButtonText}>Play</Text>
               </Pressable>
@@ -311,6 +320,7 @@ export function MultiplayerLobby({
               placeholder="Invite code"
               placeholderTextColor="#8A4B12"
               style={[lobbyStyles.input, lobbyStyles.flexInput]}
+              testID="invite-code-input"
               value={inviteCode}
             />
             <Pressable
@@ -325,6 +335,7 @@ export function MultiplayerLobby({
                 })
               }
               style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
+              testID="join-invite-button"
             >
               <Text style={lobbyStyles.smallButtonText}>Join</Text>
             </Pressable>
@@ -343,18 +354,22 @@ export function MultiplayerLobby({
               })
             }
             style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
+            testID="create-invite-button"
           >
             <Text style={lobbyStyles.secondaryButtonText}>Create Link</Text>
           </Pressable>
           {generatedInviteCode && (
             <View style={lobbyStyles.inviteLinkBlock}>
-              <Text style={lobbyStyles.inviteCode}>{generatedInviteCode}</Text>
+              <Text style={lobbyStyles.inviteCode} testID="generated-invite-code">
+                {generatedInviteCode}
+              </Text>
               <Text selectable style={lobbyStyles.inviteLinkText}>
                 {getInviteLink(generatedInviteCode)}
               </Text>
               <Pressable
                 onPress={() => void shareInviteLink()}
                 style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+                testID="share-invite-button"
               >
                 <Text style={lobbyStyles.primaryButtonText}>Share Invite</Text>
               </Pressable>
@@ -385,6 +400,7 @@ export function MultiplayerLobby({
             placeholder="Display name"
             placeholderTextColor="#8A4B12"
             style={lobbyStyles.input}
+            testID="display-name-input"
             value={displayName}
           />
           <TextInput
@@ -393,6 +409,7 @@ export function MultiplayerLobby({
             placeholder="Username"
             placeholderTextColor="#8A4B12"
             style={lobbyStyles.input}
+            testID="username-input"
             value={username}
           />
           <Pressable
@@ -407,6 +424,7 @@ export function MultiplayerLobby({
               })
             }
             style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+            testID="save-profile-button"
           >
             <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
           </Pressable>
@@ -417,6 +435,7 @@ export function MultiplayerLobby({
         <Pressable
           onPress={() => void endSession()}
           style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+          testID="sign-out-button"
         >
           <Text style={lobbyStyles.signOutText}>Sign Out</Text>
         </Pressable>
@@ -443,6 +462,7 @@ export function MultiplayerLobby({
         <Pressable
           onPress={() => setPage('profile')}
           style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+          testID="profile-button"
         >
           <Text style={lobbyStyles.signOutText}>Profile</Text>
         </Pressable>
@@ -454,6 +474,7 @@ export function MultiplayerLobby({
           <Pressable
             onPress={() => void refreshGames()}
             style={({ pressed }) => [lobbyStyles.refreshButton, pressed && lobbyStyles.pressed]}
+            testID="refresh-games-button"
           >
             <Text style={lobbyStyles.refreshText}>Refresh</Text>
           </Pressable>
@@ -474,6 +495,7 @@ export function MultiplayerLobby({
         <Pressable
           onPress={() => setPage('startFriend')}
           style={({ pressed }) => [lobbyStyles.primaryButton, lobbyStyles.actionButton, pressed && lobbyStyles.pressed]}
+          testID="start-with-friend-button"
         >
           <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
         </Pressable>
@@ -484,6 +506,7 @@ export function MultiplayerLobby({
             lobbyStyles.actionButton,
             pressed && lobbyStyles.pressed,
           ]}
+          testID="play-computer-button"
         >
           <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
         </Pressable>
@@ -539,6 +562,7 @@ function GameListItem({
         isMyTurn && lobbyStyles.gameCardMyTurn,
         pressed && lobbyStyles.pressed,
       ]}
+      testID={`game-card-${game.id}`}
     >
       <View style={lobbyStyles.gameCardTop}>
         <View style={lobbyStyles.avatarLarge}>

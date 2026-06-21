@@ -166,6 +166,7 @@ const backgroundDiePositions = [
 const computerThinkingDelayMs = 2400;
 const computerScorePreviewDelayMs = 0;
 const computerScoreAnimationDurationMs = 950;
+const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
 export default function App() {
   const [showLocalDemo, setShowLocalDemo] = useState(false);
   const [remoteGameId, setRemoteGameId] = useState<string | null>(null);
@@ -555,6 +556,10 @@ function LocalGameScreen({
   );
 
   useEffect(() => {
+    if (disableE2EAnimations) {
+      return;
+    }
+
     const loops = [
       Animated.loop(
         Animated.sequence([
@@ -1449,7 +1454,7 @@ function LocalGameScreen({
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
-      <View ref={screenRef} style={[styles.screen, gameStageStyle]}>
+      <View ref={screenRef} style={[styles.screen, gameStageStyle]} testID="game-screen">
         <BackgroundDicePattern floatValue={bgFloat} />
         <View style={styles.topBar}>
           <View pointerEvents="none" style={styles.topBarBannerClip}>
@@ -1488,7 +1493,7 @@ function LocalGameScreen({
           )}
         </View>
 
-        <View style={styles.playerStrip}>
+        <View style={styles.playerStrip} testID="player-strip">
           {displayPlayers.map((player, index) => (
             <View key={player.id} style={[styles.playerPill, player.id === currentPlayer.id && styles.activePlayer]}>
               <View style={[styles.avatar, player.id === currentPlayer.id && styles.activeAvatar]}>
@@ -1538,7 +1543,7 @@ function LocalGameScreen({
           ))}
 
           <View style={styles.boardRow}>
-            <View style={styles.bonusPanel}>
+            <View style={styles.bonusPanel} testID="section-bonus-panel">
               <View style={styles.bonusContent}>
                 <View style={styles.bonusTextBlock}>
                   <Text style={styles.bonusSmall}>Section{'\n'}Bonus</Text>
@@ -1581,7 +1586,7 @@ function LocalGameScreen({
         </View>
 
         <View ref={rollZoneRef} style={styles.rollZone}>
-          <View style={styles.diceTray}>
+          <View style={styles.diceTray} testID="dice-tray">
             {game.dice.map((die, index) => {
               const isFlying = isRolling && rollingDieIndexes.includes(index);
               const showDie = game.rollNumber > 0 || isRolling;
@@ -1711,6 +1716,7 @@ function LocalGameScreen({
                   !canRoll && styles.disabledRollButton,
                   pressed && styles.pressed,
                 ]}
+                testID="roll-button"
               >
                 <View style={styles.buttonGloss} />
                 <View style={styles.buttonInnerShade} />
@@ -1732,6 +1738,7 @@ function LocalGameScreen({
                   !canOpenTokenMenu && styles.disabledButton,
                   pressed && styles.pressed,
                 ]}
+                testID="token-menu-button"
               >
                 <View style={styles.buttonInnerShade} />
                 <Image source={suckerTokenImage} style={styles.tokenButtonImage} />
@@ -1750,6 +1757,7 @@ function LocalGameScreen({
                   !canPlaySelected && styles.disabledButton,
                   pressed && styles.pressed,
                 ]}
+                testID="play-score-button"
               >
                 <View style={styles.playGloss} />
                 <View style={styles.buttonInnerShade} />
@@ -1759,7 +1767,7 @@ function LocalGameScreen({
           </View>
         </View>
         {isTokenMenuOpen && (
-          <View style={styles.tokenMenuOverlay}>
+          <View style={styles.tokenMenuOverlay} testID="token-menu-overlay">
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
             <View style={styles.tokenMenuPanel}>
               <View style={styles.tokenMenuHeader}>
@@ -1768,7 +1776,11 @@ function LocalGameScreen({
                   <Text style={styles.tokenMenuTitle}>Sucker Tokens</Text>
                   <Text style={styles.tokenMenuSubtitle}>{myTokenCount} available</Text>
                 </View>
-                <Pressable onPress={() => setIsTokenMenuOpen(false)} style={styles.tokenMenuClose}>
+                <Pressable
+                  onPress={() => setIsTokenMenuOpen(false)}
+                  style={styles.tokenMenuClose}
+                  testID="token-menu-close-button"
+                >
                   <Text style={styles.tokenMenuCloseText}>X</Text>
                 </Pressable>
               </View>
@@ -1779,6 +1791,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
                 label="Extra Roll"
                 onPress={() => void handleUseExtraRoll()}
+                testID="token-option-extra-roll"
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.mulligan}
@@ -1786,6 +1799,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalMulligan}
                 label="Mulligan"
                 onPress={handleUseMulligan}
+                testID="token-option-mulligan"
               />
               <TokenMenuOption
                 cost={0}
@@ -1794,6 +1808,7 @@ function LocalGameScreen({
                 disabled={!canStartSuckerDeal}
                 label="Sucker Deal"
                 onPress={handleStartSuckerDeal}
+                testID="token-option-sucker-deal"
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.suckerPunch}
@@ -1805,6 +1820,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
                 label="Sucker Punch"
                 onPress={() => void handleUseSuckerPunch()}
+                testID="token-option-sucker-punch"
               />
               <TokenMenuOption
                 cost={suckerTokenCosts.suckerBlocker}
@@ -1816,6 +1832,7 @@ function LocalGameScreen({
                 disabled={!canUseLocalSuckerBlocker && !canUseRemoteSuckerBlocker}
                 label="Block Sucker Punch"
                 onPress={() => void handleUseSuckerBlocker()}
+                testID="token-option-sucker-blocker"
               />
             </View>
           </View>
@@ -1943,8 +1960,8 @@ function LocalGameScreen({
           </View>
         )}
         {gameOverVisible && (
-          <View style={styles.gameOverOverlay}>
-            <View style={styles.gameOverPanel}>
+          <View style={styles.gameOverOverlay} testID="game-over-overlay">
+            <View style={styles.gameOverPanel} testID="game-over-panel">
               <Pressable
                 accessibilityLabel="Close game over"
                 onPress={handleCloseGameOver}
@@ -1955,11 +1972,11 @@ function LocalGameScreen({
               <Text style={styles.gameOverEyebrow}>Game Over</Text>
               <Text style={styles.gameOverTitle}>{gameOverTitle}</Text>
               <View style={styles.gameOverScores}>
-                <View style={styles.gameOverScoreBox}>
+                <View style={styles.gameOverScoreBox} testID="game-over-home-score">
                   <Text style={styles.gameOverScoreName}>{homePlayer.name}</Text>
                   <Text style={styles.gameOverScoreValue}>{homeScore}</Text>
                 </View>
-                <View style={styles.gameOverScoreBox}>
+                <View style={styles.gameOverScoreBox} testID="game-over-opponent-score">
                   <Text style={styles.gameOverScoreName}>{opponentPlayer.name}</Text>
                   <Text style={styles.gameOverScoreValue}>{opponentScore}</Text>
                 </View>
@@ -2011,6 +2028,7 @@ function TokenMenuOption({
   disabled = false,
   label,
   onPress,
+  testID,
 }: {
   cost: number;
   costLabel?: string;
@@ -2018,12 +2036,14 @@ function TokenMenuOption({
   disabled?: boolean;
   label: string;
   onPress?: () => void;
+  testID?: string;
 }) {
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.tokenOption, disabled && styles.disabledTokenOption, pressed && styles.pressed]}
+      testID={testID}
     >
       <View style={styles.tokenOptionCost}>
         <Image source={suckerTokenImage} style={styles.tokenOptionCostIcon} />
@@ -2202,6 +2222,7 @@ function ScoreCell({
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
           ]}
+          testID={`home-score-box-${category}`}
         >
           {homeSuckerBonus && <SuckerBonusBadge />}
           <Text
@@ -2219,6 +2240,7 @@ function ScoreCell({
         onPress={() => onSelect(category)}
         ref={(node) => setOpponentScoreRef(category, node)}
         style={styles.opponentScoreWrap}
+        testID={`opponent-score-box-${category}`}
       >
         {opponentSuckerBonus && <SuckerBonusBadge compact />}
         <Text
@@ -3019,6 +3041,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 4,
     gap: 10,
+    height: 240,
     padding: 14,
     shadowColor: '#050505',
     shadowOffset: { width: 0, height: 6 },
