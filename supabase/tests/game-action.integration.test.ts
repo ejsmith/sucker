@@ -231,7 +231,10 @@ Deno.test({
   sanitizeResources: false,
   fn: async () => {
     await Promise.all(supabaseClients.map((client) => client.removeAllChannels()));
-    supabaseClients.forEach((client) => client.auth.stopAutoRefresh());
+    supabaseClients.forEach((client) => {
+      client.realtime.disconnect();
+      client.auth.stopAutoRefresh();
+    });
   },
 });
 
