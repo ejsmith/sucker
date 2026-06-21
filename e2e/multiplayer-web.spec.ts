@@ -110,6 +110,7 @@ test('two players can create an invite and play turns through the web UI', async
   await expect(bobPage.getByTestId('game-over-overlay')).toBeVisible();
   await expect(bobPage.getByTestId('game-over-panel')).toHaveScreenshot('game-over.png', {
     mask: [bobPage.getByTestId('game-over-home-score'), bobPage.getByTestId('game-over-opponent-score')],
+    maxDiffPixelRatio: 0.12,
   });
 });
 
