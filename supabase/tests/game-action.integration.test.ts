@@ -311,19 +311,19 @@ async function upsertProfile(id: string, displayName: string) {
 }
 
 async function invokeWithoutAuth(body: Record<string, unknown>) {
-  const response = await fetch(functionUrl, {
+  const { body: payload, status } = await fetchJsonWithRetry(functionUrl, {
     body: JSON.stringify(body),
     headers: {
       apikey: anonKey,
       'Content-Type': 'application/json',
     },
     method: 'POST',
-  });
-  return { body: await response.json(), status: response.status };
+  }, 401);
+  return { body: payload, status };
 }
 
 async function invokeGameAction(user: TestUser, body: Record<string, unknown>, expectedStatus = 200) {
-  const response = await fetch(functionUrl, {
+  const { body: payload, status } = await fetchJsonWithRetry(functionUrl, {
     body: JSON.stringify(body),
     headers: {
       apikey: anonKey,
@@ -331,12 +331,41 @@ async function invokeGameAction(user: TestUser, body: Record<string, unknown>, e
       'Content-Type': 'application/json',
     },
     method: 'POST',
-  });
-  const payload = await response.json();
-  if (response.status !== expectedStatus) {
-    throw new Error(`Expected game-action ${expectedStatus}, received ${response.status}: ${JSON.stringify(payload)}`);
+  }, expectedStatus);
+  if (status !== expectedStatus) {
+    throw new Error(`Expected game-action ${expectedStatus}, received ${status}: ${JSON.stringify(payload)}`);
   }
   return payload;
+}
+
+async function fetchJsonWithRetry(url: string, init: RequestInit, expectedStatus: number) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, init);
+      const text = await response.text();
+      const parsed = text.length > 0 ? JSON.parse(text) : null;
+      if (response.status === expectedStatus && parsed !== null) {
+        return { body: parsed as Record<string, unknown>, status: response.status };
+      }
+
+      const isTransient = response.status >= 500 || parsed === null;
+      if (!isTransient || attempt === 2) {
+        return { body: parsed, status: response.status };
+      }
+      lastError = new Error(`Transient game-action response ${response.status}: ${text || '<empty body>'}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2) {
+        throw error;
+      }
+    }
+
+    await delay(250 * (attempt + 1));
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function loadTurn(turnId: string | null): Promise<TurnRow> {
@@ -415,4 +444,8 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
