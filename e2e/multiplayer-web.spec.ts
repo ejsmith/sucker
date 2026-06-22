@@ -9,6 +9,7 @@ type TestUser = {
 };
 
 const supabaseUrl = requireEnv('SUPABASE_URL');
+const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const mailpitUrl = process.env.MAILPIT_URL ?? 'http://127.0.0.1:54324';
 const admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -114,6 +115,16 @@ test('two players can create an invite and play turns through the web UI', async
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  await context.addInitScript(
+    ({ supabaseAnonKey, supabaseUrl }) => {
+      (
+        window as typeof window & {
+          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: { supabaseAnonKey: string; supabaseUrl: string };
+        }
+      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { supabaseAnonKey, supabaseUrl };
+    },
+    { supabaseAnonKey: anonKey, supabaseUrl },
+  );
   const page = await context.newPage();
 
   await page.goto('/');

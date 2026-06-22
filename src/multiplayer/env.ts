@@ -1,6 +1,19 @@
-declare const process: {
-  env: Record<string, string | undefined>;
+type BrowserMultiplayerConfig = {
+  supabaseAnonKey?: string;
+  supabaseUrl?: string;
 };
+
+declare const process:
+  | {
+      env: Record<string, string | undefined>;
+    }
+  | undefined;
+
+declare const window:
+  | {
+      __SUCKER_E2E_MULTIPLAYER_CONFIG__?: BrowserMultiplayerConfig;
+    }
+  | undefined;
 
 export type MultiplayerConfig = {
   enabled: boolean;
@@ -9,8 +22,11 @@ export type MultiplayerConfig = {
 };
 
 export function getMultiplayerConfig(): MultiplayerConfig {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  const browserConfig = typeof window !== 'undefined' ? window.__SUCKER_E2E_MULTIPLAYER_CONFIG__ : undefined;
+  const envSupabaseUrl = typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_SUPABASE_URL : undefined;
+  const envSupabaseAnonKey = typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY : undefined;
+  const supabaseUrl = envSupabaseUrl ?? browserConfig?.supabaseUrl ?? '';
+  const supabaseAnonKey = envSupabaseAnonKey ?? browserConfig?.supabaseAnonKey ?? '';
 
   return {
     enabled: Boolean(supabaseUrl && supabaseAnonKey),
