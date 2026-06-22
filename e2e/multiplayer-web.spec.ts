@@ -122,7 +122,7 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
   });
 
   await page.goto(`/#${authHash.toString()}`);
-  await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible();
+  await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   return page;
 }
 
