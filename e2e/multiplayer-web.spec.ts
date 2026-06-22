@@ -12,7 +12,6 @@ type TestUser = {
 const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-const authStorageKey = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`;
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -116,15 +115,13 @@ test('two players can create an invite and play turns through the web UI', async
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
-  await context.addInitScript(
-    ({ key, session }) => {
-      window.localStorage.setItem(key, JSON.stringify(session));
-    },
-    { key: authStorageKey, session: user.session },
-  );
-
   const page = await context.newPage();
-  await page.goto('/');
+  const authHash = new URLSearchParams({
+    access_token: user.session.access_token,
+    refresh_token: user.session.refresh_token,
+  });
+
+  await page.goto(`/#${authHash.toString()}`);
   await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible();
   return page;
 }
