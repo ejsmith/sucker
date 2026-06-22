@@ -168,72 +168,82 @@ export function MultiplayerLobby({
     return renderShell(
       <>
         <SuckerLobbyTitle />
-        <Text style={lobbyStyles.heading}>Play friends anywhere.</Text>
-        {isCodeSent && <Text style={lobbyStyles.subtleText}>Code sent to {sentCodeEmail}</Text>}
-        <TextInput
-          autoCapitalize="none"
-          autoComplete="email"
-          editable={!isCodeSent}
-          keyboardType="email-address"
-          onChangeText={setEmail}
-          placeholder="Email"
-          placeholderTextColor="#8A4B12"
-          style={lobbyStyles.input}
-          testID="login-email-input"
-          value={email}
-        />
-        {isCodeSent && (
+        <View style={lobbyStyles.loginActionGroup}>
+          <Text style={lobbyStyles.loginSectionTitle}>Play Friends</Text>
+          {isCodeSent && <Text style={lobbyStyles.subtleText}>Code sent to {sentCodeEmail}</Text>}
           <TextInput
             autoCapitalize="none"
-            autoComplete="one-time-code"
-            keyboardType="number-pad"
-            maxLength={6}
-            onChangeText={(value) => setLoginCode(value.replace(/\D/g, '').slice(0, 6))}
-            placeholder="Sign-in code"
+            autoComplete="email"
+            editable={!isCodeSent}
+            keyboardType="email-address"
+            onChangeText={setEmail}
+            placeholder="Email"
             placeholderTextColor="#8A4B12"
-            style={[lobbyStyles.input, lobbyStyles.codeInput]}
-            testID="login-code-input"
-            textContentType="oneTimeCode"
-            value={loginCode}
+            style={lobbyStyles.input}
+            testID="login-email-input"
+            value={email}
           />
-        )}
-        <Pressable
-          disabled={isLoading || (isCodeSent ? loginCode.trim().length < 6 : email.trim().length === 0)}
-          onPress={() => void (isCodeSent ? handleVerifyCode() : handleSendCode())}
-          style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
-          testID={isCodeSent ? 'verify-code-button' : 'send-code-button'}
-        >
-          <Text style={lobbyStyles.primaryButtonText}>{isCodeSent ? 'Verify Code' : 'Send Code'}</Text>
-        </Pressable>
-        {isCodeSent && (
-          <View style={lobbyStyles.loginLinksRow}>
-            <Pressable
-              disabled={isLoading}
-              onPress={() => void handleSendCode()}
-              style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
-            >
-              <Text style={lobbyStyles.localLinkText}>Resend code</Text>
-            </Pressable>
-            <Pressable
-              disabled={isLoading}
-              onPress={() => {
-                setSentCodeEmail(null);
-                setLoginCode('');
-                setMessage(null);
-              }}
-              style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
-            >
-              <Text style={lobbyStyles.localLinkText}>Different email</Text>
-            </Pressable>
-          </View>
-        )}
-        <Pressable
-          onPress={onPlayLocalDemo}
-          style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
-          testID="play-computer-button"
-        >
-          <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
-        </Pressable>
+          {isCodeSent && (
+            <TextInput
+              autoCapitalize="none"
+              autoComplete="one-time-code"
+              keyboardType="number-pad"
+              maxLength={6}
+              onChangeText={(value) => setLoginCode(value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="Sign-in code"
+              placeholderTextColor="#8A4B12"
+              style={[lobbyStyles.input, lobbyStyles.codeInput]}
+              testID="login-code-input"
+              textContentType="oneTimeCode"
+              value={loginCode}
+            />
+          )}
+          <Pressable
+            disabled={isLoading || (isCodeSent ? loginCode.trim().length < 6 : email.trim().length === 0)}
+            onPress={() => void (isCodeSent ? handleVerifyCode() : handleSendCode())}
+            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+            testID={isCodeSent ? 'verify-code-button' : 'send-code-button'}
+          >
+            <Text style={lobbyStyles.primaryButtonText}>{isCodeSent ? 'Verify Code' : 'Send Code'}</Text>
+          </Pressable>
+          {isCodeSent && (
+            <View style={lobbyStyles.loginLinksRow}>
+              <Pressable
+                disabled={isLoading}
+                onPress={() => void handleSendCode()}
+                style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
+              >
+                <Text style={lobbyStyles.localLinkText}>Resend code</Text>
+              </Pressable>
+              <Pressable
+                disabled={isLoading}
+                onPress={() => {
+                  setSentCodeEmail(null);
+                  setLoginCode('');
+                  setMessage(null);
+                }}
+                style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
+              >
+                <Text style={lobbyStyles.localLinkText}>Different email</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+        <View style={lobbyStyles.loginDividerRow}>
+          <View style={lobbyStyles.loginDivider} />
+          <Text style={lobbyStyles.loginDividerText}>or</Text>
+          <View style={lobbyStyles.loginDivider} />
+        </View>
+        <View style={lobbyStyles.loginActionGroup}>
+          <Text style={lobbyStyles.loginSectionTitle}>Solo Game</Text>
+          <Pressable
+            onPress={onPlayLocalDemo}
+            style={({ pressed }) => [lobbyStyles.soloButton, pressed && lobbyStyles.pressed]}
+            testID="play-computer-button"
+          >
+            <Text style={lobbyStyles.soloButtonText}>Play Computer</Text>
+          </Pressable>
+        </View>
         {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
       </>,
     );
@@ -936,9 +946,42 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
+  loginActionGroup: {
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 8,
+    padding: 10,
+    width: '100%',
+  },
+  loginDivider: {
+    backgroundColor: '#FFB000',
+    flex: 1,
+    height: 2,
+    opacity: 0.7,
+  },
+  loginDividerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  loginDividerText: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   loginLinksRow: {
     flexDirection: 'row',
     gap: 14,
+  },
+  loginSectionTitle: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   message: {
     color: '#FFF3C2',
@@ -1151,6 +1194,25 @@ const lobbyStyles = StyleSheet.create({
   smallButtonText: {
     color: '#210505',
     fontSize: 14,
+    fontWeight: '900',
+  },
+  soloButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderWidth: 2,
+    height: 54,
+    justifyContent: 'center',
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
+    width: '100%',
+  },
+  soloButtonText: {
+    color: '#FFD329',
+    fontSize: 17,
     fontWeight: '900',
   },
   statGrid: {
