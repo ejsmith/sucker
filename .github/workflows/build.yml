@@ -19,17 +19,59 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.1.4
 
+      - name: Cache Deno dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-v2.1.4-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
-        run: npm ci
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline
+
+      - name: Cache Playwright browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright system dependencies
+        run: npx playwright install-deps chromium
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      - name: Cache Supabase Docker images
+        id: cache-supabase-docker
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/supabase-docker-cache
+          key: ${{ runner.os }}-supabase-docker-${{ hashFiles('package-lock.json', 'supabase/config.toml') }}
+
+      - name: Restore Supabase Docker images
+        if: steps.cache-supabase-docker.outputs.cache-hit == 'true'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for image_archive in "${{ runner.temp }}/supabase-docker-cache"/*.tar; do
+            docker load --input "$image_archive"
+          done
 
       - name: Typecheck app
         run: npm run typecheck
@@ -48,6 +90,17 @@ jobs:
 
       - name: Test web E2E
         run: npm run test:e2e:web
+
+      - name: Save Supabase Docker images
+        if: always() && steps.cache-supabase-docker.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          docker images --format '{{.Repository}}:{{.Tag}}' > /tmp/docker-images.txt
+          mapfile -t images < <(grep -E '^(public\.ecr\.aws/supabase/|supabase/|postgrest/|kong:|darthsim/imgproxy|timberio/vector|inbucket/inbucket)' /tmp/docker-images.txt | sort -u || true)
+          if [ "${#images[@]}" -gt 0 ]; then
+            mkdir -p "${{ runner.temp }}/supabase-docker-cache"
+            docker save "${images[@]}" --output "${{ runner.temp }}/supabase-docker-cache/supabase-images.tar"
+          fi
 
       - name: Stop Supabase
         if: always()
