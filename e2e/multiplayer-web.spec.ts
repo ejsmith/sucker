@@ -1,18 +1,17 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
 type TestUser = {
   displayName: string;
   email: string;
   id: string;
-  session: Session;
 };
 
 const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-const authStorageKey = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`;
+const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -117,16 +116,105 @@ test('two players can create an invite and play turns through the web UI', async
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   await context.addInitScript(
-    ({ key, session }) => {
-      window.localStorage.setItem(key, JSON.stringify(session));
+    ({ supabaseAnonKey, supabaseUrl }) => {
+      (
+        window as typeof window & {
+          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: { supabaseAnonKey: string; supabaseUrl: string };
+        }
+      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { supabaseAnonKey, supabaseUrl };
     },
-    { key: authStorageKey, session: user.session },
+    { supabaseAnonKey: anonKey, supabaseUrl },
+  );
+  const page = await context.newPage();
+  const failedResponses = captureFailedResponses(page);
+
+  await page.goto(await generateSignInLink(user.email));
+  try {
+    await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
+  } catch (error) {
+    const details = await describePage(page, failedResponses);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Authenticated lobby did not render.\n${details}\nOriginal error: ${message}`);
+  }
+  return page;
+}
+
+function captureFailedResponses(page: Page) {
+  const failedResponses: string[] = [];
+  page.on('response', (response) => {
+    if (response.status() < 400) {
+      return;
+    }
+
+    void response
+      .text()
+      .then((body) => {
+        failedResponses.push(`${response.status()} ${response.url()}\n${body.slice(0, 2_000)}`);
+      })
+      .catch((error) => {
+        failedResponses.push(
+          `${response.status()} ${response.url()}\nUnable to read response body: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+  });
+  return failedResponses;
+}
+
+async function describePage(page: Page, failedResponses: string[]) {
+  const testIds = await page
+    .locator('[data-testid]')
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.getAttribute('data-testid'))
+        .filter(Boolean)
+        .slice(0, 20),
+    )
+    .catch(() => []);
+  const bodyText = await page
+    .locator('body')
+    .innerText({ timeout: 1_000 })
+    .catch((error) => `Unable to read body text: ${error instanceof Error ? error.message : String(error)}`);
+  const bodyHtml = await page
+    .locator('body')
+    .evaluate((body) => body.innerHTML.slice(0, 1_000))
+    .catch((error) => `Unable to read body HTML: ${error instanceof Error ? error.message : String(error)}`);
+
+  return [
+    `url: ${page.url()}`,
+    `title: ${await page.title().catch(() => '')}`,
+    `test ids: ${testIds.join(', ') || '(none)'}`,
+    `body text: ${bodyText.slice(0, 1_000)}`,
+    `body html: ${bodyHtml}`,
+    `failed responses: ${failedResponses.join('\n---\n') || '(none)'}`,
+    `script responses: ${await describeScriptResponses(page)}`,
+  ].join('\n');
+}
+
+async function describeScriptResponses(page: Page) {
+  const scriptUrls = await page
+    .locator('script[src]')
+    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLScriptElement).src).filter(Boolean))
+    .catch(() => []);
+
+  if (scriptUrls.length === 0) {
+    return '(none)';
+  }
+
+  const responses = await Promise.all(
+    scriptUrls.map(async (scriptUrl) => {
+      try {
+        const response = await page.request.get(scriptUrl, { timeout: 15_000 });
+        const body = await response.text();
+        return `${response.status()} ${scriptUrl}\n${body.slice(0, 2_000)}`;
+      } catch (error) {
+        return `${scriptUrl}\nUnable to request script: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }),
   );
 
-  const page = await context.newPage();
-  await page.goto('/');
-  await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible();
-  return page;
+  return responses.join('\n---\n');
 }
 
 async function openGameFromLobby(page: Page, gameId: string) {
@@ -139,11 +227,9 @@ async function openGameFromLobby(page: Page, gameId: string) {
 
 async function createUser(slug: string, displayName: string): Promise<TestUser> {
   const email = `${slug}@example.test`;
-  const password = 'Password1!';
   const { data: created, error: createError } = await admin.auth.admin.createUser({
     email,
     email_confirm: true,
-    password,
     user_metadata: { display_name: displayName },
   });
   assertNoError(createError);
@@ -153,20 +239,10 @@ async function createUser(slug: string, displayName: string): Promise<TestUser> 
 
   await upsertProfile(created.user.id, displayName, slug.replace(/[^a-z0-9_]/gi, '_').slice(0, 24));
 
-  const client = createClient(supabaseUrl, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  const { data: signedIn, error: signInError } = await client.auth.signInWithPassword({ email, password });
-  assertNoError(signInError);
-  if (!signedIn.session) {
-    throw new Error(`Unable to sign in ${displayName}.`);
-  }
-
   return {
     displayName,
     email,
     id: created.user.id,
-    session: signedIn.session,
   };
 }
 
@@ -177,6 +253,22 @@ async function upsertProfile(id: string, displayName: string, username: string) 
     username,
   });
   assertNoError(error);
+}
+
+async function generateSignInLink(email: string) {
+  const { data, error } = await admin.auth.admin.generateLink({
+    email,
+    type: 'magiclink',
+    options: { redirectTo: e2eBaseUrl },
+  });
+  assertNoError(error);
+
+  const link = data.properties?.action_link;
+  if (!link) {
+    throw new Error(`Unable to generate sign-in link for ${email}.`);
+  }
+
+  return link;
 }
 
 async function waitForAcceptedGame(inviteCode: string) {

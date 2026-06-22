@@ -633,6 +633,7 @@ grant execute on function public.record_computer_game_result(
   integer,
   integer,
   integer,
+  integer,
   integer
 ) to authenticated;
 
