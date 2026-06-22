@@ -14,7 +14,8 @@ function readEnvFile(path: string) {
   return env;
 }
 
-const localTestEnv = readEnvFile('.env.e2e.local');
+const localEnvFile = 'supabase/.temp/e2e.env';
+const localTestEnv = readEnvFile(localEnvFile);
 Object.assign(process.env, localTestEnv);
 const e2eBaseUrl = localTestEnv.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 
@@ -39,7 +40,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'supabase functions serve game-action --no-verify-jwt --env-file .env.e2e.local',
+      command: `supabase functions serve game-action --no-verify-jwt --env-file ${localEnvFile}`,
       env: localTestEnv,
       name: 'Supabase functions',
       reuseExistingServer: false,

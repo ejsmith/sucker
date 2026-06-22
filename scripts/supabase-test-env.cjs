@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const envFilePath = path.resolve(__dirname, '..', '.env.e2e.local');
+const envFilePath = path.resolve(__dirname, '..', 'supabase', '.temp', 'e2e.env');
 const expoEnvFilePath = path.resolve(__dirname, '..', '.env.local');
 const supabaseCliPath = path.resolve(__dirname, '..', 'node_modules', 'supabase', 'dist', 'supabase.js');
 
@@ -66,6 +66,8 @@ function writeLocalTestEnvFile(filePath = envFilePath) {
     .map(([key, value]) => `${key}=${value}`)
     .join('\n');
 
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
   fs.writeFileSync(filePath, `${contents}\n`, 'utf8');
   fs.writeFileSync(expoEnvFilePath, `${contents}\n`, 'utf8');
   return env;
@@ -82,5 +84,5 @@ module.exports = {
 
 if (require.main === module) {
   writeLocalTestEnvFile();
-  console.log('Wrote .env.e2e.local and .env.local');
+  console.log('Wrote supabase/.temp/e2e.env and .env.local');
 }
