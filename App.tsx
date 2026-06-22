@@ -168,18 +168,18 @@ const computerScorePreviewDelayMs = 0;
 const computerScoreAnimationDurationMs = 950;
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
 export default function App() {
-  const [showLocalDemo, setShowLocalDemo] = useState(false);
+  const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
   const [remoteGameId, setRemoteGameId] = useState<string | null>(null);
 
   if (isMultiplayerConfigured && remoteGameId) {
     return <RemoteGameScreen gameId={remoteGameId} onExit={() => setRemoteGameId(null)} />;
   }
 
-  if (isMultiplayerConfigured && !showLocalDemo) {
+  if (!showLocalDemo) {
     return <MultiplayerLobby onOpenGame={setRemoteGameId} onPlayLocalDemo={() => setShowLocalDemo(true)} />;
   }
 
-  return <LocalGameScreen onExit={isMultiplayerConfigured ? () => setShowLocalDemo(false) : undefined} />;
+  return <LocalGameScreen onExit={() => setShowLocalDemo(false)} />;
 }
 
 function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {
@@ -1460,14 +1460,20 @@ function LocalGameScreen({
           <View pointerEvents="none" style={styles.topBarBannerClip}>
             <Image source={suckerGameBannerImage} style={styles.topBarBannerImage} />
           </View>
+          {onExit && (
+            <Pressable
+              accessibilityLabel="Back to games"
+              onPress={() => {
+                setIsMenuOpen(false);
+                onExit();
+              }}
+              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.backButtonText}>‹</Text>
+            </Pressable>
+          )}
           <Pressable
-            disabled={!onExit}
-            onPress={onExit}
-            style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.backButtonText}>‹</Text>
-          </Pressable>
-          <Pressable
+            accessibilityLabel="Open menu"
             onPress={() => setIsMenuOpen((open) => !open)}
             style={({ pressed }) => [styles.menuDotsButton, pressed && styles.pressed]}
           >
@@ -1477,7 +1483,14 @@ function LocalGameScreen({
               <View style={styles.menuDot} />
             </View>
           </Pressable>
-          {isMenuOpen && (
+        </View>
+        {isMenuOpen && (
+          <View pointerEvents="box-none" style={styles.topMenuLayer}>
+            <Pressable
+              accessibilityLabel="Close menu"
+              onPress={() => setIsMenuOpen(false)}
+              style={StyleSheet.absoluteFill}
+            />
             <View style={styles.topMenu}>
               <Pressable
                 onPress={() => {
@@ -1490,8 +1503,8 @@ function LocalGameScreen({
                 <Text style={styles.topMenuText}>Stats</Text>
               </Pressable>
             </View>
-          )}
-        </View>
+          </View>
+        )}
 
         <View style={styles.playerStrip} testID="player-strip">
           {displayPlayers.map((player, index) => (
@@ -2526,18 +2539,22 @@ const styles = StyleSheet.create({
     width: 32,
     zIndex: 25,
   },
+  topMenuLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 80,
+  },
   topMenu: {
     backgroundColor: '#FFF3C2',
     borderColor: '#210505',
     borderRadius: 8,
     borderWidth: 2,
     elevation: 12,
-    minWidth: 188,
     padding: 4,
     position: 'absolute',
-    right: 8,
-    top: 46,
-    zIndex: 30,
+    right: 18,
+    top: 50,
+    width: 116,
+    zIndex: 82,
   },
   topMenuItem: {
     borderRadius: 6,
