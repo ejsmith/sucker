@@ -1,17 +1,16 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
 type TestUser = {
   displayName: string;
   email: string;
   id: string;
-  session: Session;
 };
 
 const supabaseUrl = requireEnv('SUPABASE_URL');
-const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
+const mailpitUrl = process.env.MAILPIT_URL ?? 'http://127.0.0.1:54324';
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -116,12 +115,13 @@ test('two players can create an invite and play turns through the web UI', async
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   const page = await context.newPage();
-  const authHash = new URLSearchParams({
-    access_token: user.session.access_token,
-    refresh_token: user.session.refresh_token,
-  });
 
-  await page.goto(`/?${authHash.toString()}`);
+  await page.goto('/');
+  await page.getByTestId('login-email-input').fill(user.email);
+  await page.getByTestId('send-code-button').click();
+  const code = await readLatestSignInCode(user.email);
+  await page.getByTestId('login-code-input').fill(code);
+  await page.getByTestId('verify-code-button').click();
   await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   return page;
 }
@@ -136,11 +136,9 @@ async function openGameFromLobby(page: Page, gameId: string) {
 
 async function createUser(slug: string, displayName: string): Promise<TestUser> {
   const email = `${slug}@example.test`;
-  const password = 'Password1!';
   const { data: created, error: createError } = await admin.auth.admin.createUser({
     email,
     email_confirm: true,
-    password,
     user_metadata: { display_name: displayName },
   });
   assertNoError(createError);
@@ -150,20 +148,10 @@ async function createUser(slug: string, displayName: string): Promise<TestUser> 
 
   await upsertProfile(created.user.id, displayName, slug.replace(/[^a-z0-9_]/gi, '_').slice(0, 24));
 
-  const client = createClient(supabaseUrl, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  const { data: signedIn, error: signInError } = await client.auth.signInWithPassword({ email, password });
-  assertNoError(signInError);
-  if (!signedIn.session) {
-    throw new Error(`Unable to sign in ${displayName}.`);
-  }
-
   return {
     displayName,
     email,
     id: created.user.id,
-    session: signedIn.session,
   };
 }
 
@@ -174,6 +162,42 @@ async function upsertProfile(id: string, displayName: string, username: string) 
     username,
   });
   assertNoError(error);
+}
+
+async function readLatestSignInCode(email: string) {
+  let latestCode: string | null = null;
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`${mailpitUrl}/api/v1/messages`);
+        if (!response.ok) {
+          throw new Error(`Unable to read Mailpit messages: ${response.status}`);
+        }
+
+        const mailbox = (await response.json()) as {
+          messages?: Array<{
+            Created?: string;
+            Snippet?: string;
+            To?: Array<{ Address?: string }>;
+          }>;
+        };
+        const message = (mailbox.messages ?? [])
+          .filter((candidate) =>
+            candidate.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase()),
+          )
+          .sort((left, right) => Date.parse(right.Created ?? '') - Date.parse(left.Created ?? ''))[0];
+        latestCode = message?.Snippet?.match(/\b\d{6}\b/)?.[0] ?? null;
+        return latestCode;
+      },
+      { timeout: 10_000 },
+    )
+    .not.toBeNull();
+
+  if (!latestCode) {
+    throw new Error(`No sign-in code was delivered to ${email}.`);
+  }
+
+  return latestCode;
 }
 
 async function waitForAcceptedGame(inviteCode: string) {
