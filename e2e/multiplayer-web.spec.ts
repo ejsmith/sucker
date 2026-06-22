@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
@@ -11,7 +11,7 @@ type TestUser = {
 const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-const mailpitUrl = process.env.MAILPIT_URL ?? 'http://127.0.0.1:54324';
+const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -128,28 +128,15 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
   const page = await context.newPage();
   const failedResponses = captureFailedResponses(page);
 
-  await page.goto('/');
-  const loginEmailInput = await waitForLoginEmailInput(page, failedResponses);
-  await loginEmailInput.fill(user.email);
-  await page.getByTestId('send-code-button').click();
-  const code = await readLatestSignInCode(user.email);
-  await page.getByTestId('login-code-input').fill(code);
-  await page.getByTestId('verify-code-button').click();
-  await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
-  return page;
-}
-
-async function waitForLoginEmailInput(page: Page, failedResponses: string[]): Promise<Locator> {
-  const loginEmailInput = page.getByTestId('login-email-input');
+  await page.goto(await generateSignInLink(user.email));
   try {
-    await expect(loginEmailInput).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   } catch (error) {
     const details = await describePage(page, failedResponses);
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Login email input did not render.\n${details}\nOriginal error: ${message}`);
+    throw new Error(`Authenticated lobby did not render.\n${details}\nOriginal error: ${message}`);
   }
-
-  return loginEmailInput;
+  return page;
 }
 
 function captureFailedResponses(page: Page) {
@@ -268,40 +255,20 @@ async function upsertProfile(id: string, displayName: string, username: string) 
   assertNoError(error);
 }
 
-async function readLatestSignInCode(email: string) {
-  let latestCode: string | null = null;
-  await expect
-    .poll(
-      async () => {
-        const response = await fetch(`${mailpitUrl}/api/v1/messages`);
-        if (!response.ok) {
-          throw new Error(`Unable to read Mailpit messages: ${response.status}`);
-        }
+async function generateSignInLink(email: string) {
+  const { data, error } = await admin.auth.admin.generateLink({
+    email,
+    type: 'magiclink',
+    options: { redirectTo: e2eBaseUrl },
+  });
+  assertNoError(error);
 
-        const mailbox = (await response.json()) as {
-          messages?: Array<{
-            Created?: string;
-            Snippet?: string;
-            To?: Array<{ Address?: string }>;
-          }>;
-        };
-        const message = (mailbox.messages ?? [])
-          .filter((candidate) =>
-            candidate.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase()),
-          )
-          .sort((left, right) => Date.parse(right.Created ?? '') - Date.parse(left.Created ?? ''))[0];
-        latestCode = message?.Snippet?.match(/\b\d{6}\b/)?.[0] ?? null;
-        return latestCode;
-      },
-      { timeout: 10_000 },
-    )
-    .not.toBeNull();
-
-  if (!latestCode) {
-    throw new Error(`No sign-in code was delivered to ${email}.`);
+  const link = data.properties?.action_link;
+  if (!link) {
+    throw new Error(`Unable to generate sign-in link for ${email}.`);
   }
 
-  return latestCode;
+  return link;
 }
 
 async function waitForAcceptedGame(inviteCode: string) {
