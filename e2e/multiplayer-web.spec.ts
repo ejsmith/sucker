@@ -121,7 +121,7 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     refresh_token: user.session.refresh_token,
   });
 
-  await page.goto(`/#${authHash.toString()}`);
+  await page.goto(`/?${authHash.toString()}`);
   await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   return page;
 }
