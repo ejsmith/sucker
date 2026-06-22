@@ -136,8 +136,9 @@ export function useMultiplayerSession() {
     try {
       return await signInWithEmail(email);
     } catch (signInError) {
-      setError(toErrorMessage(signInError));
-      throw signInError;
+      const message = toErrorMessage(signInError);
+      setError(message);
+      throw new Error(message);
     } finally {
       setIsLoading(false);
     }
@@ -154,8 +155,9 @@ export function useMultiplayerSession() {
       }
       return nextSession;
     } catch (verifyError) {
-      setError(toErrorMessage(verifyError));
-      throw verifyError;
+      const message = toErrorMessage(verifyError);
+      setError(message);
+      throw new Error(message);
     } finally {
       setIsLoading(false);
     }
@@ -198,5 +200,17 @@ export function useMultiplayerSession() {
 }
 
 function toErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Something went wrong.';
+  if (error instanceof Error) {
+    if (error.message === 'Failed to fetch') {
+      return 'Unable to reach Sucker! services. Check your connection and try again.';
+    }
+
+    if (error.message === '{}') {
+      return 'Unable to complete the login request. Please try again.';
+    }
+
+    return error.message;
+  }
+
+  return 'Something went wrong.';
 }

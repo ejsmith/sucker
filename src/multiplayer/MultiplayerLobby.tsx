@@ -164,6 +164,16 @@ export function MultiplayerLobby({
 
   if (!session) {
     const isCodeSent = sentCodeEmail !== null;
+    const isLoginBusy = isBusy || isLoading;
+    const loginMessage = message ?? error;
+    const isLoginActionDisabled = isLoginBusy || (isCodeSent ? loginCode.trim().length < 6 : email.trim().length === 0);
+    const loginButtonLabel = isLoginBusy
+      ? isCodeSent
+        ? 'Verifying...'
+        : 'Sending...'
+      : isCodeSent
+        ? 'Verify Code'
+        : 'Send Code';
 
     return renderShell(
       <>
@@ -186,6 +196,7 @@ export function MultiplayerLobby({
           {isCodeSent && (
             <TextInput
               autoCapitalize="none"
+              editable={!isLoginBusy}
               autoComplete="one-time-code"
               keyboardType="number-pad"
               maxLength={6}
@@ -199,24 +210,31 @@ export function MultiplayerLobby({
             />
           )}
           <Pressable
-            disabled={isLoading || (isCodeSent ? loginCode.trim().length < 6 : email.trim().length === 0)}
+            disabled={isLoginActionDisabled}
             onPress={() => void (isCodeSent ? handleVerifyCode() : handleSendCode())}
-            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+            style={({ pressed }) => [
+              lobbyStyles.primaryButton,
+              isLoginActionDisabled && lobbyStyles.primaryButtonDisabled,
+              pressed && lobbyStyles.pressed,
+            ]}
             testID={isCodeSent ? 'verify-code-button' : 'send-code-button'}
           >
-            <Text style={lobbyStyles.primaryButtonText}>{isCodeSent ? 'Verify Code' : 'Send Code'}</Text>
+            <View style={lobbyStyles.primaryButtonContent}>
+              {isLoginBusy && <ActivityIndicator color="#210505" size="small" />}
+              <Text style={lobbyStyles.primaryButtonText}>{loginButtonLabel}</Text>
+            </View>
           </Pressable>
           {isCodeSent && (
             <View style={lobbyStyles.loginLinksRow}>
               <Pressable
-                disabled={isLoading}
+                disabled={isLoginBusy}
                 onPress={() => void handleSendCode()}
                 style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
               >
                 <Text style={lobbyStyles.localLinkText}>Resend code</Text>
               </Pressable>
               <Pressable
-                disabled={isLoading}
+                disabled={isLoginBusy}
                 onPress={() => {
                   setSentCodeEmail(null);
                   setLoginCode('');
@@ -228,6 +246,7 @@ export function MultiplayerLobby({
               </Pressable>
             </View>
           )}
+          {loginMessage && <Text style={lobbyStyles.message}>{loginMessage}</Text>}
         </View>
         <View style={lobbyStyles.loginDividerRow}>
           <View style={lobbyStyles.loginDivider} />
@@ -244,7 +263,6 @@ export function MultiplayerLobby({
             <Text style={lobbyStyles.soloButtonText}>Play Computer</Text>
           </Pressable>
         </View>
-        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
       </>,
     );
   }
@@ -1019,6 +1037,15 @@ const lobbyStyles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 0,
     width: '100%',
+  },
+  primaryButtonContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  primaryButtonDisabled: {
+    opacity: 0.62,
   },
   primaryButtonText: {
     color: '#210505',
