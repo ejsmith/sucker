@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import {
   availableCategories,
+  categoryLabels,
   createGame,
   maxAvailableRolls,
   mulliganCurrentTurn,
@@ -84,6 +85,7 @@ type ScoreFlyDie = {
   fromY: number;
   id: string;
   progress: Animated.Value;
+  size: number;
   toX: number;
   toY: number;
 };
@@ -95,6 +97,15 @@ type ScoreFlyNumber = {
   toX: number;
   toY: number;
   value: number;
+};
+type OpponentTurnReveal = {
+  dice: ReturnType<typeof createGame>['dice'];
+  dieSize: number;
+  gap: number;
+  id: string;
+  message: string;
+  progress: Animated.Value;
+  top: number;
 };
 function concealActiveOpponentDice(game: GameState, myProfileId?: string | null): GameState {
   const currentPlayerId = game.players[game.currentPlayerIndex]?.id;
@@ -165,6 +176,8 @@ const backgroundDiePositions = [
 
 const computerThinkingDelayMs = 2400;
 const computerScorePreviewDelayMs = 0;
+const computerScoreRevealDurationMs = 520;
+const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
 export default function App() {
@@ -414,8 +427,10 @@ function LocalGameScreen({
   const [isScoring, setIsScoring] = useState(false);
   const [scoreFlyDice, setScoreFlyDice] = useState<ScoreFlyDie[]>([]);
   const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
+  const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
+  const boardRef = useRef<ViewRef | null>(null);
   const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
   const scoreBoxRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
@@ -632,7 +647,7 @@ function LocalGameScreen({
       return;
     }
 
-    if (!isComputerTurn || isComputerThinking || isRolling || isScoring) {
+    if (!isComputerTurn || isComputerThinking || isRolling || isScoring || opponentTurnReveal) {
       return;
     }
 
@@ -647,7 +662,7 @@ function LocalGameScreen({
     return () => {
       clearTimeout(timer);
     };
-  }, [game, isComputerTurn, isRemoteGame, isRolling, isScoring, pendingTurn]);
+  }, [game, isComputerTurn, isRemoteGame, isRolling, isScoring, opponentTurnReveal, pendingTurn]);
 
   useEffect(() => {
     if (!showSuckerPunchNotice) {
@@ -735,20 +750,36 @@ function LocalGameScreen({
       return;
     }
 
-    if (!isRolling && !isScoring && remoteGame && !shouldHoldRemoteTurnReveal) {
+    if (!isRolling && !isScoring && !opponentTurnReveal && remoteGame && !shouldHoldRemoteTurnReveal) {
       setVisibleRemoteGame(concealActiveOpponentDice(remoteGame, myProfileId));
       visibleRemoteTurnId.current = remoteLastTurnId ?? null;
     }
-  }, [isRemoteGame, isRolling, isScoring, myProfileId, remoteGame, remoteLastTurnId, shouldHoldRemoteTurnReveal]);
+  }, [
+    isRemoteGame,
+    isRolling,
+    isScoring,
+    myProfileId,
+    opponentTurnReveal,
+    remoteGame,
+    remoteLastTurnId,
+    shouldHoldRemoteTurnReveal,
+  ]);
 
   useEffect(() => {
-    if (!remoteOpponentTurnNeedsReveal || !remoteGame || !remoteLastTurn || isRolling || isScoring) {
+    if (
+      !remoteOpponentTurnNeedsReveal ||
+      !remoteGame ||
+      !remoteLastTurn ||
+      isRolling ||
+      isScoring ||
+      opponentTurnReveal
+    ) {
       return;
     }
 
     setRevealingRemoteTurnId(remoteLastTurn.id);
     void animateRemoteOpponentScoreTurn(remoteGame, remoteLastTurn);
-  }, [isRolling, isScoring, remoteGame, remoteLastTurn, remoteOpponentTurnNeedsReveal]);
+  }, [isRolling, isScoring, opponentTurnReveal, remoteGame, remoteLastTurn, remoteOpponentTurnNeedsReveal]);
 
   async function refreshComputerStats() {
     try {
@@ -1040,6 +1071,123 @@ function LocalGameScreen({
     setIsComputerThinking(false);
   }
 
+  async function animateOpponentScoreReveal({
+    category,
+    dice,
+    displayScore,
+    playerName,
+    scoreId,
+    targetRef,
+  }: {
+    category: ScoreCategory;
+    dice: GameState['dice'];
+    displayScore: number;
+    playerName: string;
+    scoreId: string;
+    targetRef: ViewRef | null | undefined;
+  }) {
+    const [screenRect, boardRect, targetRect] = await Promise.all([
+      measureInWindow(screenRef.current),
+      measureInWindow(boardRef.current),
+      measureInWindow(targetRef ?? null),
+    ]);
+
+    if (!screenRect || !targetRect) {
+      return false;
+    }
+
+    const dieSize = Math.min(54, Math.max(46, (screenRect.width - 56) / 5.6));
+    const gap = Math.max(4, Math.min(7, dieSize * 0.12));
+    const rowWidth = dieSize * dice.length + gap * (dice.length - 1);
+    const revealLeft = Math.max(12, (screenRect.width - rowWidth) / 2);
+    const boardTop = boardRect ? boardRect.y - screenRect.y + 8 : screenRect.height * 0.22;
+    const revealTop = Math.max(96, Math.min(screenRect.height - 170, boardTop));
+    const targetCenterX = targetRect.x - screenRect.x + targetRect.width / 2 - dieSize / 2;
+    const targetCenterY = targetRect.y - screenRect.y + targetRect.height / 2 - dieSize / 2;
+    const targetOffsets = [
+      { x: -12, y: -4 },
+      { x: -6, y: 4 },
+      { x: 0, y: -2 },
+      { x: 6, y: 4 },
+      { x: 12, y: -4 },
+    ];
+    const revealProgress = new Animated.Value(0);
+
+    setIsScoring(true);
+    setOpponentTurnReveal({
+      dice,
+      dieSize,
+      gap,
+      id: scoreId,
+      message: formatScoreRevealMessage(playerName, displayScore, category),
+      progress: revealProgress,
+      top: revealTop,
+    });
+
+    await runAnimation(
+      Animated.timing(revealProgress, {
+        toValue: 1,
+        duration: computerScoreRevealDurationMs,
+        easing: Easing.out(Easing.back(1.12)),
+        useNativeDriver: true,
+      }),
+    );
+    await wait(computerScoreRevealPauseMs);
+    setOpponentTurnReveal(null);
+
+    const flyingDice = dice.map((face, index) => {
+      const offset = targetOffsets[index] ?? { x: 0, y: 0 };
+      return {
+        face,
+        fromX: revealLeft + index * (dieSize + gap),
+        fromY: revealTop,
+        id: `${scoreId}-die-${index}`,
+        progress: new Animated.Value(0),
+        size: dieSize,
+        toX: targetCenterX + offset.x,
+        toY: targetCenterY + offset.y,
+      };
+    });
+    const flyingScore = {
+      fromX: screenRect.width / 2 - 44,
+      fromY: revealTop + dieSize + 4,
+      id: scoreId,
+      progress: new Animated.Value(0),
+      toX: targetRect.x - screenRect.x + targetRect.width / 2 - 44,
+      toY: targetRect.y - screenRect.y + targetRect.height / 2 - 24,
+      value: displayScore,
+    };
+
+    setScoreFlyDice(flyingDice);
+    setScoreFlyNumber(flyingScore);
+    await runAnimation(
+      Animated.parallel([
+        Animated.stagger(
+          42,
+          flyingDice.map((die) =>
+            Animated.timing(die.progress, {
+              toValue: 1,
+              duration: 700,
+              easing: Easing.inOut(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ),
+        ),
+        Animated.timing(flyingScore.progress, {
+          toValue: 1,
+          duration: computerScoreAnimationDurationMs,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    setScoreFlyDice([]);
+    setScoreFlyNumber(null);
+    setIsScoring(false);
+
+    return true;
+  }
+
   async function animateComputerTurnResult(result: ComputerTurnResult) {
     if (!result.scoreAnimation) {
       finishComputerTurnResult(result);
@@ -1053,15 +1201,25 @@ function LocalGameScreen({
     setHighlightCategory(category);
 
     await wait(computerScorePreviewDelayMs);
-    if (scorerIndex !== myPlayerIndex && isSuckerDice(dice)) {
-      const scorerName = result.game.players[scorerIndex]?.name ?? 'Opponent';
-      setSuckerRollNoticeTitle(`${scorerName} rolled`);
-      await wait(1250);
-      setSuckerRollNoticeTitle(null);
-    }
 
+    const displayScore = displayScoreWithoutSuckerBonus(score, hadSuckerBonus) ?? score;
     const targetRef =
       scorerIndex === myPlayerIndex ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
+
+    if (scorerIndex !== myPlayerIndex) {
+      await animateOpponentScoreReveal({
+        category,
+        dice,
+        displayScore,
+        playerName: result.game.players[scorerIndex]?.name ?? 'Opponent',
+        scoreId: `computer-score-${category}-${Date.now()}`,
+        targetRef,
+      });
+
+      finishComputerTurnResult(result);
+      return;
+    }
+
     const [screenRect, targetRect] = await Promise.all([
       measureInWindow(screenRef.current),
       measureInWindow(targetRef ?? null),
@@ -1072,18 +1230,13 @@ function LocalGameScreen({
       return;
     }
 
-    const displayScore = displayScoreWithoutSuckerBonus(score, hadSuckerBonus) ?? score;
-    const startX = screenRect.width / 2 - 44;
-    const startY = screenRect.height * 0.44;
-    const endX = targetRect.x - screenRect.x + targetRect.width / 2 - 44;
-    const endY = targetRect.y - screenRect.y + targetRect.height / 2 - 24;
     const flyingScore = {
-      fromX: startX,
-      fromY: startY,
+      fromX: screenRect.width / 2 - 44,
+      fromY: screenRect.height * 0.44,
       id: `computer-score-${category}-${Date.now()}`,
       progress: new Animated.Value(0),
-      toX: endX,
-      toY: endY,
+      toX: targetRect.x - screenRect.x + targetRect.width / 2 - 44,
+      toY: targetRect.y - screenRect.y + targetRect.height / 2 - 24,
       value: displayScore,
     };
 
@@ -1122,55 +1275,29 @@ function LocalGameScreen({
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(turn.category);
-    if (turn.score > 0 && isSuckerDice(turn.dice)) {
-      setSuckerRollNoticeTitle(`${scorer?.name ?? 'Opponent'} rolled`);
-      await wait(1250);
-      setSuckerRollNoticeTitle(null);
-    }
-
-    const [screenRect, targetRect] = await Promise.all([
-      measureInWindow(screenRef.current),
-      measureInWindow(opponentScoreRefs.current[turn.category] ?? null),
-    ]);
-
-    if (!screenRect || !targetRect) {
-      setVisibleRemoteGame(nextRemoteGame);
-      visibleRemoteTurnId.current = turn.id;
-      lastAnimatedRemoteScoreTurnId.current = turn.id;
-      setRevealingRemoteTurnId(null);
-      setHighlightCategory(null);
-      return;
-    }
 
     const displayScore = displayScoreWithoutSuckerBonus(turn.score, hadSuckerBonus) ?? turn.score;
-    const flyingScore = {
-      fromX: screenRect.width / 2 - 44,
-      fromY: screenRect.height * 0.44,
-      id: `remote-score-${turn.id}`,
-      progress: new Animated.Value(0),
-      toX: targetRect.x - screenRect.x + targetRect.width / 2 - 44,
-      toY: targetRect.y - screenRect.y + targetRect.height / 2 - 24,
-      value: displayScore,
-    };
-
-    setIsScoring(true);
-    setScoreFlyNumber(flyingScore);
-    requestAnimationFrame(() => {
-      Animated.timing(flyingScore.progress, {
-        toValue: 1,
-        duration: computerScoreAnimationDurationMs,
-        easing: Easing.inOut(Easing.cubic),
-        useNativeDriver: true,
-      }).start(() => {
-        setScoreFlyNumber(null);
-        setIsScoring(false);
-        setVisibleRemoteGame(nextRemoteGame);
-        visibleRemoteTurnId.current = turn.id;
-        lastAnimatedRemoteScoreTurnId.current = turn.id;
-        setRevealingRemoteTurnId(null);
-        setHighlightCategory(null);
-      });
+    const didAnimateReveal = await animateOpponentScoreReveal({
+      category: turn.category,
+      dice: turn.dice,
+      displayScore,
+      playerName: scorer?.name ?? 'Opponent',
+      scoreId: `remote-score-${turn.id}`,
+      targetRef: opponentScoreRefs.current[turn.category],
     });
+
+    setVisibleRemoteGame(nextRemoteGame);
+    visibleRemoteTurnId.current = turn.id;
+    lastAnimatedRemoteScoreTurnId.current = turn.id;
+    setRevealingRemoteTurnId(null);
+    setHighlightCategory(null);
+
+    if (!didAnimateReveal) {
+      setIsScoring(false);
+      setOpponentTurnReveal(null);
+      setScoreFlyDice([]);
+      setScoreFlyNumber(null);
+    }
   }
 
   async function handleUseExtraRoll() {
@@ -1399,13 +1526,14 @@ function LocalGameScreen({
     ];
     const flyingDice = game.dice.map((face, index) => {
       const rect = sourceRects[index] as MeasuredRect;
-      const offset = targetOffsets[index];
+      const offset = targetOffsets[index] ?? { x: 0, y: 0 };
       return {
         face,
         fromX: rect.x - screenRect.x,
         fromY: rect.y - screenRect.y,
         id: `${category}-${index}-${Date.now()}`,
         progress: new Animated.Value(0),
+        size: diceSize,
         toX: targetCenterX + offset.x,
         toY: targetCenterY + offset.y,
       };
@@ -1520,7 +1648,7 @@ function LocalGameScreen({
             </View>
           ))}
         </View>
-        <View style={styles.board}>
+        <View ref={boardRef} style={styles.board}>
           {upperCategories.map((leftCategory, index) => (
             <ScorePair
               key={leftCategory}
@@ -1850,6 +1978,84 @@ function LocalGameScreen({
             </View>
           </View>
         )}
+        {opponentTurnReveal && (
+          <View pointerEvents="none" style={[styles.opponentTurnRevealOverlay, { top: opponentTurnReveal.top }]}>
+            <View style={styles.opponentTurnRevealPanel}>
+              <View style={[styles.opponentTurnRevealDiceRow, { gap: opponentTurnReveal.gap }]}>
+                {opponentTurnReveal.dice.map((face, index) => {
+                  const opacity = opponentTurnReveal.progress.interpolate({
+                    inputRange: [0, Math.min(0.76, 0.16 + index * 0.08), 1],
+                    outputRange: [0, 0, 1],
+                  });
+                  const translateY = opponentTurnReveal.progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-26 - index * 2, 0],
+                  });
+                  const scale = opponentTurnReveal.progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.74, 1],
+                  });
+                  const rotate = opponentTurnReveal.progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [index % 2 === 0 ? '-16deg' : '16deg', '0deg'],
+                  });
+
+                  return (
+                    <Animated.View
+                      key={`${opponentTurnReveal.id}-reveal-${index}`}
+                      style={[
+                        styles.opponentTurnRevealDie,
+                        {
+                          height: opponentTurnReveal.dieSize,
+                          opacity,
+                          transform: [{ translateY }, { rotate }, { scale }],
+                          width: opponentTurnReveal.dieSize,
+                        },
+                      ]}
+                    >
+                      {failedDiceImages.includes(face) && <Text style={styles.flyingDieFallback}>{face}</Text>}
+                      <Image
+                        source={whiteDiceImages[face]}
+                        style={styles.opponentTurnRevealDieImage}
+                        onError={() => {
+                          setFailedDiceImages((faces) => (faces.includes(face) ? faces : [...faces, face]));
+                        }}
+                      />
+                    </Animated.View>
+                  );
+                })}
+              </View>
+              <Animated.View
+                style={[
+                  styles.opponentTurnRevealMessage,
+                  {
+                    opacity: opponentTurnReveal.progress.interpolate({
+                      inputRange: [0, 0.58, 1],
+                      outputRange: [0, 0, 1],
+                    }),
+                    transform: [
+                      {
+                        translateY: opponentTurnReveal.progress.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [8, 0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Text
+                  adjustsFontSizeToFit
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={styles.opponentTurnRevealText}
+                >
+                  {opponentTurnReveal.message}
+                </Text>
+              </Animated.View>
+            </View>
+          </View>
+        )}
         {scoreFlyDice.length > 0 && (
           <View pointerEvents="none" style={styles.scoreDiceOverlay}>
             {scoreFlyDice.map((die, index) => {
@@ -1885,10 +2091,12 @@ function LocalGameScreen({
                   style={[
                     styles.scoreFlyingDie,
                     {
+                      height: die.size,
                       left: die.fromX,
                       opacity,
                       top: die.fromY,
                       transform: [{ translateX }, { translateY }, { rotate }, { scale }],
+                      width: die.size,
                     },
                   ]}
                 >
@@ -2269,6 +2477,32 @@ function ScoreCell({
   );
 }
 
+function runAnimation(animation: Animated.CompositeAnimation) {
+  return new Promise<void>((resolve) => {
+    animation.start(() => resolve());
+  });
+}
+
+function formatScoreRevealMessage(playerName: string, score: number, category: ScoreCategory) {
+  return `${playerName} played ${score} on ${formatScoreRevealCategory(category)}`;
+}
+
+function formatScoreRevealCategory(category: ScoreCategory) {
+  switch (category) {
+    case 'threeOfAKind':
+      return '3 of a Kind';
+    case 'fourOfAKind':
+      return '4 of a Kind';
+    case 'fullHouse':
+      return 'Full House';
+    case 'smallStraight':
+      return 'Small Straight';
+    case 'largeStraight':
+      return 'Large Straight';
+    default:
+      return categoryLabels[category];
+  }
+}
 function displayScoreWithoutSuckerBonus(score: number | null, hasSuckerBonus: boolean) {
   if (score === null) {
     return null;
@@ -2937,6 +3171,58 @@ const styles = StyleSheet.create({
     height: 88,
     resizeMode: 'contain',
     width: 88,
+  },
+  opponentTurnRevealOverlay: {
+    alignItems: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    zIndex: 26,
+  },
+  opponentTurnRevealPanel: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(143, 59, 16, 0.42)',
+    borderBottomColor: 'rgba(255, 211, 41, 0.5)',
+    borderBottomWidth: 1,
+    borderTopColor: 'rgba(255, 211, 41, 0.5)',
+    borderTopWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    width: '100%',
+  },
+  opponentTurnRevealDiceRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  opponentTurnRevealDie: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.38,
+    shadowRadius: 0,
+  },
+  opponentTurnRevealDieImage: {
+    height: '100%',
+    resizeMode: 'contain',
+    width: '100%',
+  },
+  opponentTurnRevealMessage: {
+    alignItems: 'center',
+    marginTop: 2,
+    maxWidth: '96%',
+    minHeight: 22,
+    paddingHorizontal: 6,
+  },
+  opponentTurnRevealText: {
+    color: '#FFF3C2',
+    fontSize: 15,
+    fontWeight: '900',
+    lineHeight: 20,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
   },
   scoreDiceOverlay: {
     ...StyleSheet.absoluteFillObject,
