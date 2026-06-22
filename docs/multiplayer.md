@@ -172,8 +172,8 @@ The important template variable is:
 {{ .Token }}
 ```
 
-Keep `{{ .ConfirmationURL }}` in the template as a fallback for users who prefer
-tapping a link. The app accepts both code entry and the fallback auth callback.
+Do not include `{{ .ConfirmationURL }}` or any other link in the email template.
+Users should enter the code in the app to finish signing in.
 
 Hosted redirect allow-list values should include:
 
