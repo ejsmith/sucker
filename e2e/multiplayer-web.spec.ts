@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
@@ -128,7 +128,8 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
   const page = await context.newPage();
 
   await page.goto('/');
-  await page.getByTestId('login-email-input').fill(user.email);
+  const loginEmailInput = await waitForLoginEmailInput(page);
+  await loginEmailInput.fill(user.email);
   await page.getByTestId('send-code-button').click();
   const code = await readLatestSignInCode(user.email);
   await page.getByTestId('login-code-input').fill(code);
@@ -137,6 +138,46 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
   return page;
 }
 
+async function waitForLoginEmailInput(page: Page): Promise<Locator> {
+  const loginEmailInput = page.getByTestId('login-email-input');
+  try {
+    await expect(loginEmailInput).toBeVisible({ timeout: 15_000 });
+  } catch (error) {
+    const details = await describePage(page);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Login email input did not render.\n${details}\nOriginal error: ${message}`);
+  }
+
+  return loginEmailInput;
+}
+
+async function describePage(page: Page) {
+  const testIds = await page
+    .locator('[data-testid]')
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.getAttribute('data-testid'))
+        .filter(Boolean)
+        .slice(0, 20),
+    )
+    .catch(() => []);
+  const bodyText = await page
+    .locator('body')
+    .innerText({ timeout: 1_000 })
+    .catch((error) => `Unable to read body text: ${error instanceof Error ? error.message : String(error)}`);
+  const bodyHtml = await page
+    .locator('body')
+    .evaluate((body) => body.innerHTML.slice(0, 1_000))
+    .catch((error) => `Unable to read body HTML: ${error instanceof Error ? error.message : String(error)}`);
+
+  return [
+    `url: ${page.url()}`,
+    `title: ${await page.title().catch(() => '')}`,
+    `test ids: ${testIds.join(', ') || '(none)'}`,
+    `body text: ${bodyText.slice(0, 1_000)}`,
+    `body html: ${bodyHtml}`,
+  ].join('\n');
+}
 async function openGameFromLobby(page: Page, gameId: string) {
   await page.goto('/');
   await expect(page.getByTestId('refresh-games-button')).toBeVisible();
