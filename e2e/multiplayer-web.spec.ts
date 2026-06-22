@@ -201,8 +201,35 @@ async function describePage(page: Page, failedResponses: string[]) {
     `body text: ${bodyText.slice(0, 1_000)}`,
     `body html: ${bodyHtml}`,
     `failed responses: ${failedResponses.join('\n---\n') || '(none)'}`,
+    `script responses: ${await describeScriptResponses(page)}`,
   ].join('\n');
 }
+
+async function describeScriptResponses(page: Page) {
+  const scriptUrls = await page
+    .locator('script[src]')
+    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLScriptElement).src).filter(Boolean))
+    .catch(() => []);
+
+  if (scriptUrls.length === 0) {
+    return '(none)';
+  }
+
+  const responses = await Promise.all(
+    scriptUrls.map(async (scriptUrl) => {
+      try {
+        const response = await page.request.get(scriptUrl, { timeout: 15_000 });
+        const body = await response.text();
+        return `${response.status()} ${scriptUrl}\n${body.slice(0, 2_000)}`;
+      } catch (error) {
+        return `${scriptUrl}\nUnable to request script: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }),
+  );
+
+  return responses.join('\n---\n');
+}
+
 async function openGameFromLobby(page: Page, gameId: string) {
   await page.goto('/');
   await expect(page.getByTestId('refresh-games-button')).toBeVisible();
