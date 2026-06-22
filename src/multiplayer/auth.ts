@@ -22,7 +22,7 @@ export async function signInWithEmail(email: string) {
   });
 
   if (error) {
-    throw new Error(`${error.message} Redirect: ${emailRedirectTo}`);
+    throw error;
   }
 
   return emailRedirectTo;
