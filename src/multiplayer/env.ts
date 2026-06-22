@@ -25,8 +25,8 @@ export function getMultiplayerConfig(): MultiplayerConfig {
   const browserConfig = typeof window !== 'undefined' ? window.__SUCKER_E2E_MULTIPLAYER_CONFIG__ : undefined;
   const envSupabaseUrl = typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_SUPABASE_URL : undefined;
   const envSupabaseAnonKey = typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY : undefined;
-  const supabaseUrl = envSupabaseUrl ?? browserConfig?.supabaseUrl ?? '';
-  const supabaseAnonKey = envSupabaseAnonKey ?? browserConfig?.supabaseAnonKey ?? '';
+  const supabaseUrl = envSupabaseUrl || browserConfig?.supabaseUrl || '';
+  const supabaseAnonKey = envSupabaseAnonKey || browserConfig?.supabaseAnonKey || '';
 
   return {
     enabled: Boolean(supabaseUrl && supabaseAnonKey),
