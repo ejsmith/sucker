@@ -126,9 +126,10 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     { supabaseAnonKey: anonKey, supabaseUrl },
   );
   const page = await context.newPage();
+  const failedResponses = captureFailedResponses(page);
 
   await page.goto('/');
-  const loginEmailInput = await waitForLoginEmailInput(page);
+  const loginEmailInput = await waitForLoginEmailInput(page, failedResponses);
   await loginEmailInput.fill(user.email);
   await page.getByTestId('send-code-button').click();
   const code = await readLatestSignInCode(user.email);
@@ -138,12 +139,12 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
   return page;
 }
 
-async function waitForLoginEmailInput(page: Page): Promise<Locator> {
+async function waitForLoginEmailInput(page: Page, failedResponses: string[]): Promise<Locator> {
   const loginEmailInput = page.getByTestId('login-email-input');
   try {
     await expect(loginEmailInput).toBeVisible({ timeout: 15_000 });
   } catch (error) {
-    const details = await describePage(page);
+    const details = await describePage(page, failedResponses);
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Login email input did not render.\n${details}\nOriginal error: ${message}`);
   }
@@ -151,7 +152,30 @@ async function waitForLoginEmailInput(page: Page): Promise<Locator> {
   return loginEmailInput;
 }
 
-async function describePage(page: Page) {
+function captureFailedResponses(page: Page) {
+  const failedResponses: string[] = [];
+  page.on('response', (response) => {
+    if (response.status() < 400) {
+      return;
+    }
+
+    void response
+      .text()
+      .then((body) => {
+        failedResponses.push(`${response.status()} ${response.url()}\n${body.slice(0, 2_000)}`);
+      })
+      .catch((error) => {
+        failedResponses.push(
+          `${response.status()} ${response.url()}\nUnable to read response body: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+  });
+  return failedResponses;
+}
+
+async function describePage(page: Page, failedResponses: string[]) {
   const testIds = await page
     .locator('[data-testid]')
     .evaluateAll((nodes) =>
@@ -176,6 +200,7 @@ async function describePage(page: Page) {
     `test ids: ${testIds.join(', ') || '(none)'}`,
     `body text: ${bodyText.slice(0, 1_000)}`,
     `body html: ${bodyHtml}`,
+    `failed responses: ${failedResponses.join('\n---\n') || '(none)'}`,
   ].join('\n');
 }
 async function openGameFromLobby(page: Page, gameId: string) {
