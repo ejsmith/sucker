@@ -35,6 +35,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "node scripts/start-web.cjs",
+    "build:web": "expo export --platform web --output-dir dist",
     "lint": "expo lint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
