@@ -1159,7 +1159,7 @@ function LocalGameScreen({
     const gap = Math.max(4, Math.min(7, dieSize * 0.12));
     const rowWidth = dieSize * dice.length + gap * (dice.length - 1);
     const revealLeft = Math.max(12, (screenRect.width - rowWidth) / 2);
-    const boardTop = boardRect ? boardRect.y - screenRect.y + 8 : screenRect.height * 0.22;
+    const boardTop = boardRect ? boardRect.y - screenRect.y : screenRect.height * 0.22;
     const revealTop = Math.max(96, Math.min(screenRect.height - 170, boardTop));
     const targetCenterX = targetRect.x - screenRect.x + targetRect.width / 2 - dieSize / 2;
     const targetCenterY = targetRect.y - screenRect.y + targetRect.height / 2 - dieSize / 2;
