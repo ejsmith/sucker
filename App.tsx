@@ -103,7 +103,9 @@ type OpponentTurnReveal = {
   dieSize: number;
   gap: number;
   id: string;
-  message: string;
+  categoryLabel: string;
+  playerName: string;
+  score: number;
   progress: Animated.Value;
   top: number;
 };
@@ -1176,7 +1178,9 @@ function LocalGameScreen({
       dieSize,
       gap,
       id: scoreId,
-      message: formatScoreRevealMessage(playerName, displayScore, category),
+      categoryLabel: formatScoreRevealCategory(category),
+      playerName,
+      score: displayScore,
       progress: revealProgress,
       top: revealTop,
     });
@@ -2111,7 +2115,10 @@ function LocalGameScreen({
                   numberOfLines={1}
                   style={styles.opponentTurnRevealText}
                 >
-                  {opponentTurnReveal.message}
+                  {opponentTurnReveal.playerName} played{' '}
+                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.score}</Text>
+                  {' '}on{' '}
+                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.categoryLabel}</Text>
                 </Text>
               </Animated.View>
             </View>
@@ -2569,10 +2576,6 @@ function runAnimation(animation: Animated.CompositeAnimation) {
   return new Promise<void>((resolve) => {
     animation.start(() => resolve());
   });
-}
-
-function formatScoreRevealMessage(playerName: string, score: number, category: ScoreCategory) {
-  return `${playerName} played ${score} on ${formatScoreRevealCategory(category)}`;
 }
 
 function formatScoreRevealCategory(category: ScoreCategory) {
@@ -3281,7 +3284,7 @@ const styles = StyleSheet.create({
   },
   opponentTurnRevealPanel: {
     alignItems: 'center',
-    backgroundColor: 'rgba(143, 59, 16, 0.42)',
+    backgroundColor: 'rgba(90, 19, 8, 0.68)',
     borderBottomColor: 'rgba(255, 211, 41, 0.5)',
     borderBottomWidth: 1,
     borderTopColor: 'rgba(255, 211, 41, 0.5)',
@@ -3322,6 +3325,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     textShadowColor: '#050505',
     textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  opponentTurnRevealTextHighlight: {
+    color: '#FFD329',
+    fontSize: 17,
+    textShadowColor: '#5A1308',
+    textShadowOffset: { width: 1, height: 2 },
     textShadowRadius: 0,
   },
   scoreDiceOverlay: {
