@@ -66,3 +66,4 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - The worktree may contain user changes. Do not revert changes you did not make.
 - Keep edits scoped to the user request.
 - Use `apply_patch` for manual file edits.
+- For PRs, use project-facing branch names and titles: do not add `codex/` branch prefixes, `[codex]` PR title prefixes, or draft PR status unless explicitly requested.

@@ -36,6 +36,13 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 Without Supabase configuration, the app can still run the local demo game.
 
+For the GitHub Pages deployment, add these repository variables before running the deploy workflow:
+
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+
+The Pages workflow publishes `play.sucker.games` through `dist/CNAME`.
+
 ## Run The App
 
 Start the Expo dev server:
