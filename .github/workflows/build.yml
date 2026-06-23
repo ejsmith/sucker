@@ -122,27 +122,8 @@ jobs:
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
-      - name: Cache Supabase Docker images
-        id: cache-supabase-images
-        uses: actions/cache@v4
-        with:
-          path: /tmp/supabase-images.tar
-          key: ${{ runner.os }}-supabase-images-${{ hashFiles('package-lock.json', 'supabase/config.toml') }}
-
-      - name: Load Supabase Docker images
-        if: steps.cache-supabase-images.outputs.cache-hit == 'true'
-        run: docker load -i /tmp/supabase-images.tar
-
       - name: Test Supabase integration
         run: npm run test:integration:supabase
-
-      - name: Save Supabase Docker images
-        if: success() && steps.cache-supabase-images.outputs.cache-hit != 'true'
-        run: |
-          images="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^public\.ecr\.aws/supabase/(postgres|gotrue|postgrest|kong|edge-runtime):' || true)"
-          if [ -n "$images" ]; then
-            docker save $images -o /tmp/supabase-images.tar
-          fi
 
   web-e2e:
     name: Web E2E
@@ -171,17 +152,6 @@ jobs:
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
-      - name: Cache Supabase Docker images
-        id: cache-supabase-images
-        uses: actions/cache@v4
-        with:
-          path: /tmp/supabase-images.tar
-          key: ${{ runner.os }}-supabase-images-${{ hashFiles('package-lock.json', 'supabase/config.toml') }}
-
-      - name: Load Supabase Docker images
-        if: steps.cache-supabase-images.outputs.cache-hit == 'true'
-        run: docker load -i /tmp/supabase-images.tar
-
       - name: Cache Playwright browsers
         id: cache-playwright
         uses: actions/cache@v4
@@ -198,14 +168,6 @@ jobs:
 
       - name: Test web E2E
         run: npm run test:e2e:web
-
-      - name: Save Supabase Docker images
-        if: success() && steps.cache-supabase-images.outputs.cache-hit != 'true'
-        run: |
-          images="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^public\.ecr\.aws/supabase/(postgres|gotrue|postgrest|kong|edge-runtime):' || true)"
-          if [ -n "$images" ]; then
-            docker save $images -o /tmp/supabase-images.tar
-          fi
 
       - name: Upload Playwright test results
         if: failure()
