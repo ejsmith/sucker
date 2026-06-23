@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
@@ -30,95 +30,104 @@ export function StatsPage({
         </Pressable>
       </View>
 
-      <View style={styles.currentGameStatsCard}>
-        <Text style={styles.statsSectionTitle}>Current Game</Text>
-        <View style={styles.statsScoreRow}>
-          <StatBox label="You" value={String(currentScore)} />
-          <StatBox label={currentOpponentName} value={String(opponentScore)} />
+      <ScrollView
+        contentContainerStyle={styles.statsScrollContent}
+        showsVerticalScrollIndicator={false}
+        style={styles.statsScroll}
+      >
+        <View style={styles.currentGameStatsCard}>
+          <Text style={styles.statsSectionTitle}>Current Game</Text>
+          <View style={styles.statsScoreRow}>
+            <StatBox label="You" value={String(currentScore)} />
+            <StatBox label={currentOpponentName} value={String(opponentScore)} />
+          </View>
         </View>
-      </View>
 
-      {hasStats && stats ? (
-        <>
-          <View style={styles.statsGrid}>
-            <StatBox label="Record" value={`${stats.wins}-${stats.losses}`} />
-            <StatBox label="Games" value={String(stats.games_played)} />
-            <StatBox label="Your Avg" value={String(stats.average_score)} />
-            <StatBox label={`${currentOpponentName} Avg`} value={String(stats.computer_average_score ?? 0)} />
-            <StatBox label="Your High" value={String(stats.highest_score)} />
-            <StatBox label={`${currentOpponentName} High`} value={String(stats.computer_highest_score ?? 0)} />
-          </View>
-          <View style={styles.statsDetailCard}>
-            <View style={styles.statsComparisonHeader}>
-              <Text style={styles.statsSectionTitle}>Category Rates</Text>
-              <View style={styles.statsComparisonLabels}>
-                <Text style={styles.statsComparisonLabel}>You</Text>
-                <Text numberOfLines={1} style={styles.statsComparisonLabel}>
-                  {currentOpponentName}
-                </Text>
-              </View>
+        {hasStats && stats ? (
+          <>
+            <View style={styles.statsGrid}>
+              <StatBox label="Record" value={`${stats.wins}-${stats.losses}`} />
+              <StatBox label="Games" value={String(stats.games_played)} />
+              <StatBox label="Your Avg" value={String(stats.average_score)} />
+              <StatBox label={`${currentOpponentName} Avg`} value={String(stats.computer_average_score ?? 0)} />
+              <StatBox label="Your High" value={String(stats.highest_score)} />
+              <StatBox label={`${currentOpponentName} High`} value={String(stats.computer_highest_score ?? 0)} />
             </View>
-            <StatsComparisonLine
-              label="Upper bonus"
-              opponentValue={formatStatsPct(stats.computer_upper_bonus_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.upper_bonus_games, stats.games_played)}
-            />
-            <StatsComparisonLine
-              label="Sucker"
-              opponentValue={formatStatsPct(stats.computer_sucker_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.sucker_games, stats.games_played)}
-            />
-            <StatsComparisonLine
-              label="3 of a kind"
-              opponentValue={formatStatsPct(stats.computer_three_of_a_kind_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.three_of_a_kind_games, stats.games_played)}
-            />
-            <StatsComparisonLine
-              label="4 of a kind"
-              opponentValue={formatStatsPct(stats.computer_four_of_a_kind_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.four_of_a_kind_games, stats.games_played)}
-            />
-            <StatsComparisonLine
-              label="Full house"
-              opponentValue={formatStatsPct(stats.computer_full_house_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.full_house_games, stats.games_played)}
-            />
-            <StatsComparisonLine
-              label="Small straight"
-              opponentValue={formatStatsPct(stats.computer_small_straight_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.small_straight_games, stats.games_played)}
-            />
-            <StatsComparisonLine
-              label="Large straight"
-              opponentValue={formatStatsPct(stats.computer_large_straight_games ?? 0, stats.games_played)}
-              value={formatStatsPct(stats.large_straight_games, stats.games_played)}
-            />
+            <View style={styles.statsDetailCard}>
+              <View style={styles.statsComparisonHeader}>
+                <Text style={styles.statsSectionTitle}>Category Rates</Text>
+                <View style={styles.statsComparisonLabels}>
+                  <Text style={styles.statsComparisonLabel}>You</Text>
+                  <Text numberOfLines={1} style={styles.statsComparisonLabel}>
+                    {currentOpponentName}
+                  </Text>
+                </View>
+              </View>
+              <StatsComparisonLine
+                label="Upper bonus"
+                opponentValue={formatStatsPct(stats.computer_upper_bonus_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.upper_bonus_games, stats.games_played)}
+              />
+              <StatsComparisonLine
+                label="Sucker"
+                opponentValue={formatStatsPct(stats.computer_sucker_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.sucker_games, stats.games_played)}
+              />
+              <StatsComparisonLine
+                label="3 of a kind"
+                opponentValue={formatStatsPct(stats.computer_three_of_a_kind_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.three_of_a_kind_games, stats.games_played)}
+              />
+              <StatsComparisonLine
+                label="4 of a kind"
+                opponentValue={formatStatsPct(stats.computer_four_of_a_kind_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.four_of_a_kind_games, stats.games_played)}
+              />
+              <StatsComparisonLine
+                label="Full house"
+                opponentValue={formatStatsPct(stats.computer_full_house_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.full_house_games, stats.games_played)}
+              />
+              <StatsComparisonLine
+                label="Small straight"
+                opponentValue={formatStatsPct(stats.computer_small_straight_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.small_straight_games, stats.games_played)}
+              />
+              <StatsComparisonLine
+                label="Large straight"
+                opponentValue={formatStatsPct(stats.computer_large_straight_games ?? 0, stats.games_played)}
+                value={formatStatsPct(stats.large_straight_games, stats.games_played)}
+              />
+            </View>
+            <View style={styles.statsDetailCard}>
+              <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
+              <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
+              <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
+              <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
+              <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
+              <StatsValueLine label="Sucker punches" value={String(stats.sucker_punches_used ?? 0)} />
+              <StatsValueLine label="Blocks" value={String(stats.sucker_blockers_used ?? 0)} />
+              <StatsValueLine label="Sucker hunts" value={String(stats.sucker_hunts ?? 0)} />
+              <StatsValueLine label="Hunt misses" value={String(stats.sucker_hunt_misses ?? 0)} />
+              <StatsValueLine
+                label="Avg tokens used"
+                value={formatStatNumber(stats.average_sucker_tokens_spent ?? 0)}
+              />
+              <StatsValueLine
+                label="Avg tokens left"
+                value={formatStatNumber(stats.average_sucker_tokens_leftover ?? 0)}
+              />
+            </View>
+          </>
+        ) : (
+          <View style={styles.statsEmptyCard}>
+            <Text style={styles.statsEmptyTitle}>No saved stats yet</Text>
+            <Text style={styles.statsEmptyBody}>
+              Finish games against the computer while signed in to build your history.
+            </Text>
           </View>
-          <View style={styles.statsDetailCard}>
-            <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
-            <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
-            <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
-            <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
-            <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
-            <StatsValueLine label="Sucker punches" value={String(stats.sucker_punches_used ?? 0)} />
-            <StatsValueLine label="Blocks" value={String(stats.sucker_blockers_used ?? 0)} />
-            <StatsValueLine label="Sucker hunts" value={String(stats.sucker_hunts ?? 0)} />
-            <StatsValueLine label="Hunt misses" value={String(stats.sucker_hunt_misses ?? 0)} />
-            <StatsValueLine label="Avg tokens used" value={formatStatNumber(stats.average_sucker_tokens_spent ?? 0)} />
-            <StatsValueLine
-              label="Avg tokens left"
-              value={formatStatNumber(stats.average_sucker_tokens_leftover ?? 0)}
-            />
-          </View>
-        </>
-      ) : (
-        <View style={styles.statsEmptyCard}>
-          <Text style={styles.statsEmptyTitle}>No saved stats yet</Text>
-          <Text style={styles.statsEmptyBody}>
-            Finish games against the computer while signed in to build your history.
-          </Text>
-        </View>
-      )}
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -324,6 +333,14 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     zIndex: 100,
+  },
+  statsScroll: {
+    flex: 1,
+    width: '100%',
+  },
+  statsScrollContent: {
+    gap: 10,
+    paddingBottom: 24,
   },
   statsScoreRow: {
     flexDirection: 'row',
