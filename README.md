@@ -41,7 +41,7 @@ For the GitHub Pages deployment, add these repository variables before running t
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 
-The Pages workflow publishes `play.sucker.games` through `dist/CNAME`.
+The Pages workflow publishes `sucker.games` through `dist/CNAME`.
 
 ## Run The App
 

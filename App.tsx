@@ -6,12 +6,13 @@ import {
   Image,
   ImageSourcePropType,
   Pressable,
-  SafeAreaView,
+  Platform,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   availableCategories,
   categoryLabels,
@@ -199,6 +200,14 @@ const bonusOutlineOffsets = [
 ];
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppRoutes />
+    </SafeAreaProvider>
+  );
+}
+
+function AppRoutes() {
   const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
   const [remoteGameId, setRemoteGameId] = useState<string | null>(null);
 
@@ -215,6 +224,8 @@ export default function App() {
 
 function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
+  const remoteStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
   const [activeGameId, setActiveGameId] = useState(gameId);
   const [error, setError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -344,9 +355,9 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
 
   if (isLoading || !remoteGame || !profileId) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
         <StatusBar style="light" />
-        <View style={[styles.remoteLoadingScreen, getPhoneStageStyle(windowWidth, windowHeight)]}>
+        <View style={[styles.remoteLoadingScreen, remoteStageStyle]}>
           <Text style={styles.remoteLoadingTitle}>Loading Game</Text>
           {error && <Text style={styles.remoteMessage}>{error}</Text>}
           <Pressable onPress={onExit} style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}>
@@ -419,6 +430,7 @@ function LocalGameScreen({
   remoteStatus?: RemoteGameStatus;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
   const [localGame, setLocalGame] = useState(() => createGame(playerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
@@ -552,7 +564,7 @@ function LocalGameScreen({
     remoteStatus === 'blocked_response' &&
     Boolean(remoteLastTurnId) &&
     myTokenCount >= suckerTokenCosts.suckerBlocker;
-  const gameStageStyle = getPhoneStageStyle(windowWidth, windowHeight);
+  const gameStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
   const standardRollsLeft = rollsRemaining(game);
   const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
   const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
@@ -1641,7 +1653,7 @@ function LocalGameScreen({
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <StatusBar style="light" />
       <View ref={screenRef} style={[styles.screen, gameStageStyle]} testID="game-screen">
         <BackgroundDicePattern floatValue={bgFloat} />
@@ -2116,8 +2128,7 @@ function LocalGameScreen({
                   style={styles.opponentTurnRevealText}
                 >
                   {opponentTurnReveal.playerName} played{' '}
-                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.score}</Text>
-                  {' '}on{' '}
+                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.score}</Text> on{' '}
                   <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.categoryLabel}</Text>
                 </Text>
               </Animated.View>
@@ -2310,6 +2321,19 @@ function upperSectionTotal(scorecard: PlayerView['scorecard']) {
   return upperCategories.reduce((sum, category) => sum + (scorecard[category] ?? 0), 0);
 }
 
+function getSafePhoneStageStyle(windowWidth: number, windowHeight: number, topInset: number, bottomInset: number) {
+  const safeHeight = Math.max(1, windowHeight - topInset - bottomInset);
+
+  if (Platform.OS !== 'web' && windowWidth < 500) {
+    return {
+      height: safeHeight,
+      width: windowWidth,
+    };
+  }
+
+  return getPhoneStageStyle(windowWidth, safeHeight);
+}
+
 function BonusValueText({
   awarded,
   faceColor,
@@ -2325,13 +2349,23 @@ function BonusValueText({
     <Animated.View style={[styles.bonusValueWrap, { transform: [{ scale }] }]}>
       {bonusOutlineOffsets.map((offset, index) => (
         <Text
+          adjustsFontSizeToFit
+          allowFontScaling={false}
           key={`${offset.x}:${offset.y}:${index}`}
+          numberOfLines={1}
           style={[styles.bonusBig, styles.bonusBigOutline, { color: outlineColor, left: offset.x, top: offset.y }]}
         >
           +35
         </Text>
       ))}
-      <Animated.Text style={[styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}>+35</Animated.Text>
+      <Animated.Text
+        adjustsFontSizeToFit
+        allowFontScaling={false}
+        numberOfLines={1}
+        style={[styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}
+      >
+        +35
+      </Animated.Text>
     </Animated.View>
   );
 }
@@ -3144,7 +3178,7 @@ const styles = StyleSheet.create({
   },
   bonusTextBlock: {
     justifyContent: 'center',
-    width: 67,
+    width: 61,
   },
   bonusSmall: {
     color: '#5A1308',
@@ -3154,16 +3188,18 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   bonusValueWrap: {
-    height: 34,
+    height: 30,
     marginTop: -1,
     position: 'relative',
-    width: 58,
+    width: 62,
   },
   bonusBig: {
-    fontSize: 28,
+    fontSize: 25,
     fontWeight: '900',
     includeFontPadding: false,
-    lineHeight: 30,
+    lineHeight: 27,
+    textAlign: 'center',
+    width: 62,
   },
   bonusBigOutline: {
     position: 'absolute',

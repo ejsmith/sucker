@@ -39,7 +39,7 @@ file_size_limit = "50MiB"
 
 [auth]
 enabled = true
-site_url = "https://play.sucker.games"
+site_url = "https://sucker.games"
 additional_redirect_urls = ["sucker://auth/callback", "https://play.sucker.games", "https://play.sucker.games/auth/callback", "https://sucker.games/auth/callback", "exp://127.0.0.1:*", "http://localhost:*", "http://127.0.0.1:*"]
 jwt_expiry = 3600
 enable_signup = true
