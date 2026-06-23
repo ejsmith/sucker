@@ -1,22 +1,33 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
+import type { getHeadToHeadStats } from '../multiplayer/stats';
 
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
+type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
+type ComputerStatsRow = NonNullable<ComputerStatsSnapshot>;
+type HeadToHeadStatsRow = NonNullable<HeadToHeadStatsSnapshot['mine']>;
+type StatsKind = 'computer' | 'headToHead';
+type StatsSnapshot = ComputerStatsRow | HeadToHeadStatsRow | null;
 
 export function StatsPage({
   currentOpponentName,
   currentScore,
   onClose,
   opponentScore,
+  opponentStats,
   stats,
+  statsKind,
 }: {
   currentOpponentName: string;
   currentScore: number;
   onClose: () => void;
+  opponentStats?: HeadToHeadStatsRow | null;
   opponentScore: number;
-  stats: ComputerStatsSnapshot;
+  stats: StatsSnapshot;
+  statsKind: StatsKind;
 }) {
   const hasStats = Boolean(stats && stats.games_played > 0);
+  const emptyStatsTarget = statsKind === 'computer' ? 'the computer' : currentOpponentName;
 
   return (
     <View style={styles.statsOverlay}>
@@ -49,9 +60,15 @@ export function StatsPage({
               <StatBox label="Record" value={`${stats.wins}-${stats.losses}`} />
               <StatBox label="Games" value={String(stats.games_played)} />
               <StatBox label="Your Avg" value={String(stats.average_score)} />
-              <StatBox label={`${currentOpponentName} Avg`} value={String(stats.computer_average_score ?? 0)} />
+              <StatBox
+                label={`${currentOpponentName} Avg`}
+                value={formatStatNumber(getOpponentAverage(stats, statsKind, opponentStats))}
+              />
               <StatBox label="Your High" value={String(stats.highest_score)} />
-              <StatBox label={`${currentOpponentName} High`} value={String(stats.computer_highest_score ?? 0)} />
+              <StatBox
+                label={`${currentOpponentName} High`}
+                value={String(getOpponentHigh(stats, statsKind, opponentStats))}
+              />
             </View>
             <View style={styles.statsDetailCard}>
               <View style={styles.statsComparisonHeader}>
@@ -65,38 +82,38 @@ export function StatsPage({
               </View>
               <StatsComparisonLine
                 label="Upper bonus"
-                opponentValue={formatStatsPct(stats.computer_upper_bonus_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.upper_bonus_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'upper_bonus')}
+                value={formatCategoryRate(stats, statsKind, null, 'upper_bonus')}
               />
               <StatsComparisonLine
                 label="Sucker"
-                opponentValue={formatStatsPct(stats.computer_sucker_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.sucker_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'sucker')}
+                value={formatCategoryRate(stats, statsKind, null, 'sucker')}
               />
               <StatsComparisonLine
                 label="3 of a kind"
-                opponentValue={formatStatsPct(stats.computer_three_of_a_kind_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.three_of_a_kind_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'three_of_a_kind')}
+                value={formatCategoryRate(stats, statsKind, null, 'three_of_a_kind')}
               />
               <StatsComparisonLine
                 label="4 of a kind"
-                opponentValue={formatStatsPct(stats.computer_four_of_a_kind_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.four_of_a_kind_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'four_of_a_kind')}
+                value={formatCategoryRate(stats, statsKind, null, 'four_of_a_kind')}
               />
               <StatsComparisonLine
                 label="Full house"
-                opponentValue={formatStatsPct(stats.computer_full_house_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.full_house_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'full_house')}
+                value={formatCategoryRate(stats, statsKind, null, 'full_house')}
               />
               <StatsComparisonLine
                 label="Small straight"
-                opponentValue={formatStatsPct(stats.computer_small_straight_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.small_straight_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'small_straight')}
+                value={formatCategoryRate(stats, statsKind, null, 'small_straight')}
               />
               <StatsComparisonLine
                 label="Large straight"
-                opponentValue={formatStatsPct(stats.computer_large_straight_games ?? 0, stats.games_played)}
-                value={formatStatsPct(stats.large_straight_games, stats.games_played)}
+                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'large_straight')}
+                value={formatCategoryRate(stats, statsKind, null, 'large_straight')}
               />
             </View>
             <View style={styles.statsDetailCard}>
@@ -123,13 +140,63 @@ export function StatsPage({
           <View style={styles.statsEmptyCard}>
             <Text style={styles.statsEmptyTitle}>No saved stats yet</Text>
             <Text style={styles.statsEmptyBody}>
-              Finish games against the computer while signed in to build your history.
+              Finish games against {emptyStatsTarget} while signed in to build your history.
             </Text>
           </View>
         )}
       </ScrollView>
     </View>
   );
+}
+
+type CategoryRateKey =
+  | 'four_of_a_kind'
+  | 'full_house'
+  | 'large_straight'
+  | 'small_straight'
+  | 'sucker'
+  | 'three_of_a_kind'
+  | 'upper_bonus';
+
+function getOpponentAverage(
+  stats: NonNullable<StatsSnapshot>,
+  statsKind: StatsKind,
+  opponentStats?: HeadToHeadStatsRow | null,
+) {
+  if (statsKind === 'headToHead') {
+    return opponentStats?.average_score ?? 0;
+  }
+
+  return (stats as ComputerStatsRow).computer_average_score ?? 0;
+}
+
+function getOpponentHigh(
+  stats: NonNullable<StatsSnapshot>,
+  statsKind: StatsKind,
+  opponentStats?: HeadToHeadStatsRow | null,
+) {
+  if (statsKind === 'headToHead') {
+    return opponentStats?.highest_score ?? 0;
+  }
+
+  return (stats as ComputerStatsRow).computer_highest_score ?? 0;
+}
+
+function formatCategoryRate(
+  stats: NonNullable<StatsSnapshot>,
+  statsKind: StatsKind,
+  opponentStats: HeadToHeadStatsRow | null | undefined,
+  key: CategoryRateKey,
+) {
+  if (statsKind === 'headToHead') {
+    const row = opponentStats ?? (stats as HeadToHeadStatsRow);
+    return `${formatStatNumber(row[`${key}_pct`])}%`;
+  }
+
+  const computerStats = stats as ComputerStatsRow;
+  const countKey = `${key}_games` as keyof ComputerStatsRow;
+  const count = Number(computerStats[countKey] ?? 0);
+  return formatStatsPct(count, computerStats.games_played);
 }
 
 function StatBox({ label, value }: { label: string; value: string }) {
