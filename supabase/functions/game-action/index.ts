@@ -109,7 +109,8 @@ Deno.serve(async (request) => {
     queueActionNotifications(admin, user.id, action, result);
     return json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unexpected multiplayer error';
+    console.error('game-action failed', error);
+    const message = toErrorMessage(error);
     return json({ error: message }, 400);
   }
 });
@@ -1432,6 +1433,28 @@ function requireEnv(name: string): string {
     throw new Error(`${name} is not configured.`);
   }
   return value;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.length > 0) {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) {
+      return message;
+    }
+
+    const details = (error as { details?: unknown }).details;
+    if (typeof details === 'string' && details.length > 0) {
+      return details;
+    }
+  }
+
+  return 'Unexpected multiplayer error';
 }
 
 function json(body: unknown, status = 200) {
