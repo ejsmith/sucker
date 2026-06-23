@@ -186,11 +186,6 @@ jobs:
 
   build-pages:
     name: Build GitHub Pages
-    needs:
-      - app
-      - edge
-      - supabase-integration
-      - web-e2e
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -236,7 +231,12 @@ jobs:
 
   deploy-pages:
     name: Deploy GitHub Pages
-    needs: build-pages
+    needs:
+      - app
+      - edge
+      - supabase-integration
+      - web-e2e
+      - build-pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
