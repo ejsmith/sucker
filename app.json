@@ -25,7 +25,16 @@
     },
     "plugins": ["expo-notifications"],
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "themeColor": "#8F0000",
+      "backgroundColor": "#8F0000",
+      "display": "fullscreen",
+      "orientation": "portrait",
+      "barStyle": "black-translucent",
+      "name": "Sucker!",
+      "shortName": "Sucker!",
+      "startUrl": "/"
+    },
+    "backgroundColor": "#8F0000"
   }
 }

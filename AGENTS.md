@@ -32,7 +32,8 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 ## Development Loop
 
 - Prefer hot reload. Do not restart the dev server unless it died, dependencies/config changed, or Metro is stale.
-- Local web command: `npm run web -- --port 8081`.
+- Local web command: `npm run web`. It uses Expo standard port `8081` in the primary checkout and `scripts/start-web.cjs` chooses a deterministic open port for linked worktrees, so multiple worktrees can run at the same time.
+- When starting the web app for browser QA, run `npm run web`, then read `.build/dev-server.json` and open its `url` in the integrated browser. Do not assume `8081` in a linked worktree.
 - Use an iPhone-sized browser viewport for UI checks: `393 x 852`.
 - For code validation run:
   - `npm run typecheck`
@@ -65,3 +66,4 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - The worktree may contain user changes. Do not revert changes you did not make.
 - Keep edits scoped to the user request.
 - Use `apply_patch` for manual file edits.
+- For PRs, use project-facing branch names and titles: do not add `codex/` branch prefixes, `[codex]` PR title prefixes, or draft PR status unless explicitly requested.
