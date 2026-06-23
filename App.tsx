@@ -206,11 +206,11 @@ export default function App() {
     return <RemoteGameScreen gameId={remoteGameId} onExit={() => setRemoteGameId(null)} />;
   }
 
-  if (!showLocalDemo) {
+  if (isMultiplayerConfigured && !showLocalDemo) {
     return <MultiplayerLobby onOpenGame={setRemoteGameId} onPlayLocalDemo={() => setShowLocalDemo(true)} />;
   }
 
-  return <LocalGameScreen onExit={() => setShowLocalDemo(false)} />;
+  return <LocalGameScreen onExit={() => setShowLocalDemo(!isMultiplayerConfigured)} />;
 }
 
 function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {

@@ -38,6 +38,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline
 
+      - name: Validate deployment config
+        run: |
+          test -n "$EXPO_PUBLIC_SUPABASE_URL" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_URL before deploying GitHub Pages."; exit 1; }
+          test -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_ANON_KEY before deploying GitHub Pages."; exit 1; }
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+
       - name: Build web
         run: npm run build:web
         env:
