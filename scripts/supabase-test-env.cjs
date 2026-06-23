@@ -6,7 +6,7 @@ const envFilePath = path.resolve(__dirname, '..', 'supabase', '.temp', 'e2e.env'
 const expoEnvFilePath = path.resolve(__dirname, '..', '.env.local');
 const supabaseCliPath = path.resolve(__dirname, '..', 'node_modules', 'supabase', 'dist', 'supabase.js');
 const supabaseConfigPath = path.resolve(__dirname, '..', 'supabase', 'config.toml');
-const ciDisabledSupabaseConfigSections = new Set(['edge_runtime', 'inbucket', 'realtime', 'storage', 'studio']);
+const ciDisabledSupabaseConfigSections = new Set(['inbucket', 'realtime', 'storage', 'studio']);
 const minimalSupabaseStartExclude = [
   'studio',
   'storage-api',
