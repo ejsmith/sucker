@@ -172,8 +172,8 @@ The important template variable is:
 {{ .Token }}
 ```
 
-Do not include `{{ .ConfirmationURL }}` or any other link in the email template.
-Users should enter the code in the app to finish signing in.
+Include `{{ .Token }}` so installed PWA users can enter a code in the app.
+Keep `{{ .ConfirmationURL }}` as a secondary option for users who can open links.
 
 Hosted redirect allow-list values should include:
 
