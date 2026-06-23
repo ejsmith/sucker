@@ -8,6 +8,7 @@ import {
   scratchScoreBox,
   startingSuckerTokens,
   suckerTokenCosts,
+  toGameState,
   type Dice,
 } from './game.ts';
 
@@ -48,8 +49,36 @@ Deno.test('Edge shared game rules award a token for zero scores and scratches', 
   assertEquals(scratched.players[0].suckerTokens, startingSuckerTokens + 1);
 });
 
+Deno.test('Edge shared game state defaults legacy missing extra rolls to zero', () => {
+  const game = createGame(['Erin', 'Sam']);
+  const { extraRollsAvailable, ...legacyGame } = game;
+  const parsedLegacyGame = toGameState(legacyGame);
+  const parsedNullExtraRollsGame = toGameState({ ...game, extraRollsAvailable: null });
+
+  assertEquals(extraRollsAvailable, 0);
+  assertEquals(parsedLegacyGame.id, game.id);
+  assertEquals(parsedLegacyGame.extraRollsAvailable, 0);
+  assertEquals(parsedLegacyGame.players.length, game.players.length);
+  assertEquals(parsedNullExtraRollsGame.extraRollsAvailable, 0);
+  assertThrows(() => toGameState({ ...game, extraRollsAvailable: -1 }), 'invalid extra rolls');
+  assertThrows(() => toGameState({ ...game, extraRollsAvailable: 1.5 }), 'invalid extra rolls');
+});
+
 function assertEquals<T>(actual: T, expected: T) {
   if (actual !== expected) {
     throw new Error(`Expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
   }
+}
+
+function assertThrows(action: () => unknown, message: string) {
+  try {
+    action();
+  } catch (error) {
+    if (error instanceof Error && error.message.includes(message)) {
+      return;
+    }
+    throw error;
+  }
+
+  throw new Error(`Expected error including "${message}".`);
 }

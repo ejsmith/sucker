@@ -200,6 +200,17 @@ test('stored game state is validated before use', () => {
   assert.throws(() => toGameState({ ...game, currentPlayerIndex: 3 }), /invalid current player/);
 });
 
+test('stored game state defaults legacy missing extra rolls to zero', () => {
+  const game = createGame(['Erin', 'Sam']);
+  const { extraRollsAvailable, ...legacyGame } = game;
+
+  assert.equal(extraRollsAvailable, 0);
+  assert.deepEqual(toGameState(legacyGame), game);
+  assert.deepEqual(toGameState({ ...game, extraRollsAvailable: null }), game);
+  assert.throws(() => toGameState({ ...game, extraRollsAvailable: -1 }), /invalid extra rolls/);
+  assert.throws(() => toGameState({ ...game, extraRollsAvailable: 1.5 }), /invalid extra rolls/);
+});
+
 test('stored held dice must be a five boolean tuple', () => {
   assert.deepEqual(toHeldDice([true, false, true, false, true]), [true, false, true, false, true]);
   assert.throws(() => toHeldDice([true, false]), /invalid held dice/);
