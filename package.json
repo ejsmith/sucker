@@ -1,6 +1,7 @@
 {
   "name": "sucker",
   "version": "1.0.0",
+  "license": "MIT",
   "main": "index.ts",
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

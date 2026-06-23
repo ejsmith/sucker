@@ -125,3 +125,7 @@ npm run test:integration:supabase
 - Suckers do not award tokens
 
 See the design spec for complete rules and balancing details.
+
+## License
+
+Sucker! is licensed under the [MIT License](LICENSE).
