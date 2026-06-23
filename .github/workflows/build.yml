@@ -23,7 +23,15 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
       - name: Typecheck app
@@ -48,6 +56,13 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package-lock.json') }}
+
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -60,6 +75,7 @@ jobs:
           key: ${{ runner.os }}-deno-v2.1.4-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
 
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
       - name: Typecheck Edge Functions
@@ -84,6 +100,13 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package-lock.json') }}
+
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -96,14 +119,11 @@ jobs:
           key: ${{ runner.os }}-deno-v2.1.4-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
 
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
       - name: Test Supabase integration
         run: npm run test:integration:supabase
-
-      - name: Stop Supabase
-        if: always()
-        run: npx supabase stop --no-backup || true
 
   web-e2e:
     name: Web E2E
@@ -121,7 +141,15 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
       - name: Cache Playwright browsers
@@ -148,7 +176,3 @@ jobs:
           name: playwright-test-results
           path: test-results
           if-no-files-found: ignore
-
-      - name: Stop Supabase
-        if: always()
-        run: npx supabase stop --no-backup || true
