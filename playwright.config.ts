@@ -18,6 +18,7 @@ const localEnvFile = 'supabase/.temp/e2e.env';
 const localTestEnv = readEnvFile(localEnvFile);
 Object.assign(process.env, localTestEnv);
 const e2eBaseUrl = localTestEnv.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
+const e2eWebPort = new URL(e2eBaseUrl).port || '8081';
 
 export default defineConfig({
   expect: {
@@ -51,7 +52,7 @@ export default defineConfig({
       },
     },
     {
-      command: 'npm run web -- --port 8081',
+      command: `npm run web -- --port ${e2eWebPort}`,
       env: { ...localTestEnv, BROWSER: 'none' },
       name: 'Expo web',
       reuseExistingServer: false,
