@@ -172,6 +172,57 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
   );
 });
 
+Deno.test('game-action lets a punched player replay instead of blocking', async () => {
+  const [alice, bob] = await createUsers('punch-replay', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+  const firstScore = (
+    await invokeGameAction(alice, {
+      category: 'chance',
+      gameId: game.id,
+      held: falseHeld,
+      type: 'score_category',
+    })
+  ).game as GameRow;
+  assertEquals(firstScore.status, 'response_window');
+  assertString(firstScore.last_turn_id);
+
+  const punched = (
+    await invokeGameAction(bob, {
+      gameId: game.id,
+      turnId: firstScore.last_turn_id,
+      type: 'sucker_punch',
+    })
+  ).game as GameRow;
+  assertEquals(punched.status, 'blocked_response');
+  assertEquals(punched.current_player_id, alice.id);
+  assertEquals((await loadTurn(firstScore.last_turn_id)).status, 'punched');
+
+  const replayRoll = (await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' })).game as GameRow;
+  assertEquals(replayRoll.status, 'active');
+  assertEquals(replayRoll.current_player_id, alice.id);
+
+  const replayScore = (
+    await invokeGameAction(alice, {
+      category: 'chance',
+      gameId: game.id,
+      held: falseHeld,
+      type: 'score_category',
+    })
+  ).game as GameRow;
+  assertEquals(replayScore.status, 'response_window');
+  assertEquals(replayScore.current_player_id, bob.id);
+  assertString(replayScore.last_turn_id);
+  assertEquals((await loadTurn(replayScore.last_turn_id)).status, 'submitted');
+
+  const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id).order('turn_index'));
+  assertEquals(
+    turns.map((turn) => turn.status),
+    ['punched', 'submitted'],
+  );
+});
+
 Deno.test('game-action scratches, pass responses, game completion, and stats are written end to end', async () => {
   const [alice, bob] = await createUsers('completion', ['Alice', 'Bob']);
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
