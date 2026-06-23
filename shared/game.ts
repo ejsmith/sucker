@@ -308,7 +308,11 @@ export function toGameState(value: unknown): GameState {
   return {
     currentPlayerIndex,
     dice: toDice(game.dice),
-    extraRollsAvailable: toNonNegativeInteger(game.extraRollsAvailable, 'Stored game has invalid extra rolls.'),
+    extraRollsAvailable: toOptionalNonNegativeInteger(
+      game.extraRollsAvailable,
+      0,
+      'Stored game has invalid extra rolls.',
+    ),
     held: toHeldDice(game.held),
     id: toString(game.id, 'Stored game has invalid id.'),
     phase: toGamePhase(game.phase),
@@ -472,6 +476,14 @@ function toNonNegativeInteger(value: unknown, message: string): number {
   }
 
   return value;
+}
+
+function toOptionalNonNegativeInteger(value: unknown, fallback: number, message: string): number {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  return toNonNegativeInteger(value, message);
 }
 
 function isDieValue(value: unknown): value is DieValue {
