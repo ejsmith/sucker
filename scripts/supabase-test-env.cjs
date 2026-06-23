@@ -5,6 +5,18 @@ const { execFileSync } = require('node:child_process');
 const envFilePath = path.resolve(__dirname, '..', 'supabase', '.temp', 'e2e.env');
 const expoEnvFilePath = path.resolve(__dirname, '..', '.env.local');
 const supabaseCliPath = path.resolve(__dirname, '..', 'node_modules', 'supabase', 'dist', 'supabase.js');
+const minimalSupabaseStartExclude = [
+  'studio',
+  'storage-api',
+  'imgproxy',
+  'mailpit',
+  'realtime',
+  'logflare',
+  'vector',
+  'postgres-meta',
+  'edge-runtime',
+  'supavisor',
+];
 
 function parseEnv(output) {
   const values = {};
@@ -60,6 +72,27 @@ function readEnvFile(filePath = envFilePath) {
   return parseEnv(fs.readFileSync(filePath, 'utf8'));
 }
 
+function runSupabase(args) {
+  execFileSync(process.execPath, [supabaseCliPath, ...args], { stdio: 'inherit' });
+}
+
+function startMinimalSupabase() {
+  runSupabase(['start', '--exclude', minimalSupabaseStartExclude.join(',')]);
+}
+
+function shouldResetSupabaseDatabase() {
+  return process.env.CI !== 'true' && process.env.SUPABASE_SKIP_DB_RESET !== '1';
+}
+
+function resetSupabaseDatabaseIfNeeded() {
+  if (!shouldResetSupabaseDatabase()) {
+    console.log('Skipping Supabase db reset; startup already applies migrations in CI.');
+    return;
+  }
+
+  runSupabase(['db', 'reset', '--no-seed']);
+}
+
 function writeLocalTestEnvFile(filePath = envFilePath) {
   const env = buildLocalTestEnv();
   const contents = Object.entries(env)
@@ -77,7 +110,12 @@ module.exports = {
   buildLocalTestEnv,
   envFilePath,
   expoEnvFilePath,
+  minimalSupabaseStartExclude,
   readEnvFile,
+  resetSupabaseDatabaseIfNeeded,
+  runSupabase,
+  shouldResetSupabaseDatabase,
+  startMinimalSupabase,
   supabaseCliPath,
   writeLocalTestEnvFile,
 };

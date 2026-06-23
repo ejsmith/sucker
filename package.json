@@ -42,7 +42,7 @@
     "test:edge": "deno test supabase/functions",
     "prepare:e2e-env": "node scripts/supabase-test-env.cjs",
     "test:integration:supabase": "node scripts/test-supabase-integration.cjs",
-    "test:e2e:web": "supabase start && supabase db reset && npm run prepare:e2e-env && playwright test",
+    "test:e2e:web": "node scripts/test-web-e2e.cjs",
     "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs",
     "simulate:computer": "tsc --project tsconfig.rules.json && node scripts/simulate-computer.cjs",
     "tournament:computer": "tsc --project tsconfig.rules.json && node scripts/tournament-computer.cjs",
