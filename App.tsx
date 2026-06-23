@@ -103,7 +103,9 @@ type OpponentTurnReveal = {
   dieSize: number;
   gap: number;
   id: string;
-  message: string;
+  categoryLabel: string;
+  playerName: string;
+  score: number;
   progress: Animated.Value;
   top: number;
 };
@@ -179,6 +181,22 @@ const computerScorePreviewDelayMs = 0;
 const computerScoreRevealDurationMs = 520;
 const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
+const upperBonusTarget = 63;
+const bonusValueColor = '#FFD329';
+const awardedBonusColor = bonusValueColor;
+const bonusOutlineColor = '#5A1308';
+const awardedBonusOutlineColor = bonusOutlineColor;
+const bonusOutlineOffsets = [
+  { x: -2, y: 0 },
+  { x: 2, y: 0 },
+  { x: 0, y: -2 },
+  { x: 0, y: 2 },
+  { x: -1, y: -1 },
+  { x: 1, y: -1 },
+  { x: -1, y: 1 },
+  { x: 1, y: 1 },
+  { x: 2, y: 2 },
+];
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
 export default function App() {
   const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
@@ -447,6 +465,8 @@ function LocalGameScreen({
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const bgFloat = useRef(new Animated.Value(0)).current;
   const selectedPulse = useRef(new Animated.Value(0)).current;
+  const sectionBonusPulse = useRef(new Animated.Value(0)).current;
+  const previousHomeSectionBonusAwarded = useRef<boolean | null>(null);
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
   const myPlayerIndex = isRemoteGame
     ? Math.max(
@@ -534,6 +554,9 @@ function LocalGameScreen({
     myTokenCount >= suckerTokenCosts.suckerBlocker;
   const gameStageStyle = getPhoneStageStyle(windowWidth, windowHeight);
   const standardRollsLeft = rollsRemaining(game);
+  const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
+  const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
+  const homeSectionBonusAwarded = homeUpperTotal >= upperBonusTarget;
   const homeScore = totalScore(homePlayer.scorecard);
   const opponentScore = totalScore(opponentPlayer.scorecard);
   const isGameOver = game.phase === 'complete';
@@ -569,6 +592,42 @@ function LocalGameScreen({
       remoteOpponentTurnNeedsReveal ||
       revealingRemoteTurnId === remoteLastTurnId),
   );
+  const sectionBonusScale = sectionBonusPulse.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: [1, 2, 1],
+  });
+  const sectionBonusColor = sectionBonusPulse.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: [bonusValueColor, bonusValueColor, awardedBonusColor],
+  });
+
+  useEffect(() => {
+    if (previousHomeSectionBonusAwarded.current === null) {
+      sectionBonusPulse.setValue(homeSectionBonusAwarded ? 1 : 0);
+      previousHomeSectionBonusAwarded.current = homeSectionBonusAwarded;
+      return;
+    }
+
+    if (!homeSectionBonusAwarded) {
+      sectionBonusPulse.setValue(0);
+      previousHomeSectionBonusAwarded.current = false;
+      return;
+    }
+
+    if (!previousHomeSectionBonusAwarded.current && !disableE2EAnimations) {
+      sectionBonusPulse.setValue(0);
+      Animated.timing(sectionBonusPulse, {
+        toValue: 1,
+        duration: 560,
+        easing: Easing.out(Easing.back(1.7)),
+        useNativeDriver: false,
+      }).start();
+    } else {
+      sectionBonusPulse.setValue(1);
+    }
+
+    previousHomeSectionBonusAwarded.current = true;
+  }, [homeSectionBonusAwarded, sectionBonusPulse]);
 
   useEffect(() => {
     if (disableE2EAnimations) {
@@ -1100,7 +1159,7 @@ function LocalGameScreen({
     const gap = Math.max(4, Math.min(7, dieSize * 0.12));
     const rowWidth = dieSize * dice.length + gap * (dice.length - 1);
     const revealLeft = Math.max(12, (screenRect.width - rowWidth) / 2);
-    const boardTop = boardRect ? boardRect.y - screenRect.y + 8 : screenRect.height * 0.22;
+    const boardTop = boardRect ? boardRect.y - screenRect.y : screenRect.height * 0.22;
     const revealTop = Math.max(96, Math.min(screenRect.height - 170, boardTop));
     const targetCenterX = targetRect.x - screenRect.x + targetRect.width / 2 - dieSize / 2;
     const targetCenterY = targetRect.y - screenRect.y + targetRect.height / 2 - dieSize / 2;
@@ -1119,7 +1178,9 @@ function LocalGameScreen({
       dieSize,
       gap,
       id: scoreId,
-      message: formatScoreRevealMessage(playerName, displayScore, category),
+      categoryLabel: formatScoreRevealCategory(category),
+      playerName,
+      score: displayScore,
       progress: revealProgress,
       top: revealTop,
     });
@@ -1688,10 +1749,14 @@ function LocalGameScreen({
               <View style={styles.bonusContent}>
                 <View style={styles.bonusTextBlock}>
                   <Text style={styles.bonusSmall}>Section{'\n'}Bonus</Text>
-                  <Text style={styles.bonusBig}>+35</Text>
+                  <BonusValueText
+                    awarded={homeSectionBonusAwarded}
+                    faceColor={sectionBonusColor}
+                    scale={sectionBonusScale}
+                  />
                 </View>
-                <BonusMeter total={upperSectionTotal(homePlayer.scorecard)} />
-                <BonusMeter total={upperSectionTotal(opponentPlayer.scorecard)} />
+                <BonusMeter total={homeUpperTotal} />
+                <BonusMeter total={opponentUpperTotal} />
               </View>
             </View>
             <ScoreCell
@@ -2050,7 +2115,10 @@ function LocalGameScreen({
                   numberOfLines={1}
                   style={styles.opponentTurnRevealText}
                 >
-                  {opponentTurnReveal.message}
+                  {opponentTurnReveal.playerName} played{' '}
+                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.score}</Text>
+                  {' '}on{' '}
+                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.categoryLabel}</Text>
                 </Text>
               </Animated.View>
             </View>
@@ -2242,6 +2310,32 @@ function upperSectionTotal(scorecard: PlayerView['scorecard']) {
   return upperCategories.reduce((sum, category) => sum + (scorecard[category] ?? 0), 0);
 }
 
+function BonusValueText({
+  awarded,
+  faceColor,
+  scale,
+}: {
+  awarded: boolean;
+  faceColor: Animated.AnimatedInterpolation<string | number>;
+  scale: Animated.AnimatedInterpolation<number>;
+}) {
+  const outlineColor = awarded ? awardedBonusOutlineColor : bonusOutlineColor;
+
+  return (
+    <Animated.View style={[styles.bonusValueWrap, { transform: [{ scale }] }]}>
+      {bonusOutlineOffsets.map((offset, index) => (
+        <Text
+          key={`${offset.x}:${offset.y}:${index}`}
+          style={[styles.bonusBig, styles.bonusBigOutline, { color: outlineColor, left: offset.x, top: offset.y }]}
+        >
+          +35
+        </Text>
+      ))}
+      <Animated.Text style={[styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}>+35</Animated.Text>
+    </Animated.View>
+  );
+}
+
 function TokenMenuOption({
   cost,
   costLabel,
@@ -2279,13 +2373,14 @@ function TokenMenuOption({
 }
 
 function BonusMeter({ total }: { total: number }) {
-  const clampedTotal = Math.max(0, Math.min(63, total));
-  const progress = clampedTotal / 63;
+  const clampedTotal = Math.max(0, Math.min(upperBonusTarget, total));
+  const progress = clampedTotal / upperBonusTarget;
   const size = 44;
   const strokeWidth = 5;
   const center = size / 2;
   const radius = center - strokeWidth / 2;
   const circumference = 2 * Math.PI * radius;
+  const progressColor = '#F12D22';
 
   return (
     <View style={styles.bonusMeter}>
@@ -2298,7 +2393,7 @@ function BonusMeter({ total }: { total: number }) {
               cy={center}
               fill="transparent"
               r={radius}
-              stroke="#F12D22"
+              stroke={progressColor}
               strokeDasharray={`${circumference} ${circumference}`}
               strokeDashoffset={circumference * (1 - progress)}
               strokeLinecap="round"
@@ -2481,10 +2576,6 @@ function runAnimation(animation: Animated.CompositeAnimation) {
   return new Promise<void>((resolve) => {
     animation.start(() => resolve());
   });
-}
-
-function formatScoreRevealMessage(playerName: string, score: number, category: ScoreCategory) {
-  return `${playerName} played ${score} on ${formatScoreRevealCategory(category)}`;
 }
 
 function formatScoreRevealCategory(category: ScoreCategory) {
@@ -2974,7 +3065,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     height: 56,
     justifyContent: 'center',
-    marginLeft: -2,
+    marginLeft: -8,
     width: 54,
   },
   lockedScoreBox: {
@@ -3056,21 +3147,33 @@ const styles = StyleSheet.create({
     width: 67,
   },
   bonusSmall: {
-    color: '#9A3F0C',
+    color: '#5A1308',
     fontSize: 10,
     fontWeight: '900',
     lineHeight: 10,
     textTransform: 'uppercase',
   },
+  bonusValueWrap: {
+    height: 34,
+    marginTop: -1,
+    position: 'relative',
+    width: 58,
+  },
   bonusBig: {
-    color: '#FFD329',
     fontSize: 28,
     fontWeight: '900',
+    includeFontPadding: false,
     lineHeight: 30,
-    textShadowColor: '#5A1308',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 0,
   },
+  bonusBigOutline: {
+    position: 'absolute',
+  },
+  bonusBigFace: {
+    left: 0,
+    position: 'absolute',
+    top: 0,
+  },
+
   bonusMeter: {
     alignItems: 'center',
     height: 48,
@@ -3091,7 +3194,7 @@ const styles = StyleSheet.create({
     top: 0,
   },
   bonusMeterText: {
-    color: '#8A2D0A',
+    color: '#5A1308',
     fontSize: 10,
     fontWeight: '900',
     lineHeight: 12,
@@ -3181,7 +3284,7 @@ const styles = StyleSheet.create({
   },
   opponentTurnRevealPanel: {
     alignItems: 'center',
-    backgroundColor: 'rgba(143, 59, 16, 0.42)',
+    backgroundColor: 'rgba(90, 19, 8, 0.68)',
     borderBottomColor: 'rgba(255, 211, 41, 0.5)',
     borderBottomWidth: 1,
     borderTopColor: 'rgba(255, 211, 41, 0.5)',
@@ -3222,6 +3325,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     textShadowColor: '#050505',
     textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  opponentTurnRevealTextHighlight: {
+    color: '#FFD329',
+    fontSize: 17,
+    textShadowColor: '#5A1308',
+    textShadowOffset: { width: 1, height: 2 },
     textShadowRadius: 0,
   },
   scoreDiceOverlay: {
