@@ -42,13 +42,65 @@ export async function applyMultiplayerAction(action: MultiplayerAction): Promise
   });
 
   if (error) {
-    throw error;
+    throw new Error(await toFunctionErrorMessage(error));
   }
   if (!data) {
     throw new Error('Game action returned no data.');
   }
 
   return data;
+}
+
+async function toFunctionErrorMessage(error: unknown) {
+  const response = toFunctionErrorResponse(error);
+  const responseMessage = response ? await readFunctionErrorMessage(response) : null;
+  if (responseMessage) {
+    return responseMessage;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Unable to update game.';
+}
+
+function toFunctionErrorResponse(error: unknown): Response | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  const context = (error as { context?: unknown }).context;
+  if (!context || typeof context !== 'object') {
+    return null;
+  }
+
+  const response = context as Partial<Response>;
+  return typeof response.json === 'function' && typeof response.text === 'function' ? (context as Response) : null;
+}
+
+async function readFunctionErrorMessage(response: Response): Promise<string | null> {
+  try {
+    const payload = (response.clone ? response.clone() : response) as Response;
+    const body = await payload.json();
+    if (body && typeof body === 'object') {
+      const message = (body as { error?: unknown; message?: unknown }).error ?? (body as { message?: unknown }).message;
+      if (typeof message === 'string' && message.length > 0) {
+        return message;
+      }
+    }
+  } catch {
+    try {
+      const message = await ((response.clone ? response.clone() : response) as Response).text();
+      if (message.length > 0) {
+        return message;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export async function createGameAgainst(opponentProfileId: string) {

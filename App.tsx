@@ -5,8 +5,8 @@ import {
   Easing,
   Image,
   ImageSourcePropType,
-  Pressable,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -58,8 +58,10 @@ import {
 } from './src/multiplayer/games';
 import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
 import { supabase } from './src/multiplayer/supabase';
+import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
 import { getPhoneStageStyle } from './src/ui/phoneStage';
+import { useAppActivity } from './src/ui/useAppActivity';
 import {
   createRollingLaunch,
   defaultRollingLaunch,
@@ -125,6 +127,7 @@ function concealActiveOpponentDice(game: GameState, myProfileId?: string | null)
   };
 }
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
+type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
 type RemoteActionHandlers = {
   onExtraRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onRematch: () => Promise<ReturnType<typeof createGame> | null>;
@@ -292,6 +295,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const remoteStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
+  const isAppActive = useAppActivity();
   const [activeGameId, setActiveGameId] = useState(gameId);
   const [error, setError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -387,7 +391,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   }, [remoteGame?.last_turn_id]);
 
   useEffect(() => {
-    if (!remoteGame || isRealtimeConnected) {
+    if (!remoteGame || isRealtimeConnected || !isAppActive) {
       return;
     }
 
@@ -402,7 +406,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [activeGameId, isRealtimeConnected, remoteGame]);
+  }, [activeGameId, isAppActive, isRealtimeConnected, remoteGame]);
 
   async function runRemoteAction(action: () => Promise<{ game: RemoteGameRow }>) {
     setIsRemoteBusy(true);
@@ -515,6 +519,7 @@ function LocalGameScreen({
   const [isTokenMenuOpen, setIsTokenMenuOpen] = useState(false);
   const [dismissedGameOverId, setDismissedGameOverId] = useState<string | null>(null);
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
+  const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
   const [failedDiceImages, setFailedDiceImages] = useState<number[]>([]);
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
@@ -526,6 +531,7 @@ function LocalGameScreen({
   const [scoreFlyDice, setScoreFlyDice] = useState<ScoreFlyDie[]>([]);
   const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
+  const isAppActive = useAppActivity();
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
   const boardRef = useRef<ViewRef | null>(null);
@@ -728,48 +734,64 @@ function LocalGameScreen({
   }, [homeSectionBonusAwarded, sectionBonusPulse]);
 
   useEffect(() => {
-    if (disableE2EAnimations) {
+    if (disableE2EAnimations || !isAppActive) {
       return;
     }
 
-    const loops = [
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(bgFloat, {
-            toValue: 1,
-            duration: 5200,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-          Animated.timing(bgFloat, {
-            toValue: 0,
-            duration: 5200,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-        ]),
-      ),
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(selectedPulse, {
-            toValue: 1,
-            duration: 620,
-            easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(selectedPulse, {
-            toValue: 0,
-            duration: 620,
-            easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
-          }),
-        ]),
-      ),
-    ];
+    const loops: Animated.CompositeAnimation[] = [];
+
+    if (Platform.OS !== 'web') {
+      loops.push(
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(bgFloat, {
+              toValue: 1,
+              duration: 5200,
+              easing: Easing.inOut(Easing.sin),
+              useNativeDriver: true,
+            }),
+            Animated.timing(bgFloat, {
+              toValue: 0,
+              duration: 5200,
+              easing: Easing.inOut(Easing.sin),
+              useNativeDriver: true,
+            }),
+          ]),
+        ),
+      );
+    }
+
+    if (Platform.OS !== 'web' && selectedCategory !== null) {
+      loops.push(
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(selectedPulse, {
+              toValue: 1,
+              duration: 620,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(selectedPulse, {
+              toValue: 0,
+              duration: 620,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+          ]),
+        ),
+      );
+    } else {
+      selectedPulse.setValue(0);
+    }
+
+    if (loops.length === 0) {
+      bgFloat.setValue(0);
+      return;
+    }
 
     loops.forEach((loop) => loop.start());
     return () => loops.forEach((loop) => loop.stop());
-  }, [bgFloat, selectedPulse]);
+  }, [bgFloat, isAppActive, selectedCategory, selectedPulse]);
 
   useEffect(() => {
     return () => {
@@ -899,6 +921,31 @@ function LocalGameScreen({
         console.warn('Unable to record computer stats', statsError);
       });
   }, [game, isRemoteGame]);
+
+  useEffect(() => {
+    if (!isRemoteGame || !opponentPlayer.id) {
+      setHeadToHeadStats(null);
+      return;
+    }
+
+    let isMounted = true;
+    void getHeadToHeadStats(opponentPlayer.id)
+      .then((nextStats) => {
+        if (isMounted) {
+          setHeadToHeadStats(nextStats);
+        }
+      })
+      .catch((statsError) => {
+        console.warn('Unable to load head-to-head stats', statsError);
+        if (isMounted) {
+          setHeadToHeadStats(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isRemoteGame, opponentPlayer.id, remoteLastTurnId, remoteStatus]);
 
   useEffect(() => {
     if (!isRemoteGame) {
@@ -2459,7 +2506,9 @@ function LocalGameScreen({
             currentScore={totalScore(homePlayer.scorecard)}
             onClose={() => setShowStatsPage(false)}
             opponentScore={totalScore(opponentPlayer.scorecard)}
-            stats={computerStats}
+            opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}
+            stats={isRemoteGame ? (headToHeadStats?.mine ?? null) : computerStats}
+            statsKind={isRemoteGame ? 'headToHead' : 'computer'}
           />
         )}
       </View>

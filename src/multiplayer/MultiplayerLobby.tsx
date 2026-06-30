@@ -19,6 +19,7 @@ import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
 import { getPhoneStageStyle } from '../ui/phoneStage';
+import { useAppActivity } from '../ui/useAppActivity';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
@@ -36,6 +37,7 @@ export function MultiplayerLobby({
   onPlayLocalDemo: () => void;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const isAppActive = useAppActivity();
   const { endSession, error, isLoading, profile, saveProfile, sendSignInCode, session, verifySignInCode } =
     useMultiplayerSession();
   const [email, setEmail] = useState('');
@@ -78,9 +80,13 @@ export function MultiplayerLobby({
   }, [profile, session]);
 
   useEffect(() => {
+    if (!isAppActive) {
+      return;
+    }
+
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isAppActive]);
 
   useEffect(() => {
     let isMounted = true;

@@ -172,8 +172,8 @@ The important template variable is:
 {{ .Token }}
 ```
 
-Keep `{{ .ConfirmationURL }}` in the template as a fallback for users who prefer
-tapping a link. The app accepts both code entry and the fallback auth callback.
+Include `{{ .Token }}` so installed PWA users can enter a code in the app.
+Keep `{{ .ConfirmationURL }}` as a secondary option for users who can open links.
 
 Hosted redirect allow-list values should include:
 

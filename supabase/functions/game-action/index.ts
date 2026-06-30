@@ -109,7 +109,8 @@ Deno.serve(async (request) => {
     queueActionNotifications(admin, user.id, action, result);
     return json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unexpected multiplayer error';
+    console.error('game-action failed', error);
+    const message = toErrorMessage(error);
     return json({ error: message }, 400);
   }
 });
@@ -720,7 +721,7 @@ async function scoreRemoteTurn(
   }
 
   const turnHeld = normalizeHeld(submittedHeld, state.held);
-  const turnIndex = await loadNextTurnIndex(admin, gameId);
+  const turnIndex = await loadNextTurnIndex(admin, gameId, game.last_turn_id);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus =
     !scratch && category !== 'sucker' && currentPlayer.scorecard.sucker !== null && isSuckerRoll(state.dice);
@@ -757,7 +758,7 @@ async function scoreRemoteTurn(
   };
   const winner = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard))[0] : null;
 
-  const { data: turn, error: turnError } = await admin
+  const { data: insertedTurn, error: turnError } = await admin
     .from('turns')
     .insert({
       category,
@@ -773,7 +774,10 @@ async function scoreRemoteTurn(
     .select()
     .single();
 
-  if (turnError) {
+  const turn = isDuplicateTurnIndexError(turnError)
+    ? await loadDuplicateScoreTurn(admin, gameId, actorId, state, category, turnScore, complete)
+    : insertedTurn;
+  if (!turn) {
     throw turnError;
   }
 
@@ -1056,7 +1060,7 @@ async function loadTurn(admin: DbClient, turnId: string): Promise<TurnRow> {
   return turn;
 }
 
-async function loadNextTurnIndex(admin: DbClient, gameId: string) {
+async function loadNextTurnIndex(admin: DbClient, gameId: string, lastTurnId: string | null) {
   const { data: latestTurn, error } = await admin
     .from('turns')
     .select('turn_index')
@@ -1069,7 +1073,43 @@ async function loadNextTurnIndex(admin: DbClient, gameId: string) {
     throw error;
   }
 
-  return (latestTurn?.turn_index ?? 0) + 1;
+  const lastTurn = lastTurnId ? await loadTurn(admin, lastTurnId) : null;
+  return Math.max(latestTurn?.turn_index ?? 0, lastTurn?.turn_index ?? 0) + 1;
+}
+
+async function loadDuplicateScoreTurn(
+  admin: DbClient,
+  gameId: string,
+  actorId: string,
+  state: GameState,
+  category: ScoreCategory,
+  score: number,
+  complete: boolean,
+): Promise<TurnRow | null> {
+  const { data: latestTurn, error } = await admin
+    .from('turns')
+    .select('*')
+    .eq('game_id', gameId)
+    .order('turn_index', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+  if (
+    !latestTurn ||
+    latestTurn.player_id !== actorId ||
+    latestTurn.category !== category ||
+    latestTurn.score !== score ||
+    latestTurn.roll_count !== state.rollNumber ||
+    latestTurn.status !== (complete ? 'finalized' : 'submitted') ||
+    !arraysEqual(toDice(latestTurn.dice), state.dice)
+  ) {
+    return null;
+  }
+
+  return latestTurn;
 }
 
 async function syncGamePlayers(admin: DbClient, gameId: string, state: GameState, complete: boolean) {
@@ -1258,6 +1298,24 @@ function edgeRollRandom(): number {
   return cryptoRandom();
 }
 
+function isDuplicateTurnIndexError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const postgrestError = error as { code?: unknown; details?: unknown; message?: unknown };
+  return (
+    postgrestError.code === '23505' &&
+    ((typeof postgrestError.details === 'string' && postgrestError.details.includes('(game_id, turn_index)')) ||
+      (typeof postgrestError.message === 'string' &&
+        postgrestError.message.includes('turns_game_id_turn_index_key')))
+  );
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function assertCurrentPlayer(state: GameState, actorId: string) {
   if (state.players[state.currentPlayerIndex]?.id !== actorId) {
     throw new Error('It is not your turn.');
@@ -1432,6 +1490,28 @@ function requireEnv(name: string): string {
     throw new Error(`${name} is not configured.`);
   }
   return value;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.length > 0) {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) {
+      return message;
+    }
+
+    const details = (error as { details?: unknown }).details;
+    if (typeof details === 'string' && details.length > 0) {
+      return details;
+    }
+  }
+
+  return 'Unexpected multiplayer error';
 }
 
 function json(body: unknown, status = 200) {

@@ -11,6 +11,7 @@
       "bundleIdentifier": "com.ejsmith.sucker",
       "icon": "./assets/ios-icon.png",
       "supportsTablet": true,
+      "requireFullScreen": true,
       "associatedDomains": ["applinks:sucker.games"],
       "config": {
         "usesNonExemptEncryption": false
