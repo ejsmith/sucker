@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { getComputerStats } from './computerStats';
-import { createGameAgainst, listMyGames } from './games';
+import { createGameAgainst, listMyGames, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
@@ -68,6 +68,18 @@ export function MultiplayerLobby({
     );
   }
 
+  const refreshGames = useCallback(async ({ surfaceError = true }: { surfaceError?: boolean } = {}) => {
+    try {
+      const nextGames = await listMyGames();
+      setGames(nextGames);
+      setNow(Date.now());
+    } catch (refreshError) {
+      if (surfaceError) {
+        setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (session) {
       void refreshGames();
@@ -78,7 +90,20 @@ export function MultiplayerLobby({
       setDisplayName(profile.display_name);
       setUsername(profile.username ?? '');
     }
-  }, [profile, session]);
+  }, [profile, refreshGames, session]);
+
+  useEffect(() => {
+    if (!session || !isAppActive) {
+      return;
+    }
+
+    const unsubscribe = subscribeToGameListChanges(() => void refreshGames({ surfaceError: false }));
+    const timer = setInterval(() => void refreshGames({ surfaceError: false }), 15_000);
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, [isAppActive, refreshGames, session]);
 
   useEffect(() => {
     if (!isAppActive) {
@@ -121,11 +146,6 @@ export function MultiplayerLobby({
     } finally {
       setIsBusy(false);
     }
-  }
-
-  async function refreshGames() {
-    const nextGames = await listMyGames();
-    setGames(nextGames);
   }
 
   async function refreshComputerStats() {

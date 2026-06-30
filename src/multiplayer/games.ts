@@ -172,6 +172,32 @@ export function subscribeToGame(
   };
 }
 
+export function subscribeToGameListChanges(
+  onChange: () => void,
+  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+) {
+  const channel = supabase
+    .channel('games:list')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'games',
+      },
+      () => {
+        onChange();
+      },
+    )
+    .subscribe((status) => {
+      onStatus?.(status);
+    });
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
 function toRemoteGameRow(row: GameRow) {
   return {
     completed_at: row.completed_at,
