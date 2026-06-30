@@ -186,13 +186,17 @@ Hosted redirect allow-list values should include:
 The app config now includes:
 
 - iOS bundle ID: `com.ejsmith.sucker`
+- iOS universal link entitlement: `applinks:sucker.games`
 - Android package: `com.ejsmith.sucker`
 - Expo notifications plugin
+
+Use [app-store-release.md](app-store-release.md) for the full App Store release
+checklist.
 
 Install EAS CLI and configure builds when ready:
 
 ```sh
-npx eas build:configure
-npx eas build --platform ios --profile production
-npx eas submit --platform ios
+npx eas-cli@latest init
+npx eas-cli@latest build --platform ios --profile production
+npx eas-cli@latest submit --platform ios --profile production
 ```

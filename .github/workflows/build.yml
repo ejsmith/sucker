@@ -211,18 +211,43 @@ jobs:
         run: |
           test -n "$EXPO_PUBLIC_SUPABASE_URL" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_URL before deploying GitHub Pages."; exit 1; }
           test -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_ANON_KEY before deploying GitHub Pages."; exit 1; }
+          test -n "$APPLE_TEAM_ID" || { echo "::error::Set repository variable APPLE_TEAM_ID before deploying GitHub Pages."; exit 1; }
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Build web
         run: npx expo export --platform web --output-dir dist
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+
+      - name: Add Apple associated domain file
+        run: |
+          mkdir -p dist/.well-known
+          cat > dist/.well-known/apple-app-site-association <<EOF
+          {
+            "applinks": {
+              "apps": [],
+              "details": [
+                {
+                  "appIDs": ["${APPLE_TEAM_ID}.com.ejsmith.sucker"],
+                  "components": [
+                    { "/": "/invite/*" },
+                    { "/": "/auth/callback" }
+                  ]
+                }
+              ]
+            }
+          }
+          EOF
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Add custom domain
-        run: echo "play.sucker.games" > dist/CNAME
+        run: echo "sucker.games" > dist/CNAME
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

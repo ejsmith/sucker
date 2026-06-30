@@ -9,8 +9,13 @@
     "userInterfaceStyle": "light",
     "ios": {
       "bundleIdentifier": "com.ejsmith.sucker",
+      "icon": "./assets/ios-icon.png",
       "supportsTablet": true,
-      "requireFullScreen": true
+      "requireFullScreen": true,
+      "associatedDomains": ["applinks:sucker.games"],
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -36,6 +41,12 @@
       "shortName": "Sucker!",
       "startUrl": "/"
     },
-    "backgroundColor": "#8F0000"
+    "backgroundColor": "#8F0000",
+    "extra": {
+      "eas": {
+        "projectId": "9e385d7c-1520-4497-b069-f20870551a34"
+      }
+    },
+    "owner": "ericjsmith"
   }
 }

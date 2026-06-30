@@ -25,6 +25,8 @@ type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
 type LobbyPage = 'games' | 'profile' | 'startFriend';
 const publicInviteBaseUrl = 'https://sucker.games/invite';
+const privacyPolicyUrl = 'https://sucker.games/privacy.html';
+const accountDeletionUrl = 'https://sucker.games/account-deletion.html';
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -466,6 +468,28 @@ export function MultiplayerLobby({
 
         <ComputerStatsCard stats={computerStats} />
 
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Account</Text>
+          <Pressable
+            onPress={() => void Linking.openURL(privacyPolicyUrl)}
+            style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+            testID="privacy-policy-button"
+          >
+            <Text style={lobbyStyles.signOutText}>Privacy Policy</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => void Linking.openURL(accountDeletionUrl)}
+            style={({ pressed }) => [
+              lobbyStyles.signOutButton,
+              lobbyStyles.deleteAccountButton,
+              pressed && lobbyStyles.pressed,
+            ]}
+            testID="delete-account-button"
+          >
+            <Text style={[lobbyStyles.signOutText, lobbyStyles.deleteAccountText]}>Delete Account</Text>
+          </Pressable>
+        </View>
+
         <Pressable
           onPress={() => void endSession()}
           style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
@@ -852,6 +876,14 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '900',
     lineHeight: 36,
+  },
+  deleteAccountButton: {
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    width: '100%',
+  },
+  deleteAccountText: {
+    color: '#FFF3C2',
   },
   divider: {
     backgroundColor: '#8F3B10',
