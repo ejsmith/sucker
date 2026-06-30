@@ -18,6 +18,7 @@ import { acceptInviteCode, createInviteGame } from './invites';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
+import { totalScore } from '../game';
 import { getPhoneStageStyle } from '../ui/phoneStage';
 import { useAppActivity } from '../ui/useAppActivity';
 
@@ -602,8 +603,8 @@ function GameListItem({
   const opponent = game.state.players.find((player) => player.id !== profileId);
   const me = game.state.players.find((player) => player.id === profileId);
   const opponentName = opponent?.name ?? (game.status === 'inviting' ? 'Waiting for friend' : 'Opponent');
-  const myScore = me ? totalFilledScore(me.scorecard) : 0;
-  const opponentScore = opponent ? totalFilledScore(opponent.scorecard) : 0;
+  const myScore = me ? totalScore(me.scorecard) : 0;
+  const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
   const isMyTurn = game.current_player_id === profileId;
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
@@ -754,10 +755,6 @@ function formatElapsed(now: number, updatedAt: string) {
   }
 
   return `${Math.floor(elapsedHours / 24)}d`;
-}
-
-function totalFilledScore(scorecard: RemoteGameRow['state']['players'][number]['scorecard']) {
-  return Object.values(scorecard).reduce<number>((total, score) => total + (score ?? 0), 0);
 }
 
 function formatPct(count: number, gamesPlayed: number) {
