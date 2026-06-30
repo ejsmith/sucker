@@ -11,6 +11,8 @@ const {
 const playwrightCliPath = path.resolve(__dirname, '..', 'node_modules', '@playwright', 'test', 'cli.js');
 
 function main() {
+  const playwrightArgs = process.argv.slice(2);
+
   console.log('Starting minimal local Supabase stack...');
   startMinimalSupabase();
 
@@ -21,7 +23,7 @@ function main() {
   writeLocalTestEnvFile();
 
   console.log('Running Playwright web E2E tests...');
-  execFileSync(process.execPath, [playwrightCliPath, 'test'], { stdio: 'inherit' });
+  execFileSync(process.execPath, [playwrightCliPath, 'test', ...playwrightArgs], { stdio: 'inherit' });
 }
 
 try {
