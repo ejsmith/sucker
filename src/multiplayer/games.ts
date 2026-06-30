@@ -51,6 +51,21 @@ export async function applyMultiplayerAction(action: MultiplayerAction): Promise
   return data;
 }
 
+export async function removeRemoteGame(gameId: string) {
+  const { data, error } = await supabase.functions.invoke<{ removedGameId: string }>('game-action', {
+    body: { gameId, type: 'remove_game' },
+  });
+
+  if (error) {
+    throw new Error(await toFunctionErrorMessage(error));
+  }
+  if (!data) {
+    throw new Error('Game action returned no data.');
+  }
+
+  return data;
+}
+
 async function toFunctionErrorMessage(error: unknown) {
   const response = toFunctionErrorResponse(error);
   const responseMessage = response ? await readFunctionErrorMessage(response) : null;

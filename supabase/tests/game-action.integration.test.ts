@@ -75,6 +75,46 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
 });
 
+Deno.test('game-action removes open invites and hides started games from the actor', async () => {
+  const [alice, bob] = await createUsers('remove-games', ['Alice', 'Bob']);
+
+  const invite = await invokeGameAction(alice, { type: 'create_invite' });
+  const inviteGameId = (invite.game as GameRow).id;
+  const removedInvite = await invokeGameAction(alice, { gameId: inviteGameId, type: 'remove_game' });
+  assertEquals(removedInvite.removedGameId, inviteGameId);
+
+  const deletedGame = await selectMaybe<{ id: string }>(
+    admin.from('games').select('id').eq('id', inviteGameId).maybeSingle(),
+  );
+  assertEquals(deletedGame, null);
+  const deletedInvite = await selectMaybe<{ game_id: string }>(
+    admin.from('game_invites').select('game_id').eq('game_id', inviteGameId).maybeSingle(),
+  );
+  assertEquals(deletedInvite, null);
+
+  const activeGame = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const removedGame = await invokeGameAction(alice, { gameId: activeGame.id, type: 'remove_game' });
+  assertEquals(removedGame.removedGameId, activeGame.id);
+
+  const hiddenFromAlice = await selectMaybe<{ id: string }>(
+    alice.client.from('games').select('id').eq('id', activeGame.id).maybeSingle(),
+  );
+  assertEquals(hiddenFromAlice, null);
+
+  const visibleToBob = await selectSingle<{ id: string }>(
+    bob.client.from('games').select('id').eq('id', activeGame.id).single(),
+  );
+  assertEquals(visibleToBob.id, activeGame.id);
+
+  const alicePlayer = await selectSingle<{ hidden_at: string | null }>(
+    admin.from('game_players').select('hidden_at').eq('game_id', activeGame.id).eq('player_id', alice.id).single(),
+  );
+  assertString(alicePlayer.hidden_at);
+
+  const hiddenPlayerAction = await invokeGameAction(alice, { gameId: activeGame.id, type: 'roll' }, 400);
+  assertEquals(hiddenPlayerAction.error, 'You are not a player in this game.');
+});
+
 Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

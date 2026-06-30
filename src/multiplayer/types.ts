@@ -43,6 +43,10 @@ export type MultiplayerAction =
       inviteCode: string;
     }
   | {
+      type: 'remove_game';
+      gameId: string;
+    }
+  | {
       type: 'extra_roll';
       gameId: string;
       held?: GameState['held'];

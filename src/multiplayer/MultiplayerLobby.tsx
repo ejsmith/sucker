@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   Share,
@@ -13,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import { getComputerStats } from './computerStats';
-import { createGameAgainst, listMyGames, subscribeToGameListChanges } from './games';
+import { createGameAgainst, listMyGames, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
@@ -158,6 +160,40 @@ export function MultiplayerLobby({
       const results = await searchProfiles(query);
       setSearchResults(results.filter((result) => result.id !== profile?.id));
     });
+  }
+
+  function handleRemoveGame(game: RemoteGameRow) {
+    const isInvite = game.status === 'inviting';
+    const message = isInvite
+      ? 'This cancels the open invite and removes it from your games list.'
+      : 'This removes the game from your games list. The other player can still see their copy.';
+    const removeGame = () =>
+      runAction(async () => {
+        await removeRemoteGame(game.id);
+        setGames((currentGames) => currentGames.filter((currentGame) => currentGame.id !== game.id));
+        setMessage(isInvite ? 'Invite removed.' : 'Game removed.');
+        await refreshGames({ surfaceError: false });
+      });
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(message)) {
+        void removeGame();
+      }
+      return;
+    }
+
+    Alert.alert(
+      isInvite ? 'Remove invite?' : 'Remove game?',
+      message,
+      [
+        { style: 'cancel', text: 'Cancel' },
+        {
+          onPress: () => void removeGame(),
+          style: 'destructive',
+          text: 'Remove',
+        },
+      ],
+    );
   }
 
   async function handleSendCode() {
@@ -565,7 +601,14 @@ export function MultiplayerLobby({
           </View>
         ) : (
           activeGames.map((game) => (
-            <GameListItem game={game} key={game.id} now={now} onOpenGame={onOpenGame} profileId={profileId} />
+            <GameListItem
+              game={game}
+              key={game.id}
+              now={now}
+              onOpenGame={onOpenGame}
+              onRemoveGame={handleRemoveGame}
+              profileId={profileId}
+            />
           ))
         )}
       </View>
@@ -613,11 +656,13 @@ function GameListItem({
   game,
   now,
   onOpenGame,
+  onRemoveGame,
   profileId,
 }: {
   game: RemoteGameRow;
   now: number;
   onOpenGame: (gameId: string) => void;
+  onRemoveGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
   const opponent = game.state.players.find((player) => player.id !== profileId);
@@ -653,10 +698,22 @@ function GameListItem({
           </Text>
           <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
         </View>
-        <View style={lobbyStyles.scorePill}>
-          <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
-          <Text style={lobbyStyles.scoreDivider}>-</Text>
-          <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+        <View style={lobbyStyles.gameCardActions}>
+          <View style={lobbyStyles.scorePill}>
+            <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
+            <Text style={lobbyStyles.scoreDivider}>-</Text>
+            <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+          </View>
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              onRemoveGame(game);
+            }}
+            style={({ pressed }) => [lobbyStyles.removeGameButton, pressed && lobbyStyles.pressed]}
+            testID={`remove-game-${game.id}`}
+          >
+            <Text style={lobbyStyles.removeGameText}>Remove</Text>
+          </Pressable>
         </View>
       </View>
       <Text style={lobbyStyles.waitText}>{waitText}</Text>
@@ -941,6 +998,10 @@ const lobbyStyles = StyleSheet.create({
   gameCardMyTurn: {
     borderColor: '#FFD329',
   },
+  gameCardActions: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
   codeInput: {
     fontSize: 22,
     letterSpacing: 0,
@@ -1125,6 +1186,22 @@ const lobbyStyles = StyleSheet.create({
     color: '#FFD76B',
     fontSize: 11,
     fontWeight: '800',
+  },
+  removeGameButton: {
+    alignItems: 'center',
+    backgroundColor: '#8F3B10',
+    borderColor: '#FFD76B',
+    borderRadius: 6,
+    borderWidth: 1,
+    minWidth: 58,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  removeGameText: {
+    color: '#FFF3C2',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   refreshButton: {
     alignItems: 'center',
