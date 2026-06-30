@@ -135,6 +135,13 @@ type RemoteActionHandlers = {
   onSuckerPunch: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
 };
 const playerNames = ['You', 'Computer'];
+const devViewportPresets = [
+  { key: 'se', label: 'SE', width: 375, height: 667 },
+  { key: 'mini', label: 'Mini', width: 375, height: 812 },
+  { key: 'iphone16', label: '16', width: 393, height: 852 },
+  { key: 'iphone17', label: '17', width: 402, height: 874 },
+  { key: 'max', label: 'Max', width: 430, height: 932 },
+] as const;
 const upperCategories: ScoreCategory[] = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'];
 const lowerCategories: ScoreCategory[] = [
   'threeOfAKind',
@@ -199,6 +206,65 @@ const bonusOutlineOffsets = [
   { x: 2, y: 2 },
 ];
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
+type DevViewportPresetKey = (typeof devViewportPresets)[number]['key'];
+type DevViewportPresetSelection = DevViewportPresetKey | 'responsive';
+
+function getWebLocation() {
+  if (Platform.OS !== 'web') {
+    return null;
+  }
+
+  return (globalThis as { location?: Location }).location ?? null;
+}
+
+function getWebHistory() {
+  if (Platform.OS !== 'web') {
+    return null;
+  }
+
+  return (globalThis as { history?: History }).history ?? null;
+}
+
+function getDevViewportPreset(key: DevViewportPresetSelection) {
+  return devViewportPresets.find((preset) => preset.key === key) ?? null;
+}
+
+function getInitialDevViewportPresetKey(): DevViewportPresetSelection {
+  const location = getWebLocation();
+  const viewportKey = new URLSearchParams(location?.search ?? '').get('viewport');
+
+  return devViewportPresets.some((preset) => preset.key === viewportKey)
+    ? (viewportKey as DevViewportPresetKey)
+    : 'responsive';
+}
+
+function isWebDevViewportControlsEnabled() {
+  const location = getWebLocation();
+
+  return new URLSearchParams(location?.search ?? '').get('presets') === '1';
+}
+
+function replaceWebDevViewportPreset(key: DevViewportPresetSelection) {
+  const location = getWebLocation();
+  const history = getWebHistory();
+
+  if (!location || !history) {
+    return;
+  }
+
+  const params = new URLSearchParams(location.search);
+  params.set('presets', '1');
+
+  if (key === 'responsive') {
+    params.delete('viewport');
+  } else {
+    params.set('viewport', key);
+  }
+
+  const search = params.toString();
+  history.replaceState(null, '', `${location.pathname}${search ? `?${search}` : ''}${location.hash}`);
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -431,6 +497,8 @@ function LocalGameScreen({
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
+  const [devViewportPresetKey, setDevViewportPresetKey] =
+    useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
   const [localGame, setLocalGame] = useState(() => createGame(playerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
@@ -564,7 +632,25 @@ function LocalGameScreen({
     remoteStatus === 'blocked_response' &&
     Boolean(remoteLastTurnId) &&
     myTokenCount >= suckerTokenCosts.suckerBlocker;
-  const gameStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
+  const devViewportPreset = getDevViewportPreset(devViewportPresetKey);
+  const effectiveWindowWidth = devViewportPreset?.width ?? windowWidth;
+  const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
+  const gameStageStyle = getSafePhoneStageStyle(
+    effectiveWindowWidth,
+    effectiveWindowHeight,
+    safeAreaInsets.top,
+    safeAreaInsets.bottom,
+  );
+  const showDevViewportControls = isWebDevViewportControlsEnabled();
+  const compactPhoneLayout = effectiveWindowHeight < 760 || effectiveWindowWidth < 390;
+  const roomyPhoneLayout = !compactPhoneLayout && effectiveWindowHeight >= 870 && effectiveWindowWidth >= 400;
+  const standardPhoneLayout = !compactPhoneLayout && !roomyPhoneLayout;
+  const diceTrayGap = 2;
+  const diceTrayHorizontalPadding = compactPhoneLayout ? 12 : 16;
+  const diceTrayAvailableWidth = Math.max(1, gameStageStyle.width - diceTrayHorizontalPadding);
+  const diceSlotSize = Math.floor(
+    Math.min(compactPhoneLayout ? 66 : 76, (diceTrayAvailableWidth - diceTrayGap * 4) / 5),
+  );
   const standardRollsLeft = rollsRemaining(game);
   const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
   const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
@@ -1655,9 +1741,22 @@ function LocalGameScreen({
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <StatusBar style="light" />
-      <View ref={screenRef} style={[styles.screen, gameStageStyle]} testID="game-screen">
+      {showDevViewportControls && (
+        <DevViewportPresetControls
+          activePresetKey={devViewportPresetKey}
+          onSelect={(key) => {
+            setDevViewportPresetKey(key);
+            replaceWebDevViewportPreset(key);
+          }}
+        />
+      )}
+      <View
+        ref={screenRef}
+        style={[styles.screen, compactPhoneLayout && styles.compactScreen, gameStageStyle]}
+        testID="game-screen"
+      >
         <BackgroundDicePattern floatValue={bgFloat} />
-        <View style={styles.topBar}>
+        <View style={[styles.topBar, compactPhoneLayout && styles.compactTopBar]}>
           <View pointerEvents="none" style={styles.topBarBannerClip}>
             <Image source={suckerGameBannerImage} style={styles.topBarBannerImage} />
           </View>
@@ -1668,15 +1767,23 @@ function LocalGameScreen({
                 setIsMenuOpen(false);
                 onExit();
               }}
-              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.backButton,
+                compactPhoneLayout && styles.compactBackButton,
+                pressed && styles.pressed,
+              ]}
             >
-              <Text style={styles.backButtonText}>‹</Text>
+              <Text style={[styles.backButtonText, compactPhoneLayout && styles.compactBackButtonText]}>‹</Text>
             </Pressable>
           )}
           <Pressable
             accessibilityLabel="Open menu"
             onPress={() => setIsMenuOpen((open) => !open)}
-            style={({ pressed }) => [styles.menuDotsButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.menuDotsButton,
+              compactPhoneLayout && styles.compactMenuDotsButton,
+              pressed && styles.pressed,
+            ]}
           >
             <View style={styles.menuDots}>
               <View style={styles.menuDot} />
@@ -1709,19 +1816,46 @@ function LocalGameScreen({
 
         <View style={styles.playerStrip} testID="player-strip">
           {displayPlayers.map((player, index) => (
-            <View key={player.id} style={[styles.playerPill, player.id === currentPlayer.id && styles.activePlayer]}>
-              <View style={[styles.avatar, player.id === currentPlayer.id && styles.activeAvatar]}>
-                <Text style={styles.avatarText}>{player.name.slice(0, 1)}</Text>
+            <View
+              key={player.id}
+              style={[
+                styles.playerPill,
+                compactPhoneLayout && styles.compactPlayerPill,
+                player.id === currentPlayer.id && styles.activePlayer,
+              ]}
+            >
+              <View
+                style={[
+                  styles.avatar,
+                  compactPhoneLayout && styles.compactAvatar,
+                  player.id === currentPlayer.id && styles.activeAvatar,
+                ]}
+              >
+                <Text style={[styles.avatarText, compactPhoneLayout && styles.compactAvatarText]}>
+                  {player.name.slice(0, 1)}
+                </Text>
               </View>
-              <Text style={styles.playerScore}>{totalScore(player.scorecard)}</Text>
-              <Text numberOfLines={1} style={styles.playerName}>
+              <Text style={[styles.playerScore, compactPhoneLayout && styles.compactPlayerScore]}>
+                {totalScore(player.scorecard)}
+              </Text>
+              <Text numberOfLines={1} style={[styles.playerName, compactPhoneLayout && styles.compactPlayerName]}>
                 {player.name}
               </Text>
-              <Text style={styles.tokenText}>{player.suckerTokens} Tokens</Text>
+              <Text style={[styles.tokenText, compactPhoneLayout && styles.compactTokenText]}>
+                {player.suckerTokens} Tokens
+              </Text>
             </View>
           ))}
         </View>
-        <View ref={boardRef} style={styles.board}>
+        <View
+          ref={boardRef}
+          style={[
+            styles.board,
+            standardPhoneLayout && styles.standardPhoneBoard,
+            roomyPhoneLayout && styles.roomyBoard,
+            compactPhoneLayout && styles.compactBoard,
+          ]}
+        >
           {upperCategories.map((leftCategory, index) => (
             <ScorePair
               key={leftCategory}
@@ -1753,6 +1887,7 @@ function LocalGameScreen({
                 scoreBoxRefs.current[scoreCategoryName] = node;
               }}
               selectedPulse={selectedPulse}
+              compactLayout={compactPhoneLayout}
             />
           ))}
 
@@ -1799,19 +1934,27 @@ function LocalGameScreen({
                 scoreBoxRefs.current[scoreCategoryName] = node;
               }}
               selectedPulse={selectedPulse}
+              compactLayout={compactPhoneLayout}
             />
           </View>
         </View>
 
-        <View ref={rollZoneRef} style={styles.rollZone}>
-          <View style={styles.diceTray} testID="dice-tray">
+        <View ref={rollZoneRef} style={[styles.rollZone, compactPhoneLayout && styles.compactRollZone]}>
+          <View
+            style={[
+              styles.diceTray,
+              compactPhoneLayout && styles.compactDiceTray,
+              { gap: diceTrayGap, height: diceSlotSize },
+            ]}
+            testID="dice-tray"
+          >
             {game.dice.map((die, index) => {
               const isFlying = isRolling && rollingDieIndexes.includes(index);
               const showDie = game.rollNumber > 0 || isRolling;
               const showSlotDie = showDie && !isFlying;
 
               return (
-                <View key={`die-${index}`} style={styles.dieMotion}>
+                <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
                   <Pressable
                     disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteBusy}
                     onPress={() => void handleToggleHold(index)}
@@ -1820,6 +1963,7 @@ function LocalGameScreen({
                     }}
                     style={({ pressed }) => [
                       styles.dieSlot,
+                      compactPhoneLayout && styles.compactDieSlot,
                       isFlying && styles.settlingDieSlot,
                       game.held[index] && styles.heldDie,
                       pressed && styles.pressed,
@@ -1924,13 +2068,14 @@ function LocalGameScreen({
             </View>
           )}
 
-          <View style={styles.controlsRow}>
-            <View style={styles.rollButtonWrap}>
+          <View style={[styles.controlsRow, compactPhoneLayout && styles.compactControlsRow]}>
+            <View style={[styles.rollButtonWrap, compactPhoneLayout && styles.compactRollButtonWrap]}>
               <Pressable
                 disabled={!canRoll}
                 onPress={handleRoll}
                 style={({ pressed }) => [
                   styles.rollButton,
+                  compactPhoneLayout && styles.compactRollButton,
                   !canRoll && styles.disabledRollButton,
                   pressed && styles.pressed,
                 ]}
@@ -1938,40 +2083,47 @@ function LocalGameScreen({
               >
                 <View style={styles.buttonGloss} />
                 <View style={styles.buttonInnerShade} />
-                <Text style={styles.rollText}>ROLL</Text>
-                <View style={styles.rollsLeftBadge}>
-                  <Text style={styles.rollsLeftNumber}>{standardRollsLeft}</Text>
-                  <Text style={styles.rollsLeftLabel}>LEFT</Text>
+                <Text style={[styles.rollText, compactPhoneLayout && styles.compactRollText]}>ROLL</Text>
+                <View style={[styles.rollsLeftBadge, compactPhoneLayout && styles.compactRollsLeftBadge]}>
+                  <Text style={[styles.rollsLeftNumber, compactPhoneLayout && styles.compactRollsLeftNumber]}>
+                    {standardRollsLeft}
+                  </Text>
+                  <Text style={[styles.rollsLeftLabel, compactPhoneLayout && styles.compactRollsLeftLabel]}>LEFT</Text>
                 </View>
               </Pressable>
             </View>
 
-            <View style={styles.tokenButtonWrap}>
+            <View style={[styles.tokenButtonWrap, compactPhoneLayout && styles.compactTokenButtonWrap]}>
               <Pressable
                 accessibilityLabel="Sucker token menu"
                 disabled={!canOpenTokenMenu}
                 onPress={() => setIsTokenMenuOpen(true)}
                 style={({ pressed }) => [
                   styles.tokenButton,
+                  compactPhoneLayout && styles.compactTokenButton,
                   !canOpenTokenMenu && styles.disabledButton,
                   pressed && styles.pressed,
                 ]}
                 testID="token-menu-button"
               >
                 <View style={styles.buttonInnerShade} />
-                <Image source={suckerTokenImage} style={styles.tokenButtonImage} />
+                <Image
+                  source={suckerTokenImage}
+                  style={[styles.tokenButtonImage, compactPhoneLayout && styles.compactTokenButtonImage]}
+                />
                 <View style={styles.tokenCountBadge}>
                   <Text style={styles.tokenCountText}>{myTokenCount}</Text>
                 </View>
               </Pressable>
             </View>
 
-            <View style={styles.playButtonWrap}>
+            <View style={[styles.playButtonWrap, compactPhoneLayout && styles.compactPlayButtonWrap]}>
               <Pressable
                 disabled={!canPlaySelected}
                 onPress={handlePlayScore}
                 style={({ pressed }) => [
                   styles.playButton,
+                  compactPhoneLayout && styles.compactPlayButton,
                   !canPlaySelected && styles.disabledButton,
                   pressed && styles.pressed,
                 ]}
@@ -1979,7 +2131,7 @@ function LocalGameScreen({
               >
                 <View style={styles.playGloss} />
                 <View style={styles.buttonInnerShade} />
-                <Text style={styles.playText}>PLAY</Text>
+                <Text style={[styles.playText, compactPhoneLayout && styles.compactPlayText]}>PLAY</Text>
               </Pressable>
             </View>
           </View>
@@ -2324,7 +2476,7 @@ function upperSectionTotal(scorecard: PlayerView['scorecard']) {
 function getSafePhoneStageStyle(windowWidth: number, windowHeight: number, topInset: number, bottomInset: number) {
   const safeHeight = Math.max(1, windowHeight - topInset - bottomInset);
 
-  if (Platform.OS !== 'web' && windowWidth < 500) {
+  if (windowWidth < 500) {
     return {
       height: safeHeight,
       width: windowWidth,
@@ -2461,6 +2613,7 @@ type ScorePairProps = {
   setOpponentScoreRef: (category: ScoreCategory, node: ViewRef | null) => void;
   setScoreBoxRef: (category: ScoreCategory, node: ViewRef | null) => void;
   selectedPulse: Animated.Value;
+  compactLayout: boolean;
 };
 
 function ScorePair(props: ScorePairProps) {
@@ -2496,6 +2649,7 @@ function ScoreCell({
   setOpponentScoreRef,
   setScoreBoxRef,
   selectedPulse,
+  compactLayout,
 }: ScoreCellProps) {
   const homeLockedScore = homePlayer.scorecard[category];
   const opponentLockedScore = opponentPlayer.scorecard[category];
@@ -2539,11 +2693,16 @@ function ScoreCell({
         nativeID={`category-button-${category}`}
         onPress={() => onSelect(category)}
         testID={`category-button-${category}`}
-        style={({ pressed }) => [styles.categoryTileButton, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          styles.categoryTileButton,
+          compactLayout && styles.compactCategoryTileButton,
+          pressed && styles.pressed,
+        ]}
       >
         <View
           style={[
             styles.categoryTile,
+            compactLayout && styles.compactCategoryTile,
             category === 'sucker' && styles.suckerCategoryTile,
             highlighted && styles.selectedCategoryTile,
           ]}
@@ -2556,6 +2715,7 @@ function ScoreCell({
       <Animated.View
         style={[
           styles.scorePressWrap,
+          compactLayout && styles.compactScorePressWrap,
           {
             transform: [{ scale: selectedScale }],
           },
@@ -2567,6 +2727,7 @@ function ScoreCell({
           ref={(node) => setScoreBoxRef(category, node)}
           style={({ pressed }) => [
             styles.scoreBox,
+            compactLayout && styles.compactScoreBox,
             homeLockedScore !== null && styles.lockedScoreBox,
             highlighted && activePlayerIndex === 0 && styles.selectedScoreBox,
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
@@ -2579,7 +2740,11 @@ function ScoreCell({
             adjustsFontSizeToFit
             allowFontScaling={false}
             numberOfLines={1}
-            style={[styles.scoreBoxText, homePreviewScore !== null && styles.previewScoreText]}
+            style={[
+              styles.scoreBoxText,
+              compactLayout && styles.compactScoreBoxText,
+              homePreviewScore !== null && styles.previewScoreText,
+            ]}
           >
             {scoreText}
           </Text>
@@ -2589,7 +2754,7 @@ function ScoreCell({
         disabled={!selectable || locked}
         onPress={() => onSelect(category)}
         ref={(node) => setOpponentScoreRef(category, node)}
-        style={styles.opponentScoreWrap}
+        style={[styles.opponentScoreWrap, compactLayout && styles.compactOpponentScoreWrap]}
         testID={`opponent-score-box-${category}`}
       >
         {opponentSuckerBonus && <SuckerBonusBadge compact />}
@@ -2597,7 +2762,11 @@ function ScoreCell({
           adjustsFontSizeToFit
           allowFontScaling={false}
           numberOfLines={1}
-          style={[styles.opponentScoreText, opponentPreviewScore !== null && styles.previewScoreText]}
+          style={[
+            styles.opponentScoreText,
+            compactLayout && styles.compactOpponentScoreText,
+            opponentPreviewScore !== null && styles.previewScoreText,
+          ]}
         >
           {opponentScoreText}
         </Text>
@@ -2753,6 +2922,48 @@ function StraightIcon({ label, cardCount }: { label: string; cardCount: 3 | 4 })
   );
 }
 
+function DevViewportPresetControls({
+  activePresetKey,
+  onSelect,
+}: {
+  activePresetKey: DevViewportPresetSelection;
+  onSelect: (key: DevViewportPresetSelection) => void;
+}) {
+  return (
+    <View style={styles.devViewportPresetBar}>
+      <Pressable
+        onPress={() => onSelect('responsive')}
+        style={[
+          styles.devViewportPresetButton,
+          activePresetKey === 'responsive' && styles.activeDevViewportPresetButton,
+        ]}
+      >
+        <Text
+          style={[styles.devViewportPresetText, activePresetKey === 'responsive' && styles.activeDevViewportPresetText]}
+        >
+          Resp
+        </Text>
+      </Pressable>
+      {devViewportPresets.map((preset) => (
+        <Pressable
+          key={preset.key}
+          onPress={() => onSelect(preset.key)}
+          style={[
+            styles.devViewportPresetButton,
+            activePresetKey === preset.key && styles.activeDevViewportPresetButton,
+          ]}
+        >
+          <Text
+            style={[styles.devViewportPresetText, activePresetKey === preset.key && styles.activeDevViewportPresetText]}
+          >
+            {preset.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function SuckerIcon() {
   return <SuckerWordmark variant="tile" />;
 }
@@ -2778,12 +2989,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
+  devViewportPresetBar: {
+    backgroundColor: 'rgba(33, 5, 5, 0.84)',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    left: 8,
+    padding: 4,
+    position: 'absolute',
+    top: 8,
+    zIndex: 120,
+  },
+  devViewportPresetButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderRadius: 5,
+    minWidth: 32,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  activeDevViewportPresetButton: {
+    backgroundColor: '#FFD329',
+  },
+  devViewportPresetText: {
+    color: '#210505',
+    fontSize: 11,
+    fontWeight: '900',
+    lineHeight: 13,
+  },
+  activeDevViewportPresetText: {
+    color: '#8F0000',
+  },
   screen: {
     backgroundColor: '#8F0000',
     gap: 7,
     overflow: 'hidden',
     padding: 8,
     paddingBottom: 12,
+  },
+  compactScreen: {
+    gap: 5,
+    padding: 6,
+    paddingBottom: 8,
   },
   remoteBackButton: {
     alignItems: 'center',
@@ -2845,6 +3094,11 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 60,
   },
+  compactTopBar: {
+    minHeight: 46,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
   topBarBannerClip: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 8,
@@ -2866,6 +3120,11 @@ const styles = StyleSheet.create({
     width: 48,
     zIndex: 25,
   },
+  compactBackButton: {
+    height: 40,
+    left: 5,
+    width: 40,
+  },
   backButtonText: {
     color: '#FFF0A6',
     fontSize: 54,
@@ -2874,6 +3133,10 @@ const styles = StyleSheet.create({
     textShadowColor: '#050505',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
+  },
+  compactBackButtonText: {
+    fontSize: 46,
+    lineHeight: 46,
   },
   menuDots: {
     alignItems: 'center',
@@ -2897,6 +3160,10 @@ const styles = StyleSheet.create({
     top: 11,
     width: 32,
     zIndex: 25,
+  },
+  compactMenuDotsButton: {
+    right: 8,
+    top: 7,
   },
   topMenuLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -2940,6 +3207,11 @@ const styles = StyleSheet.create({
     paddingLeft: 70,
     paddingRight: 8,
   },
+  compactPlayerPill: {
+    minHeight: 52,
+    paddingLeft: 58,
+    paddingRight: 6,
+  },
   activePlayer: {
     backgroundColor: '#B91510',
   },
@@ -2952,16 +3224,26 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 1, height: 2 },
     textShadowRadius: 0,
   },
+  compactPlayerScore: {
+    fontSize: 19,
+    lineHeight: 21,
+  },
   playerName: {
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '900',
     maxWidth: '100%',
   },
+  compactPlayerName: {
+    fontSize: 10,
+  },
   tokenText: {
     color: '#FFD329',
     fontSize: 10,
     fontWeight: '900',
+  },
+  compactTokenText: {
+    fontSize: 9,
   },
   avatar: {
     alignItems: 'center',
@@ -2976,6 +3258,13 @@ const styles = StyleSheet.create({
     top: 6,
     width: 54,
   },
+  compactAvatar: {
+    borderRadius: 23,
+    height: 44,
+    left: 8,
+    top: 4,
+    width: 46,
+  },
   activeAvatar: {
     backgroundColor: '#FFD76A',
   },
@@ -2984,6 +3273,9 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '900',
   },
+  compactAvatarText: {
+    fontSize: 21,
+  },
   board: {
     backgroundColor: '#F3B84A',
     borderColor: '#210505',
@@ -2991,6 +3283,15 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     flex: 0.94,
     overflow: 'hidden',
+  },
+  standardPhoneBoard: {
+    flex: 1,
+  },
+  roomyBoard: {
+    flex: 1.04,
+  },
+  compactBoard: {
+    flex: 1,
   },
   boardRow: {
     borderBottomColor: '#FFE083',
@@ -3005,7 +3306,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
+    minWidth: 0,
+    paddingHorizontal: 4,
   },
   categoryTileButton: {
     alignItems: 'flex-start',
@@ -3013,7 +3316,11 @@ const styles = StyleSheet.create({
     height: 68,
     justifyContent: 'center',
     overflow: 'visible',
-    width: 68,
+    width: 64,
+  },
+  compactCategoryTileButton: {
+    height: 56,
+    width: 56,
   },
   categoryTile: {
     alignItems: 'center',
@@ -3026,9 +3333,15 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 3, height: 4 },
     shadowOpacity: 0.5,
     shadowRadius: 0,
-    height: 56,
+    height: 54,
     overflow: 'hidden',
-    width: 56,
+    width: 54,
+  },
+  compactCategoryTile: {
+    borderRadius: 10,
+    borderWidth: 2,
+    height: 50,
+    width: 50,
   },
   selectedCategoryTile: {
     borderColor: '#FFD329',
@@ -3089,18 +3402,29 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     width: '100%',
   },
+  compactScoreBox: {
+    borderRadius: 10,
+    borderWidth: 2,
+    height: 50,
+  },
   scorePressWrap: {
     height: 56,
-    marginRight: 10,
-    width: 56,
+    width: 54,
+  },
+  compactScorePressWrap: {
+    height: 50,
+    width: 50,
   },
   opponentScoreWrap: {
     alignItems: 'center',
     flexShrink: 0,
     height: 56,
     justifyContent: 'center',
-    marginLeft: -8,
-    width: 54,
+    width: 50,
+  },
+  compactOpponentScoreWrap: {
+    height: 50,
+    width: 48,
   },
   lockedScoreBox: {
     backgroundColor: '#FFE08A',
@@ -3120,6 +3444,10 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     textAlign: 'center',
   },
+  compactScoreBoxText: {
+    fontSize: 28,
+    lineHeight: 30,
+  },
   opponentScoreText: {
     color: '#A24B13',
     fontSize: 32,
@@ -3128,6 +3456,10 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     textAlign: 'center',
     width: '100%',
+  },
+  compactOpponentScoreText: {
+    fontSize: 26,
+    lineHeight: 28,
   },
   previewScoreText: {
     color: '#7A1208',
@@ -3238,18 +3570,28 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   diceTray: {
+    alignItems: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 4,
     height: 70,
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+  },
+  compactDiceTray: {
+    gap: 4,
+    height: 56,
   },
   rollZone: {
     gap: 7,
     marginTop: 4,
     position: 'relative',
   },
+  compactRollZone: {
+    gap: 5,
+    marginTop: 2,
+  },
   dieMotion: {
-    flex: 1,
+    aspectRatio: 1,
+    flexShrink: 0,
     height: '100%',
   },
   dieSlot: {
@@ -3266,6 +3608,10 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     width: '100%',
   },
+  compactDieSlot: {
+    borderRadius: 10,
+    borderWidth: 2,
+  },
   settlingDieSlot: {
     opacity: 0.55,
   },
@@ -3277,9 +3623,9 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
   },
   dieImage: {
-    height: '92%',
+    height: '100%',
     resizeMode: 'contain',
-    width: '92%',
+    width: '100%',
   },
   scoringSourceDieImage: {
     opacity: 0,
@@ -3628,6 +3974,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 0,
   },
+  compactRollButton: {
+    height: 52,
+  },
   disabledRollButton: {
     opacity: 0.55,
   },
@@ -3638,15 +3987,27 @@ const styles = StyleSheet.create({
     height: 64,
     paddingBottom: 4,
   },
+  compactControlsRow: {
+    gap: 6,
+    height: 54,
+    paddingBottom: 2,
+  },
   rollButtonWrap: {
     borderRadius: 10,
     flex: 2,
     height: 60,
   },
+  compactRollButtonWrap: {
+    height: 52,
+  },
   tokenButtonWrap: {
     borderRadius: 10,
     height: 60,
     width: 60,
+  },
+  compactTokenButtonWrap: {
+    height: 52,
+    width: 52,
   },
   tokenButton: {
     alignItems: 'center',
@@ -3662,10 +4023,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 0,
   },
+  compactTokenButton: {
+    height: 52,
+  },
   tokenButtonImage: {
     height: 44,
     resizeMode: 'contain',
     width: 44,
+  },
+  compactTokenButtonImage: {
+    height: 38,
+    width: 38,
   },
   tokenCountBadge: {
     alignItems: 'center',
@@ -3831,6 +4199,9 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
   },
+  compactRollText: {
+    fontSize: 26,
+  },
   rollsLeftBadge: {
     alignItems: 'center',
     backgroundColor: '#E8B552',
@@ -3845,17 +4216,31 @@ const styles = StyleSheet.create({
     minWidth: 58,
     paddingHorizontal: 7,
   },
+  compactRollsLeftBadge: {
+    height: 26,
+    marginLeft: 8,
+    minWidth: 50,
+    paddingHorizontal: 5,
+  },
   rollsLeftNumber: {
     color: '#7A220D',
     fontSize: 18,
     fontWeight: '900',
     lineHeight: 20,
   },
+  compactRollsLeftNumber: {
+    fontSize: 16,
+    lineHeight: 18,
+  },
   rollsLeftLabel: {
     color: '#7A220D',
     fontSize: 9,
     fontWeight: '900',
     lineHeight: 11,
+  },
+  compactRollsLeftLabel: {
+    fontSize: 8,
+    lineHeight: 10,
   },
   playButton: {
     alignItems: 'center',
@@ -3871,10 +4256,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 0,
   },
+  compactPlayButton: {
+    height: 52,
+  },
   playButtonWrap: {
     borderRadius: 10,
     flex: 1,
     height: 60,
+  },
+  compactPlayButtonWrap: {
+    height: 52,
   },
   playGloss: {
     backgroundColor: '#FFFFFF',
@@ -3892,6 +4283,9 @@ const styles = StyleSheet.create({
     textShadowColor: '#050505',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
+  },
+  compactPlayText: {
+    fontSize: 24,
   },
   fullHouseIcon: {
     alignItems: 'center',
