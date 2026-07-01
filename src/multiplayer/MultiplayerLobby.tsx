@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
 import { createGameAgainst, listMyGames, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
-import { canRegisterWebPush, registerWebPushSubscription } from './notifications';
+import { canRegisterWebPush, hasWebPushVapidPublicKey, registerWebPushSubscription } from './notifications';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
@@ -31,9 +31,12 @@ import { useAppActivity } from '../ui/useAppActivity';
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
 type LobbyPage = 'games' | 'profile' | 'startFriend';
+type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://sucker.games/invite';
 const privacyPolicyUrl = 'https://sucker.games/privacy.html';
 const accountDeletionUrl = 'https://sucker.games/account-deletion.html';
+const webPushPromptDismissedAtKey = 'sucker.webPushPromptDismissedAt';
+const webPushPromptSnoozeMs = 7 * 24 * 60 * 60 * 1_000;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -61,7 +64,8 @@ export function MultiplayerLobby({
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
-  const [webPushEnabled, setWebPushEnabled] = useState(() => Platform.OS === 'web' && canRegisterWebPush());
+  const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
+  const [webPushPromptVisible, setWebPushPromptVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
@@ -148,6 +152,16 @@ export function MultiplayerLobby({
     };
   }, []);
 
+  useEffect(() => {
+    const hasActiveGames = games.some((game) => game.status !== 'complete');
+    if (!profile || !hasActiveGames || webPushPromptDismissed || !canOfferWebPushPrompt()) {
+      setWebPushPromptVisible(false);
+      return;
+    }
+
+    setWebPushPromptVisible(getWebNotificationPermission() === 'default');
+  }, [games, profile, webPushPromptDismissed]);
+
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
     setMessage(null);
@@ -172,11 +186,17 @@ export function MultiplayerLobby({
 
     await runAction(async () => {
       const result = await registerWebPushSubscription(profile.id);
+      setWebPushPromptVisible(false);
       if (result) {
-        setWebPushEnabled(false);
         setMessage('Browser notifications enabled.');
       }
     });
+  }
+
+  function handleDismissWebPushPrompt() {
+    rememberWebPushPromptDismissed();
+    setWebPushPromptDismissed(true);
+    setWebPushPromptVisible(false);
   }
 
   async function handleSearchProfiles() {
@@ -581,93 +601,145 @@ export function MultiplayerLobby({
   }
 
   return renderShell(
-    <ScrollView
-      contentContainerStyle={lobbyStyles.scrollContent}
-      showsVerticalScrollIndicator={false}
-      style={lobbyStyles.scroll}
-    >
-      <SuckerLobbyTitle />
-      <View style={lobbyStyles.topBar}>
-        <View>
-          <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
-          <Text style={lobbyStyles.subtleText}>
-            {activeGames.length} active {activeGames.length === 1 ? 'game' : 'games'}
-          </Text>
-        </View>
-        <Pressable
-          onPress={() => setPage('profile')}
-          style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
-          testID="profile-button"
-        >
-          <Text style={lobbyStyles.signOutText}>Profile</Text>
-        </Pressable>
-      </View>
-
-      <View style={lobbyStyles.panel}>
-        <View style={lobbyStyles.panelHeader}>
-          <Text style={lobbyStyles.sectionTitle}>Games</Text>
+    <>
+      <ScrollView
+        contentContainerStyle={lobbyStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <View style={lobbyStyles.topBar}>
+          <View>
+            <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
+            <Text style={lobbyStyles.subtleText}>
+              {activeGames.length} active {activeGames.length === 1 ? 'game' : 'games'}
+            </Text>
+          </View>
           <Pressable
-            onPress={() => void refreshGames()}
-            style={({ pressed }) => [lobbyStyles.refreshButton, pressed && lobbyStyles.pressed]}
-            testID="refresh-games-button"
+            onPress={() => setPage('profile')}
+            style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+            testID="profile-button"
           >
-            <Text style={lobbyStyles.refreshText}>Refresh</Text>
+            <Text style={lobbyStyles.signOutText}>Profile</Text>
           </Pressable>
         </View>
-        {activeGames.length === 0 ? (
-          <View style={lobbyStyles.emptyState}>
-            <Text style={lobbyStyles.emptyTitle}>No games yet</Text>
-            <Text style={lobbyStyles.emptyBody}>Start one with a friend or play the computer.</Text>
+
+        <View style={lobbyStyles.panel}>
+          <View style={lobbyStyles.panelHeader}>
+            <Text style={lobbyStyles.sectionTitle}>Games</Text>
+            <Pressable
+              onPress={() => void refreshGames()}
+              style={({ pressed }) => [lobbyStyles.refreshButton, pressed && lobbyStyles.pressed]}
+              testID="refresh-games-button"
+            >
+              <Text style={lobbyStyles.refreshText}>Refresh</Text>
+            </Pressable>
           </View>
-        ) : (
-          activeGames.map((game) => (
-            <GameListItem
-              game={game}
-              key={game.id}
-              now={now}
-              onOpenGame={onOpenGame}
-              onRemoveGame={handleRemoveGame}
-              profileId={profileId}
-            />
-          ))
-        )}
-      </View>
+          {activeGames.length === 0 ? (
+            <View style={lobbyStyles.emptyState}>
+              <Text style={lobbyStyles.emptyTitle}>No games yet</Text>
+              <Text style={lobbyStyles.emptyBody}>Start one with a friend or play the computer.</Text>
+            </View>
+          ) : (
+            activeGames.map((game) => (
+              <GameListItem
+                game={game}
+                key={game.id}
+                now={now}
+                onOpenGame={onOpenGame}
+                onRemoveGame={handleRemoveGame}
+                profileId={profileId}
+              />
+            ))
+          )}
+        </View>
 
-      {webPushEnabled && profile && (
-        <Pressable
-          disabled={isBusy || isLoading}
-          onPress={() => void handleEnableWebNotifications()}
-          style={({ pressed }) => [lobbyStyles.notificationButton, pressed && lobbyStyles.pressed]}
-        >
-          <Text style={lobbyStyles.notificationButtonText}>Enable Turn Notifications</Text>
-        </Pressable>
+        <View style={lobbyStyles.actionGrid}>
+          <Pressable
+            onPress={() => setPage('startFriend')}
+            style={({ pressed }) => [
+              lobbyStyles.primaryButton,
+              lobbyStyles.actionButton,
+              pressed && lobbyStyles.pressed,
+            ]}
+            testID="start-with-friend-button"
+          >
+            <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
+          </Pressable>
+          <Pressable
+            onPress={onPlayLocalDemo}
+            style={({ pressed }) => [
+              lobbyStyles.secondaryButton,
+              lobbyStyles.actionButton,
+              pressed && lobbyStyles.pressed,
+            ]}
+            testID="play-computer-button"
+          >
+            <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
+          </Pressable>
+        </View>
+
+        {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
+        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>
+
+      {webPushPromptVisible && profile && (
+        <View style={lobbyStyles.notificationPromptOverlay} testID="turn-notification-prompt">
+          <View style={lobbyStyles.notificationPromptCard}>
+            <Text style={lobbyStyles.notificationPromptTitle}>Turn notifications?</Text>
+            <Text style={lobbyStyles.notificationPromptBody}>Get notified when a friend is waiting on you.</Text>
+            <View style={lobbyStyles.notificationPromptActions}>
+              <Pressable
+                disabled={isBusy || isLoading}
+                onPress={handleDismissWebPushPrompt}
+                style={({ pressed }) => [lobbyStyles.notificationPromptSecondaryButton, pressed && lobbyStyles.pressed]}
+                testID="turn-notification-not-now"
+              >
+                <Text style={lobbyStyles.notificationPromptSecondaryText}>Not Now</Text>
+              </Pressable>
+              <Pressable
+                disabled={isBusy || isLoading}
+                onPress={() => void handleEnableWebNotifications()}
+                style={({ pressed }) => [lobbyStyles.notificationPromptPrimaryButton, pressed && lobbyStyles.pressed]}
+                testID="turn-notification-enable"
+              >
+                <Text style={lobbyStyles.notificationPromptPrimaryText}>Enable</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
       )}
-
-      <View style={lobbyStyles.actionGrid}>
-        <Pressable
-          onPress={() => setPage('startFriend')}
-          style={({ pressed }) => [lobbyStyles.primaryButton, lobbyStyles.actionButton, pressed && lobbyStyles.pressed]}
-          testID="start-with-friend-button"
-        >
-          <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
-        </Pressable>
-        <Pressable
-          onPress={onPlayLocalDemo}
-          style={({ pressed }) => [
-            lobbyStyles.secondaryButton,
-            lobbyStyles.actionButton,
-            pressed && lobbyStyles.pressed,
-          ]}
-          testID="play-computer-button"
-        >
-          <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
-        </Pressable>
-      </View>
-
-      {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
-      {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
-    </ScrollView>,
+    </>,
   );
+}
+
+function canOfferWebPushPrompt() {
+  return Platform.OS === 'web' && canRegisterWebPush() && hasWebPushVapidPublicKey();
+}
+
+function getWebNotificationPermission(): WebNotificationPermission {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !('Notification' in window)) {
+    return 'denied';
+  }
+
+  return window.Notification.permission;
+}
+
+function readWebPushPromptDismissed() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return false;
+  }
+
+  const dismissedAt = Number(window.localStorage.getItem(webPushPromptDismissedAtKey));
+  return Number.isFinite(dismissedAt) && Date.now() - dismissedAt < webPushPromptSnoozeMs;
+}
+
+function rememberWebPushPromptDismissed() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(webPushPromptDismissedAtKey, String(Date.now()));
 }
 
 function ScreenHeader({ onBack, title }: { onBack: () => void; title: string }) {
@@ -1153,22 +1225,78 @@ const lobbyStyles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
-  notificationButton: {
-    alignItems: 'center',
-    backgroundColor: '#3A0A05',
-    borderColor: '#FFD329',
-    borderRadius: 8,
-    borderWidth: 2,
-    height: 42,
-    justifyContent: 'center',
-    paddingHorizontal: 10,
+  notificationPromptActions: {
+    flexDirection: 'row',
+    gap: 8,
     width: '100%',
   },
-  notificationButtonText: {
-    color: '#FFD329',
-    fontSize: 13,
+  notificationPromptBody: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  notificationPromptCard: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 10,
+    maxWidth: 330,
+    padding: 14,
+    width: '100%',
+  },
+  notificationPromptOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(33, 5, 5, 0.72)',
+    bottom: 0,
+    justifyContent: 'center',
+    left: 0,
+    padding: 16,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  notificationPromptPrimaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 8,
+    borderWidth: 3,
+    flex: 1,
+    height: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  notificationPromptPrimaryText: {
+    color: '#210505',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  notificationPromptSecondaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flex: 1,
+    height: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  notificationPromptSecondaryText: {
+    color: '#FFF3C2',
+    fontSize: 14,
     fontWeight: '900',
     textTransform: 'uppercase',
+  },
+  notificationPromptTitle: {
+    color: '#FFD329',
+    fontSize: 21,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   panel: {
     backgroundColor: '#210505',

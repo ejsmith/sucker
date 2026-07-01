@@ -19,6 +19,7 @@ const localTestEnv = readEnvFile(localEnvFile);
 Object.assign(process.env, localTestEnv);
 const e2eBaseUrl = localTestEnv.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const e2eWebPort = new URL(e2eBaseUrl).port || '8081';
+const webPushVapidPublicKey = process.env.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY?.trim() || 'test';
 
 export default defineConfig({
   expect: {
@@ -53,7 +54,7 @@ export default defineConfig({
     },
     {
       command: `npm run web -- --port ${e2eWebPort}`,
-      env: { ...localTestEnv, BROWSER: 'none' },
+      env: { ...localTestEnv, BROWSER: 'none', EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: webPushVapidPublicKey },
       name: 'Expo web',
       reuseExistingServer: false,
       timeout: 90_000,
