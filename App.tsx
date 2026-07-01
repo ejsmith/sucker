@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -57,6 +57,7 @@ import {
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
 import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
+import { getInitialNotificationGameId, useWebNotificationClicks } from './src/multiplayer/notificationNavigation';
 import { supabase } from './src/multiplayer/supabase';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
@@ -137,6 +138,11 @@ type RemoteActionHandlers = {
   onSuckerBlocker: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerPunch: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
 };
+type RemoteGameRequest = {
+  gameId: string;
+  requestId: number;
+};
+let remoteGameRequestId = 0;
 const playerNames = ['You', 'Computer'];
 const devViewportPresets = [
   { key: 'se', label: 'SE', width: 375, height: 667 },
@@ -278,17 +284,37 @@ export default function App() {
 
 function AppRoutes() {
   const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
-  const [remoteGameId, setRemoteGameId] = useState<string | null>(null);
+  const [remoteGameRequest, setRemoteGameRequest] = useState<RemoteGameRequest | null>(() => {
+    const gameId = getInitialNotificationGameId();
+    return gameId ? createRemoteGameRequest(gameId) : null;
+  });
+  const openRemoteGame = useCallback((gameId: string) => {
+    setShowLocalDemo(false);
+    setRemoteGameRequest(createRemoteGameRequest(gameId));
+  }, []);
 
-  if (isMultiplayerConfigured && remoteGameId) {
-    return <RemoteGameScreen gameId={remoteGameId} onExit={() => setRemoteGameId(null)} />;
+  useWebNotificationClicks(openRemoteGame);
+
+  if (isMultiplayerConfigured && remoteGameRequest) {
+    return (
+      <RemoteGameScreen
+        gameId={remoteGameRequest.gameId}
+        key={`${remoteGameRequest.gameId}:${remoteGameRequest.requestId}`}
+        onExit={() => setRemoteGameRequest(null)}
+      />
+    );
   }
 
   if (isMultiplayerConfigured && !showLocalDemo) {
-    return <MultiplayerLobby onOpenGame={setRemoteGameId} onPlayLocalDemo={() => setShowLocalDemo(true)} />;
+    return <MultiplayerLobby onOpenGame={openRemoteGame} onPlayLocalDemo={() => setShowLocalDemo(true)} />;
   }
 
   return <LocalGameScreen onExit={() => setShowLocalDemo(!isMultiplayerConfigured)} />;
+}
+
+function createRemoteGameRequest(gameId: string): RemoteGameRequest {
+  remoteGameRequestId += 1;
+  return { gameId, requestId: remoteGameRequestId };
 }
 
 function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {
