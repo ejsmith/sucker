@@ -92,7 +92,8 @@ Deno.test('game-action removes open invites and hides started games from the act
   );
   assertEquals(deletedInvite, null);
 
-  const activeGame = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const activeGame = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' }))
+    .game as GameRow;
   const removedGame = await invokeGameAction(alice, { gameId: activeGame.id, type: 'remove_game' });
   assertEquals(removedGame.removedGameId, activeGame.id);
 
@@ -239,7 +240,8 @@ Deno.test('game-action lets a punched player replay instead of blocking', async 
   assertEquals(punched.current_player_id, alice.id);
   assertEquals((await loadTurn(firstScore.last_turn_id)).status, 'punched');
 
-  const replayRoll = (await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' })).game as GameRow;
+  const replayRoll = (await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' }))
+    .game as GameRow;
   assertEquals(replayRoll.status, 'active');
   assertEquals(replayRoll.current_player_id, alice.id);
 
@@ -402,27 +404,35 @@ async function upsertProfile(id: string, displayName: string) {
 }
 
 async function invokeWithoutAuth(body: Record<string, unknown>) {
-  const { body: payload, status } = await fetchJsonWithRetry(functionUrl, {
-    body: JSON.stringify(body),
-    headers: {
-      apikey: anonKey,
-      'Content-Type': 'application/json',
+  const { body: payload, status } = await fetchJsonWithRetry(
+    functionUrl,
+    {
+      body: JSON.stringify(body),
+      headers: {
+        apikey: anonKey,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
     },
-    method: 'POST',
-  }, 401);
+    401,
+  );
   return { body: payload, status };
 }
 
 async function invokeGameAction(user: TestUser, body: Record<string, unknown>, expectedStatus = 200) {
-  const { body: payload, status } = await fetchJsonWithRetry(functionUrl, {
-    body: JSON.stringify(body),
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${user.session.access_token}`,
-      'Content-Type': 'application/json',
+  const { body: payload, status } = await fetchJsonWithRetry(
+    functionUrl,
+    {
+      body: JSON.stringify(body),
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${user.session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
     },
-    method: 'POST',
-  }, expectedStatus);
+    expectedStatus,
+  );
   if (status !== expectedStatus) {
     throw new Error(`Expected game-action ${expectedStatus}, received ${status}: ${JSON.stringify(payload)}`);
   }

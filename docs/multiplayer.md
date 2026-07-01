@@ -36,13 +36,17 @@ Required Supabase Edge Function secrets:
 supabase secrets set SUPABASE_URL=https://<project-ref>.supabase.co
 supabase secrets set SUPABASE_ANON_KEY=<anon-key>
 supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+supabase secrets set WEB_PUSH_VAPID_PUBLIC_KEY=<vapid-public-key>
+supabase secrets set WEB_PUSH_VAPID_PRIVATE_KEY=<vapid-private-key>
+supabase secrets set WEB_PUSH_VAPID_SUBJECT=mailto:notifications@sucker.games
 ```
 
 Never put the service role key in the mobile app.
 
 The `game-action` function also sends Expo push notifications directly through
-Expo's push API after successful server-authoritative game actions. No extra
-secret is required for the current Expo push flow.
+Expo's push API after successful server-authoritative game actions. It also
+sends standards-based Web Push notifications to PWA installs when VAPID secrets
+are configured.
 
 ## App Environment
 
@@ -51,9 +55,21 @@ Copy `.env.example` to `.env.local`:
 ```sh
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY=your-vapid-public-key
 ```
 
 Only `EXPO_PUBLIC_*` values are bundled into the Expo app.
+
+Generate Web Push VAPID keys once for the app:
+
+```sh
+npx web-push generate-vapid-keys
+```
+
+Use the public key in the Expo app env and store both keys as Supabase Edge
+Function secrets. On iOS and iPadOS, Web Push works only for the installed Home
+Screen web app on iOS/iPadOS 16.4 or newer, and the permission prompt must be
+started by a user tap.
 
 ## Public Domain And Invites
 
@@ -91,6 +107,7 @@ Implemented:
 - Remote game list/get helpers.
 - Realtime subscription helper for `games`.
 - Push token registration helper and Edge Function push sending.
+- PWA Web Push subscription registration and Edge Function Web Push sending.
 - Profile search helper.
 - Invite-code helpers.
 - Head-to-head stat lookup helper.

@@ -47,8 +47,8 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       wait: {
-        stdout: /Serving functions on|Using supabase-edge-runtime/,
-        stderr: /Serving functions on|Using supabase-edge-runtime/,
+        stdout: /Kong reloaded|Serving functions on|Using supabase-edge-runtime/,
+        stderr: /Kong reloaded|Serving functions on|Using supabase-edge-runtime/,
       },
     },
     {

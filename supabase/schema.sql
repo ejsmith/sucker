@@ -128,6 +128,19 @@ create table public.push_tokens (
   updated_at timestamptz not null default now()
 );
 
+create table public.web_push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh_key text not null,
+  auth_key text not null,
+  expiration_time timestamptz,
+  platform text not null default 'web' check (platform = 'web'),
+  user_agent text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table public.game_player_results (
   game_id uuid not null references public.games(id) on delete cascade,
   player_id uuid not null references public.profiles(id) on delete cascade,
@@ -294,6 +307,10 @@ for each row execute function public.touch_updated_at();
 
 create trigger push_tokens_touch_updated_at
 before update on public.push_tokens
+for each row execute function public.touch_updated_at();
+
+create trigger web_push_subscriptions_touch_updated_at
+before update on public.web_push_subscriptions
 for each row execute function public.touch_updated_at();
 
 create trigger computer_stats_touch_updated_at
@@ -512,6 +529,7 @@ alter table public.turns enable row level security;
 alter table public.turn_actions enable row level security;
 alter table public.token_events enable row level security;
 alter table public.push_tokens enable row level security;
+alter table public.web_push_subscriptions enable row level security;
 alter table public.game_player_results enable row level security;
 alter table public.head_to_head_stats enable row level security;
 alter table public.computer_stats enable row level security;
@@ -590,6 +608,12 @@ using (public.is_game_participant(game_id, (select auth.uid())));
 
 create policy "Users manage their own push tokens"
 on public.push_tokens for all
+to authenticated
+using ((select auth.uid()) = profile_id)
+with check ((select auth.uid()) = profile_id);
+
+create policy "Users manage their own web push subscriptions"
+on public.web_push_subscriptions for all
 to authenticated
 using ((select auth.uid()) = profile_id)
 with check ((select auth.uid()) = profile_id);

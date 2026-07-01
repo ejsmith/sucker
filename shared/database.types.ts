@@ -187,6 +187,39 @@ export type Database = {
           updated_at?: string;
         };
       };
+      web_push_subscriptions: {
+        Row: {
+          auth_key: string;
+          created_at: string;
+          endpoint: string;
+          expiration_time: string | null;
+          id: string;
+          p256dh_key: string;
+          platform: 'web';
+          profile_id: string;
+          updated_at: string;
+          user_agent: string | null;
+        };
+        Insert: {
+          auth_key: string;
+          endpoint: string;
+          expiration_time?: string | null;
+          id?: string;
+          p256dh_key: string;
+          platform?: 'web';
+          profile_id: string;
+          user_agent?: string | null;
+        };
+        Update: {
+          auth_key?: string;
+          endpoint?: string;
+          expiration_time?: string | null;
+          p256dh_key?: string;
+          platform?: 'web';
+          updated_at?: string;
+          user_agent?: string | null;
+        };
+      };
       head_to_head_stats: {
         Row: {
           average_score: number;

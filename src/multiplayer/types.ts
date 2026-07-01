@@ -94,6 +94,10 @@ export type MultiplayerActionResult = {
   notificationProfileIds?: string[];
 };
 
+export type RemoveGameActionResult = {
+  removedGameId?: string;
+};
+
 export type ProfileInput = {
   avatarUrl?: string | null;
   displayName: string;

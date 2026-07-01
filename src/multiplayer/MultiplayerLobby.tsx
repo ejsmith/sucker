@@ -9,14 +9,18 @@ import {
   ScrollView,
   Share,
   StyleSheet,
+  type StyleProp,
   Text,
   TextInput,
   useWindowDimensions,
   View,
+  type ViewStyle,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
 import { createGameAgainst, listMyGames, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
+import { canRegisterWebPush, registerWebPushSubscription } from './notifications';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
@@ -40,6 +44,7 @@ export function MultiplayerLobby({
   onPlayLocalDemo: () => void;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
   const isAppActive = useAppActivity();
   const { endSession, error, isLoading, profile, saveProfile, sendSignInCode, session, verifySignInCode } =
     useMultiplayerSession();
@@ -56,14 +61,19 @@ export function MultiplayerLobby({
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [webPushEnabled, setWebPushEnabled] = useState(() => Platform.OS === 'web' && canRegisterWebPush());
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
+  const shellSafeAreaStyle: StyleProp<ViewStyle> = {
+    paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
+    paddingTop: Math.max(12, safeAreaInsets.top + 4),
+  };
 
   function renderShell(children: ReactNode) {
     return (
       <View style={lobbyStyles.stageHost}>
-        <View style={[lobbyStyles.shell, shellStyle]} testID="multiplayer-lobby-shell">
+        <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
           {children}
         </View>
       </View>
@@ -155,6 +165,20 @@ export function MultiplayerLobby({
     setComputerStats(nextStats);
   }
 
+  async function handleEnableWebNotifications() {
+    if (!profile) {
+      return;
+    }
+
+    await runAction(async () => {
+      const result = await registerWebPushSubscription(profile.id);
+      if (result) {
+        setWebPushEnabled(false);
+        setMessage('Browser notifications enabled.');
+      }
+    });
+  }
+
   async function handleSearchProfiles() {
     await runAction(async () => {
       const results = await searchProfiles(query);
@@ -182,18 +206,14 @@ export function MultiplayerLobby({
       return;
     }
 
-    Alert.alert(
-      isInvite ? 'Remove invite?' : 'Remove game?',
-      message,
-      [
-        { style: 'cancel', text: 'Cancel' },
-        {
-          onPress: () => void removeGame(),
-          style: 'destructive',
-          text: 'Remove',
-        },
-      ],
-    );
+    Alert.alert(isInvite ? 'Remove invite?' : 'Remove game?', message, [
+      { style: 'cancel', text: 'Cancel' },
+      {
+        onPress: () => void removeGame(),
+        style: 'destructive',
+        text: 'Remove',
+      },
+    ]);
   }
 
   async function handleSendCode() {
@@ -612,6 +632,16 @@ export function MultiplayerLobby({
           ))
         )}
       </View>
+
+      {webPushEnabled && profile && (
+        <Pressable
+          disabled={isBusy || isLoading}
+          onPress={() => void handleEnableWebNotifications()}
+          style={({ pressed }) => [lobbyStyles.notificationButton, pressed && lobbyStyles.pressed]}
+        >
+          <Text style={lobbyStyles.notificationButtonText}>Enable Turn Notifications</Text>
+        </Pressable>
+      )}
 
       <View style={lobbyStyles.actionGrid}>
         <Pressable
@@ -1122,6 +1152,23 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     textAlign: 'center',
+  },
+  notificationButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    width: '100%',
+  },
+  notificationButtonText: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   panel: {
     backgroundColor: '#210505',

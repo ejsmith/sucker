@@ -31,6 +31,7 @@
     },
     "plugins": ["expo-notifications"],
     "web": {
+      "bundler": "metro",
       "favicon": "./assets/favicon.png",
       "themeColor": "#8F0000",
       "backgroundColor": "#8F0000",
