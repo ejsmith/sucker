@@ -37,6 +37,7 @@ type ActionResult = {
   game?: GameRow;
   inviteCode?: string;
   notificationProfileIds?: string[];
+  removedGameId?: string;
 };
 type NotificationContent = {
   body: string;
@@ -53,6 +54,7 @@ type Action =
   | { type: 'create_game'; opponentProfileId: string }
   | { type: 'create_invite' }
   | { type: 'accept_invite'; inviteCode: string }
+  | { type: 'remove_game'; gameId: string }
   | { type: 'extra_roll'; gameId: string; held?: GameState['held'] }
   | { type: 'roll'; gameId: string; held?: GameState['held'] }
   | {
@@ -123,6 +125,8 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
       return createInvite(admin, actorId);
     case 'accept_invite':
       return acceptInvite(admin, actorId, action.inviteCode);
+    case 'remove_game':
+      return removeGameFromList(admin, actorId, action.gameId);
     case 'roll':
       return mutateGame(
         admin,
@@ -406,6 +410,11 @@ function toAction(value: unknown): Action {
         inviteCode: readString(action, 'inviteCode'),
         type,
       };
+    case 'remove_game':
+      return {
+        gameId: readString(action, 'gameId'),
+        type,
+      };
     case 'extra_roll':
     case 'roll':
       return {
@@ -667,6 +676,35 @@ async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string
     inviteCode: normalizedInviteCode,
   });
   return { game, notificationProfileIds: [invite.inviter_id] };
+}
+
+async function removeGameFromList(admin: DbClient, actorId: string, gameId: string) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+
+  if (game.status === 'inviting') {
+    if (game.created_by !== actorId) {
+      throw new Error('Only the invite creator can remove this invite.');
+    }
+
+    const { error } = await admin.from('games').delete().eq('id', gameId);
+    if (error) {
+      throw error;
+    }
+
+    return { removedGameId: gameId };
+  }
+
+  const { error } = await admin
+    .from('game_players')
+    .update({ hidden_at: new Date().toISOString() })
+    .eq('game_id', gameId)
+    .eq('player_id', actorId);
+
+  if (error) {
+    throw error;
+  }
+
+  return { removedGameId: gameId };
 }
 
 async function mutateGame(
@@ -1034,6 +1072,7 @@ async function loadGameForActor(admin: DbClient, gameId: string, actorId: string
     .select('game_id')
     .eq('game_id', gameId)
     .eq('player_id', actorId)
+    .is('hidden_at', null)
     .maybeSingle();
 
   if (participantError) {
