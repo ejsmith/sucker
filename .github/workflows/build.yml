@@ -211,10 +211,12 @@ jobs:
         run: |
           test -n "$EXPO_PUBLIC_SUPABASE_URL" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_URL before deploying GitHub Pages."; exit 1; }
           test -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_ANON_KEY before deploying GitHub Pages."; exit 1; }
+          test -n "$EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY" || { echo "::error::Set repository variable EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY before deploying GitHub Pages."; exit 1; }
           test -n "$APPLE_TEAM_ID" || { echo "::error::Set repository variable APPLE_TEAM_ID before deploying GitHub Pages."; exit 1; }
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Build web
@@ -222,6 +224,7 @@ jobs:
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Add Apple associated domain file

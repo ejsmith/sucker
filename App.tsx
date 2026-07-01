@@ -580,6 +580,7 @@ function LocalGameScreen({
   const sectionBonusPulse = useRef(new Animated.Value(0)).current;
   const previousHomeSectionBonusAwarded = useRef<boolean | null>(null);
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
+  const liveGameRef = useRef(game);
   const myPlayerIndex = isRemoteGame
     ? Math.max(
         0,
@@ -730,6 +731,10 @@ function LocalGameScreen({
     inputRange: [0, 0.45, 1],
     outputRange: [bonusValueColor, bonusValueColor, awardedBonusColor],
   });
+
+  useEffect(() => {
+    liveGameRef.current = game;
+  }, [game]);
 
   useEffect(() => {
     if (previousHomeSectionBonusAwarded.current === null) {
@@ -1050,10 +1055,31 @@ function LocalGameScreen({
     );
   }
 
+  function setLiveRemoteGame(nextGame: ReturnType<typeof createGame>) {
+    liveGameRef.current = nextGame;
+    setVisibleRemoteGame(nextGame);
+  }
+
+  function settleRemoteOptimisticAction(
+    result: Promise<ReturnType<typeof createGame> | null>,
+    rollbackGame: ReturnType<typeof createGame>,
+  ) {
+    void result.then((nextGame) => {
+      if (nextGame) {
+        setLiveRemoteGame(nextGame);
+        return;
+      }
+
+      setLiveRemoteGame(remoteGame && myProfileId ? concealActiveOpponentDice(remoteGame, myProfileId) : rollbackGame);
+    });
+  }
+
   async function handleRoll() {
     if (!canRoll) {
       return;
     }
+
+    const sourceGame = liveGameRef.current;
 
     if (!isRemoteGame && pendingTurn) {
       setLocalPendingTurn(null);
@@ -1065,17 +1091,20 @@ function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
 
     if (isRemoteGame && remoteHandlers) {
-      await animateRemoteRoll(remoteHandlers.onRoll(game.held));
+      await animateRemoteRoll(remoteHandlers.onRoll(sourceGame.held), sourceGame);
       return;
     }
 
-    const nextGame = rollCurrentDice(game);
+    const nextGame = rollCurrentDice(sourceGame);
     recordLocalAction('roll', homePlayer.id, buildRollActionPayload(nextGame.dice));
-    await animateRollTo(nextGame);
+    await animateRollTo(nextGame, sourceGame);
   }
 
-  async function animateRemoteRoll(nextGamePromise: Promise<ReturnType<typeof createGame> | null>) {
-    const rollingIndexes = game.held
+  async function animateRemoteRoll(
+    nextGamePromise: Promise<ReturnType<typeof createGame> | null>,
+    sourceGame: ReturnType<typeof createGame>,
+  ) {
+    const rollingIndexes = sourceGame.held
       .map((held, index) => (held ? null : index))
       .filter((index): index is number => index !== null);
     const animationStartedAt = Date.now();
@@ -1084,16 +1113,17 @@ function LocalGameScreen({
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
-    setRollingFaces(game.dice);
+    setRollingFaces(sourceGame.dice);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
     let scrambleTimer: ReturnType<typeof setInterval> | null = null;
+    let serverResultSettled = false;
 
     try {
       if (rollingIndexes.length === 0) {
         const nextGame = await nextGamePromise;
         if (nextGame) {
-          setVisibleRemoteGame(nextGame);
+          setLiveRemoteGame(nextGame);
           if (isSuckerDice(nextGame.dice)) {
             showSuckerRollBanner('You rolled');
           }
@@ -1131,6 +1161,7 @@ function LocalGameScreen({
         ) - 150,
       );
       const revealFinalDice = nextGamePromise.then((nextGame) => {
+        serverResultSettled = true;
         if (!nextGame) {
           return null;
         }
@@ -1164,12 +1195,18 @@ function LocalGameScreen({
               }),
             ]);
           }),
-        ).start(() => resolve());
+        ).start(() => {
+          if (!serverResultSettled && scrambleTimer) {
+            clearInterval(scrambleTimer);
+            scrambleTimer = null;
+          }
+          resolve();
+        });
       });
 
       const [nextGame] = await Promise.all([revealFinalDice, animationDone]);
       if (nextGame) {
-        setVisibleRemoteGame(nextGame);
+        setLiveRemoteGame(nextGame);
         if (isSuckerDice(nextGame.dice)) {
           showSuckerRollBanner('You rolled');
         }
@@ -1185,15 +1222,18 @@ function LocalGameScreen({
     }
   }
 
-  async function animateRollTo(nextGame: ReturnType<typeof createGame> | null) {
-    const rollingIndexes = game.held
+  async function animateRollTo(
+    nextGame: ReturnType<typeof createGame> | null,
+    sourceGame: ReturnType<typeof createGame>,
+  ) {
+    const rollingIndexes = sourceGame.held
       .map((held, index) => (held ? null : index))
       .filter((index): index is number => index !== null);
     setIsRolling(true);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
-    setRollingFaces(game.dice);
+    setRollingFaces(sourceGame.dice);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
     if (!nextGame) {
@@ -1204,8 +1244,9 @@ function LocalGameScreen({
 
     if (rollingIndexes.length === 0) {
       if (isRemoteGame) {
-        setVisibleRemoteGame(nextGame);
+        setLiveRemoteGame(nextGame);
       } else {
+        liveGameRef.current = nextGame;
         setLocalGame(nextGame);
       }
       if (isSuckerDice(finalDice)) {
@@ -1266,8 +1307,9 @@ function LocalGameScreen({
       clearInterval(scrambleTimer);
       clearTimeout(finalRevealTimer);
       if (isRemoteGame) {
-        setVisibleRemoteGame(nextGame);
+        setLiveRemoteGame(nextGame);
       } else {
+        liveGameRef.current = nextGame;
         setLocalGame(nextGame);
       }
       if (isSuckerDice(finalDice)) {
@@ -1576,14 +1618,19 @@ function LocalGameScreen({
       return;
     }
 
+    const sourceGame = liveGameRef.current;
     setIsChoosingSuckerDeal(false);
 
     if (isRemoteGame && remoteHandlers) {
-      await remoteHandlers.onScratch(category, game.held);
+      const optimisticGame = scratchScoreBox(sourceGame, category);
+      setLiveRemoteGame(optimisticGame);
+      settleRemoteOptimisticAction(remoteHandlers.onScratch(category, sourceGame.held), sourceGame);
       return;
     }
 
-    setLocalGame(scratchScoreBox(game, category));
+    const nextGame = scratchScoreBox(sourceGame, category);
+    liveGameRef.current = nextGame;
+    setLocalGame(nextGame);
     localSuckerStatTurns.current.push({
       category,
       player_id: currentPlayer.id,
@@ -1691,9 +1738,10 @@ function LocalGameScreen({
     setDismissedGameOverId(game.id);
   }
 
-  function commitLocalScore(category: ScoreCategory) {
-    const result = scoreLocalTurn(game, category);
+  function commitLocalScore(category: ScoreCategory, sourceGame = liveGameRef.current) {
+    const result = scoreLocalTurn(sourceGame, category);
     recordLocalScoreTurn(result);
+    liveGameRef.current = result.game;
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
   }
@@ -1727,6 +1775,7 @@ function LocalGameScreen({
     }
 
     const category = selectedCategory;
+    const scoringGame = liveGameRef.current;
     const targetRef =
       activePlayerViewIndex === 0 ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
     const [screenRect, targetRect, sourceRects] = await Promise.all([
@@ -1737,9 +1786,11 @@ function LocalGameScreen({
 
     if (!screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
       if (isRemoteGame && remoteHandlers) {
-        void remoteHandlers.onScore(category, game.held);
+        const optimisticGame = scoreTurn(scoringGame, category);
+        setLiveRemoteGame(optimisticGame);
+        settleRemoteOptimisticAction(remoteHandlers.onScore(category, scoringGame.held), scoringGame);
       } else {
-        commitLocalScore(category);
+        commitLocalScore(category, scoringGame);
       }
       setSelectedCategory(null);
       setIsChoosingSuckerDeal(false);
@@ -1756,7 +1807,7 @@ function LocalGameScreen({
       { x: 6, y: 4 },
       { x: 12, y: -4 },
     ];
-    const flyingDice = game.dice.map((face, index) => {
+    const flyingDice = scoringGame.dice.map((face, index) => {
       const rect = sourceRects[index] as MeasuredRect;
       const offset = targetOffsets[index] ?? { x: 0, y: 0 };
       return {
@@ -1773,6 +1824,9 @@ function LocalGameScreen({
 
     setIsScoring(true);
     setScoreFlyDice(flyingDice);
+    const remoteScorePromise =
+      isRemoteGame && remoteHandlers ? remoteHandlers.onScore(category, scoringGame.held) : null;
+    const optimisticScoredGame = remoteScorePromise ? scoreTurn(scoringGame, category) : null;
     requestAnimationFrame(() => {
       Animated.stagger(
         42,
@@ -1787,10 +1841,11 @@ function LocalGameScreen({
       ).start(() => {
         setScoreFlyDice([]);
         setIsScoring(false);
-        if (isRemoteGame && remoteHandlers) {
-          void remoteHandlers.onScore(category, game.held);
+        if (remoteScorePromise && optimisticScoredGame) {
+          setLiveRemoteGame(optimisticScoredGame);
+          settleRemoteOptimisticAction(remoteScorePromise, scoringGame);
         } else {
-          commitLocalScore(category);
+          commitLocalScore(category, scoringGame);
         }
         setSelectedCategory(null);
         setIsChoosingSuckerDeal(false);
@@ -1799,16 +1854,28 @@ function LocalGameScreen({
   }
 
   async function handleToggleHold(index: number) {
-    if (isRolling || isScoring || game.rollNumber === 0 || !isMyRemoteTurn || !isRemoteActionPlayable || isRemoteBusy) {
+    const sourceGame = liveGameRef.current;
+    if (
+      isRolling ||
+      isScoring ||
+      sourceGame.rollNumber === 0 ||
+      !isMyRemoteTurn ||
+      !isRemoteActionPlayable ||
+      isRemoteBusy
+    ) {
       return;
     }
 
     if (isRemoteGame && remoteHandlers) {
-      setVisibleRemoteGame(toggleHold(game, index));
+      setLiveRemoteGame(toggleHold(sourceGame, index));
       return;
     }
 
-    setLocalGame((state) => toggleHold(state, index));
+    setLocalGame((state) => {
+      const nextGame = toggleHold(state, index);
+      liveGameRef.current = nextGame;
+      return nextGame;
+    });
   }
 
   return (

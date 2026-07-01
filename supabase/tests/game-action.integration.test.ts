@@ -404,7 +404,11 @@ async function upsertProfile(id: string, displayName: string) {
 }
 
 async function invokeWithoutAuth(body: Record<string, unknown>) {
-  const { body: payload, status } = await fetchJsonWithRetry(
+  const {
+    body: payload,
+    serverTiming,
+    status,
+  } = await fetchJsonWithRetry(
     functionUrl,
     {
       body: JSON.stringify(body),
@@ -420,7 +424,11 @@ async function invokeWithoutAuth(body: Record<string, unknown>) {
 }
 
 async function invokeGameAction(user: TestUser, body: Record<string, unknown>, expectedStatus = 200) {
-  const { body: payload, status } = await fetchJsonWithRetry(
+  const {
+    body: payload,
+    serverTiming,
+    status,
+  } = await fetchJsonWithRetry(
     functionUrl,
     {
       body: JSON.stringify(body),
@@ -436,6 +444,12 @@ async function invokeGameAction(user: TestUser, body: Record<string, unknown>, e
   if (status !== expectedStatus) {
     throw new Error(`Expected game-action ${expectedStatus}, received ${status}: ${JSON.stringify(payload)}`);
   }
+  if (expectedStatus === 200) {
+    assertString(serverTiming);
+    if (!serverTiming.includes('total;dur=')) {
+      throw new Error(`Expected Server-Timing total duration, received ${serverTiming}.`);
+    }
+  }
   return payload;
 }
 
@@ -448,12 +462,16 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, expectedStatus
       const text = await response.text();
       const parsed = text.length > 0 ? JSON.parse(text) : null;
       if (response.status === expectedStatus && parsed !== null) {
-        return { body: parsed as Record<string, unknown>, status: response.status };
+        return {
+          body: parsed as Record<string, unknown>,
+          serverTiming: response.headers.get('server-timing'),
+          status: response.status,
+        };
       }
 
       const isTransient = response.status >= 500 || parsed === null;
       if (!isTransient || attempt === 2) {
-        return { body: parsed, status: response.status };
+        return { body: parsed, serverTiming: response.headers.get('server-timing'), status: response.status };
       }
       lastError = new Error(`Transient game-action response ${response.status}: ${text || '<empty body>'}`);
     } catch (error) {

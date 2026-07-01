@@ -51,6 +51,12 @@ test('two players can create an invite and play turns through the web UI', async
   await bobPage.getByTestId('join-invite-button').click();
 
   const gameId = await waitForAcceptedGame(inviteCode);
+  await alicePage.goto('/');
+  await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
+  await expect(alicePage.getByTestId('turn-notification-prompt')).toBeVisible();
+  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('turn-notification-prompt.png');
+  await dismissTurnNotificationPrompt(alicePage);
+
   await openGameFromLobby(alicePage, gameId);
   await expect(alicePage.getByTestId('game-screen')).toHaveScreenshot('active-turn.png');
 
@@ -115,6 +121,32 @@ test('two players can create an invite and play turns through the web UI', async
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  await context.addInitScript(() => {
+    const testWindow = window as Window & { PushManager?: unknown };
+    const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
+
+    Object.defineProperty(testWindow, 'Notification', {
+      configurable: true,
+      value: {
+        permission: 'default',
+        requestPermission: async () => 'default',
+      },
+    });
+
+    if (!('PushManager' in testWindow)) {
+      Object.defineProperty(testWindow, 'PushManager', {
+        configurable: true,
+        value: function PushManager() {},
+      });
+    }
+
+    if (!('serviceWorker' in testNavigator)) {
+      Object.defineProperty(testNavigator, 'serviceWorker', {
+        configurable: true,
+        value: {},
+      });
+    }
+  });
   await context.addInitScript(
     ({ supabaseAnonKey, supabaseUrl }) => {
       (
@@ -220,8 +252,10 @@ async function describeScriptResponses(page: Page) {
 async function openGameFromLobby(page: Page, gameId: string) {
   await page.goto('/');
   await expect(page.getByTestId('refresh-games-button')).toBeVisible();
+  await dismissTurnNotificationPrompt(page);
   await page.getByTestId('refresh-games-button').click();
   await expect(page.getByTestId(`game-card-${gameId}`)).toBeVisible();
+  await dismissTurnNotificationPrompt(page);
   await page.getByTestId(`game-card-${gameId}`).click();
 }
 
@@ -238,6 +272,13 @@ async function openGameFromNotification(page: Page, gameId: string) {
     );
   }, gameId);
   await expect(page.getByTestId('game-screen')).toBeVisible();
+}
+
+async function dismissTurnNotificationPrompt(page: Page) {
+  const prompt = page.getByTestId('turn-notification-prompt');
+  if (await prompt.isVisible({ timeout: 500 }).catch(() => false)) {
+    await page.getByTestId('turn-notification-not-now').click();
+  }
 }
 
 async function createUser(slug: string, displayName: string): Promise<TestUser> {
