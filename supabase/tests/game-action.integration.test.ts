@@ -75,30 +75,45 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
 });
 
-Deno.test('game-action removes a game from one participant list', async () => {
-  const [alice, bob] = await createUsers('remove-game', ['Alice', 'Bob']);
-  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+Deno.test('game-action removes open invites and hides started games from the actor', async () => {
+  const [alice, bob] = await createUsers('remove-games', ['Alice', 'Bob']);
 
-  const removed = await invokeGameAction(alice, { gameId: game.id, type: 'remove_game' });
-  assertEquals(removed.removedGameId, game.id);
+  const invite = await invokeGameAction(alice, { type: 'create_invite' });
+  const inviteGameId = (invite.game as GameRow).id;
+  const removedInvite = await invokeGameAction(alice, { gameId: inviteGameId, type: 'remove_game' });
+  assertEquals(removedInvite.removedGameId, inviteGameId);
+
+  const deletedGame = await selectMaybe<{ id: string }>(
+    admin.from('games').select('id').eq('id', inviteGameId).maybeSingle(),
+  );
+  assertEquals(deletedGame, null);
+  const deletedInvite = await selectMaybe<{ game_id: string }>(
+    admin.from('game_invites').select('game_id').eq('game_id', inviteGameId).maybeSingle(),
+  );
+  assertEquals(deletedInvite, null);
+
+  const activeGame = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' }))
+    .game as GameRow;
+  const removedGame = await invokeGameAction(alice, { gameId: activeGame.id, type: 'remove_game' });
+  assertEquals(removedGame.removedGameId, activeGame.id);
 
   const hiddenFromAlice = await selectMaybe<{ id: string }>(
-    alice.client.from('games').select('id').eq('id', game.id).maybeSingle(),
+    alice.client.from('games').select('id').eq('id', activeGame.id).maybeSingle(),
   );
   assertEquals(hiddenFromAlice, null);
 
   const visibleToBob = await selectSingle<{ id: string }>(
-    bob.client.from('games').select('id').eq('id', game.id).single(),
+    bob.client.from('games').select('id').eq('id', activeGame.id).single(),
   );
-  assertEquals(visibleToBob.id, game.id);
+  assertEquals(visibleToBob.id, activeGame.id);
 
-  const removedPlayer = await selectSingle<{ removed_at: string | null }>(
-    admin.from('game_players').select('removed_at').eq('game_id', game.id).eq('player_id', alice.id).single(),
+  const alicePlayer = await selectSingle<{ hidden_at: string | null }>(
+    admin.from('game_players').select('hidden_at').eq('game_id', activeGame.id).eq('player_id', alice.id).single(),
   );
-  assertString(removedPlayer.removed_at);
+  assertString(alicePlayer.hidden_at);
 
-  const missing = await invokeGameAction(alice, { gameId: crypto.randomUUID(), type: 'remove_game' }, 400);
-  assertEquals(missing.error, 'Game not found.');
+  const hiddenPlayerAction = await invokeGameAction(alice, { gameId: activeGame.id, type: 'roll' }, 400);
+  assertEquals(hiddenPlayerAction.error, 'You are not a player in this game.');
 });
 
 Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker state', async () => {

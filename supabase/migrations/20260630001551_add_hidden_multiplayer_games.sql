@@ -1,5 +1,9 @@
 alter table public.game_players
-add column removed_at timestamptz;
+add column if not exists hidden_at timestamptz;
+
+create index if not exists game_players_visible_player_idx
+on public.game_players(player_id, game_id)
+where hidden_at is null;
 
 create or replace function public.is_game_participant(target_game_id uuid, target_profile_id uuid)
 returns boolean
@@ -13,6 +17,6 @@ as $$
     from public.game_players
     where game_id = target_game_id
       and player_id = target_profile_id
-      and removed_at is null
+      and hidden_at is null
   );
 $$;

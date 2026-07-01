@@ -131,7 +131,7 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
     case 'accept_invite':
       return acceptInvite(admin, actorId, action.inviteCode);
     case 'remove_game':
-      return removeRemoteGame(admin, actorId, action.gameId);
+      return removeGameFromList(admin, actorId, action.gameId);
     case 'roll':
       return mutateGame(
         admin,
@@ -258,26 +258,6 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       actorId,
     ),
   ]);
-}
-
-async function removeRemoteGame(admin: DbClient, actorId: string, gameId: string): Promise<ActionResult> {
-  const { data, error } = await admin
-    .from('game_players')
-    .update({ removed_at: new Date().toISOString() })
-    .eq('game_id', gameId)
-    .eq('player_id', actorId)
-    .is('removed_at', null)
-    .select('game_id')
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-  if (!data) {
-    throw new Error('Game not found.');
-  }
-
-  return { removedGameId: gameId };
 }
 
 async function sendExpoPushMessages(messages: unknown[]) {
@@ -811,6 +791,35 @@ async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string
   return { game, notificationProfileIds: [invite.inviter_id] };
 }
 
+async function removeGameFromList(admin: DbClient, actorId: string, gameId: string) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+
+  if (game.status === 'inviting') {
+    if (game.created_by !== actorId) {
+      throw new Error('Only the invite creator can remove this invite.');
+    }
+
+    const { error } = await admin.from('games').delete().eq('id', gameId);
+    if (error) {
+      throw error;
+    }
+
+    return { removedGameId: gameId };
+  }
+
+  const { error } = await admin
+    .from('game_players')
+    .update({ hidden_at: new Date().toISOString() })
+    .eq('game_id', gameId)
+    .eq('player_id', actorId);
+
+  if (error) {
+    throw error;
+  }
+
+  return { removedGameId: gameId };
+}
+
 async function mutateGame(
   admin: DbClient,
   actorId: string,
@@ -1176,6 +1185,7 @@ async function loadGameForActor(admin: DbClient, gameId: string, actorId: string
     .select('game_id')
     .eq('game_id', gameId)
     .eq('player_id', actorId)
+    .is('hidden_at', null)
     .maybeSingle();
 
   if (participantError) {

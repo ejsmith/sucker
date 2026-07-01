@@ -50,8 +50,8 @@ create table public.game_players (
   sucker_tokens integer not null default 8 check (sucker_tokens >= 0),
   final_score integer,
   upper_bonus_awarded boolean not null default false,
+  hidden_at timestamptz,
   joined_at timestamptz not null default now(),
-  removed_at timestamptz,
   primary key (game_id, player_id),
   unique (game_id, seat_index)
 );
@@ -317,6 +317,10 @@ create trigger computer_stats_touch_updated_at
 before update on public.computer_stats
 for each row execute function public.touch_updated_at();
 
+create index if not exists game_players_visible_player_idx
+on public.game_players(player_id, game_id)
+where hidden_at is null;
+
 create or replace function public.record_computer_game_result(
   player_score integer,
   computer_score integer,
@@ -490,7 +494,7 @@ as $$
     from public.game_players
     where game_id = target_game_id
       and player_id = target_profile_id
-      and removed_at is null
+      and hidden_at is null
   );
 $$;
 

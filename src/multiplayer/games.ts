@@ -1,30 +1,13 @@
 import { supabase } from './supabase';
 import type { Database } from './database.types';
-import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow, RemoveGameActionResult } from './types';
+import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
 import { scoreCategories, type GameState, type ScoreCategory, toDice, toGameState, toHeldDice } from '../game';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 
 export async function listMyGames() {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    throw userError;
-  }
-  if (!user) {
-    return [];
-  }
-
-  const { data, error } = await supabase
-    .from('games')
-    .select('*, game_players!inner(player_id, removed_at)')
-    .eq('game_players.player_id', user.id)
-    .is('game_players.removed_at', null)
-    .order('updated_at', { ascending: false });
+  const { data, error } = await supabase.from('games').select('*').order('updated_at', { ascending: false });
 
   if (error) {
     throw error;
@@ -53,11 +36,24 @@ export async function getTurn(turnId: string) {
   return toRemoteTurnRow(data);
 }
 
-export async function applyMultiplayerAction<Result extends Record<string, unknown> = MultiplayerActionResult>(
-  action: MultiplayerAction,
-): Promise<Result> {
-  const { data, error } = await supabase.functions.invoke<Result>('game-action', {
+export async function applyMultiplayerAction(action: MultiplayerAction): Promise<MultiplayerActionResult> {
+  const { data, error } = await supabase.functions.invoke<MultiplayerActionResult>('game-action', {
     body: action,
+  });
+
+  if (error) {
+    throw new Error(await toFunctionErrorMessage(error));
+  }
+  if (!data) {
+    throw new Error('Game action returned no data.');
+  }
+
+  return data;
+}
+
+export async function removeRemoteGame(gameId: string) {
+  const { data, error } = await supabase.functions.invoke<{ removedGameId: string }>('game-action', {
+    body: { gameId, type: 'remove_game' },
   });
 
   if (error) {
@@ -129,10 +125,6 @@ export async function createGameAgainst(opponentProfileId: string) {
   });
 }
 
-export async function removeRemoteGame(gameId: string) {
-  return applyMultiplayerAction<RemoveGameActionResult>({ gameId, type: 'remove_game' });
-}
-
 export async function rollRemoteGame(gameId: string, held: GameState['held']) {
   return applyMultiplayerAction({ gameId, held, type: 'roll' });
 }
@@ -184,6 +176,32 @@ export function subscribeToGame(
         if (payload.new) {
           onChange(toRemoteGameRow(payload.new as GameRow));
         }
+      },
+    )
+    .subscribe((status) => {
+      onStatus?.(status);
+    });
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
+export function subscribeToGameListChanges(
+  onChange: () => void,
+  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+) {
+  const channel = supabase
+    .channel('games:list')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'games',
+      },
+      () => {
+        onChange();
       },
     )
     .subscribe((status) => {

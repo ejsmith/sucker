@@ -1,6 +1,7 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Linking,
   Platform,
@@ -17,12 +18,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
-import { createGameAgainst, listMyGames, removeRemoteGame } from './games';
+import { createGameAgainst, listMyGames, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import { canRegisterWebPush, registerWebPushSubscription } from './notifications';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
+import { totalScore } from '../game';
 import { getPhoneStageStyle } from '../ui/phoneStage';
 import { useAppActivity } from '../ui/useAppActivity';
 
@@ -78,6 +80,18 @@ export function MultiplayerLobby({
     );
   }
 
+  const refreshGames = useCallback(async ({ surfaceError = true }: { surfaceError?: boolean } = {}) => {
+    try {
+      const nextGames = await listMyGames();
+      setGames(nextGames);
+      setNow(Date.now());
+    } catch (refreshError) {
+      if (surfaceError) {
+        setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (session) {
       void refreshGames();
@@ -88,7 +102,20 @@ export function MultiplayerLobby({
       setDisplayName(profile.display_name);
       setUsername(profile.username ?? '');
     }
-  }, [profile, session]);
+  }, [profile, refreshGames, session]);
+
+  useEffect(() => {
+    if (!session || !isAppActive) {
+      return;
+    }
+
+    const unsubscribe = subscribeToGameListChanges(() => void refreshGames({ surfaceError: false }));
+    const timer = setInterval(() => void refreshGames({ surfaceError: false }), 15_000);
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, [isAppActive, refreshGames, session]);
 
   useEffect(() => {
     if (!isAppActive) {
@@ -133,11 +160,6 @@ export function MultiplayerLobby({
     }
   }
 
-  async function refreshGames() {
-    const nextGames = await listMyGames();
-    setGames(nextGames);
-  }
-
   async function refreshComputerStats() {
     const nextStats = await getComputerStats();
     setComputerStats(nextStats);
@@ -157,19 +179,41 @@ export function MultiplayerLobby({
     });
   }
 
-  async function handleRemoveGame(gameId: string) {
-    await runAction(async () => {
-      await removeRemoteGame(gameId);
-      setGames((currentGames) => currentGames.filter((game) => game.id !== gameId));
-      setMessage('Game removed.');
-    });
-  }
-
   async function handleSearchProfiles() {
     await runAction(async () => {
       const results = await searchProfiles(query);
       setSearchResults(results.filter((result) => result.id !== profile?.id));
     });
+  }
+
+  function handleRemoveGame(game: RemoteGameRow) {
+    const isInvite = game.status === 'inviting';
+    const message = isInvite
+      ? 'This cancels the open invite and removes it from your games list.'
+      : 'This removes the game from your games list. The other player can still see their copy.';
+    const removeGame = () =>
+      runAction(async () => {
+        await removeRemoteGame(game.id);
+        setGames((currentGames) => currentGames.filter((currentGame) => currentGame.id !== game.id));
+        setMessage(isInvite ? 'Invite removed.' : 'Game removed.');
+        await refreshGames({ surfaceError: false });
+      });
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(message)) {
+        void removeGame();
+      }
+      return;
+    }
+
+    Alert.alert(isInvite ? 'Remove invite?' : 'Remove game?', message, [
+      { style: 'cancel', text: 'Cancel' },
+      {
+        onPress: () => void removeGame(),
+        style: 'destructive',
+        text: 'Remove',
+      },
+    ]);
   }
 
   async function handleSendCode() {
@@ -579,7 +623,6 @@ export function MultiplayerLobby({
           activeGames.map((game) => (
             <GameListItem
               game={game}
-              isBusy={isBusy}
               key={game.id}
               now={now}
               onOpenGame={onOpenGame}
@@ -641,24 +684,22 @@ function ScreenHeader({ onBack, title }: { onBack: () => void; title: string }) 
 
 function GameListItem({
   game,
-  isBusy,
   now,
   onOpenGame,
   onRemoveGame,
   profileId,
 }: {
   game: RemoteGameRow;
-  isBusy: boolean;
   now: number;
   onOpenGame: (gameId: string) => void;
-  onRemoveGame: (gameId: string) => Promise<void>;
+  onRemoveGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
   const opponent = game.state.players.find((player) => player.id !== profileId);
   const me = game.state.players.find((player) => player.id === profileId);
   const opponentName = opponent?.name ?? (game.status === 'inviting' ? 'Waiting for friend' : 'Opponent');
-  const myScore = me ? totalFilledScore(me.scorecard) : 0;
-  const opponentScore = opponent ? totalFilledScore(opponent.scorecard) : 0;
+  const myScore = me ? totalScore(me.scorecard) : 0;
+  const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
   const isMyTurn = game.current_player_id === profileId;
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
@@ -668,39 +709,45 @@ function GameListItem({
       : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
 
   return (
-    <View style={[lobbyStyles.gameCard, isMyTurn && lobbyStyles.gameCardMyTurn]} testID={`game-card-${game.id}`}>
-      <Pressable
-        onPress={() => onOpenGame(game.id)}
-        style={({ pressed }) => [lobbyStyles.gameCardPressTarget, pressed && lobbyStyles.pressed]}
-        testID={`open-game-${game.id}`}
-      >
-        <View style={lobbyStyles.gameCardTop}>
-          <View style={lobbyStyles.avatarLarge}>
-            <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
-          </View>
-          <View style={lobbyStyles.gameSummary}>
-            <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
-              {opponentName}
-            </Text>
-            <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
-          </View>
+    <Pressable
+      onPress={() => onOpenGame(game.id)}
+      style={({ pressed }) => [
+        lobbyStyles.gameCard,
+        isMyTurn && lobbyStyles.gameCardMyTurn,
+        pressed && lobbyStyles.pressed,
+      ]}
+      testID={`game-card-${game.id}`}
+    >
+      <View style={lobbyStyles.gameCardTop}>
+        <View style={lobbyStyles.avatarLarge}>
+          <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={lobbyStyles.gameSummary}>
+          <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
+            {opponentName}
+          </Text>
+          <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
+        </View>
+        <View style={lobbyStyles.gameCardActions}>
           <View style={lobbyStyles.scorePill}>
             <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
             <Text style={lobbyStyles.scoreDivider}>-</Text>
             <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
           </View>
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              onRemoveGame(game);
+            }}
+            style={({ pressed }) => [lobbyStyles.removeGameButton, pressed && lobbyStyles.pressed]}
+            testID={`remove-game-${game.id}`}
+          >
+            <Text style={lobbyStyles.removeGameText}>Remove</Text>
+          </Pressable>
         </View>
-        <Text style={lobbyStyles.waitText}>{waitText}</Text>
-      </Pressable>
-      <Pressable
-        disabled={isBusy}
-        onPress={() => void onRemoveGame(game.id)}
-        style={({ pressed }) => [lobbyStyles.removeGameButton, pressed && lobbyStyles.pressed]}
-        testID={`remove-game-${game.id}`}
-      >
-        <Text style={lobbyStyles.removeGameText}>Remove</Text>
-      </Pressable>
-    </View>
+      </View>
+      <Text style={lobbyStyles.waitText}>{waitText}</Text>
+    </Pressable>
   );
 }
 
@@ -815,10 +862,6 @@ function formatElapsed(now: number, updatedAt: string) {
   }
 
   return `${Math.floor(elapsedHours / 24)}d`;
-}
-
-function totalFilledScore(scorecard: RemoteGameRow['state']['players'][number]['scorecard']) {
-  return Object.values(scorecard).reduce<number>((total, score) => total + (score ?? 0), 0);
 }
 
 function formatPct(count: number, gamesPlayed: number) {
@@ -985,8 +1028,9 @@ const lobbyStyles = StyleSheet.create({
   gameCardMyTurn: {
     borderColor: '#FFD329',
   },
-  gameCardPressTarget: {
-    gap: 6,
+  gameCardActions: {
+    alignItems: 'flex-end',
+    gap: 4,
   },
   codeInput: {
     fontSize: 22,
@@ -1190,6 +1234,22 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
+  removeGameButton: {
+    alignItems: 'center',
+    backgroundColor: '#8F3B10',
+    borderColor: '#FFD76B',
+    borderRadius: 6,
+    borderWidth: 1,
+    minWidth: 58,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  removeGameText: {
+    color: '#FFF3C2',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   refreshButton: {
     alignItems: 'center',
     backgroundColor: '#FFD329',
@@ -1209,24 +1269,6 @@ const lobbyStyles = StyleSheet.create({
     color: '#210505',
     fontSize: 12,
     fontWeight: '900',
-  },
-  removeGameButton: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: '#8F3B10',
-    borderColor: '#D89746',
-    borderRadius: 6,
-    borderWidth: 2,
-    height: 30,
-    justifyContent: 'center',
-    minWidth: 76,
-    paddingHorizontal: 8,
-  },
-  removeGameText: {
-    color: '#FFF3C2',
-    fontSize: 11,
-    fontWeight: '900',
-    textTransform: 'uppercase',
   },
   row: {
     alignItems: 'center',

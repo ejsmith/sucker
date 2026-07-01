@@ -82,9 +82,9 @@ export type Database = {
         Row: {
           final_score: number | null;
           game_id: string;
+          hidden_at: string | null;
           joined_at: string;
           player_id: string;
-          removed_at: string | null;
           seat_index: number;
           sucker_tokens: number;
           upper_bonus_awarded: boolean;
@@ -92,15 +92,15 @@ export type Database = {
         Insert: {
           final_score?: number | null;
           game_id: string;
+          hidden_at?: string | null;
           player_id: string;
-          removed_at?: string | null;
           seat_index: number;
           sucker_tokens?: number;
           upper_bonus_awarded?: boolean;
         };
         Update: {
           final_score?: number | null;
-          removed_at?: string | null;
+          hidden_at?: string | null;
           sucker_tokens?: number;
           upper_bonus_awarded?: boolean;
         };
