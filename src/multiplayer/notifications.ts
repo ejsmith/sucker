@@ -4,6 +4,12 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
 
+declare const process:
+  | {
+      env: Record<string, string | undefined>;
+    }
+  | undefined;
+
 type WebPushSubscriptionJson = {
   endpoint?: unknown;
   expirationTime?: unknown;
@@ -87,13 +93,17 @@ export function canRegisterWebPush() {
   );
 }
 
+export function hasWebPushVapidPublicKey() {
+  return getWebPushVapidPublicKey().length > 0;
+}
+
 export async function registerWebPushSubscription(profileId: string) {
   if (!canRegisterWebPush()) {
     return null;
   }
 
-  const vapidPublicKey = Constants.expoConfig?.extra?.webPush?.vapidPublicKey;
-  if (!vapidPublicKey || typeof vapidPublicKey !== 'string') {
+  const vapidPublicKey = getWebPushVapidPublicKey();
+  if (!vapidPublicKey) {
     throw new Error('Web push VAPID public key is required to enable browser notifications.');
   }
 
@@ -151,6 +161,17 @@ export async function registerWebPushSubscription(profileId: string) {
 
 function getExpoProjectId() {
   return Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
+}
+
+function getWebPushVapidPublicKey() {
+  const envVapidPublicKey =
+    typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY : undefined;
+  if (envVapidPublicKey) {
+    return envVapidPublicKey.trim();
+  }
+
+  const vapidPublicKey = Constants.expoConfig?.extra?.webPush?.vapidPublicKey;
+  return typeof vapidPublicKey === 'string' ? vapidPublicKey.trim() : '';
 }
 
 function urlBase64ToUint8Array(value: string) {
