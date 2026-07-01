@@ -84,6 +84,7 @@ export type Database = {
           game_id: string;
           joined_at: string;
           player_id: string;
+          removed_at: string | null;
           seat_index: number;
           sucker_tokens: number;
           upper_bonus_awarded: boolean;
@@ -92,12 +93,14 @@ export type Database = {
           final_score?: number | null;
           game_id: string;
           player_id: string;
+          removed_at?: string | null;
           seat_index: number;
           sucker_tokens?: number;
           upper_bonus_awarded?: boolean;
         };
         Update: {
           final_score?: number | null;
+          removed_at?: string | null;
           sucker_tokens?: number;
           upper_bonus_awarded?: boolean;
         };
@@ -182,6 +185,39 @@ export type Database = {
           expo_push_token?: string;
           platform?: 'ios' | 'android';
           updated_at?: string;
+        };
+      };
+      web_push_subscriptions: {
+        Row: {
+          auth_key: string;
+          created_at: string;
+          endpoint: string;
+          expiration_time: string | null;
+          id: string;
+          p256dh_key: string;
+          platform: 'web';
+          profile_id: string;
+          updated_at: string;
+          user_agent: string | null;
+        };
+        Insert: {
+          auth_key: string;
+          endpoint: string;
+          expiration_time?: string | null;
+          id?: string;
+          p256dh_key: string;
+          platform?: 'web';
+          profile_id: string;
+          user_agent?: string | null;
+        };
+        Update: {
+          auth_key?: string;
+          endpoint?: string;
+          expiration_time?: string | null;
+          p256dh_key?: string;
+          platform?: 'web';
+          updated_at?: string;
+          user_agent?: string | null;
         };
       };
       head_to_head_stats: {

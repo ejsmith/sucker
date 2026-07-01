@@ -3,18 +3,23 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   Share,
   StyleSheet,
+  type StyleProp,
   Text,
   TextInput,
   useWindowDimensions,
   View,
+  type ViewStyle,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
-import { createGameAgainst, listMyGames } from './games';
+import { createGameAgainst, listMyGames, removeRemoteGame } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
+import { canRegisterWebPush, registerWebPushSubscription } from './notifications';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
@@ -37,6 +42,7 @@ export function MultiplayerLobby({
   onPlayLocalDemo: () => void;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
   const isAppActive = useAppActivity();
   const { endSession, error, isLoading, profile, saveProfile, sendSignInCode, session, verifySignInCode } =
     useMultiplayerSession();
@@ -53,14 +59,19 @@ export function MultiplayerLobby({
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [webPushEnabled, setWebPushEnabled] = useState(() => Platform.OS === 'web' && canRegisterWebPush());
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
+  const shellSafeAreaStyle: StyleProp<ViewStyle> = {
+    paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
+    paddingTop: Math.max(12, safeAreaInsets.top + 4),
+  };
 
   function renderShell(children: ReactNode) {
     return (
       <View style={lobbyStyles.stageHost}>
-        <View style={[lobbyStyles.shell, shellStyle]} testID="multiplayer-lobby-shell">
+        <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
           {children}
         </View>
       </View>
@@ -130,6 +141,28 @@ export function MultiplayerLobby({
   async function refreshComputerStats() {
     const nextStats = await getComputerStats();
     setComputerStats(nextStats);
+  }
+
+  async function handleEnableWebNotifications() {
+    if (!profile) {
+      return;
+    }
+
+    await runAction(async () => {
+      const result = await registerWebPushSubscription(profile.id);
+      if (result) {
+        setWebPushEnabled(false);
+        setMessage('Browser notifications enabled.');
+      }
+    });
+  }
+
+  async function handleRemoveGame(gameId: string) {
+    await runAction(async () => {
+      await removeRemoteGame(gameId);
+      setGames((currentGames) => currentGames.filter((game) => game.id !== gameId));
+      setMessage('Game removed.');
+    });
   }
 
   async function handleSearchProfiles() {
@@ -544,10 +577,28 @@ export function MultiplayerLobby({
           </View>
         ) : (
           activeGames.map((game) => (
-            <GameListItem game={game} key={game.id} now={now} onOpenGame={onOpenGame} profileId={profileId} />
+            <GameListItem
+              game={game}
+              isBusy={isBusy}
+              key={game.id}
+              now={now}
+              onOpenGame={onOpenGame}
+              onRemoveGame={handleRemoveGame}
+              profileId={profileId}
+            />
           ))
         )}
       </View>
+
+      {webPushEnabled && profile && (
+        <Pressable
+          disabled={isBusy || isLoading}
+          onPress={() => void handleEnableWebNotifications()}
+          style={({ pressed }) => [lobbyStyles.notificationButton, pressed && lobbyStyles.pressed]}
+        >
+          <Text style={lobbyStyles.notificationButtonText}>Enable Turn Notifications</Text>
+        </Pressable>
+      )}
 
       <View style={lobbyStyles.actionGrid}>
         <Pressable
@@ -590,13 +641,17 @@ function ScreenHeader({ onBack, title }: { onBack: () => void; title: string }) 
 
 function GameListItem({
   game,
+  isBusy,
   now,
   onOpenGame,
+  onRemoveGame,
   profileId,
 }: {
   game: RemoteGameRow;
+  isBusy: boolean;
   now: number;
   onOpenGame: (gameId: string) => void;
+  onRemoveGame: (gameId: string) => Promise<void>;
   profileId: string;
 }) {
   const opponent = game.state.players.find((player) => player.id !== profileId);
@@ -613,33 +668,39 @@ function GameListItem({
       : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
 
   return (
-    <Pressable
-      onPress={() => onOpenGame(game.id)}
-      style={({ pressed }) => [
-        lobbyStyles.gameCard,
-        isMyTurn && lobbyStyles.gameCardMyTurn,
-        pressed && lobbyStyles.pressed,
-      ]}
-      testID={`game-card-${game.id}`}
-    >
-      <View style={lobbyStyles.gameCardTop}>
-        <View style={lobbyStyles.avatarLarge}>
-          <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
+    <View style={[lobbyStyles.gameCard, isMyTurn && lobbyStyles.gameCardMyTurn]} testID={`game-card-${game.id}`}>
+      <Pressable
+        onPress={() => onOpenGame(game.id)}
+        style={({ pressed }) => [lobbyStyles.gameCardPressTarget, pressed && lobbyStyles.pressed]}
+        testID={`open-game-${game.id}`}
+      >
+        <View style={lobbyStyles.gameCardTop}>
+          <View style={lobbyStyles.avatarLarge}>
+            <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
+          </View>
+          <View style={lobbyStyles.gameSummary}>
+            <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
+              {opponentName}
+            </Text>
+            <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
+          </View>
+          <View style={lobbyStyles.scorePill}>
+            <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
+            <Text style={lobbyStyles.scoreDivider}>-</Text>
+            <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+          </View>
         </View>
-        <View style={lobbyStyles.gameSummary}>
-          <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
-            {opponentName}
-          </Text>
-          <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
-        </View>
-        <View style={lobbyStyles.scorePill}>
-          <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
-          <Text style={lobbyStyles.scoreDivider}>-</Text>
-          <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
-        </View>
-      </View>
-      <Text style={lobbyStyles.waitText}>{waitText}</Text>
-    </Pressable>
+        <Text style={lobbyStyles.waitText}>{waitText}</Text>
+      </Pressable>
+      <Pressable
+        disabled={isBusy}
+        onPress={() => void onRemoveGame(game.id)}
+        style={({ pressed }) => [lobbyStyles.removeGameButton, pressed && lobbyStyles.pressed]}
+        testID={`remove-game-${game.id}`}
+      >
+        <Text style={lobbyStyles.removeGameText}>Remove</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -924,6 +985,9 @@ const lobbyStyles = StyleSheet.create({
   gameCardMyTurn: {
     borderColor: '#FFD329',
   },
+  gameCardPressTarget: {
+    gap: 6,
+  },
   codeInput: {
     fontSize: 22,
     letterSpacing: 0,
@@ -1045,6 +1109,23 @@ const lobbyStyles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
+  notificationButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    width: '100%',
+  },
+  notificationButtonText: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   panel: {
     backgroundColor: '#210505',
     borderColor: '#FFB000',
@@ -1128,6 +1209,24 @@ const lobbyStyles = StyleSheet.create({
     color: '#210505',
     fontSize: 12,
     fontWeight: '900',
+  },
+  removeGameButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#8F3B10',
+    borderColor: '#D89746',
+    borderRadius: 6,
+    borderWidth: 2,
+    height: 30,
+    justifyContent: 'center',
+    minWidth: 76,
+    paddingHorizontal: 8,
+  },
+  removeGameText: {
+    color: '#FFF3C2',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   row: {
     alignItems: 'center',

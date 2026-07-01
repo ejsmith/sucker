@@ -69,13 +69,13 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.1.4
+          deno-version: 2.9.0
 
       - name: Cache Deno dependencies
         uses: actions/cache@v5
         with:
           path: ~/.cache/deno
-          key: ${{ runner.os }}-deno-v2.1.4-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
+          key: ${{ runner.os }}-deno-2.9.0-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
@@ -113,13 +113,13 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.1.4
+          deno-version: 2.9.0
 
       - name: Cache Deno dependencies
         uses: actions/cache@v5
         with:
           path: ~/.cache/deno
-          key: ${{ runner.os }}-deno-v2.1.4-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
+          key: ${{ runner.os }}-deno-2.9.0-${{ hashFiles('supabase/functions/**/*.ts', 'supabase/tests/**/*.ts') }}
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'

@@ -43,6 +43,10 @@ export type MultiplayerAction =
       inviteCode: string;
     }
   | {
+      type: 'remove_game';
+      gameId: string;
+    }
+  | {
       type: 'extra_roll';
       gameId: string;
       held?: GameState['held'];
@@ -88,6 +92,10 @@ export type MultiplayerActionResult = {
   dice?: Dice;
   inviteCode?: string;
   notificationProfileIds?: string[];
+};
+
+export type RemoveGameActionResult = {
+  removedGameId?: string;
 };
 
 export type ProfileInput = {

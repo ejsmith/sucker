@@ -1,13 +1,30 @@
 import { supabase } from './supabase';
 import type { Database } from './database.types';
-import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
+import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow, RemoveGameActionResult } from './types';
 import { scoreCategories, type GameState, type ScoreCategory, toDice, toGameState, toHeldDice } from '../game';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 
 export async function listMyGames() {
-  const { data, error } = await supabase.from('games').select('*').order('updated_at', { ascending: false });
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) {
+    throw userError;
+  }
+  if (!user) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('games')
+    .select('*, game_players!inner(player_id, removed_at)')
+    .eq('game_players.player_id', user.id)
+    .is('game_players.removed_at', null)
+    .order('updated_at', { ascending: false });
 
   if (error) {
     throw error;
@@ -36,8 +53,10 @@ export async function getTurn(turnId: string) {
   return toRemoteTurnRow(data);
 }
 
-export async function applyMultiplayerAction(action: MultiplayerAction): Promise<MultiplayerActionResult> {
-  const { data, error } = await supabase.functions.invoke<MultiplayerActionResult>('game-action', {
+export async function applyMultiplayerAction<Result extends Record<string, unknown> = MultiplayerActionResult>(
+  action: MultiplayerAction,
+): Promise<Result> {
+  const { data, error } = await supabase.functions.invoke<Result>('game-action', {
     body: action,
   });
 
@@ -108,6 +127,10 @@ export async function createGameAgainst(opponentProfileId: string) {
     opponentProfileId,
     type: 'create_game',
   });
+}
+
+export async function removeRemoteGame(gameId: string) {
+  return applyMultiplayerAction<RemoveGameActionResult>({ gameId, type: 'remove_game' });
 }
 
 export async function rollRemoteGame(gameId: string, held: GameState['held']) {

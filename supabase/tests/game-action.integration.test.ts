@@ -75,6 +75,32 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
 });
 
+Deno.test('game-action removes a game from one participant list', async () => {
+  const [alice, bob] = await createUsers('remove-game', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  const removed = await invokeGameAction(alice, { gameId: game.id, type: 'remove_game' });
+  assertEquals(removed.removedGameId, game.id);
+
+  const hiddenFromAlice = await selectMaybe<{ id: string }>(
+    alice.client.from('games').select('id').eq('id', game.id).maybeSingle(),
+  );
+  assertEquals(hiddenFromAlice, null);
+
+  const visibleToBob = await selectSingle<{ id: string }>(
+    bob.client.from('games').select('id').eq('id', game.id).single(),
+  );
+  assertEquals(visibleToBob.id, game.id);
+
+  const removedPlayer = await selectSingle<{ removed_at: string | null }>(
+    admin.from('game_players').select('removed_at').eq('game_id', game.id).eq('player_id', alice.id).single(),
+  );
+  assertString(removedPlayer.removed_at);
+
+  const missing = await invokeGameAction(alice, { gameId: crypto.randomUUID(), type: 'remove_game' }, 400);
+  assertEquals(missing.error, 'Game not found.');
+});
+
 Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
@@ -199,7 +225,8 @@ Deno.test('game-action lets a punched player replay instead of blocking', async 
   assertEquals(punched.current_player_id, alice.id);
   assertEquals((await loadTurn(firstScore.last_turn_id)).status, 'punched');
 
-  const replayRoll = (await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' })).game as GameRow;
+  const replayRoll = (await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' }))
+    .game as GameRow;
   assertEquals(replayRoll.status, 'active');
   assertEquals(replayRoll.current_player_id, alice.id);
 
@@ -362,27 +389,35 @@ async function upsertProfile(id: string, displayName: string) {
 }
 
 async function invokeWithoutAuth(body: Record<string, unknown>) {
-  const { body: payload, status } = await fetchJsonWithRetry(functionUrl, {
-    body: JSON.stringify(body),
-    headers: {
-      apikey: anonKey,
-      'Content-Type': 'application/json',
+  const { body: payload, status } = await fetchJsonWithRetry(
+    functionUrl,
+    {
+      body: JSON.stringify(body),
+      headers: {
+        apikey: anonKey,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
     },
-    method: 'POST',
-  }, 401);
+    401,
+  );
   return { body: payload, status };
 }
 
 async function invokeGameAction(user: TestUser, body: Record<string, unknown>, expectedStatus = 200) {
-  const { body: payload, status } = await fetchJsonWithRetry(functionUrl, {
-    body: JSON.stringify(body),
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${user.session.access_token}`,
-      'Content-Type': 'application/json',
+  const { body: payload, status } = await fetchJsonWithRetry(
+    functionUrl,
+    {
+      body: JSON.stringify(body),
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${user.session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
     },
-    method: 'POST',
-  }, expectedStatus);
+    expectedStatus,
+  );
   if (status !== expectedStatus) {
     throw new Error(`Expected game-action ${expectedStatus}, received ${status}: ${JSON.stringify(payload)}`);
   }

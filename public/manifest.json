@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Sucker!",
+  "short_name": "Sucker!",
+  "description": "Async multiplayer dice with Sucker Tokens.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#8F0000",
+  "theme_color": "#D90000",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

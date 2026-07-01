@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
 import {
   createEmptyScorecard,
@@ -37,12 +38,17 @@ type ActionResult = {
   game?: GameRow;
   inviteCode?: string;
   notificationProfileIds?: string[];
+  removedGameId?: string;
 };
 type NotificationContent = {
   body: string;
   title: string;
 };
 type PushTokenRow = Pick<Database['public']['Tables']['push_tokens']['Row'], 'expo_push_token' | 'profile_id'>;
+type WebPushSubscriptionRow = Pick<
+  Database['public']['Tables']['web_push_subscriptions']['Row'],
+  'auth_key' | 'endpoint' | 'p256dh_key' | 'profile_id'
+>;
 type EdgeRuntimeGlobal = typeof globalThis & {
   EdgeRuntime?: {
     waitUntil: (promise: Promise<unknown>) => void;
@@ -53,6 +59,7 @@ type Action =
   | { type: 'create_game'; opponentProfileId: string }
   | { type: 'create_invite' }
   | { type: 'accept_invite'; inviteCode: string }
+  | { type: 'remove_game'; gameId: string }
   | { type: 'extra_roll'; gameId: string; held?: GameState['held'] }
   | { type: 'roll'; gameId: string; held?: GameState['held'] }
   | {
@@ -123,6 +130,8 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
       return createInvite(admin, actorId);
     case 'accept_invite':
       return acceptInvite(admin, actorId, action.inviteCode);
+    case 'remove_game':
+      return removeRemoteGame(admin, actorId, action.gameId);
     case 'roll':
       return mutateGame(
         admin,
@@ -180,16 +189,22 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
   }
 
   const uniqueProfileIds = [...new Set(profileIds)];
-  const { data: pushTokens, error } = await admin
-    .from('push_tokens')
-    .select('expo_push_token, profile_id')
-    .in('profile_id', uniqueProfileIds);
+  const [{ data: pushTokens, error: pushTokenError }, { data: webPushSubscriptions, error: webPushError }] =
+    await Promise.all([
+      admin.from('push_tokens').select('expo_push_token, profile_id').in('profile_id', uniqueProfileIds),
+      admin
+        .from('web_push_subscriptions')
+        .select('auth_key, endpoint, p256dh_key, profile_id')
+        .in('profile_id', uniqueProfileIds),
+    ]);
 
-  if (error) {
-    console.error('Unable to load push tokens', error);
-    return;
+  if (pushTokenError) {
+    console.error('Unable to load push tokens', pushTokenError);
   }
-  if (!pushTokens?.length) {
+  if (webPushError) {
+    console.error('Unable to load web push subscriptions', webPushError);
+  }
+  if (!pushTokens?.length && !webPushSubscriptions?.length) {
     return;
   }
 
@@ -199,7 +214,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
         return null;
       })
     : null;
-  const tokens = pushTokens as PushTokenRow[];
+  const tokens = (pushTokens ?? []) as PushTokenRow[];
   const messages = tokens.flatMap((pushToken) => {
     const content = buildNotificationContent(action, game, latestTurn, actorId, pushToken.profile_id);
     if (!content) {
@@ -220,6 +235,52 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
     ];
   });
 
+  if (!messages.length) {
+    await sendWebPushNotifications(
+      admin,
+      webPushSubscriptions as WebPushSubscriptionRow[] | null,
+      action,
+      game,
+      latestTurn,
+      actorId,
+    );
+    return;
+  }
+
+  await Promise.all([
+    sendExpoPushMessages(messages),
+    sendWebPushNotifications(
+      admin,
+      webPushSubscriptions as WebPushSubscriptionRow[] | null,
+      action,
+      game,
+      latestTurn,
+      actorId,
+    ),
+  ]);
+}
+
+async function removeRemoteGame(admin: DbClient, actorId: string, gameId: string): Promise<ActionResult> {
+  const { data, error } = await admin
+    .from('game_players')
+    .update({ removed_at: new Date().toISOString() })
+    .eq('game_id', gameId)
+    .eq('player_id', actorId)
+    .is('removed_at', null)
+    .select('game_id')
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+  if (!data) {
+    throw new Error('Game not found.');
+  }
+
+  return { removedGameId: gameId };
+}
+
+async function sendExpoPushMessages(messages: unknown[]) {
   if (!messages.length) {
     return;
   }
@@ -242,6 +303,82 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       console.error('Expo push send failed', pushError);
     }
   }
+}
+
+async function sendWebPushNotifications(
+  admin: DbClient,
+  subscriptions: WebPushSubscriptionRow[] | null,
+  action: Action,
+  game: GameRow,
+  latestTurn: TurnRow | null,
+  actorId: string,
+) {
+  if (!subscriptions?.length) {
+    return;
+  }
+
+  if (!configureWebPush()) {
+    console.error('Web push subscriptions exist, but VAPID secrets are not configured.');
+    return;
+  }
+
+  await Promise.all(
+    subscriptions.map(async (subscription) => {
+      const content = buildNotificationContent(action, game, latestTurn, actorId, subscription.profile_id);
+      if (!content) {
+        return;
+      }
+
+      try {
+        await webpush.sendNotification(
+          {
+            endpoint: subscription.endpoint,
+            keys: {
+              auth: subscription.auth_key,
+              p256dh: subscription.p256dh_key,
+            },
+          },
+          JSON.stringify({
+            actionType: action.type,
+            body: content.body,
+            gameId: game.id,
+            title: content.title,
+            url: '/',
+          }),
+        );
+      } catch (pushError) {
+        const statusCode = getWebPushStatusCode(pushError);
+        if (statusCode === 404 || statusCode === 410) {
+          await admin.from('web_push_subscriptions').delete().eq('endpoint', subscription.endpoint);
+          return;
+        }
+
+        console.error('Web push send failed', pushError);
+      }
+    }),
+  );
+}
+
+function configureWebPush() {
+  const publicKey = Deno.env.get('WEB_PUSH_VAPID_PUBLIC_KEY');
+  const privateKey = Deno.env.get('WEB_PUSH_VAPID_PRIVATE_KEY');
+  const subject = Deno.env.get('WEB_PUSH_VAPID_SUBJECT') ?? 'mailto:notifications@sucker.games';
+
+  if (!publicKey || !privateKey) {
+    return false;
+  }
+
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+  return true;
+}
+
+function getWebPushStatusCode(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
+  return typeof maybeStatusCode === 'number' ? maybeStatusCode : null;
 }
 
 function buildNotificationContent(
@@ -404,6 +541,11 @@ function toAction(value: unknown): Action {
     case 'accept_invite':
       return {
         inviteCode: readString(action, 'inviteCode'),
+        type,
+      };
+    case 'remove_game':
+      return {
+        gameId: readString(action, 'gameId'),
         type,
       };
     case 'extra_roll':
@@ -1307,8 +1449,7 @@ function isDuplicateTurnIndexError(error: unknown): boolean {
   return (
     postgrestError.code === '23505' &&
     ((typeof postgrestError.details === 'string' && postgrestError.details.includes('(game_id, turn_index)')) ||
-      (typeof postgrestError.message === 'string' &&
-        postgrestError.message.includes('turns_game_id_turn_index_key')))
+      (typeof postgrestError.message === 'string' && postgrestError.message.includes('turns_game_id_turn_index_key')))
   );
 }
 
