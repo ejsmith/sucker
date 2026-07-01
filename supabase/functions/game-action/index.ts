@@ -85,6 +85,9 @@ const corsHeaders = {
 };
 
 Deno.serve(async (request) => {
+  const timer = new ActionTimer();
+  let actionType = 'unknown';
+
   try {
     if (request.method === 'OPTIONS') {
       return new Response('ok', { headers: corsHeaders });
@@ -94,7 +97,8 @@ Deno.serve(async (request) => {
       return json({ error: 'Method not allowed' }, 405);
     }
 
-    const action = toAction(await request.json());
+    const action = await timer.measure('parse', async () => toAction(await request.json()));
+    actionType = action.type;
     const authHeader = request.headers.get('Authorization') ?? '';
     const supabaseUrl = requireEnv('SUPABASE_URL');
     const anonKey = requireEnv('SUPABASE_ANON_KEY');
@@ -106,19 +110,21 @@ Deno.serve(async (request) => {
     const {
       data: { user },
       error: userError,
-    } = await authClient.auth.getUser();
+    } = await timer.measure('auth', () => authClient.auth.getUser());
 
     if (userError || !user) {
-      return json({ error: 'Unauthorized' }, 401);
+      return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
     }
 
-    const result = await applyAction(admin, user.id, action);
+    const result = await timer.measure('action', () => applyAction(admin, user.id, action));
+    timer.logIfSlow(actionType);
     queueActionNotifications(admin, user.id, action, result);
-    return json(result);
+    return json(result, 200, timer.toHeaders());
   } catch (error) {
     console.error('game-action failed', error);
     const message = toErrorMessage(error);
-    return json({ error: message }, 400);
+    timer.logIfSlow(actionType);
+    return json({ error: message }, 400, timer.toHeaders());
   }
 });
 
@@ -846,8 +852,10 @@ async function mutateGame(
     throw error;
   }
 
-  await syncGamePlayers(admin, gameId, nextState, nextState.phase === 'complete');
-  await insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState));
+  await Promise.all([
+    syncGamePlayers(admin, gameId, nextState, nextState.phase === 'complete'),
+    insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState)),
+  ]);
   return { game: data };
 }
 
@@ -950,24 +958,15 @@ async function scoreRemoteTurn(
     throw gameError;
   }
 
-  for (const player of players) {
-    await admin
-      .from('game_players')
-      .update({
-        final_score: complete ? totalScore(player.scorecard) : null,
-        sucker_tokens: player.suckerTokens,
-        upper_bonus_awarded: upperBonus(player.scorecard) > 0,
-      })
-      .eq('game_id', gameId)
-      .eq('player_id', player.id);
-  }
-
-  await insertAction(admin, gameId, actorId, scratch ? 'scratch_category' : 'score_category', {
-    category,
-    scratched: scratch,
-    score: turnScore,
-    turnId: turn.id,
-  });
+  await Promise.all([
+    syncGamePlayers(admin, gameId, nextState, complete),
+    insertAction(admin, gameId, actorId, scratch ? 'scratch_category' : 'score_category', {
+      category,
+      scratched: scratch,
+      score: turnScore,
+      turnId: turn.id,
+    }),
+  ]);
 
   if (complete) {
     await writeCompletedGameStats(admin, gameId, players, winner?.id ?? null);
@@ -1050,16 +1049,18 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
     throw error;
   }
 
-  await admin.from('turns').update({ status: 'mulliganed' }).eq('id', turn.id);
-  await admin.from('token_events').insert({
-    event_type: 'mulligan',
-    game_id: gameId,
-    player_id: actorId,
-    target_turn_id: turn.id,
-    token_delta: -suckerTokenCosts.mulligan,
-  });
-  await syncGamePlayers(admin, gameId, nextState, false);
-  await insertAction(admin, gameId, actorId, 'mulligan', { turnId: turn.id });
+  await Promise.all([
+    updateTurnStatus(admin, turn.id, 'mulliganed'),
+    insertTokenEvent(admin, {
+      event_type: 'mulligan',
+      game_id: gameId,
+      player_id: actorId,
+      target_turn_id: turn.id,
+      token_delta: -suckerTokenCosts.mulligan,
+    }),
+    syncGamePlayers(admin, gameId, nextState, false),
+    insertAction(admin, gameId, actorId, 'mulligan', { turnId: turn.id }),
+  ]);
 
   return { game: updatedGame };
 }
@@ -1099,19 +1100,21 @@ async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string,
     throw error;
   }
 
-  await admin.from('turns').update({ status: 'punched' }).eq('id', turn.id);
-  await admin.from('token_events').insert({
-    event_type: 'sucker_punch',
-    game_id: gameId,
-    player_id: actorId,
-    target_turn_id: turn.id,
-    token_delta: -suckerTokenCosts.suckerPunch,
-  });
-  await syncGamePlayers(admin, gameId, nextState, false);
-  await insertAction(admin, gameId, actorId, 'sucker_punch', {
-    turnId: turn.id,
-    ...buildSuckerPunchActionPayload(turn.player_id),
-  });
+  await Promise.all([
+    updateTurnStatus(admin, turn.id, 'punched'),
+    insertTokenEvent(admin, {
+      event_type: 'sucker_punch',
+      game_id: gameId,
+      player_id: actorId,
+      target_turn_id: turn.id,
+      token_delta: -suckerTokenCosts.suckerPunch,
+    }),
+    syncGamePlayers(admin, gameId, nextState, false),
+    insertAction(admin, gameId, actorId, 'sucker_punch', {
+      turnId: turn.id,
+      ...buildSuckerPunchActionPayload(turn.player_id),
+    }),
+  ]);
 
   return { game: updatedGame, notificationProfileIds: [turn.player_id] };
 }
@@ -1163,30 +1166,35 @@ async function blockSuckerPunch(admin: DbClient, actorId: string, gameId: string
     throw error;
   }
 
-  await admin.from('turns').update({ status: 'blocked' }).eq('id', turn.id);
-  await admin.from('token_events').insert({
-    event_type: 'sucker_blocker',
-    game_id: gameId,
-    player_id: actorId,
-    target_turn_id: turn.id,
-    token_delta: -suckerTokenCosts.suckerBlocker,
-  });
-  await syncGamePlayers(admin, gameId, nextState, false);
-  await insertAction(admin, gameId, actorId, 'sucker_blocker', {
-    turnId: turn.id,
-  });
+  await Promise.all([
+    updateTurnStatus(admin, turn.id, 'blocked'),
+    insertTokenEvent(admin, {
+      event_type: 'sucker_blocker',
+      game_id: gameId,
+      player_id: actorId,
+      target_turn_id: turn.id,
+      token_delta: -suckerTokenCosts.suckerBlocker,
+    }),
+    syncGamePlayers(admin, gameId, nextState, false),
+    insertAction(admin, gameId, actorId, 'sucker_blocker', {
+      turnId: turn.id,
+    }),
+  ]);
 
   return { game: updatedGame, notificationProfileIds: [nextPlayer.id] };
 }
 
 async function loadGameForActor(admin: DbClient, gameId: string, actorId: string): Promise<GameRow> {
-  const { data: participant, error: participantError } = await admin
-    .from('game_players')
-    .select('game_id')
-    .eq('game_id', gameId)
-    .eq('player_id', actorId)
-    .is('hidden_at', null)
-    .maybeSingle();
+  const [{ data: participant, error: participantError }, { data: game, error }] = await Promise.all([
+    admin
+      .from('game_players')
+      .select('game_id')
+      .eq('game_id', gameId)
+      .eq('player_id', actorId)
+      .is('hidden_at', null)
+      .maybeSingle(),
+    admin.from('games').select('*').eq('id', gameId).single(),
+  ]);
 
   if (participantError) {
     throw participantError;
@@ -1195,7 +1203,6 @@ async function loadGameForActor(admin: DbClient, gameId: string, actorId: string
     throw new Error('You are not a player in this game.');
   }
 
-  const { data: game, error } = await admin.from('games').select('*').eq('id', gameId).single();
   if (error) {
     throw error;
   }
@@ -1213,19 +1220,21 @@ async function loadTurn(admin: DbClient, turnId: string): Promise<TurnRow> {
 }
 
 async function loadNextTurnIndex(admin: DbClient, gameId: string, lastTurnId: string | null) {
-  const { data: latestTurn, error } = await admin
-    .from('turns')
-    .select('turn_index')
-    .eq('game_id', gameId)
-    .order('turn_index', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [{ data: latestTurn, error }, lastTurn] = await Promise.all([
+    admin
+      .from('turns')
+      .select('turn_index')
+      .eq('game_id', gameId)
+      .order('turn_index', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    lastTurnId ? loadTurn(admin, lastTurnId) : Promise.resolve(null),
+  ]);
 
   if (error) {
     throw error;
   }
 
-  const lastTurn = lastTurnId ? await loadTurn(admin, lastTurnId) : null;
   return Math.max(latestTurn?.turn_index ?? 0, lastTurn?.turn_index ?? 0) + 1;
 }
 
@@ -1265,16 +1274,23 @@ async function loadDuplicateScoreTurn(
 }
 
 async function syncGamePlayers(admin: DbClient, gameId: string, state: GameState, complete: boolean) {
-  for (const player of state.players) {
-    await admin
-      .from('game_players')
-      .update({
-        final_score: complete ? totalScore(player.scorecard) : null,
-        sucker_tokens: player.suckerTokens,
-        upper_bonus_awarded: upperBonus(player.scorecard) > 0,
-      })
-      .eq('game_id', gameId)
-      .eq('player_id', player.id);
+  const results = await Promise.all(
+    state.players.map((player) =>
+      admin
+        .from('game_players')
+        .update({
+          final_score: complete ? totalScore(player.scorecard) : null,
+          sucker_tokens: player.suckerTokens,
+          upper_bonus_awarded: upperBonus(player.scorecard) > 0,
+        })
+        .eq('game_id', gameId)
+        .eq('player_id', player.id),
+    ),
+  );
+
+  const error = results.find((result) => result.error)?.error;
+  if (error) {
+    throw error;
   }
 }
 
@@ -1627,12 +1643,30 @@ async function insertAction(
   actionType: ActionType,
   payload: Record<string, unknown>,
 ) {
-  await admin.from('turn_actions').insert({
+  const { error } = await admin.from('turn_actions').insert({
     action_type: actionType,
     actor_id: actorId,
     game_id: gameId,
     payload,
   });
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function updateTurnStatus(admin: DbClient, turnId: string, status: TurnRow['status']) {
+  const { error } = await admin.from('turns').update({ status }).eq('id', turnId);
+  if (error) {
+    throw error;
+  }
+}
+
+async function insertTokenEvent(admin: DbClient, event: Database['public']['Tables']['token_events']['Insert']) {
+  const { error } = await admin.from('token_events').insert(event);
+  if (error) {
+    throw error;
+  }
 }
 
 function requireEnv(name: string): string {
@@ -1665,9 +1699,59 @@ function toErrorMessage(error: unknown): string {
   return 'Unexpected multiplayer error';
 }
 
-function json(body: unknown, status = 200) {
+class ActionTimer {
+  private readonly marks: Array<{ durationMs: number; name: string }> = [];
+  private readonly startedAt = performance.now();
+
+  async measure<T>(name: string, task: () => Promise<T>): Promise<T> {
+    const startedAt = performance.now();
+    try {
+      return await task();
+    } finally {
+      this.marks.push({
+        durationMs: performance.now() - startedAt,
+        name,
+      });
+    }
+  }
+
+  toHeaders() {
+    const totalMs = performance.now() - this.startedAt;
+    const timings = [
+      `total;dur=${formatDuration(totalMs)}`,
+      ...this.marks.map((mark) => `${mark.name};dur=${formatDuration(mark.durationMs)}`),
+    ];
+
+    return {
+      'Server-Timing': timings.join(', '),
+      'X-Sucker-Action-Duration-Ms': formatDuration(totalMs),
+    };
+  }
+
+  logIfSlow(actionType: string) {
+    const totalMs = performance.now() - this.startedAt;
+    if (totalMs < 750) {
+      return;
+    }
+
+    console.info('slow game-action', {
+      actionType,
+      marks: this.marks.map((mark) => ({
+        durationMs: formatDuration(mark.durationMs),
+        name: mark.name,
+      })),
+      totalMs: formatDuration(totalMs),
+    });
+  }
+}
+
+function formatDuration(durationMs: number) {
+  return (Math.round(durationMs * 10) / 10).toFixed(1);
+}
+
+function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, ...extraHeaders, 'Content-Type': 'application/json' },
     status,
   });
 }
