@@ -233,6 +233,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
         data: {
           actionType: action.type,
           gameId: game.id,
+          url: getGameNotificationUrl(game.id),
         },
         sound: 'default',
         title: content.title,
@@ -329,7 +330,7 @@ async function sendWebPushNotifications(
             body: content.body,
             gameId: game.id,
             title: content.title,
-            url: '/',
+            url: getGameNotificationUrl(game.id),
           }),
         );
       } catch (pushError) {
@@ -365,6 +366,10 @@ function getWebPushStatusCode(error: unknown) {
 
   const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
   return typeof maybeStatusCode === 'number' ? maybeStatusCode : null;
+}
+
+function getGameNotificationUrl(gameId: string) {
+  return `/?game=${encodeURIComponent(gameId)}`;
 }
 
 function buildNotificationContent(

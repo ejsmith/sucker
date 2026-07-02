@@ -81,7 +81,7 @@ test('two players can create an invite and play turns through the web UI', async
 
   await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
 
-  await openGameFromLobby(bobPage, gameId);
+  await openGameFromNotification(bobPage, gameId);
   await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png', {
     mask: [
       bobPage.getByTestId('dice-tray'),
@@ -257,6 +257,21 @@ async function openGameFromLobby(page: Page, gameId: string) {
   await expect(page.getByTestId(`game-card-${gameId}`)).toBeVisible();
   await dismissTurnNotificationPrompt(page);
   await page.getByTestId(`game-card-${gameId}`).click();
+}
+
+async function openGameFromNotification(page: Page, gameId: string) {
+  await page.evaluate((targetGameId) => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          gameId: targetGameId,
+          type: 'sucker.notification-click',
+          url: `/?game=${encodeURIComponent(targetGameId)}`,
+        },
+      }),
+    );
+  }, gameId);
+  await expect(page.getByTestId('game-screen')).toBeVisible();
 }
 
 async function dismissTurnNotificationPrompt(page: Page) {

@@ -113,6 +113,7 @@ export function MultiplayerLobby({
       return;
     }
 
+    void refreshGames({ surfaceError: false });
     const unsubscribe = subscribeToGameListChanges(() => void refreshGames({ surfaceError: false }));
     const timer = setInterval(() => void refreshGames({ surfaceError: false }), 15_000);
     return () => {

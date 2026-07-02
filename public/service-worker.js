@@ -9,16 +9,19 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  const gameId = typeof data.gameId === 'string' && data.gameId.length > 0 ? data.gameId : null;
+  const targetUrl = typeof data.url === 'string' ? data.url : gameId ? `/?game=${encodeURIComponent(gameId)}` : '/';
   const title = typeof data.title === 'string' ? data.title : 'Sucker!';
   const options = {
     badge: '/favicon.png',
     body: typeof data.body === 'string' ? data.body : 'A game needs your attention.',
     data: {
-      gameId: data.gameId,
-      url: typeof data.url === 'string' ? data.url : '/',
+      actionType: data.actionType,
+      gameId,
+      url: targetUrl,
     },
     icon: '/icon.png',
-    tag: typeof data.gameId === 'string' ? `sucker-game-${data.gameId}` : 'sucker-turn',
+    tag: gameId ? `sucker-game-${gameId}` : 'sucker-turn',
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
@@ -27,17 +30,28 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const targetUrl = new URL(event.notification.data?.url ?? '/', self.location.origin).href;
+  const notificationData = event.notification.data ?? {};
+  const targetUrl = new URL(
+    notificationData.url ??
+      (typeof notificationData.gameId === 'string' ? `/?game=${encodeURIComponent(notificationData.gameId)}` : '/'),
+    self.location.origin,
+  ).href;
+  const clickMessage = {
+    actionType: notificationData.actionType,
+    gameId: notificationData.gameId,
+    type: 'sucker.notification-click',
+    url: targetUrl,
+  };
 
   event.waitUntil(
-    self.clients.matchAll({ includeUncontrolled: true, type: 'window' }).then((clients) => {
+    self.clients.matchAll({ includeUncontrolled: true, type: 'window' }).then(async (clients) => {
       for (const client of clients) {
         if ('focus' in client) {
-          client.focus();
-          if ('navigate' in client) {
-            return client.navigate(targetUrl);
+          const focusedClient = await client.focus();
+          if ('postMessage' in focusedClient) {
+            focusedClient.postMessage(clickMessage);
           }
-          return undefined;
+          return focusedClient;
         }
       }
 
