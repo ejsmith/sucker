@@ -7,6 +7,27 @@ const expoEnvFilePath = path.resolve(__dirname, '..', '.env.local');
 const supabaseCliPath = path.resolve(__dirname, '..', 'node_modules', 'supabase', 'dist', 'supabase.js');
 const supabaseConfigPath = path.resolve(__dirname, '..', 'supabase', 'config.toml');
 const ciDisabledSupabaseConfigSections = new Set(['inbucket', 'realtime', 'storage', 'studio']);
+const ciSupabasePortSections = new Map([
+  ['api', new Map([['port', 0]])],
+  [
+    'db',
+    new Map([
+      ['port', 1],
+      ['shadow_port', 2],
+    ]),
+  ],
+  ['db.pooler', new Map([['port', 7]])],
+  ['studio', new Map([['port', 3]])],
+  [
+    'inbucket',
+    new Map([
+      ['port', 4],
+      ['smtp_port', 5],
+      ['pop3_port', 6],
+    ]),
+  ],
+  ['edge_runtime', new Map([['inspector_port', 8]])],
+]);
 const minimalSupabaseStartExclude = [
   'studio',
   'storage-api',
@@ -19,6 +40,8 @@ const minimalSupabaseStartExclude = [
   'edge-runtime',
   'supavisor',
 ];
+let originalCiSupabaseConfig = null;
+let didRegisterCiConfigRestore = false;
 
 function parseEnv(output) {
   const values = {};
@@ -98,26 +121,116 @@ function disableSupabaseConfigSections(config) {
     .join('\n');
 }
 
-function withCiMinimalSupabaseConfig(callback) {
-  if (process.env.CI !== 'true') {
-    callback();
+function hashString(value) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
+}
+
+function getCiSupabasePortBase() {
+  const explicitBase = Number(process.env.SUCKER_SUPABASE_PORT_BASE);
+  if (Number.isInteger(explicitBase) && explicitBase >= 10_000 && explicitBase <= 65_000) {
+    return explicitBase;
+  }
+
+  const portSeed = [process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.env.GITHUB_JOB, process.pid]
+    .filter(Boolean)
+    .join(':');
+
+  return 54_000 + (hashString(portSeed) % 1_000) * 10;
+}
+
+function assignCiSupabasePorts(config) {
+  const portBase = getCiSupabasePortBase();
+  let section = '';
+
+  return config
+    .split(/\r?\n/)
+    .map((line) => {
+      const sectionMatch = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+      if (sectionMatch) {
+        section = sectionMatch[1];
+        return line;
+      }
+
+      const sectionPorts = ciSupabasePortSections.get(section);
+      if (!sectionPorts) {
+        return line;
+      }
+
+      const portMatch = /^(\s*)([a-z_]+)(\s*=\s*)\d+(\s*)$/.exec(line);
+      if (!portMatch) {
+        return line;
+      }
+
+      const portOffset = sectionPorts.get(portMatch[2]);
+      return portOffset === undefined
+        ? line
+        : `${portMatch[1]}${portMatch[2]}${portMatch[3]}${portBase + portOffset}${portMatch[4]}`;
+    })
+    .join('\n');
+}
+
+function prepareCiSupabaseConfig(config) {
+  return assignCiSupabasePorts(disableSupabaseConfigSections(config));
+}
+
+function restoreCiSupabaseConfig() {
+  if (originalCiSupabaseConfig === null) {
     return;
   }
 
-  const originalConfig = fs.readFileSync(supabaseConfigPath, 'utf8');
-  fs.writeFileSync(supabaseConfigPath, `${disableSupabaseConfigSections(originalConfig)}\n`, 'utf8');
+  fs.writeFileSync(supabaseConfigPath, originalCiSupabaseConfig, 'utf8');
+  originalCiSupabaseConfig = null;
+}
+
+function registerCiConfigRestore() {
+  if (didRegisterCiConfigRestore) {
+    return;
+  }
+
+  didRegisterCiConfigRestore = true;
+  process.once('exit', restoreCiSupabaseConfig);
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      restoreCiSupabaseConfig();
+      process.exit(signal === 'SIGINT' ? 130 : 143);
+    });
+  }
+}
+
+function useCiMinimalSupabaseConfig() {
+  if (process.env.CI !== 'true') {
+    return;
+  }
+
+  if (originalCiSupabaseConfig === null) {
+    originalCiSupabaseConfig = fs.readFileSync(supabaseConfigPath, 'utf8');
+    fs.writeFileSync(supabaseConfigPath, `${prepareCiSupabaseConfig(originalCiSupabaseConfig)}\n`, 'utf8');
+    registerCiConfigRestore();
+  }
+}
+
+function stopSupabaseIfCi() {
+  if (process.env.CI !== 'true') {
+    return;
+  }
 
   try {
-    callback();
-  } finally {
-    fs.writeFileSync(supabaseConfigPath, originalConfig, 'utf8');
+    runSupabase(['stop', '--no-backup']);
+  } catch {
+    console.warn('Unable to stop an existing Supabase stack before CI startup; continuing.');
   }
 }
 
 function startMinimalSupabase() {
-  withCiMinimalSupabaseConfig(() => {
-    runSupabase(['start', '--exclude', minimalSupabaseStartExclude.join(',')]);
-  });
+  stopSupabaseIfCi();
+  useCiMinimalSupabaseConfig();
+  runSupabase(['start', '--exclude', minimalSupabaseStartExclude.join(',')]);
 }
 
 function shouldResetSupabaseDatabase() {

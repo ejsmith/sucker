@@ -36,6 +36,7 @@ test-results/
 
 # Supabase local link metadata
 supabase/.temp/
+supabase/.branches/
 
 # typescript
 *.tsbuildinfo
