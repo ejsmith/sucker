@@ -49,6 +49,7 @@ import {
   createGameAgainst,
   getGame,
   getTurn,
+  listMyGames,
   rollRemoteGame,
   scoreRemoteCategory,
   scratchRemoteCategory,
@@ -58,6 +59,7 @@ import {
 } from './src/multiplayer/games';
 import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
 import { getInitialNotificationGameId, useWebNotificationClicks } from './src/multiplayer/notificationNavigation';
+import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
 import { supabase } from './src/multiplayer/supabase';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
@@ -440,12 +442,24 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     try {
       const result = await action();
       setRemoteGame(result.game);
+      if (profileId) {
+        void syncRemoteBadgeCount(profileId);
+      }
       return result.game.state;
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Unable to update game.');
       return null;
     } finally {
       setIsRemoteBusy(false);
+    }
+  }
+
+  async function syncRemoteBadgeCount(profileId: string) {
+    try {
+      const games = await listMyGames();
+      await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId));
+    } catch (badgeError) {
+      console.warn('Unable to refresh app badge count', badgeError);
     }
   }
 
