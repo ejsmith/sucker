@@ -1757,7 +1757,6 @@ function LocalGameScreen({
   }
 
   function handleGameOverStats() {
-    setDismissedGameOverId(game.id);
     setShowStatsPage(true);
     void refreshVisibleStats();
   }
