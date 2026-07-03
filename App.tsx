@@ -1032,6 +1032,20 @@ function LocalGameScreen({
     }
   }
 
+  async function refreshVisibleStats() {
+    if (!isRemoteGame) {
+      await refreshComputerStats();
+      return;
+    }
+
+    try {
+      setHeadToHeadStats(await getHeadToHeadStats(opponentPlayer.id));
+    } catch (statsError) {
+      console.warn('Unable to load head-to-head stats', statsError);
+      setHeadToHeadStats(null);
+    }
+  }
+
   function recordLocalAction(action_type: SuckerStatAction['action_type'], actor_id: string, payload?: unknown) {
     localSuckerStatActions.current.push({ action_type, actor_id, payload });
   }
@@ -1742,8 +1756,10 @@ function LocalGameScreen({
     onExit?.();
   }
 
-  function handleDismissGameOver() {
+  function handleGameOverStats() {
     setDismissedGameOverId(game.id);
+    setShowStatsPage(true);
+    void refreshVisibleStats();
   }
 
   function commitLocalScore(category: ScoreCategory, sourceGame = liveGameRef.current) {
@@ -1952,7 +1968,7 @@ function LocalGameScreen({
                 onPress={() => {
                   setIsMenuOpen(false);
                   setShowStatsPage(true);
-                  void refreshComputerStats();
+                  void refreshVisibleStats();
                 }}
                 style={({ pressed }) => [styles.topMenuItem, pressed && styles.pressed]}
               >
@@ -2563,9 +2579,10 @@ function LocalGameScreen({
           <View style={styles.gameOverOverlay} testID="game-over-overlay">
             <View style={styles.gameOverPanel} testID="game-over-panel">
               <Pressable
-                accessibilityLabel="Close game over"
+                accessibilityLabel="Close game and return to games list"
                 onPress={handleCloseGameOver}
                 style={({ pressed }) => [styles.gameOverCloseButton, pressed && styles.pressed]}
+                testID="game-over-close-button"
               >
                 <Text style={styles.gameOverCloseText}>×</Text>
               </Pressable>
@@ -2585,17 +2602,20 @@ function LocalGameScreen({
                 <Pressable
                   onPress={() => void handleRematch()}
                   style={({ pressed }) => [styles.gameOverPrimaryButton, pressed && styles.pressed]}
+                  testID="game-over-rematch-button"
                 >
                   <View style={styles.buttonGloss} />
                   <View style={styles.buttonInnerShade} />
                   <Text style={styles.gameOverPrimaryText}>Rematch</Text>
                 </Pressable>
                 <Pressable
-                  onPress={handleDismissGameOver}
+                  accessibilityLabel="View game stats"
+                  onPress={handleGameOverStats}
                   style={({ pressed }) => [styles.gameOverSecondaryButton, pressed && styles.pressed]}
+                  testID="game-over-stats-button"
                 >
                   <View style={styles.buttonInnerShade} />
-                  <Text style={styles.gameOverSecondaryText}>Not now</Text>
+                  <Text style={styles.gameOverSecondaryText}>Stats</Text>
                 </Pressable>
               </View>
             </View>
