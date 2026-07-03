@@ -2895,6 +2895,7 @@ function ScoreCell({
           <Text
             adjustsFontSizeToFit
             allowFontScaling={false}
+            minimumFontScale={0.7}
             numberOfLines={1}
             style={[
               styles.scoreBoxText,
@@ -2917,6 +2918,7 @@ function ScoreCell({
         <Text
           adjustsFontSizeToFit
           allowFontScaling={false}
+          minimumFontScale={0.7}
           numberOfLines={1}
           style={[
             styles.opponentScoreText,
@@ -3599,6 +3601,7 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     lineHeight: 34,
     textAlign: 'center',
+    width: '100%',
   },
   compactScoreBoxText: {
     fontSize: 28,
