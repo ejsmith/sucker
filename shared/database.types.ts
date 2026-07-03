@@ -55,6 +55,7 @@ export type Database = {
           current_player_id: string | null;
           id: string;
           last_turn_id: string | null;
+          rematch_of_game_id: string | null;
           state: Json;
           status: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
           updated_at: string;
@@ -64,6 +65,7 @@ export type Database = {
           created_by: string;
           current_player_id?: string | null;
           id?: string;
+          rematch_of_game_id?: string | null;
           state: Json;
           status?: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
           winner_id?: string | null;
@@ -72,6 +74,7 @@ export type Database = {
           completed_at?: string | null;
           current_player_id?: string | null;
           last_turn_id?: string | null;
+          rematch_of_game_id?: string | null;
           state?: Json;
           status?: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
           updated_at?: string;

@@ -47,6 +47,10 @@ export type MultiplayerAction =
       gameId: string;
     }
   | {
+      type: 'rematch_game';
+      gameId: string;
+    }
+  | {
       type: 'extra_roll';
       gameId: string;
       held?: GameState['held'];

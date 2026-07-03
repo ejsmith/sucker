@@ -318,6 +318,69 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   );
 });
 
+Deno.test('game-action creates one rematch and alternates the first player', async () => {
+  const [alice, bob] = await createUsers('rematch', ['Alice', 'Bob']);
+  const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+  const originalGameId = (created.game as GameRow).id;
+  let completedGame = created.game as GameRow;
+
+  for (const category of scoreCategories) {
+    completedGame = await scratchAndPass(originalGameId, alice, bob, category);
+    completedGame = await scratchAndPass(originalGameId, bob, alice, category);
+  }
+
+  assertEquals(completedGame.status, 'complete');
+
+  const [aliceRematchResult, bobRematchResult] = await Promise.all([
+    invokeGameAction(alice, { gameId: originalGameId, type: 'rematch_game' }),
+    invokeGameAction(bob, { gameId: originalGameId, type: 'rematch_game' }),
+  ]);
+  const aliceRematch = aliceRematchResult.game as GameRow;
+  const bobRematch = bobRematchResult.game as GameRow;
+
+  assertEquals(aliceRematch.id, bobRematch.id);
+  assertEquals(aliceRematch.rematch_of_game_id, originalGameId);
+  assertEquals(aliceRematch.current_player_id, bob.id);
+  assertEquals(
+    aliceRematch.state.players.map((player) => player.id),
+    [bob.id, alice.id],
+  );
+
+  const rematchGames = await selectMany<GameRow>(
+    admin.from('games').select('*').eq('rematch_of_game_id', originalGameId),
+  );
+  assertEquals(rematchGames.length, 1);
+
+  const rematchPlayers = await selectMany<{ player_id: string; seat_index: number }>(
+    admin.from('game_players').select('player_id, seat_index').eq('game_id', aliceRematch.id).order('seat_index'),
+  );
+  assertEquals(
+    rematchPlayers.map((player) => player.player_id),
+    [bob.id, alice.id],
+  );
+
+  const rematchActions = await loadActions(aliceRematch.id);
+  assertEquals(
+    rematchActions.map((action) => action.action_type),
+    ['rematch_game'],
+  );
+
+  let completedRematch = aliceRematch;
+  for (const category of scoreCategories) {
+    completedRematch = await scratchAndPass(aliceRematch.id, bob, alice, category);
+    completedRematch = await scratchAndPass(aliceRematch.id, alice, bob, category);
+  }
+  assertEquals(completedRematch.status, 'complete');
+
+  const secondRematch = (await invokeGameAction(bob, { gameId: aliceRematch.id, type: 'rematch_game' }))
+    .game as GameRow;
+  assertEquals(secondRematch.current_player_id, alice.id);
+  assertEquals(
+    secondRematch.state.players.map((player) => player.id),
+    [alice.id, bob.id],
+  );
+});
+
 Deno.test({
   name: 'cleanup Supabase clients',
   sanitizeOps: false,

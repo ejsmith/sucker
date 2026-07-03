@@ -62,6 +62,7 @@ type Action =
   | { type: 'create_invite' }
   | { type: 'accept_invite'; inviteCode: string }
   | { type: 'remove_game'; gameId: string }
+  | { type: 'rematch_game'; gameId: string }
   | { type: 'extra_roll'; gameId: string; held?: GameState['held'] }
   | { type: 'roll'; gameId: string; held?: GameState['held'] }
   | {
@@ -140,6 +141,8 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
       return acceptInvite(admin, actorId, action.inviteCode);
     case 'remove_game':
       return removeGameFromList(admin, actorId, action.gameId);
+    case 'rematch_game':
+      return createRematchGame(admin, actorId, action.gameId);
     case 'roll':
       return mutateGame(
         admin,
@@ -449,6 +452,7 @@ function buildNotificationContent(
 
   switch (action.type) {
     case 'create_game':
+    case 'rematch_game':
       return {
         body: `${actorName} started a game with you.`,
         title: 'New Sucker! game',
@@ -596,6 +600,7 @@ function toAction(value: unknown): Action {
         type,
       };
     case 'remove_game':
+    case 'rematch_game':
       return {
         gameId: readString(action, 'gameId'),
         type,
@@ -722,6 +727,105 @@ async function createRemoteGame(admin: DbClient, actorId: string, opponentId: st
     opponentProfileId: opponentId,
   });
   return { game, notificationProfileIds: [opponentId] };
+}
+
+async function createRematchGame(admin: DbClient, actorId: string, originalGameId: string) {
+  const originalGame = await loadGameForActor(admin, originalGameId, actorId);
+  if (originalGame.status !== 'complete') {
+    throw new Error('Rematches are only available after the game is complete.');
+  }
+
+  const existingRematch = await loadExistingRematch(admin, originalGameId);
+  if (existingRematch) {
+    return { game: existingRematch };
+  }
+
+  const { data: gamePlayers, error: playersError } = await admin
+    .from('game_players')
+    .select('player_id, seat_index')
+    .eq('game_id', originalGameId)
+    .order('seat_index');
+
+  if (playersError) {
+    throw playersError;
+  }
+  if (!gamePlayers || gamePlayers.length !== 2) {
+    throw new Error('Both players need profiles before starting a rematch.');
+  }
+
+  const firstPlayer = gamePlayers.find((player) => player.seat_index === 1);
+  const secondPlayer = gamePlayers.find((player) => player.seat_index === 0);
+  if (!firstPlayer || !secondPlayer) {
+    throw new Error('Unable to determine rematch player order.');
+  }
+
+  const rematchPlayerIds = [firstPlayer.player_id, secondPlayer.player_id];
+  const { data: profiles, error: profileError } = await admin
+    .from('profiles')
+    .select('id, display_name')
+    .in('id', rematchPlayerIds);
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  const orderedProfiles = rematchPlayerIds.map((playerId) => {
+    const profile = profiles?.find((candidate) => candidate.id === playerId);
+    if (!profile) {
+      throw new Error('Both players need profiles before starting a rematch.');
+    }
+
+    return {
+      id: profile.id,
+      name: profile.display_name,
+    };
+  });
+  const gameId = crypto.randomUUID();
+  const state = createGameState(gameId, orderedProfiles);
+
+  const { data: game, error: gameError } = await admin
+    .from('games')
+    .insert({
+      created_by: actorId,
+      current_player_id: orderedProfiles[0].id,
+      id: gameId,
+      rematch_of_game_id: originalGameId,
+      state,
+      status: 'active',
+    })
+    .select()
+    .single();
+
+  if (isDuplicateRematchError(gameError)) {
+    const rematch = await loadExistingRematch(admin, originalGameId);
+    if (rematch) {
+      return { game: rematch };
+    }
+  }
+  if (gameError) {
+    throw gameError;
+  }
+  if (!game) {
+    throw new Error('Unable to start rematch.');
+  }
+
+  const { error: insertPlayersError } = await admin.from('game_players').insert(
+    orderedProfiles.map((profile, index) => ({
+      game_id: gameId,
+      player_id: profile.id,
+      seat_index: index,
+      sucker_tokens: startingSuckerTokens,
+    })),
+  );
+
+  if (insertPlayersError) {
+    throw insertPlayersError;
+  }
+
+  await insertAction(admin, gameId, actorId, 'rematch_game', {
+    originalGameId,
+  });
+  return { game, notificationProfileIds: orderedProfiles.map((profile) => profile.id) };
 }
 
 async function createInvite(admin: DbClient, actorId: string) {
@@ -1276,6 +1380,20 @@ async function loadGameForActor(admin: DbClient, gameId: string, actorId: string
   return { ...game, state: toGameState(game.state) };
 }
 
+async function loadExistingRematch(admin: DbClient, originalGameId: string): Promise<GameRow | null> {
+  const { data: game, error } = await admin
+    .from('games')
+    .select('*')
+    .eq('rematch_of_game_id', originalGameId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return game ? { ...game, state: toGameState(game.state) } : null;
+}
+
 async function loadTurn(admin: DbClient, turnId: string): Promise<TurnRow> {
   const { data: turn, error } = await admin.from('turns').select('*').eq('id', turnId).single();
   if (error) {
@@ -1542,6 +1660,19 @@ function isDuplicateTurnIndexError(error: unknown): boolean {
     postgrestError.code === '23505' &&
     ((typeof postgrestError.details === 'string' && postgrestError.details.includes('(game_id, turn_index)')) ||
       (typeof postgrestError.message === 'string' && postgrestError.message.includes('turns_game_id_turn_index_key')))
+  );
+}
+
+function isDuplicateRematchError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const postgrestError = error as { code?: unknown; details?: unknown; message?: unknown };
+  return (
+    postgrestError.code === '23505' &&
+    ((typeof postgrestError.details === 'string' && postgrestError.details.includes('(rematch_of_game_id)')) ||
+      (typeof postgrestError.message === 'string' && postgrestError.message.includes('games_rematch_of_game_id_key')))
   );
 }
 

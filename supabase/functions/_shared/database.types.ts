@@ -21,6 +21,7 @@ type ActionType =
   | 'create_game'
   | 'create_invite'
   | 'accept_invite'
+  | 'rematch_game'
   | 'extra_roll'
   | 'roll'
   | 'score_category'

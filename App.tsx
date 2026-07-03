@@ -46,7 +46,7 @@ import { isMultiplayerConfigured } from './src/multiplayer';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import {
   buyRemoteExtraRoll,
-  createGameAgainst,
+  createRematch,
   getGame,
   getTurn,
   listMyGames,
@@ -481,14 +481,8 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   const handlers: RemoteActionHandlers = {
     onExtraRoll: (held) => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id, held)),
     onRematch: async () => {
-      const opponent = remoteGame.state.players.find((player) => player.id !== profileId);
-      if (!opponent) {
-        setError('Unable to find opponent for rematch.');
-        return null;
-      }
-
       return runRemoteAction(async () => {
-        const result = await createGameAgainst(opponent.id);
+        const result = await createRematch(remoteGame.id);
         setActiveGameId(result.game.id);
         return result;
       });

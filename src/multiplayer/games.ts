@@ -125,6 +125,13 @@ export async function createGameAgainst(opponentProfileId: string) {
   });
 }
 
+export async function createRematch(gameId: string) {
+  return applyMultiplayerAction({
+    gameId,
+    type: 'rematch_game',
+  });
+}
+
 export async function rollRemoteGame(gameId: string, held: GameState['held']) {
   return applyMultiplayerAction({ gameId, held, type: 'roll' });
 }
