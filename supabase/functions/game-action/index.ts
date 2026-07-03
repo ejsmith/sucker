@@ -44,6 +44,8 @@ type NotificationContent = {
   body: string;
   title: string;
 };
+type GameBadgeCountRow = Pick<Database['public']['Tables']['games']['Row'], 'current_player_id' | 'id' | 'status'>;
+type GamePlayerBadgeRow = Pick<Database['public']['Tables']['game_players']['Row'], 'game_id' | 'player_id'>;
 type PushTokenRow = Pick<Database['public']['Tables']['push_tokens']['Row'], 'expo_push_token' | 'profile_id'>;
 type WebPushSubscriptionRow = Pick<
   Database['public']['Tables']['web_push_subscriptions']['Row'],
@@ -221,6 +223,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       })
     : null;
   const tokens = (pushTokens ?? []) as PushTokenRow[];
+  const badgeCounts = await loadBadgeCounts(admin, uniqueProfileIds);
   const messages = tokens.flatMap((pushToken) => {
     const content = buildNotificationContent(action, game, latestTurn, actorId, pushToken.profile_id);
     if (!content) {
@@ -229,9 +232,11 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
 
     return [
       {
+        badge: badgeCounts.get(pushToken.profile_id) ?? 0,
         body: content.body,
         data: {
           actionType: action.type,
+          badgeCount: badgeCounts.get(pushToken.profile_id) ?? 0,
           gameId: game.id,
           url: getGameNotificationUrl(game.id),
         },
@@ -250,6 +255,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       game,
       latestTurn,
       actorId,
+      badgeCounts,
     );
     return;
   }
@@ -263,6 +269,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       game,
       latestTurn,
       actorId,
+      badgeCounts,
     ),
   ]);
 }
@@ -299,6 +306,7 @@ async function sendWebPushNotifications(
   game: GameRow,
   latestTurn: TurnRow | null,
   actorId: string,
+  badgeCounts: Map<string, number>,
 ) {
   if (!subscriptions?.length) {
     return;
@@ -327,6 +335,7 @@ async function sendWebPushNotifications(
           },
           JSON.stringify({
             actionType: action.type,
+            badgeCount: badgeCounts.get(subscription.profile_id) ?? 0,
             body: content.body,
             gameId: game.id,
             title: content.title,
@@ -344,6 +353,58 @@ async function sendWebPushNotifications(
       }
     }),
   );
+}
+
+async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
+  const counts = new Map(profileIds.map((profileId) => [profileId, 0]));
+  if (!profileIds.length) {
+    return counts;
+  }
+
+  const { data: visiblePlayers, error: visiblePlayersError } = await admin
+    .from('game_players')
+    .select('game_id, player_id')
+    .in('player_id', profileIds)
+    .is('hidden_at', null);
+
+  if (visiblePlayersError) {
+    console.error('Unable to load visible games for badge counts', visiblePlayersError);
+    return counts;
+  }
+
+  const playerRows = (visiblePlayers ?? []) as GamePlayerBadgeRow[];
+  const gameIds = [...new Set(playerRows.map((row) => row.game_id))];
+  if (!gameIds.length) {
+    return counts;
+  }
+
+  const { data: games, error: gamesError } = await admin
+    .from('games')
+    .select('id, current_player_id, status')
+    .in('id', gameIds)
+    .in('current_player_id', profileIds)
+    .not('current_player_id', 'is', null)
+    .neq('status', 'complete')
+    .neq('status', 'inviting');
+
+  if (gamesError) {
+    console.error('Unable to load games for badge counts', gamesError);
+    return counts;
+  }
+
+  const currentPlayerByGameId = new Map(
+    ((games ?? []) as GameBadgeCountRow[])
+      .filter((game) => game.current_player_id && game.status !== 'complete' && game.status !== 'inviting')
+      .map((game) => [game.id, game.current_player_id as string]),
+  );
+
+  for (const row of playerRows) {
+    if (currentPlayerByGameId.get(row.game_id) === row.player_id) {
+      counts.set(row.player_id, (counts.get(row.player_id) ?? 0) + 1);
+    }
+  }
+
+  return counts;
 }
 
 function configureWebPush() {

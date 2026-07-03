@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
+import type { RemoteGameRow } from './types';
 
 declare const process:
   | {
@@ -22,7 +23,7 @@ type WebPushSubscriptionJson = {
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
-    shouldSetBadge: false,
+    shouldSetBadge: true,
     shouldShowAlert: true,
     shouldShowBanner: true,
     shouldShowList: true,
@@ -95,6 +96,22 @@ export function canRegisterWebPush() {
 
 export function hasWebPushVapidPublicKey() {
   return getWebPushVapidPublicKey().length > 0;
+}
+
+export function countGamesAwaitingTurn(games: RemoteGameRow[], profileId: string) {
+  return games.filter(
+    (game) => game.current_player_id === profileId && game.status !== 'complete' && game.status !== 'inviting',
+  ).length;
+}
+
+export async function syncAppBadgeCount(count: number) {
+  const badgeCount = Math.max(0, Math.trunc(count));
+
+  try {
+    await Notifications.setBadgeCountAsync(badgeCount);
+  } catch {
+    // Badges are best-effort: unsupported browsers/dev clients should not surface an app error.
+  }
 }
 
 export async function registerWebPushSubscription(profileId: string) {

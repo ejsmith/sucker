@@ -10,6 +10,7 @@ self.addEventListener('push', (event) => {
   }
 
   const gameId = typeof data.gameId === 'string' && data.gameId.length > 0 ? data.gameId : null;
+  const badgeCount = Number.isFinite(data.badgeCount) ? Math.max(0, Math.trunc(data.badgeCount)) : null;
   const targetUrl = typeof data.url === 'string' ? data.url : gameId ? `/?game=${encodeURIComponent(gameId)}` : '/';
   const title = typeof data.title === 'string' ? data.title : 'Sucker!';
   const options = {
@@ -24,7 +25,7 @@ self.addEventListener('push', (event) => {
     tag: gameId ? `sucker-game-${gameId}` : 'sucker-turn',
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(Promise.all([syncAppBadgeFromPush(badgeCount), self.registration.showNotification(title, options)]));
 });
 
 self.addEventListener('notificationclick', (event) => {
@@ -63,3 +64,27 @@ self.addEventListener('notificationclick', (event) => {
     }),
   );
 });
+
+function syncAppBadgeFromPush(count) {
+  const badgeTarget =
+    self.registration && typeof self.registration.setAppBadge === 'function'
+      ? self.registration
+      : self.navigator && typeof self.navigator.setAppBadge === 'function'
+        ? self.navigator
+        : null;
+  if (!badgeTarget) {
+    return Promise.resolve();
+  }
+
+  try {
+    if (count && count > 0) {
+      return badgeTarget.setAppBadge(count);
+    }
+    if (typeof badgeTarget.clearAppBadge === 'function') {
+      return badgeTarget.clearAppBadge();
+    }
+    return badgeTarget.setAppBadge(0);
+  } catch {
+    return Promise.resolve();
+  }
+}

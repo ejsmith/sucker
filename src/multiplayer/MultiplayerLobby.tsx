@@ -20,7 +20,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
 import { createGameAgainst, listMyGames, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
-import { canRegisterWebPush, hasWebPushVapidPublicKey, registerWebPushSubscription } from './notifications';
+import {
+  canRegisterWebPush,
+  countGamesAwaitingTurn,
+  hasWebPushVapidPublicKey,
+  registerWebPushSubscription,
+  syncAppBadgeCount,
+} from './notifications';
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
@@ -107,6 +113,10 @@ export function MultiplayerLobby({
       setUsername(profile.username ?? '');
     }
   }, [profile, refreshGames, session]);
+
+  useEffect(() => {
+    void syncAppBadgeCount(profile ? countGamesAwaitingTurn(games, profile.id) : 0);
+  }, [games, profile]);
 
   useEffect(() => {
     if (!session || !isAppActive) {
