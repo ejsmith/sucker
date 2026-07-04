@@ -333,6 +333,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
+  const wasAppActive = useRef(isAppActive);
 
   useEffect(() => {
     let isMounted = true;
@@ -435,6 +436,38 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
 
     return () => clearInterval(interval);
   }, [activeGameId, isAppActive, isRealtimeConnected, remoteGame]);
+
+  useEffect(() => {
+    const wasActive = wasAppActive.current;
+    wasAppActive.current = isAppActive;
+
+    if (!remoteGame || !isAppActive || wasActive) {
+      return;
+    }
+
+    let isCurrent = true;
+    void getGame(activeGameId)
+      .then((nextGame) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setError(null);
+        setRemoteGame(nextGame);
+        if (profileId) {
+          void syncRemoteBadgeCount(profileId);
+        }
+      })
+      .catch((refreshError) => {
+        if (isCurrent) {
+          setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh game.');
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeGameId, isAppActive, profileId, remoteGame]);
 
   async function runRemoteAction(action: () => Promise<{ game: RemoteGameRow }>) {
     setIsRemoteBusy(true);
