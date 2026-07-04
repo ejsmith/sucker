@@ -19,6 +19,10 @@ type WebPushSubscriptionJson = {
     p256dh?: unknown;
   };
 };
+type BadgeTarget = {
+  clearAppBadge?: () => Promise<void>;
+  setAppBadge?: (count?: number) => Promise<void>;
+};
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -107,8 +111,54 @@ export function countGamesAwaitingTurn(games: RemoteGameRow[], profileId: string
 export async function syncAppBadgeCount(count: number) {
   const badgeCount = Math.max(0, Math.trunc(count));
 
+  if (Platform.OS === 'web') {
+    await syncWebAppBadgeCount(badgeCount);
+  }
+
   try {
     await Notifications.setBadgeCountAsync(badgeCount);
+  } catch {
+    // Badges are best-effort: unsupported browsers/dev clients should not surface an app error.
+  }
+}
+
+async function syncWebAppBadgeCount(count: number) {
+  const targets: BadgeTarget[] = [];
+  const badgeNavigator = typeof navigator !== 'undefined' ? (navigator as Navigator & BadgeTarget) : null;
+
+  if (badgeNavigator?.setAppBadge || badgeNavigator?.clearAppBadge) {
+    targets.push(badgeNavigator);
+  }
+
+  try {
+    const registration =
+      typeof navigator !== 'undefined' && 'serviceWorker' in navigator ? await navigator.serviceWorker.ready : null;
+    const badgeRegistration = registration as ServiceWorkerRegistration & BadgeTarget;
+    if (badgeRegistration?.setAppBadge || badgeRegistration?.clearAppBadge) {
+      targets.push(badgeRegistration);
+    }
+  } catch {
+    // Service workers are not guaranteed to be ready while the app is starting.
+  }
+
+  await Promise.all(targets.map((target) => setBadgeTargetCount(target, count)));
+}
+
+async function setBadgeTargetCount(target: BadgeTarget, count: number) {
+  try {
+    if (count > 0 && target.setAppBadge) {
+      await target.setAppBadge(count);
+      return;
+    }
+
+    if (target.clearAppBadge) {
+      await target.clearAppBadge();
+      return;
+    }
+
+    if (target.setAppBadge) {
+      await target.setAppBadge(0);
+    }
   } catch {
     // Badges are best-effort: unsupported browsers/dev clients should not surface an app error.
   }
