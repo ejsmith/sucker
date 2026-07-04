@@ -90,17 +90,21 @@ export function MultiplayerLobby({
     );
   }
 
-  const refreshGames = useCallback(async ({ surfaceError = true }: { surfaceError?: boolean } = {}) => {
-    try {
-      const nextGames = await listMyGames();
-      setGames(nextGames);
-      setNow(Date.now());
-    } catch (refreshError) {
-      if (surfaceError) {
-        setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
+  const refreshGames = useCallback(
+    async ({ surfaceError = true }: { surfaceError?: boolean } = {}) => {
+      try {
+        const nextGames = await listMyGames();
+        setGames(nextGames);
+        setNow(Date.now());
+        await syncAppBadgeCount(profile ? countGamesAwaitingTurn(nextGames, profile.id) : 0);
+      } catch (refreshError) {
+        if (surfaceError) {
+          setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
+        }
       }
-    }
-  }, []);
+    },
+    [profile],
+  );
 
   useEffect(() => {
     if (session) {
