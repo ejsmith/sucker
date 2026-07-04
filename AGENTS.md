@@ -13,12 +13,12 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 
 - Exactly 2 players, asynchronous, one active turn at a time.
 - 5 dice, up to 4 standard rolls per turn.
-- Each player starts with 8 Sucker Tokens.
+- Each player starts with 10 Sucker Tokens.
 - Suckers do not award tokens.
 - Extra Roll costs 1 token and can be chained while tokens remain.
 - Mulligan costs 3 tokens.
-- Sucker Punch costs 4 tokens.
-- Sucker Blocker costs 2 tokens.
+- Sucker Punch costs 3 tokens.
+- Sucker Blocker costs 3 tokens.
 - Scratching a category awards 1 token.
 
 ## App And Stack

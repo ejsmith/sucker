@@ -48,7 +48,7 @@ create table public.game_players (
   game_id uuid not null references public.games(id) on delete cascade,
   player_id uuid not null references public.profiles(id) on delete cascade,
   seat_index integer not null check (seat_index in (0, 1)),
-  sucker_tokens integer not null default 8 check (sucker_tokens >= 0),
+  sucker_tokens integer not null default 10 check (sucker_tokens >= 0),
   final_score integer,
   upper_bonus_awarded boolean not null default false,
   hidden_at timestamptz,

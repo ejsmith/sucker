@@ -73,12 +73,12 @@ export const categoryLabels: Record<ScoreCategory, string> = {
 };
 
 export const maxRollsPerTurn = 4;
-export const startingSuckerTokens = 8;
+export const startingSuckerTokens = 10;
 export const suckerTokenCosts = {
   extraRoll: 1,
   mulligan: 3,
-  suckerBlocker: 2,
-  suckerPunch: 4,
+  suckerBlocker: 3,
+  suckerPunch: 3,
 } as const;
 
 const upperValues = {

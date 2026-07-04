@@ -15,14 +15,14 @@
 - Players may hold/release dice after the first roll.
 - Score categories are Yahtzee-style: Ones through Sixes, Three/Four of a Kind, Full House, Small/Large Straight, Chance, and Sucker.
 - Sucker means five of a kind and scores 50.
-- Each player starts with 1 Sucker Token.
-- Scoring a Sucker earns 1 Sucker Token.
+- Each player starts with 10 Sucker Tokens.
+- Scoring a Sucker does not earn a Sucker Token.
 
 ## Token Abilities
 
-- Mulligan costs 1 token and replays the current player's just-completed turn before submission.
-- Sucker Punch costs 2 tokens and targets the opponent's most recently submitted turn before the current player takes their next turn.
-- Sucker Blocker costs 1 token and cancels an incoming Sucker Punch.
+- Mulligan costs 3 tokens and replays the current player's just-completed turn before submission.
+- Sucker Punch costs 3 tokens and targets the opponent's most recently submitted turn before the current player takes their next turn.
+- Sucker Blocker costs 3 tokens and cancels an incoming Sucker Punch.
 
 ## Async Flow
 

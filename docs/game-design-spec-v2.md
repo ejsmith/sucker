@@ -91,7 +91,7 @@ Starting Balance
 
 Each player begins every game with:
 
-8 Sucker Tokens
+10 Sucker Tokens
 
 Tokens do not carry between games.
 
@@ -166,7 +166,7 @@ Rules
 
 Sucker Punch
 
-Cost: 4 Tokens
+Cost: 3 Tokens
 
 Description
 
@@ -189,7 +189,7 @@ Unused opportunities expire.
 
 Sucker Blocker
 
-Cost: 2 Tokens
+Cost: 3 Tokens
 
 Description
 
@@ -199,7 +199,7 @@ Rules
 
 - May only be used in response to a Sucker Punch
 - Original turn result remains intact
-- Consumes 2 tokens
+- Consumes 3 tokens
 
 ⸻
 
