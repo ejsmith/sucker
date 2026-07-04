@@ -28,7 +28,7 @@ Deno.test('Edge shared game rules allow extra rolls beyond standard rolls', () =
   assertEquals(rollsRemaining(nextGame), 0);
 });
 
-Deno.test('Edge shared game rules award a token for zero scores and scratches', () => {
+Deno.test('Edge shared game rules award a token for scratches, not zero scores', () => {
   const zeroScoreGame = {
     ...createGame(['Erin', 'Sam']),
     dice: [1, 2, 3, 4, 5] as Dice,
@@ -36,7 +36,7 @@ Deno.test('Edge shared game rules award a token for zero scores and scratches', 
     rollNumber: 2,
   };
   const scored = scoreTurn(zeroScoreGame, 'sixes');
-  assertEquals(scored.players[0].suckerTokens, startingSuckerTokens + 1);
+  assertEquals(scored.players[0].suckerTokens, startingSuckerTokens);
 
   const scratchGame = {
     ...createGame(['Erin', 'Sam']),

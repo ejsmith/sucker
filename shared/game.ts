@@ -157,7 +157,7 @@ export function scoreTurn(game: GameState, category: ScoreCategory): GameState {
 
   const turnScore = scoreCategoryForScorecard(game.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus = hasExtraSuckerBonus(game.dice, category, currentPlayer.scorecard);
-  return applyScore(game, category, turnScore, extraSuckerBonus, turnScore === 0 ? 1 : 0);
+  return applyScore(game, category, turnScore, extraSuckerBonus, 0);
 }
 
 export function scratchScoreBox(game: GameState, category: ScoreCategory): GameState {

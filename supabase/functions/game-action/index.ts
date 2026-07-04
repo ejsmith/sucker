@@ -1054,7 +1054,7 @@ async function scoreRemoteTurn(
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus =
     !scratch && category !== 'sucker' && currentPlayer.scorecard.sucker !== null && isSuckerRoll(state.dice);
-  const tokenDelta = turnScore === 0 ? 1 : 0;
+  const tokenDelta = scratch ? 1 : 0;
   const players = state.players.map((player) => {
     if (player.id !== actorId) {
       return player;
@@ -1690,7 +1690,10 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
   for (const player of players) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = await buildResult(admin, gameId, player, opponent, players, winnerId);
-    await admin.from('game_player_results').upsert(result);
+    const { error: resultError } = await admin.from('game_player_results').upsert(result);
+    if (resultError) {
+      throw resultError;
+    }
     const { data: existing, error } = await admin
       .from('head_to_head_stats')
       .select('*')
@@ -1703,7 +1706,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
     }
 
     if (!existing) {
-      await admin.from('head_to_head_stats').insert({
+      const { error: insertError } = await admin.from('head_to_head_stats').insert({
         player_id: player.id,
         opponent_id: opponent.id,
         games_played: 1,
@@ -1735,12 +1738,15 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         sucker_tokens_leftover: result.sucker_tokens_leftover,
         average_sucker_tokens_leftover: result.sucker_tokens_leftover,
       });
+      if (insertError) {
+        throw insertError;
+      }
       continue;
     }
 
     const gamesPlayed = existing.games_played + 1;
     const totalScoreValue = existing.total_score + result.final_score;
-    await admin
+    const { error: updateError } = await admin
       .from('head_to_head_stats')
       .update({
         average_score: Number((totalScoreValue / gamesPlayed).toFixed(2)),
@@ -1778,6 +1784,9 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
       })
       .eq('player_id', player.id)
       .eq('opponent_id', opponent.id);
+    if (updateError) {
+      throw updateError;
+    }
   }
 }
 

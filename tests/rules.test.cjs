@@ -84,7 +84,7 @@ test('scoring a sucker does not earn a sucker token', () => {
   assert.equal(next.players[0].suckerTokens, startingSuckerTokens);
 });
 
-test('scoring zero in a category earns one sucker token', () => {
+test('scoring zero in a category does not earn a sucker token', () => {
   const game = {
     ...createGame(['Erin', 'Sam']),
     dice: [1, 2, 3, 4, 5],
@@ -95,7 +95,7 @@ test('scoring zero in a category earns one sucker token', () => {
   const next = scoreTurn(game, 'sixes');
 
   assert.equal(next.players[0].scorecard.sixes, 0);
-  assert.equal(next.players[0].suckerTokens, startingSuckerTokens + 1);
+  assert.equal(next.players[0].suckerTokens, startingSuckerTokens);
 });
 
 test('sucker deal scratches a selected score box and earns one token', () => {

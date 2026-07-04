@@ -213,6 +213,31 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
   );
 });
 
+Deno.test('game-action scoring zero does not award a sucker token', async () => {
+  const [alice, bob] = await createUsers('zero-score-token', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const scoringState: GameState = {
+    ...game.state,
+    dice: [1, 2, 3, 4, 5],
+    phase: 'scoring',
+    rollNumber: 1,
+  };
+
+  assertNoError((await admin.from('games').update({ state: scoringState }).eq('id', game.id)).error);
+
+  const scored = (
+    await invokeGameAction(alice, {
+      category: 'sixes',
+      gameId: game.id,
+      held: falseHeld,
+      type: 'score_category',
+    })
+  ).game as GameRow;
+
+  assertEquals(scored.state.players[0].scorecard.sixes, 0);
+  assertPlayerTokens(scored, alice.id, startingSuckerTokens);
+});
+
 Deno.test('game-action lets a punched player replay instead of blocking', async () => {
   const [alice, bob] = await createUsers('punch-replay', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
@@ -371,6 +396,19 @@ Deno.test('game-action creates one rematch and alternates the first player', asy
     completedRematch = await scratchAndPass(aliceRematch.id, alice, bob, category);
   }
   assertEquals(completedRematch.status, 'complete');
+
+  const stats = await selectMany<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+  );
+  assertEquals(stats.length, 2);
+  assertEquals(
+    stats.every((row) => row.games_played === 2),
+    true,
+  );
+  assertEquals(
+    stats.every((row) => row.wins === 1 && row.losses === 1),
+    true,
+  );
 
   const secondRematch = (await invokeGameAction(bob, { gameId: aliceRematch.id, type: 'rematch_game' }))
     .game as GameRow;
