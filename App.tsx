@@ -2939,9 +2939,7 @@ function ScoreCell({
         >
           {homeSuckerBonus && <SuckerBonusBadge />}
           <Text
-            adjustsFontSizeToFit
             allowFontScaling={false}
-            minimumFontScale={0.7}
             numberOfLines={1}
             style={[
               styles.scoreBoxText,
@@ -2962,9 +2960,7 @@ function ScoreCell({
       >
         {opponentSuckerBonus && <SuckerBonusBadge compact />}
         <Text
-          adjustsFontSizeToFit
           allowFontScaling={false}
-          minimumFontScale={0.7}
           numberOfLines={1}
           style={[
             styles.opponentScoreText,
