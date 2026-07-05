@@ -1159,115 +1159,22 @@ function LocalGameScreen({
     nextGamePromise: Promise<ReturnType<typeof createGame> | null>,
     sourceGame: ReturnType<typeof createGame>,
   ) {
-    const rollingIndexes = sourceGame.held
-      .map((held, index) => (held ? null : index))
-      .filter((index): index is number => index !== null);
-    const airborneProgress = 0.45;
-
+    // Keep the current dice still while the server decides the result. Once the
+    // result is known, the normal roll animation can land on the correct faces.
     setIsRolling(true);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
-    setRollingFaces(sourceGame.dice);
-    rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
+    setRollingDieIndexes([]);
+    setRollingLaunches({});
 
-    let scrambleTimer: ReturnType<typeof setInterval> | null = null;
-
-    try {
-      if (rollingIndexes.length === 0) {
-        const nextGame = await nextGamePromise;
-        if (nextGame) {
-          setLiveRemoteGame(nextGame);
-          if (isSuckerDice(nextGame.dice)) {
-            showSuckerRollBanner('You rolled');
-          }
-        }
-        return;
-      }
-
-      const launchSide = Math.random() < 0.5 ? 'left' : 'right';
-      const [rollZoneRect, slotRects] = await Promise.all([
-        measureInWindow(rollZoneRef.current),
-        Promise.all(dieSlotRefs.current.map((ref) => measureInWindow(ref))),
-      ]);
-      const launches = Object.fromEntries(
-        rollingIndexes.map((index) => [
-          index,
-          createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null),
-        ]),
-      ) as Partial<Record<number, RollingLaunch>>;
-      setRollingLaunches(launches);
-      setRollingDieIndexes(rollingIndexes);
-
-      scrambleTimer = setInterval(() => {
-        setRollingFaces(
-          (faces) =>
-            faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
-        );
-      }, 65);
-
-      const throwToAir = runAnimation(
-        Animated.parallel(
-          rollingIndexes.map((index) => {
-            const launch = launches[index] ?? defaultRollingLaunch;
-
-            return Animated.sequence([
-              Animated.delay(launch.delay),
-              Animated.timing(diceAnimations[index], {
-                toValue: airborneProgress,
-                duration: Math.round(Math.max(220, Math.min(360, launch.duration * airborneProgress))),
-                easing: Easing.out(Easing.quad),
-                useNativeDriver: true,
-              }),
-            ]);
-          }),
-        ),
-      );
-
-      const [nextGame] = await Promise.all([nextGamePromise, throwToAir]);
-      if (!nextGame) {
-        return;
-      }
-
-      if (scrambleTimer) {
-        clearInterval(scrambleTimer);
-        scrambleTimer = null;
-      }
-      setRollingFaces(nextGame.dice);
-
-      await runAnimation(
-        Animated.parallel(
-          rollingIndexes.map((index) => {
-            const launch = launches[index] ?? defaultRollingLaunch;
-            const throwDuration = Math.round(Math.max(220, Math.min(360, launch.duration * airborneProgress)));
-            const landingDuration = Math.max(320, launch.duration - throwDuration);
-
-            return Animated.sequence([
-              Animated.delay(index * 16),
-              Animated.timing(diceAnimations[index], {
-                toValue: 1,
-                duration: landingDuration,
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: true,
-              }),
-            ]);
-          }),
-        ),
-      );
-
-      setLiveRemoteGame(nextGame);
-      if (isSuckerDice(nextGame.dice)) {
-        showSuckerRollBanner('You rolled');
-      }
-    } finally {
-      if (scrambleTimer) {
-        clearInterval(scrambleTimer);
-      }
-      rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
-      setRollingDieIndexes([]);
-      setRollingLaunches({});
+    const nextGame = await nextGamePromise;
+    if (!nextGame) {
       setIsRolling(false);
+      return;
     }
+
+    await animateRollTo(nextGame, sourceGame);
   }
 
   async function animateRollTo(
