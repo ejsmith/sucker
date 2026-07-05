@@ -660,7 +660,10 @@ export function MultiplayerLobby({
   return renderShell(
     <>
       <ScrollView
-        contentContainerStyle={lobbyStyles.scrollContent}
+        alwaysBounceVertical
+        bounces
+        contentContainerStyle={[lobbyStyles.scrollContent, lobbyStyles.gamesScrollContent]}
+        overScrollMode="always"
         refreshControl={
           <RefreshControl
             colors={['#FFD329']}
@@ -671,7 +674,7 @@ export function MultiplayerLobby({
           />
         }
         showsVerticalScrollIndicator={false}
-        style={lobbyStyles.scroll}
+        style={[lobbyStyles.scroll, lobbyStyles.gamesScroll]}
       >
         <SuckerLobbyTitle />
         <View style={lobbyStyles.topBar}>
@@ -1291,6 +1294,12 @@ const lobbyStyles = StyleSheet.create({
   gameSummary: {
     flex: 1,
     gap: 3,
+  },
+  gamesScroll: {
+    flex: 1,
+  },
+  gamesScrollContent: {
+    flexGrow: 1,
   },
   heading: {
     color: '#FFF3C2',

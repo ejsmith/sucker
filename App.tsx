@@ -5,6 +5,7 @@ import {
   Easing,
   Image,
   ImageSourcePropType,
+  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
@@ -202,6 +203,10 @@ const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const remoteRollServerHeadStartMs = 80;
 const rollFinalFaceHoldMs = 120;
+const backSwipeEdgeWidth = 28;
+const backSwipeTriggerDistance = 76;
+const backSwipeMinimumMove = 18;
+const backSwipeVelocity = 0.45;
 const upperBonusTarget = 63;
 const bonusValueColor = '#FFD329';
 const awardedBonusColor = bonusValueColor;
@@ -623,6 +628,42 @@ function LocalGameScreen({
   const selectedPulse = useRef(new Animated.Value(0)).current;
   const sectionBonusPulse = useRef(new Animated.Value(0)).current;
   const previousHomeSectionBonusAwarded = useRef<boolean | null>(null);
+  const backSwipeStartedAtEdge = useRef(false);
+  const exitGame = useCallback(() => {
+    setIsMenuOpen(false);
+    setIsTokenMenuOpen(false);
+    setShowStatsPage(false);
+    onExit?.();
+  }, [onExit]);
+  const backSwipeResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: (event) => {
+        backSwipeStartedAtEdge.current = Boolean(onExit && event.nativeEvent.locationX <= backSwipeEdgeWidth);
+        return false;
+      },
+      onMoveShouldSetPanResponder: (_event, gestureState) => {
+        if (!backSwipeStartedAtEdge.current) {
+          return false;
+        }
+
+        const horizontalMove = gestureState.dx > backSwipeMinimumMove;
+        const mostlyHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4;
+        return horizontalMove && mostlyHorizontal;
+      },
+      onPanResponderRelease: (_event, gestureState) => {
+        const shouldExit =
+          gestureState.dx > backSwipeTriggerDistance ||
+          (gestureState.dx > backSwipeMinimumMove && gestureState.vx > backSwipeVelocity);
+        backSwipeStartedAtEdge.current = false;
+        if (shouldExit) {
+          exitGame();
+        }
+      },
+      onPanResponderTerminate: () => {
+        backSwipeStartedAtEdge.current = false;
+      },
+    }),
+  ).current;
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
   const liveGameRef = useRef(game);
   const myPlayerIndex = isRemoteGame
@@ -1877,6 +1918,7 @@ function LocalGameScreen({
         ref={screenRef}
         style={[styles.screen, compactPhoneLayout && styles.compactScreen, gameStageStyle]}
         testID="game-screen"
+        {...backSwipeResponder.panHandlers}
       >
         <BackgroundDicePattern floatValue={bgFloat} />
         <View style={[styles.topBar, compactPhoneLayout && styles.compactTopBar]}>
@@ -1886,10 +1928,7 @@ function LocalGameScreen({
           {onExit && (
             <Pressable
               accessibilityLabel="Back to games"
-              onPress={() => {
-                setIsMenuOpen(false);
-                onExit();
-              }}
+              onPress={exitGame}
               style={({ pressed }) => [
                 styles.backButton,
                 compactPhoneLayout && styles.compactBackButton,
