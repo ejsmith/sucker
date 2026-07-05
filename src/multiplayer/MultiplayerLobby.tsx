@@ -1,11 +1,14 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Linking,
+  PanResponder,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Share,
   StyleSheet,
@@ -45,6 +48,7 @@ const webPushPromptDismissedAtKey = 'sucker.webPushPromptDismissedAt';
 const webPushPromptSnoozeMs = 7 * 24 * 60 * 60 * 1_000;
 const nudgeTurnWaitMs = 60 * 60 * 1_000;
 const nudgeCooldownMs = 8 * 60 * 60 * 1_000;
+const gameListRemoveActionWidth = 96;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -72,6 +76,7 @@ export function MultiplayerLobby({
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
   const [webPushPromptVisible, setWebPushPromptVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -208,6 +213,15 @@ export function MultiplayerLobby({
         setMessage('Browser notifications enabled.');
       }
     });
+  }
+
+  async function handlePullRefreshGames() {
+    setIsRefreshing(true);
+    try {
+      await refreshGames();
+    } finally {
+      setIsRefreshing(false);
+    }
   }
 
   function handleDismissWebPushPrompt() {
@@ -550,6 +564,15 @@ export function MultiplayerLobby({
     return renderShell(
       <ScrollView
         contentContainerStyle={lobbyStyles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            colors={['#FFD329']}
+            onRefresh={() => void handlePullRefreshGames()}
+            progressBackgroundColor="#210505"
+            refreshing={isRefreshing}
+            tintColor="#FFD329"
+          />
+        }
         showsVerticalScrollIndicator={false}
         style={lobbyStyles.scroll}
       >
@@ -816,64 +839,96 @@ function GameListItem({
     game.status === 'inviting'
       ? `Open invite for ${formatElapsed(now, game.updated_at)}`
       : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gestureState) =>
+        Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4,
+      onPanResponderMove: (_event, gestureState) => {
+        const nextX = Math.max(-gameListRemoveActionWidth, Math.min(0, gestureState.dx));
+        translateX.setValue(nextX);
+      },
+      onPanResponderRelease: (_event, gestureState) => {
+        const shouldOpen = gestureState.dx < -gameListRemoveActionWidth / 2 || gestureState.vx < -0.45;
+        Animated.spring(translateX, {
+          bounciness: 0,
+          speed: 18,
+          toValue: shouldOpen ? -gameListRemoveActionWidth : 0,
+          useNativeDriver: true,
+        }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, {
+          bounciness: 0,
+          speed: 18,
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
 
   return (
-    <Pressable
-      onPress={() => onOpenGame(game.id)}
-      style={({ pressed }) => [
-        lobbyStyles.gameCard,
-        isMyTurn && lobbyStyles.gameCardMyTurn,
-        pressed && lobbyStyles.pressed,
-      ]}
-      testID={`game-card-${game.id}`}
-    >
-      <View style={lobbyStyles.gameCardTop}>
-        <View style={lobbyStyles.avatarLarge}>
-          <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
-        </View>
-        <View style={lobbyStyles.gameSummary}>
-          <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
-            {opponentName}
-          </Text>
-          <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
-        </View>
-        <View style={lobbyStyles.gameCardActions}>
-          <View style={lobbyStyles.scorePill}>
-            <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
-            <Text style={lobbyStyles.scoreDivider}>-</Text>
-            <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+    <View style={lobbyStyles.swipeGameWrap}>
+      <Pressable
+        onPress={() => onRemoveGame(game)}
+        style={({ pressed }) => [lobbyStyles.swipeRemoveAction, pressed && lobbyStyles.pressed]}
+        testID={`remove-game-${game.id}`}
+      >
+        <Text style={lobbyStyles.swipeRemoveText}>Remove</Text>
+      </Pressable>
+      <Animated.View
+        style={[lobbyStyles.swipeGameContent, { transform: [{ translateX }] }]}
+        {...panResponder.panHandlers}
+      >
+        <Pressable
+          onPress={() => onOpenGame(game.id)}
+          style={({ pressed }) => [
+            lobbyStyles.gameCard,
+            isMyTurn && lobbyStyles.gameCardMyTurn,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`game-card-${game.id}`}
+        >
+          <View style={lobbyStyles.gameCardTop}>
+            <View style={lobbyStyles.avatarLarge}>
+              <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
+            </View>
+            <View style={lobbyStyles.gameSummary}>
+              <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
+                {opponentName}
+              </Text>
+              <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
+            </View>
+            <View style={lobbyStyles.gameCardActions}>
+              <View style={lobbyStyles.scorePill}>
+                <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
+                <Text style={lobbyStyles.scoreDivider}>-</Text>
+                <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+              </View>
+              {nudgeState.visible && (
+                <Pressable
+                  disabled={isBusy || !nudgeState.enabled}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    onNudgeGame(game);
+                  }}
+                  style={({ pressed }) => [
+                    lobbyStyles.nudgeButton,
+                    (!nudgeState.enabled || isBusy) && lobbyStyles.nudgeButtonDisabled,
+                    pressed && lobbyStyles.pressed,
+                  ]}
+                  testID={`nudge-game-${game.id}`}
+                >
+                  <Text style={lobbyStyles.nudgeButtonText}>{nudgeState.label}</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
-          {nudgeState.visible && (
-            <Pressable
-              disabled={isBusy || !nudgeState.enabled}
-              onPress={(event) => {
-                event.stopPropagation();
-                onNudgeGame(game);
-              }}
-              style={({ pressed }) => [
-                lobbyStyles.nudgeButton,
-                (!nudgeState.enabled || isBusy) && lobbyStyles.nudgeButtonDisabled,
-                pressed && lobbyStyles.pressed,
-              ]}
-              testID={`nudge-game-${game.id}`}
-            >
-              <Text style={lobbyStyles.nudgeButtonText}>{nudgeState.label}</Text>
-            </Pressable>
-          )}
-          <Pressable
-            onPress={(event) => {
-              event.stopPropagation();
-              onRemoveGame(game);
-            }}
-            style={({ pressed }) => [lobbyStyles.removeGameButton, pressed && lobbyStyles.pressed]}
-            testID={`remove-game-${game.id}`}
-          >
-            <Text style={lobbyStyles.removeGameText}>Remove</Text>
-          </Pressable>
-        </View>
-      </View>
-      <Text style={lobbyStyles.waitText}>{waitText}</Text>
-    </Pressable>
+          <Text style={lobbyStyles.waitText}>{waitText}</Text>
+        </Pressable>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -1385,18 +1440,19 @@ const lobbyStyles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFD329',
     borderColor: '#FFF3C2',
-    borderRadius: 6,
-    borderWidth: 2,
-    minWidth: 78,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 3,
+    height: 44,
+    justifyContent: 'center',
+    minWidth: 96,
+    paddingHorizontal: 10,
   },
   nudgeButtonDisabled: {
     opacity: 0.55,
   },
   nudgeButtonText: {
     color: '#210505',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '900',
     textTransform: 'uppercase',
   },
@@ -1684,6 +1740,30 @@ const lobbyStyles = StyleSheet.create({
     color: '#210505',
     fontSize: 18,
     fontWeight: '900',
+  },
+  swipeGameContent: {
+    width: '100%',
+  },
+  swipeGameWrap: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  swipeRemoveAction: {
+    alignItems: 'center',
+    backgroundColor: '#B61C14',
+    bottom: 0,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: gameListRemoveActionWidth,
+  },
+  swipeRemoveText: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   subtleText: {
     color: '#FFF3C2',
