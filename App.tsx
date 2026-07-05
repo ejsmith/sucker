@@ -130,6 +130,42 @@ function concealActiveOpponentDice(game: GameState, myProfileId?: string | null)
     phase: 'rolling',
   };
 }
+
+function buildRemoteGameBeforeTurn(game: GameState, turn: RemoteTurnRow): GameState | null {
+  const scorerIndex = game.players.findIndex((player) => player.id === turn.player_id);
+  if (scorerIndex < 0) {
+    return null;
+  }
+
+  return {
+    ...game,
+    currentPlayerIndex: scorerIndex,
+    dice: turn.dice,
+    held: turn.held,
+    phase: 'scoring',
+    players: game.players.map((player, index) =>
+      index === scorerIndex
+        ? {
+            ...player,
+            scorecard: {
+              ...player.scorecard,
+              [turn.category]: null,
+            },
+            suckerBonusCategories: (player.suckerBonusCategories ?? []).filter(
+              (category) => category !== turn.category,
+            ),
+          }
+        : player,
+    ),
+    rollNumber: turn.roll_count,
+  };
+}
+
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
 type RemoteActionHandlers = {
@@ -621,7 +657,7 @@ function LocalGameScreen({
   const lastRemoteBlockNoticeId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
   const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visibleRemoteTurnId = useRef<string | null>(remoteLastTurnId ?? null);
+  const visibleRemoteTurnId = useRef<string | null>(null);
   const previousRemoteStatus = useRef<RemoteGameStatus | undefined>(remoteStatus);
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const bgFloat = useRef(new Animated.Value(0)).current;
@@ -808,7 +844,7 @@ function LocalGameScreen({
     remoteLastTurnId &&
     visibleRemoteTurnId.current !== remoteLastTurnId &&
     remoteLastTurnLoadFailedId !== remoteLastTurnId &&
-    (remoteStatus === 'response_window' || remoteStatus === 'complete') &&
+    (remoteStatus === 'active' || remoteStatus === 'response_window' || remoteStatus === 'complete') &&
     (!remoteLastTurn ||
       remoteLastTurn.id !== remoteLastTurnId ||
       remoteOpponentTurnNeedsReveal ||
@@ -1554,7 +1590,7 @@ function LocalGameScreen({
   }
 
   async function animateRemoteOpponentScoreTurn(nextRemoteGame: GameState, turn: RemoteTurnRow) {
-    const previousGame = visibleRemoteGame;
+    const previousGame = buildRemoteGameBeforeTurn(nextRemoteGame, turn) ?? visibleRemoteGame;
     if (!previousGame) {
       setVisibleRemoteGame(nextRemoteGame);
       visibleRemoteTurnId.current = turn.id;
@@ -1562,6 +1598,10 @@ function LocalGameScreen({
       setRevealingRemoteTurnId(null);
       return;
     }
+
+    liveGameRef.current = previousGame;
+    setVisibleRemoteGame(previousGame);
+    await waitForNextFrame();
 
     const scorerIndex = previousGame.players.findIndex((player) => player.id === turn.player_id);
     const scorer =
@@ -1584,6 +1624,7 @@ function LocalGameScreen({
     });
 
     setVisibleRemoteGame(nextRemoteGame);
+    liveGameRef.current = nextRemoteGame;
     visibleRemoteTurnId.current = turn.id;
     lastAnimatedRemoteScoreTurnId.current = turn.id;
     setRevealingRemoteTurnId(null);
