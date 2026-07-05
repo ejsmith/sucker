@@ -200,6 +200,8 @@ const computerScorePreviewDelayMs = 0;
 const computerScoreRevealDurationMs = 520;
 const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
+const remoteRollServerHeadStartMs = 80;
+const rollSettleDurationMs = 260;
 const upperBonusTarget = 63;
 const bonusValueColor = '#FFD329';
 const awardedBonusColor = bonusValueColor;
@@ -1174,8 +1176,6 @@ function LocalGameScreen({
     nextGamePromise: Promise<ReturnType<typeof createGame> | null>,
     sourceGame: ReturnType<typeof createGame>,
   ) {
-    // Wait for the authoritative dice before rendering any roll motion.
-    // This prevents first-roll placeholders from looking like a completed sucker.
     setIsAwaitingRemoteRoll(true);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
@@ -1183,17 +1183,20 @@ function LocalGameScreen({
     setRollingDieIndexes([]);
     setRollingLaunches({});
 
-    const nextGame = await nextGamePromise;
+    await wait(remoteRollServerHeadStartMs);
     setIsAwaitingRemoteRoll(false);
-    if (!nextGame) {
-      return;
-    }
-
-    await animateRollTo(nextGame, sourceGame);
+    await animateRollToPending(nextGamePromise, sourceGame);
   }
 
   async function animateRollTo(
     nextGame: ReturnType<typeof createGame> | null,
+    sourceGame: ReturnType<typeof createGame>,
+  ) {
+    await animateRollToPending(Promise.resolve(nextGame), sourceGame);
+  }
+
+  async function animateRollToPending(
+    nextGamePromise: Promise<ReturnType<typeof createGame> | null>,
     sourceGame: ReturnType<typeof createGame>,
   ) {
     const rollingIndexes = sourceGame.held
@@ -1206,13 +1209,13 @@ function LocalGameScreen({
     setRollingFaces(sourceGame.dice);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
-    if (!nextGame) {
-      setIsRolling(false);
-      return;
-    }
-    const finalDice = nextGame.dice;
-
     if (rollingIndexes.length === 0) {
+      const nextGame = await nextGamePromise;
+      if (!nextGame) {
+        setIsRolling(false);
+        return;
+      }
+      const finalDice = nextGame.dice;
       if (isRemoteGame) {
         setLiveRemoteGame(nextGame);
       } else {
@@ -1245,51 +1248,64 @@ function LocalGameScreen({
         (faces) => faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
       );
     }, 65);
-    const finalRevealDelay = Math.max(
-      0,
-      Math.max(
-        ...rollingIndexes.map((index) => {
-          const launch = launches[index] ?? defaultRollingLaunch;
-          return launch.delay + launch.duration;
-        }),
-      ) - 150,
-    );
-    const finalRevealTimer = setTimeout(() => {
-      clearInterval(scrambleTimer);
-      setRollingFaces(finalDice);
-    }, finalRevealDelay);
-
-    Animated.parallel(
+    const approachAnimation = Animated.parallel(
       rollingIndexes.map((index) => {
         const launch = launches[index] ?? defaultRollingLaunch;
 
         return Animated.sequence([
           Animated.delay(launch.delay),
           Animated.timing(diceAnimations[index], {
-            toValue: 1,
-            duration: launch.duration,
+            toValue: 0.82,
+            duration: Math.max(1, launch.duration - rollSettleDurationMs),
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
         ]);
       }),
-    ).start(() => {
+    );
+    const settleAnimation = Animated.parallel(
+      rollingIndexes.map((index) =>
+        Animated.timing(diceAnimations[index], {
+          toValue: 1,
+          duration: rollSettleDurationMs,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ),
+    );
+
+    let nextGame: ReturnType<typeof createGame> | null = null;
+    try {
+      [nextGame] = await Promise.all([nextGamePromise, runAnimation(approachAnimation)]);
+    } finally {
       clearInterval(scrambleTimer);
-      clearTimeout(finalRevealTimer);
-      if (isRemoteGame) {
-        setLiveRemoteGame(nextGame);
-      } else {
-        liveGameRef.current = nextGame;
-        setLocalGame(nextGame);
-      }
-      if (isSuckerDice(finalDice)) {
-        showSuckerRollBanner('You rolled');
-      }
+    }
+
+    if (!nextGame) {
       rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
       setRollingDieIndexes([]);
       setRollingLaunches({});
       setIsRolling(false);
-    });
+      return;
+    }
+    const finalDice = nextGame.dice;
+
+    setRollingFaces(finalDice);
+    await runAnimation(settleAnimation);
+
+    if (isRemoteGame) {
+      setLiveRemoteGame(nextGame);
+    } else {
+      liveGameRef.current = nextGame;
+      setLocalGame(nextGame);
+    }
+    if (isSuckerDice(finalDice)) {
+      showSuckerRollBanner('You rolled');
+    }
+    rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
+    setRollingDieIndexes([]);
+    setRollingLaunches({});
+    setIsRolling(false);
   }
 
   function finishComputerTurnResult(result: ComputerTurnResult) {

@@ -29,7 +29,7 @@ const rollingDieBaseSize = 88;
 
 export const defaultRollingLaunch: RollingLaunch = {
   delay: 0,
-  duration: 880,
+  duration: 1180,
   fromX: -104,
   fromY: 28,
   midX: 72,
@@ -73,7 +73,7 @@ export function createRollingLaunch(
 
   return {
     delay: Math.round(Math.random() * 90 + index * (8 + Math.random() * 12)),
-    duration: Math.round(760 + Math.random() * 240),
+    duration: Math.round(1040 + Math.random() * 320),
     fromX,
     fromY,
     midX,
