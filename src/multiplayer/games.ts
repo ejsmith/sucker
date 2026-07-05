@@ -5,6 +5,7 @@ import { scoreCategories, type GameState, type ScoreCategory, toDice, toGameStat
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
+type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
 
 export async function listMyGames() {
   const { data, error } = await supabase.from('games').select('*').order('updated_at', { ascending: false });
@@ -13,7 +14,8 @@ export async function listMyGames() {
     throw error;
   }
 
-  return data.map(toRemoteGameRow);
+  const lastNudges = await loadLastNudges(data.map((game) => game.id));
+  return data.map((game) => toRemoteGameRow(game, lastNudges.get(game.id) ?? null));
 }
 
 export async function getGame(gameId: string) {
@@ -164,6 +166,10 @@ export async function useRemoteSuckerBlocker(gameId: string, turnId: string) {
   return applyMultiplayerAction({ gameId, turnId, type: 'sucker_blocker' });
 }
 
+export async function nudgeRemoteGame(gameId: string) {
+  return applyMultiplayerAction({ gameId, type: 'nudge_turn' });
+}
+
 export function subscribeToGame(
   gameId: string,
   onChange: (game: ReturnType<typeof toRemoteGameRow>) => void,
@@ -220,7 +226,41 @@ export function subscribeToGameListChanges(
   };
 }
 
-function toRemoteGameRow(row: GameRow) {
+async function loadLastNudges(gameIds: string[]) {
+  if (gameIds.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return new Map<string, string>();
+  }
+
+  const { data, error } = await supabase
+    .from('turn_actions')
+    .select('game_id, created_at')
+    .eq('actor_id', user.id)
+    .eq('action_type', 'nudge_turn')
+    .in('game_id', gameIds)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  const lastNudges = new Map<string, string>();
+  for (const action of data as Pick<TurnActionRow, 'created_at' | 'game_id'>[]) {
+    if (!lastNudges.has(action.game_id)) {
+      lastNudges.set(action.game_id, action.created_at);
+    }
+  }
+
+  return lastNudges;
+}
+
+function toRemoteGameRow(row: GameRow, lastNudgedAt: string | null = null) {
   return {
     completed_at: row.completed_at,
     created_at: row.created_at,
@@ -228,6 +268,7 @@ function toRemoteGameRow(row: GameRow) {
     current_player_id: row.current_player_id,
     id: row.id,
     last_turn_id: row.last_turn_id,
+    last_nudged_at: lastNudgedAt,
     state: toGameState(row.state),
     status: row.status,
     updated_at: row.updated_at,

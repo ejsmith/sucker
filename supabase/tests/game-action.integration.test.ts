@@ -116,6 +116,32 @@ Deno.test('game-action removes open invites and hides started games from the act
   assertEquals(hiddenPlayerAction.error, 'You are not a player in this game.');
 });
 
+Deno.test('game-action nudges the current player only after the wait window and cooldown', async () => {
+  const [alice, bob] = await createUsers('nudge-turn', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  const currentPlayerNudge = await invokeGameAction(alice, { gameId: game.id, type: 'nudge_turn' }, 400);
+  assertEquals(currentPlayerNudge.error, 'It is your turn.');
+
+  const earlyNudge = await invokeGameAction(bob, { gameId: game.id, type: 'nudge_turn' }, 400);
+  assertEquals(earlyNudge.error, 'You can nudge after it has been their turn for 1 hour.');
+
+  await delay(1_100);
+
+  const nudge = await invokeGameAction(bob, { gameId: game.id, type: 'nudge_turn' });
+  assertEquals((nudge.game as GameRow).id, game.id);
+  assertEquals(nudge.notificationProfileIds, [alice.id]);
+
+  const repeatNudge = await invokeGameAction(bob, { gameId: game.id, type: 'nudge_turn' }, 400);
+  assertEquals(repeatNudge.error, 'You can nudge this player again 8 hours after your last nudge.');
+
+  const actions = await loadActions(game.id);
+  assertEquals(
+    actions.filter((action) => action.action_type === 'nudge_turn').map((action) => action.actor_id),
+    [bob.id],
+  );
+});
+
 Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

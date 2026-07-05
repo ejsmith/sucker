@@ -63,6 +63,7 @@ type Action =
   | { type: 'accept_invite'; inviteCode: string }
   | { type: 'remove_game'; gameId: string }
   | { type: 'rematch_game'; gameId: string }
+  | { type: 'nudge_turn'; gameId: string }
   | { type: 'extra_roll'; gameId: string; held?: GameState['held'] }
   | { type: 'roll'; gameId: string; held?: GameState['held'] }
   | {
@@ -86,6 +87,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Origin': '*',
 };
+const nudgeTurnWaitMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_WAIT_MS') ?? 60 * 60 * 1_000;
+const nudgeCooldownMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_COOLDOWN_MS') ?? 8 * 60 * 60 * 1_000;
 
 Deno.serve(async (request) => {
   const timer = new ActionTimer();
@@ -143,6 +146,8 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
       return removeGameFromList(admin, actorId, action.gameId);
     case 'rematch_game':
       return createRematchGame(admin, actorId, action.gameId);
+    case 'nudge_turn':
+      return nudgeTurn(admin, actorId, action.gameId);
     case 'roll':
       return mutateGame(
         admin,
@@ -475,6 +480,11 @@ function buildNotificationContent(
         body: `${actorName} blocked your Sucker Punch.`,
         title: 'Sucker Punch blocked!',
       };
+    case 'nudge_turn':
+      return {
+        body: `${actorName} nudged you. It is your turn in Sucker!`,
+        title: 'Your turn',
+      };
     default:
       return null;
   }
@@ -601,6 +611,7 @@ function toAction(value: unknown): Action {
       };
     case 'remove_game':
     case 'rematch_game':
+    case 'nudge_turn':
       return {
         gameId: readString(action, 'gameId'),
         type,
@@ -994,6 +1005,45 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
   }
 
   return { removedGameId: gameId };
+}
+
+async function nudgeTurn(admin: DbClient, actorId: string, gameId: string) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status === 'inviting' || game.status === 'complete' || !game.current_player_id) {
+    throw new Error('This game is not waiting on another player.');
+  }
+  if (game.current_player_id === actorId) {
+    throw new Error('It is your turn.');
+  }
+
+  const now = Date.now();
+  const turnStartedAt = new Date(game.updated_at).getTime();
+  if (!Number.isFinite(turnStartedAt) || now - turnStartedAt < nudgeTurnWaitMs) {
+    throw new Error('You can nudge after it has been their turn for 1 hour.');
+  }
+
+  const cooldownCutoff = new Date(now - nudgeCooldownMs).toISOString();
+  const { data: recentNudge, error: recentNudgeError } = await admin
+    .from('turn_actions')
+    .select('id')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .eq('action_type', 'nudge_turn')
+    .gte('created_at', cooldownCutoff)
+    .limit(1)
+    .maybeSingle();
+
+  if (recentNudgeError) {
+    throw recentNudgeError;
+  }
+  if (recentNudge) {
+    throw new Error('You can nudge this player again 8 hours after your last nudge.');
+  }
+
+  await insertAction(admin, gameId, actorId, 'nudge_turn', {
+    targetPlayerId: game.current_player_id,
+  });
+  return { game, notificationProfileIds: [game.current_player_id] };
 }
 
 async function mutateGame(
@@ -1833,6 +1883,7 @@ async function loadSuckerStatActions(admin: DbClient, gameId: string) {
     .from('turn_actions')
     .select('action_type, actor_id, payload')
     .eq('game_id', gameId)
+    .in('action_type', ['extra_roll', 'roll', 'mulligan', 'sucker_punch', 'sucker_blocker'])
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -1881,6 +1932,11 @@ function requireEnv(name: string): string {
     throw new Error(`${name} is not configured.`);
   }
   return value;
+}
+
+function readPositiveIntegerEnv(name: string): number | null {
+  const value = Number(Deno.env.get(name));
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function toErrorMessage(error: unknown): string {

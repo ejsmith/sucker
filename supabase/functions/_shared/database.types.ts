@@ -22,6 +22,7 @@ type ActionType =
   | 'create_invite'
   | 'accept_invite'
   | 'rematch_game'
+  | 'nudge_turn'
   | 'extra_roll'
   | 'roll'
   | 'score_category'

@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
-import { createGameAgainst, listMyGames, removeRemoteGame, subscribeToGameListChanges } from './games';
+import { createGameAgainst, listMyGames, nudgeRemoteGame, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import {
   canRegisterWebPush,
@@ -43,6 +43,8 @@ const privacyPolicyUrl = 'https://sucker.games/privacy.html';
 const accountDeletionUrl = 'https://sucker.games/account-deletion.html';
 const webPushPromptDismissedAtKey = 'sucker.webPushPromptDismissedAt';
 const webPushPromptSnoozeMs = 7 * 24 * 60 * 60 * 1_000;
+const nudgeTurnWaitMs = 60 * 60 * 1_000;
+const nudgeCooldownMs = 8 * 60 * 60 * 1_000;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -249,6 +251,19 @@ export function MultiplayerLobby({
         text: 'Remove',
       },
     ]);
+  }
+
+  async function handleNudgeGame(game: RemoteGameRow) {
+    await runAction(async () => {
+      await nudgeRemoteGame(game.id);
+      setGames((currentGames) =>
+        currentGames.map((currentGame) =>
+          currentGame.id === game.id ? { ...currentGame, last_nudged_at: new Date().toISOString() } : currentGame,
+        ),
+      );
+      setMessage('Nudge sent.');
+      await refreshGames({ surfaceError: false });
+    });
   }
 
   async function handleSendCode() {
@@ -663,7 +678,9 @@ export function MultiplayerLobby({
                 now={now}
                 onOpenGame={onOpenGame}
                 onRemoveGame={handleRemoveGame}
+                onNudgeGame={handleNudgeGame}
                 profileId={profileId}
+                isBusy={isBusy || isLoading}
               />
             ))
           )}
@@ -771,15 +788,19 @@ function ScreenHeader({ onBack, title }: { onBack: () => void; title: string }) 
 
 function GameListItem({
   game,
+  isBusy,
   now,
   onOpenGame,
   onRemoveGame,
+  onNudgeGame,
   profileId,
 }: {
   game: RemoteGameRow;
+  isBusy: boolean;
   now: number;
   onOpenGame: (gameId: string) => void;
   onRemoveGame: (game: RemoteGameRow) => void;
+  onNudgeGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
   const opponent = game.state.players.find((player) => player.id !== profileId);
@@ -788,6 +809,7 @@ function GameListItem({
   const myScore = me ? totalScore(me.scorecard) : 0;
   const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
   const isMyTurn = game.current_player_id === profileId;
+  const nudgeState = getNudgeState(game, profileId, now);
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
   const waitText =
@@ -821,6 +843,23 @@ function GameListItem({
             <Text style={lobbyStyles.scoreDivider}>-</Text>
             <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
           </View>
+          {nudgeState.visible && (
+            <Pressable
+              disabled={isBusy || !nudgeState.enabled}
+              onPress={(event) => {
+                event.stopPropagation();
+                onNudgeGame(game);
+              }}
+              style={({ pressed }) => [
+                lobbyStyles.nudgeButton,
+                (!nudgeState.enabled || isBusy) && lobbyStyles.nudgeButtonDisabled,
+                pressed && lobbyStyles.pressed,
+              ]}
+              testID={`nudge-game-${game.id}`}
+            >
+              <Text style={lobbyStyles.nudgeButtonText}>{nudgeState.label}</Text>
+            </Pressable>
+          )}
           <Pressable
             onPress={(event) => {
               event.stopPropagation();
@@ -933,6 +972,26 @@ function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
   return game.current_player_id === profileId ? 'Your turn' : 'Their turn';
 }
 
+function getNudgeState(game: RemoteGameRow, profileId: string, now: number) {
+  if (game.status === 'inviting' || game.status === 'complete' || !game.current_player_id) {
+    return { enabled: false, label: 'Nudge', visible: false };
+  }
+  if (game.current_player_id === profileId) {
+    return { enabled: false, label: 'Nudge', visible: false };
+  }
+
+  const turnAgeMs = Math.max(0, now - new Date(game.updated_at).getTime());
+  const waitRemainingMs = Math.max(0, nudgeTurnWaitMs - turnAgeMs);
+  const lastNudgedAt = game.last_nudged_at ? new Date(game.last_nudged_at).getTime() : 0;
+  const cooldownRemainingMs = lastNudgedAt ? Math.max(0, nudgeCooldownMs - (now - lastNudgedAt)) : 0;
+  const remainingMs = Math.max(waitRemainingMs, cooldownRemainingMs);
+  if (remainingMs > 0) {
+    return { enabled: false, label: `Nudge ${formatDurationRemaining(remainingMs)}`, visible: true };
+  }
+
+  return { enabled: true, label: 'Nudge', visible: true };
+}
+
 function formatElapsed(now: number, updatedAt: string) {
   const elapsedMs = Math.max(0, now - new Date(updatedAt).getTime());
   const elapsedMinutes = Math.floor(elapsedMs / 60_000);
@@ -949,6 +1008,15 @@ function formatElapsed(now: number, updatedAt: string) {
   }
 
   return `${Math.floor(elapsedHours / 24)}d`;
+}
+
+function formatDurationRemaining(durationMs: number) {
+  const minutes = Math.ceil(durationMs / 60_000);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
+  return `${Math.ceil(minutes / 60)}h`;
 }
 
 function formatPct(count: number, gamesPlayed: number) {
@@ -1312,6 +1380,25 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 21,
     fontWeight: '900',
     textAlign: 'center',
+  },
+  nudgeButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 6,
+    borderWidth: 2,
+    minWidth: 78,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  nudgeButtonDisabled: {
+    opacity: 0.55,
+  },
+  nudgeButtonText: {
+    color: '#210505',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   panel: {
     backgroundColor: '#210505',

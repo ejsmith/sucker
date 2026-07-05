@@ -9,6 +9,7 @@ export type RemoteGameRow = {
   current_player_id: string | null;
   id: string;
   last_turn_id: string | null;
+  last_nudged_at: string | null;
   state: GameState;
   status: RemoteGameStatus;
   updated_at: string;
@@ -48,6 +49,10 @@ export type MultiplayerAction =
     }
   | {
       type: 'rematch_game';
+      gameId: string;
+    }
+  | {
+      type: 'nudge_turn';
       gameId: string;
     }
   | {

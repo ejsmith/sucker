@@ -141,6 +141,54 @@ export type Database = {
           status?: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
         };
       };
+      turn_actions: {
+        Row: {
+          action_type:
+            | 'create_game'
+            | 'create_invite'
+            | 'accept_invite'
+            | 'rematch_game'
+            | 'nudge_turn'
+            | 'extra_roll'
+            | 'roll'
+            | 'score_category'
+            | 'scratch_category'
+            | 'pass_response'
+            | 'mulligan'
+            | 'sucker_punch'
+            | 'sucker_blocker'
+            | 'taunt';
+          actor_id: string;
+          created_at: string;
+          game_id: string;
+          id: string;
+          payload: Json;
+          turn_id: string | null;
+        };
+        Insert: {
+          action_type:
+            | 'create_game'
+            | 'create_invite'
+            | 'accept_invite'
+            | 'rematch_game'
+            | 'nudge_turn'
+            | 'extra_roll'
+            | 'roll'
+            | 'score_category'
+            | 'scratch_category'
+            | 'pass_response'
+            | 'mulligan'
+            | 'sucker_punch'
+            | 'sucker_blocker'
+            | 'taunt';
+          actor_id: string;
+          game_id: string;
+          id?: string;
+          payload?: Json;
+          turn_id?: string | null;
+        };
+        Update: never;
+      };
       game_invites: {
         Row: {
           created_at: string;

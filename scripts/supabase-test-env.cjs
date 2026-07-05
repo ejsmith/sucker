@@ -89,6 +89,8 @@ function buildLocalTestEnv(statusEnv = readSupabaseStatusEnv()) {
     EXPO_PUBLIC_SUPABASE_ANON_KEY: anonKey,
     EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS: '1',
     SUCKER_E2E_FIXED_DIE: '1',
+    SUCKER_E2E_NUDGE_COOLDOWN_MS: '1000',
+    SUCKER_E2E_NUDGE_WAIT_MS: '1000',
     E2E_BASE_URL: process.env.E2E_BASE_URL || 'http://127.0.0.1:8081',
   };
 }
