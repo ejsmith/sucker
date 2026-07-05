@@ -1,7 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Image,
   Linking,
@@ -85,6 +84,7 @@ export function MultiplayerLobby({
   const [isPullRefreshActive, setIsPullRefreshActive] = useState(false);
   const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
   const [webPushPromptVisible, setWebPushPromptVisible] = useState(false);
+  const [removeGameToConfirm, setRemoveGameToConfirm] = useState<RemoteGameRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const gamesScrollY = useRef(0);
@@ -259,33 +259,23 @@ export function MultiplayerLobby({
   }
 
   function handleRemoveGame(game: RemoteGameRow) {
-    const isInvite = game.status === 'inviting';
-    const message = isInvite
-      ? 'This cancels the open invite and removes it from your games list.'
-      : 'This removes the game from your games list. The other player can still see their copy.';
-    const removeGame = () =>
-      runAction(async () => {
-        await removeRemoteGame(game.id);
-        setGames((currentGames) => currentGames.filter((currentGame) => currentGame.id !== game.id));
-        setMessage(isInvite ? 'Invite removed.' : 'Game removed.');
-        await refreshGames({ surfaceError: false });
-      });
+    setRemoveGameToConfirm(game);
+  }
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(message)) {
-        void removeGame();
-      }
+  async function confirmRemoveGame() {
+    if (!removeGameToConfirm) {
       return;
     }
 
-    Alert.alert(isInvite ? 'Remove invite?' : 'Remove game?', message, [
-      { style: 'cancel', text: 'Cancel' },
-      {
-        onPress: () => void removeGame(),
-        style: 'destructive',
-        text: 'Remove',
-      },
-    ]);
+    const game = removeGameToConfirm;
+    const isInvite = game.status === 'inviting';
+    setRemoveGameToConfirm(null);
+    await runAction(async () => {
+      await removeRemoteGame(game.id);
+      setGames((currentGames) => currentGames.filter((currentGame) => currentGame.id !== game.id));
+      setMessage(isInvite ? 'Invite removed.' : 'Game removed.');
+      await refreshGames({ surfaceError: false });
+    });
   }
 
   async function handleNudgeGame(game: RemoteGameRow) {
@@ -326,10 +316,38 @@ export function MultiplayerLobby({
     }
 
     const inviteLink = getInviteLink(generatedInviteCode);
-    await Share.share({
-      message: `Play Sucker! with me: ${inviteLink}`,
-      url: inviteLink,
-    });
+    const inviteMessage = `Play Sucker! with me: ${inviteLink}`;
+    setMessage(null);
+
+    try {
+      if (Platform.OS === 'web') {
+        try {
+          const didShare = await shareInviteLinkOnWeb(inviteLink, inviteMessage);
+          if (didShare) {
+            return;
+          }
+        } catch (webShareError) {
+          if (isWebShareAbort(webShareError)) {
+            return;
+          }
+        }
+
+        await copyTextToWebClipboard(inviteLink);
+        setMessage('Invite link copied.');
+        return;
+      }
+
+      await Share.share({
+        message: inviteMessage,
+        url: inviteLink,
+      });
+    } catch (shareError) {
+      if (isWebShareAbort(shareError)) {
+        return;
+      }
+
+      setMessage(shareError instanceof Error ? shareError.message : 'Unable to share invite.');
+    }
   }
 
   if (!session) {
@@ -861,8 +879,91 @@ export function MultiplayerLobby({
           </View>
         </View>
       )}
+
+      {removeGameToConfirm && (
+        <View style={lobbyStyles.notificationPromptOverlay} testID="remove-game-confirmation">
+          <View style={lobbyStyles.notificationPromptCard}>
+            <Text style={lobbyStyles.notificationPromptTitle}>
+              {removeGameToConfirm.status === 'inviting' ? 'Remove invite?' : 'Remove game?'}
+            </Text>
+            <Text style={lobbyStyles.notificationPromptBody}>{getRemoveGameMessage(removeGameToConfirm)}</Text>
+            <View style={lobbyStyles.notificationPromptActions}>
+              <Pressable
+                disabled={isBusy || isLoading}
+                onPress={() => setRemoveGameToConfirm(null)}
+                style={({ pressed }) => [lobbyStyles.notificationPromptSecondaryButton, pressed && lobbyStyles.pressed]}
+                testID="cancel-remove-game"
+              >
+                <Text style={lobbyStyles.notificationPromptSecondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                disabled={isBusy || isLoading}
+                onPress={() => void confirmRemoveGame()}
+                style={({ pressed }) => [
+                  lobbyStyles.notificationPromptPrimaryButton,
+                  lobbyStyles.removeConfirmButton,
+                  pressed && lobbyStyles.pressed,
+                ]}
+                testID="confirm-remove-game"
+              >
+                <Text style={lobbyStyles.notificationPromptPrimaryText}>Remove</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
     </>,
   );
+}
+
+async function shareInviteLinkOnWeb(inviteLink: string, inviteMessage: string) {
+  const webNavigator = getWebNavigator();
+  if (!webNavigator?.share) {
+    return false;
+  }
+
+  await webNavigator.share({
+    text: inviteMessage,
+    title: 'Play Sucker!',
+    url: inviteLink,
+  });
+  return true;
+}
+
+async function copyTextToWebClipboard(text: string) {
+  const webNavigator = getWebNavigator();
+  if (!webNavigator?.clipboard?.writeText) {
+    throw new Error('Copy is not available in this browser. Select the invite link to copy it.');
+  }
+
+  await webNavigator.clipboard.writeText(text);
+}
+
+function getWebNavigator() {
+  if (Platform.OS !== 'web') {
+    return null;
+  }
+
+  return (
+    (globalThis as typeof globalThis & {
+      navigator?: Navigator & {
+        clipboard?: {
+          writeText?: (text: string) => Promise<void>;
+        };
+        share?: (data: { text?: string; title?: string; url?: string }) => Promise<void>;
+      };
+    }).navigator ?? null
+  );
+}
+
+function isWebShareAbort(error: unknown) {
+  return Platform.OS === 'web' && error instanceof DOMException && error.name === 'AbortError';
+}
+
+function getRemoveGameMessage(game: RemoteGameRow) {
+  return game.status === 'inviting'
+    ? 'This cancels the open invite and removes it from your games list.'
+    : 'This removes the game from your games list. The other player can still see their copy.';
 }
 
 function canOfferWebPushPrompt() {
@@ -1637,21 +1738,8 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
-  removeGameButton: {
-    alignItems: 'center',
-    backgroundColor: '#8F3B10',
-    borderColor: '#FFD76B',
-    borderRadius: 6,
-    borderWidth: 1,
-    minWidth: 58,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  removeGameText: {
-    color: '#FFF3C2',
-    fontSize: 10,
-    fontWeight: '900',
-    textTransform: 'uppercase',
+  removeConfirmButton: {
+    backgroundColor: '#B61C14',
   },
   refreshButton: {
     alignItems: 'center',
