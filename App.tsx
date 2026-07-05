@@ -201,7 +201,7 @@ const computerScoreRevealDurationMs = 520;
 const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const remoteRollServerHeadStartMs = 80;
-const rollSettleDurationMs = 260;
+const rollFinalFaceHoldMs = 120;
 const upperBonusTarget = 63;
 const bonusValueColor = '#FFD329';
 const awardedBonusColor = bonusValueColor;
@@ -1243,40 +1243,36 @@ function LocalGameScreen({
     setRollingLaunches(launches);
     setRollingDieIndexes(rollingIndexes);
 
+    let resolvedNextGame: ReturnType<typeof createGame> | null | undefined;
+    const trackedNextGamePromise = nextGamePromise.then((gameResult) => {
+      resolvedNextGame = gameResult;
+      return gameResult;
+    });
     const scrambleTimer = setInterval(() => {
       setRollingFaces(
         (faces) => faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
       );
     }, 65);
-    const approachAnimation = Animated.parallel(
+    const rollAnimation = Animated.parallel(
       rollingIndexes.map((index) => {
         const launch = launches[index] ?? defaultRollingLaunch;
 
         return Animated.sequence([
           Animated.delay(launch.delay),
           Animated.timing(diceAnimations[index], {
-            toValue: 0.82,
-            duration: Math.max(1, launch.duration - rollSettleDurationMs),
+            toValue: 1,
+            duration: launch.duration,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
         ]);
       }),
     );
-    const settleAnimation = Animated.parallel(
-      rollingIndexes.map((index) =>
-        Animated.timing(diceAnimations[index], {
-          toValue: 1,
-          duration: rollSettleDurationMs,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ),
-    );
 
     let nextGame: ReturnType<typeof createGame> | null = null;
     try {
-      [nextGame] = await Promise.all([nextGamePromise, runAnimation(approachAnimation)]);
+      await runAnimation(rollAnimation);
+      nextGame = resolvedNextGame === undefined ? await trackedNextGamePromise : resolvedNextGame;
     } finally {
       clearInterval(scrambleTimer);
     }
@@ -1291,7 +1287,7 @@ function LocalGameScreen({
     const finalDice = nextGame.dice;
 
     setRollingFaces(finalDice);
-    await runAnimation(settleAnimation);
+    await wait(rollFinalFaceHoldMs);
 
     if (isRemoteGame) {
       setLiveRemoteGame(nextGame);
