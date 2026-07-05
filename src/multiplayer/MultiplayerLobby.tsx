@@ -49,6 +49,7 @@ const webPushPromptSnoozeMs = 7 * 24 * 60 * 60 * 1_000;
 const nudgeTurnWaitMs = 60 * 60 * 1_000;
 const nudgeCooldownMs = 8 * 60 * 60 * 1_000;
 const gameListRemoveActionWidth = 96;
+const minimumVisibleRefreshMs = 450;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -215,10 +216,13 @@ export function MultiplayerLobby({
     });
   }
 
-  async function handlePullRefreshGames() {
+  async function handleVisibleRefreshGames() {
+    if (isRefreshing) {
+      return;
+    }
     setIsRefreshing(true);
     try {
-      await refreshGames();
+      await Promise.all([refreshGames(), waitForVisibleRefresh()]);
     } finally {
       setIsRefreshing(false);
     }
@@ -567,7 +571,7 @@ export function MultiplayerLobby({
         refreshControl={
           <RefreshControl
             colors={['#FFD329']}
-            onRefresh={() => void handlePullRefreshGames()}
+            onRefresh={() => void handleVisibleRefreshGames()}
             progressBackgroundColor="#210505"
             refreshing={isRefreshing}
             tintColor="#FFD329"
@@ -657,6 +661,15 @@ export function MultiplayerLobby({
     <>
       <ScrollView
         contentContainerStyle={lobbyStyles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            colors={['#FFD329']}
+            onRefresh={() => void handleVisibleRefreshGames()}
+            progressBackgroundColor="#210505"
+            refreshing={isRefreshing}
+            tintColor="#FFD329"
+          />
+        }
         showsVerticalScrollIndicator={false}
         style={lobbyStyles.scroll}
       >
@@ -681,11 +694,27 @@ export function MultiplayerLobby({
           <View style={lobbyStyles.panelHeader}>
             <Text style={lobbyStyles.sectionTitle}>Games</Text>
             <Pressable
-              onPress={() => void refreshGames()}
-              style={({ pressed }) => [lobbyStyles.refreshButton, pressed && lobbyStyles.pressed]}
+              disabled={isRefreshing}
+              onPress={() => void handleVisibleRefreshGames()}
+              style={({ pressed }) => [
+                lobbyStyles.refreshButton,
+                isRefreshing && lobbyStyles.refreshButtonRefreshing,
+                pressed && !isRefreshing && lobbyStyles.pressed,
+              ]}
               testID="refresh-games-button"
             >
-              <Text style={lobbyStyles.refreshText}>Refresh</Text>
+              {isRefreshing ? (
+                <View style={lobbyStyles.refreshButtonContent}>
+                  <ActivityIndicator color="#210505" size="small" />
+                  <Text numberOfLines={1} style={lobbyStyles.refreshText}>
+                    Refreshing
+                  </Text>
+                </View>
+              ) : (
+                <Text numberOfLines={1} style={lobbyStyles.refreshText}>
+                  Refresh
+                </Text>
+              )}
             </Pressable>
           </View>
           {activeGames.length === 0 ? (
@@ -1039,9 +1068,8 @@ function getNudgeState(game: RemoteGameRow, profileId: string, now: number) {
   const waitRemainingMs = Math.max(0, nudgeTurnWaitMs - turnAgeMs);
   const lastNudgedAt = game.last_nudged_at ? new Date(game.last_nudged_at).getTime() : 0;
   const cooldownRemainingMs = lastNudgedAt ? Math.max(0, nudgeCooldownMs - (now - lastNudgedAt)) : 0;
-  const remainingMs = Math.max(waitRemainingMs, cooldownRemainingMs);
-  if (remainingMs > 0) {
-    return { enabled: false, label: `Nudge ${formatDurationRemaining(remainingMs)}`, visible: true };
+  if (Math.max(waitRemainingMs, cooldownRemainingMs) > 0) {
+    return { enabled: false, label: 'Nudge', visible: true };
   }
 
   return { enabled: true, label: 'Nudge', visible: true };
@@ -1065,13 +1093,10 @@ function formatElapsed(now: number, updatedAt: string) {
   return `${Math.floor(elapsedHours / 24)}d`;
 }
 
-function formatDurationRemaining(durationMs: number) {
-  const minutes = Math.ceil(durationMs / 60_000);
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
-
-  return `${Math.ceil(minutes / 60)}h`;
+function waitForVisibleRefresh() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, minimumVisibleRefreshMs);
+  });
 }
 
 function formatPct(count: number, gamesPlayed: number) {
@@ -1544,12 +1569,20 @@ const lobbyStyles = StyleSheet.create({
     borderWidth: 3,
     height: 34,
     justifyContent: 'center',
-    minWidth: 76,
     paddingHorizontal: 10,
     shadowColor: '#050505',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.35,
     shadowRadius: 0,
+    width: 116,
+  },
+  refreshButtonContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  refreshButtonRefreshing: {
+    opacity: 0.88,
   },
   refreshText: {
     color: '#210505',
