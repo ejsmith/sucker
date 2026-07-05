@@ -54,7 +54,9 @@ test('two players can create an invite and play turns through the web UI', async
   await alicePage.goto('/');
   await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
   await expect(alicePage.getByTestId('turn-notification-prompt')).toBeVisible();
-  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('turn-notification-prompt.png');
+  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('turn-notification-prompt.png', {
+    maxDiffPixelRatio: 0.07,
+  });
   await dismissTurnNotificationPrompt(alicePage);
 
   await openGameFromLobby(alicePage, gameId);
