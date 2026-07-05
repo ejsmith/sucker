@@ -1162,7 +1162,7 @@ function LocalGameScreen({
     const rollingIndexes = sourceGame.held
       .map((held, index) => (held ? null : index))
       .filter((index): index is number => index !== null);
-    const animationStartedAt = Date.now();
+    const airborneProgress = 0.45;
 
     setIsRolling(true);
     setSelectedCategory(null);
@@ -1172,7 +1172,6 @@ function LocalGameScreen({
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
     let scrambleTimer: ReturnType<typeof setInterval> | null = null;
-    let serverResultSettled = false;
 
     try {
       if (rollingIndexes.length === 0) {
@@ -1206,36 +1205,8 @@ function LocalGameScreen({
             faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
         );
       }, 65);
-      const finalRevealAt = Math.max(
-        0,
-        Math.max(
-          ...rollingIndexes.map((index) => {
-            const launch = launches[index] ?? defaultRollingLaunch;
-            return launch.delay + launch.duration;
-          }),
-        ) - 150,
-      );
-      const revealFinalDice = nextGamePromise.then((nextGame) => {
-        serverResultSettled = true;
-        if (!nextGame) {
-          return null;
-        }
 
-        const elapsed = Date.now() - animationStartedAt;
-        const waitMs = Math.max(0, finalRevealAt - elapsed);
-
-        return new Promise<ReturnType<typeof createGame>>((resolve) => {
-          setTimeout(() => {
-            if (scrambleTimer) {
-              clearInterval(scrambleTimer);
-              scrambleTimer = null;
-            }
-            setRollingFaces(nextGame.dice);
-            resolve(nextGame);
-          }, waitMs);
-        });
-      });
-      const animationDone = new Promise<void>((resolve) => {
+      const throwToAir = runAnimation(
         Animated.parallel(
           rollingIndexes.map((index) => {
             const launch = launches[index] ?? defaultRollingLaunch;
@@ -1243,28 +1214,50 @@ function LocalGameScreen({
             return Animated.sequence([
               Animated.delay(launch.delay),
               Animated.timing(diceAnimations[index], {
+                toValue: airborneProgress,
+                duration: Math.round(Math.max(220, Math.min(360, launch.duration * airborneProgress))),
+                easing: Easing.out(Easing.quad),
+                useNativeDriver: true,
+              }),
+            ]);
+          }),
+        ),
+      );
+
+      const [nextGame] = await Promise.all([nextGamePromise, throwToAir]);
+      if (!nextGame) {
+        return;
+      }
+
+      if (scrambleTimer) {
+        clearInterval(scrambleTimer);
+        scrambleTimer = null;
+      }
+      setRollingFaces(nextGame.dice);
+
+      await runAnimation(
+        Animated.parallel(
+          rollingIndexes.map((index) => {
+            const launch = launches[index] ?? defaultRollingLaunch;
+            const throwDuration = Math.round(Math.max(220, Math.min(360, launch.duration * airborneProgress)));
+            const landingDuration = Math.max(320, launch.duration - throwDuration);
+
+            return Animated.sequence([
+              Animated.delay(index * 16),
+              Animated.timing(diceAnimations[index], {
                 toValue: 1,
-                duration: launch.duration,
+                duration: landingDuration,
                 easing: Easing.out(Easing.cubic),
                 useNativeDriver: true,
               }),
             ]);
           }),
-        ).start(() => {
-          if (!serverResultSettled && scrambleTimer) {
-            clearInterval(scrambleTimer);
-            scrambleTimer = null;
-          }
-          resolve();
-        });
-      });
+        ),
+      );
 
-      const [nextGame] = await Promise.all([revealFinalDice, animationDone]);
-      if (nextGame) {
-        setLiveRemoteGame(nextGame);
-        if (isSuckerDice(nextGame.dice)) {
-          showSuckerRollBanner('You rolled');
-        }
+      setLiveRemoteGame(nextGame);
+      if (isSuckerDice(nextGame.dice)) {
+        showSuckerRollBanner('You rolled');
       }
     } finally {
       if (scrambleTimer) {
