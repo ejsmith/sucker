@@ -50,6 +50,9 @@ const nudgeTurnWaitMs = 60 * 60 * 1_000;
 const nudgeCooldownMs = 8 * 60 * 60 * 1_000;
 const gameListRemoveActionWidth = 96;
 const minimumVisibleRefreshMs = 450;
+const pullRefreshMinimumMove = 14;
+const pullRefreshTriggerDistance = 44;
+const pullRefreshMaxDistance = 72;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -78,10 +81,13 @@ export function MultiplayerLobby({
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
+  const [isPullRefreshActive, setIsPullRefreshActive] = useState(false);
   const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
   const [webPushPromptVisible, setWebPushPromptVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
+  const gamesScrollY = useRef(0);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
   const shellSafeAreaStyle: StyleProp<ViewStyle> = {
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
@@ -225,6 +231,17 @@ export function MultiplayerLobby({
       await Promise.all([refreshGames(), waitForVisibleRefresh()]);
     } finally {
       setIsRefreshing(false);
+    }
+  }
+
+  async function handlePullRefreshGesture() {
+    setIsPullRefreshActive(true);
+    setPullRefreshDistance(42);
+    try {
+      await handleVisibleRefreshGames();
+    } finally {
+      setIsPullRefreshActive(false);
+      setPullRefreshDistance(0);
     }
   }
 
@@ -426,6 +443,41 @@ export function MultiplayerLobby({
     profileId,
   );
   const playerName = profile?.display_name ?? session.user.email ?? 'player';
+  const usesWebPullRefresh = Platform.OS === 'web';
+  const pullRefreshReady = pullRefreshDistance >= pullRefreshTriggerDistance;
+  const pullRefreshVisible = usesWebPullRefresh && (pullRefreshDistance > 0 || isPullRefreshActive);
+  const shouldStartPullRefreshGesture = (gestureState: { dx: number; dy: number }) => {
+    if (!usesWebPullRefresh || page !== 'games' || isRefreshing || gamesScrollY.current > 1) {
+      return false;
+    }
+
+    const pullingDown = gestureState.dy > pullRefreshMinimumMove;
+    const mostlyVertical = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.25;
+    return pullingDown && mostlyVertical;
+  };
+  const gamesPullRefreshResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gestureState) => shouldStartPullRefreshGesture(gestureState),
+    onMoveShouldSetPanResponderCapture: (_event, gestureState) => shouldStartPullRefreshGesture(gestureState),
+    onPanResponderMove: (_event, gestureState) => {
+      const nextDistance = Math.min(pullRefreshMaxDistance, Math.max(0, gestureState.dy * 0.55));
+      setPullRefreshDistance(nextDistance);
+    },
+    onPanResponderRelease: (_event, gestureState) => {
+      const releaseDistance = Math.min(pullRefreshMaxDistance, Math.max(0, gestureState.dy * 0.55));
+      const shouldRefresh = releaseDistance >= pullRefreshTriggerDistance || gestureState.vy > 0.85;
+      if (shouldRefresh) {
+        void handlePullRefreshGesture();
+        return;
+      }
+
+      setIsPullRefreshActive(false);
+      setPullRefreshDistance(0);
+    },
+    onPanResponderTerminate: () => {
+      setIsPullRefreshActive(false);
+      setPullRefreshDistance(0);
+    },
+  });
 
   if (page === 'startFriend') {
     return renderShell(
@@ -663,6 +715,9 @@ export function MultiplayerLobby({
         alwaysBounceVertical
         bounces
         contentContainerStyle={[lobbyStyles.scrollContent, lobbyStyles.gamesScrollContent]}
+        onScroll={(event) => {
+          gamesScrollY.current = event.nativeEvent.contentOffset.y;
+        }}
         overScrollMode="always"
         refreshControl={
           <RefreshControl
@@ -673,10 +728,20 @@ export function MultiplayerLobby({
             tintColor="#FFD329"
           />
         }
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         style={[lobbyStyles.scroll, lobbyStyles.gamesScroll]}
+        {...(usesWebPullRefresh ? gamesPullRefreshResponder.panHandlers : {})}
       >
         <SuckerLobbyTitle />
+        {pullRefreshVisible && (
+          <View style={[lobbyStyles.pullRefreshIndicator, { height: Math.max(34, pullRefreshDistance) }]}>
+            <ActivityIndicator color="#FFD329" size="small" />
+            <Text style={lobbyStyles.pullRefreshText}>
+              {isRefreshing ? 'Refreshing' : pullRefreshReady ? 'Release to refresh' : 'Pull to refresh'}
+            </Text>
+          </View>
+        )}
         <View style={lobbyStyles.topBar}>
           <View>
             <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
@@ -1506,6 +1571,24 @@ const lobbyStyles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72,
+  },
+  pullRefreshIndicator: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: '100%',
+  },
+  pullRefreshText: {
+    color: '#FFD329',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   primaryButton: {
     alignItems: 'center',
