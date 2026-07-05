@@ -580,6 +580,7 @@ function LocalGameScreen({
     remoteGame ? concealActiveOpponentDice(remoteGame, myProfileId) : null,
   );
   const [isRolling, setIsRolling] = useState(false);
+  const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showStatsPage, setShowStatsPage] = useState(false);
@@ -643,7 +644,8 @@ function LocalGameScreen({
     !isComputerTurn &&
     isMyRemoteTurn &&
     isRemoteActionPlayable;
-  const canRoll = canRollVisually && !isRolling && !isScoring && !isRemoteBusy;
+  const isRemoteInteractionPending = isRemoteBusy || isAwaitingRemoteRoll;
+  const canRoll = canRollVisually && !isRolling && !isScoring && !isRemoteInteractionPending;
   const homePlayer = game.players[myPlayerIndex] ?? game.players[0];
   const opponentPlayer =
     game.players[opponentPlayerIndex] ?? game.players.find((player) => player.id !== homePlayer.id) ?? game.players[1];
@@ -658,9 +660,14 @@ function LocalGameScreen({
     !isComputerTurn &&
     isMyRemoteTurn &&
     isRemoteActionPlayable &&
-    !isRemoteBusy;
+    !isRemoteInteractionPending;
   const canOpenTokenMenu =
-    game.phase !== 'complete' && !isRolling && !isScoring && !isComputerTurn && isMyRemoteTurn && !isRemoteBusy;
+    game.phase !== 'complete' &&
+    !isRolling &&
+    !isScoring &&
+    !isComputerTurn &&
+    isMyRemoteTurn &&
+    !isRemoteInteractionPending;
   const myTokenCount = homePlayer.suckerTokens;
   const canUseLocalExtraRoll =
     !isRemoteGame &&
@@ -1026,11 +1033,19 @@ function LocalGameScreen({
       return;
     }
 
-    if (!isRolling && !isScoring && !opponentTurnReveal && remoteGame && !shouldHoldRemoteTurnReveal) {
+    if (
+      !isAwaitingRemoteRoll &&
+      !isRolling &&
+      !isScoring &&
+      !opponentTurnReveal &&
+      remoteGame &&
+      !shouldHoldRemoteTurnReveal
+    ) {
       setVisibleRemoteGame(concealActiveOpponentDice(remoteGame, myProfileId));
       visibleRemoteTurnId.current = remoteLastTurnId ?? null;
     }
   }, [
+    isAwaitingRemoteRoll,
     isRemoteGame,
     isRolling,
     isScoring,
@@ -1159,9 +1174,9 @@ function LocalGameScreen({
     nextGamePromise: Promise<ReturnType<typeof createGame> | null>,
     sourceGame: ReturnType<typeof createGame>,
   ) {
-    // Keep the current dice still while the server decides the result. Once the
-    // result is known, the normal roll animation can land on the correct faces.
-    setIsRolling(true);
+    // Wait for the authoritative dice before rendering any roll motion.
+    // This prevents first-roll placeholders from looking like a completed sucker.
+    setIsAwaitingRemoteRoll(true);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
@@ -1169,8 +1184,8 @@ function LocalGameScreen({
     setRollingLaunches({});
 
     const nextGame = await nextGamePromise;
+    setIsAwaitingRemoteRoll(false);
     if (!nextGame) {
-      setIsRolling(false);
       return;
     }
 
@@ -1817,7 +1832,7 @@ function LocalGameScreen({
       sourceGame.rollNumber === 0 ||
       !isMyRemoteTurn ||
       !isRemoteActionPlayable ||
-      isRemoteBusy
+      isRemoteInteractionPending
     ) {
       return;
     }
@@ -1969,7 +1984,7 @@ function LocalGameScreen({
                 !isComputerTurn &&
                 isMyRemoteTurn &&
                 isRemoteActionPlayable &&
-                !isRemoteBusy
+                !isRemoteInteractionPending
               }
               selectedCategory={selectedCategory}
               isChoosingSuckerDeal={isChoosingSuckerDeal}
@@ -2016,7 +2031,7 @@ function LocalGameScreen({
                 !isComputerTurn &&
                 isMyRemoteTurn &&
                 isRemoteActionPlayable &&
-                !isRemoteBusy
+                !isRemoteInteractionPending
               }
               selectedCategory={selectedCategory}
               isChoosingSuckerDeal={isChoosingSuckerDeal}
@@ -2052,7 +2067,7 @@ function LocalGameScreen({
               return (
                 <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
                   <Pressable
-                    disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteBusy}
+                    disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending}
                     onPress={() => void handleToggleHold(index)}
                     ref={(node) => {
                       dieSlotRefs.current[index] = node;
