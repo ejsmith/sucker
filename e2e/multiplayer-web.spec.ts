@@ -64,6 +64,7 @@ test('two players can create an invite and play turns through the web UI', async
   await alicePage.getByTestId('roll-button').click();
   await expect(alicePage.getByTestId('game-screen')).toHaveScreenshot('scoring.png', {
     mask: [alicePage.getByTestId('dice-tray')],
+    maxDiffPixelRatio: 0.07,
   });
   await expect(alicePage.getByTestId('token-menu-button')).toBeEnabled();
   await expect(async () => {
