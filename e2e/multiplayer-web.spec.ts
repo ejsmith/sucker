@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
@@ -86,10 +86,12 @@ test('two players can create an invite and play turns through the web UI', async
 
   await openGameFromNotification(bobPage, gameId);
   await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png');
-  await expect(bobPage.getByTestId('roll-button')).toBeEnabled();
-  await bobPage.getByTestId('roll-button').click();
-  await expect(bobPage.getByTestId('home-score-box-twos')).toBeVisible();
-  await bobPage.getByTestId('home-score-box-twos').click();
+  const bobRollButton = bobPage.getByTestId('roll-button');
+  await waitForPressableEnabled(bobRollButton);
+  await bobRollButton.click();
+  const bobTwosScoreBox = bobPage.getByTestId('home-score-box-twos');
+  await waitForPressableEnabled(bobTwosScoreBox);
+  await bobTwosScoreBox.click();
   await expect(bobPage.getByTestId('play-score-button')).toBeEnabled();
   await bobPage.getByTestId('play-score-button').click();
 
@@ -243,6 +245,14 @@ async function describeScriptResponses(page: Page) {
   );
 
   return responses.join('\n---\n');
+}
+
+async function waitForPressableEnabled(locator: Locator) {
+  await expect
+    .poll(async () => {
+      return locator.evaluate((node) => node.getAttribute('aria-disabled') === 'true');
+    })
+    .toBe(false);
 }
 
 async function openGameFromLobby(page: Page, gameId: string) {
