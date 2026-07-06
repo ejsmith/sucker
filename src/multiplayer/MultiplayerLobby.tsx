@@ -14,13 +14,19 @@ import {
   type StyleProp,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
-import { createGameAgainst, listMyGames, nudgeRemoteGame, removeRemoteGame, subscribeToGameListChanges } from './games';
+import {
+  createGameAgainst,
+  createRematch,
+  listMyGames,
+  nudgeRemoteGame,
+  removeRemoteGame,
+  subscribeToGameListChanges,
+} from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import {
   canRegisterWebPush,
@@ -32,13 +38,14 @@ import {
 import { searchProfiles } from './profiles';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
-import { totalScore } from '../game';
+import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle } from '../ui/phoneStage';
 import { useAppActivity } from '../ui/useAppActivity';
+import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
-type LobbyPage = 'games' | 'profile' | 'startFriend';
+type LobbyPage = 'games' | 'profile' | 'startFriend' | 'completedGames' | 'completedGameDetail';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://sucker.games/invite';
 const privacyPolicyUrl = 'https://sucker.games/privacy.html';
@@ -61,7 +68,7 @@ export function MultiplayerLobby({
   onOpenGame: (gameId: string) => void;
   onPlayLocalDemo: () => void;
 }) {
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const isAppActive = useAppActivity();
   const { endSession, error, isLoading, profile, saveProfile, sendSignInCode, session, verifySignInCode } =
@@ -85,6 +92,7 @@ export function MultiplayerLobby({
   const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
   const [webPushPromptVisible, setWebPushPromptVisible] = useState(false);
   const [removeGameToConfirm, setRemoveGameToConfirm] = useState<RemoteGameRow | null>(null);
+  const [selectedCompletedGameId, setSelectedCompletedGameId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const gamesScrollY = useRef(0);
@@ -93,10 +101,12 @@ export function MultiplayerLobby({
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
     paddingTop: Math.max(12, safeAreaInsets.top + 4),
   };
+  const stageHostStableStyle: StyleProp<ViewStyle> =
+    Platform.OS === 'web' ? { minHeight: shellStyle.height, minWidth: shellStyle.width } : null;
 
   function renderShell(children: ReactNode) {
     return (
-      <View style={lobbyStyles.stageHost}>
+      <View style={[lobbyStyles.stageHost, stageHostStableStyle]}>
         <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
           {children}
         </View>
@@ -291,6 +301,16 @@ export function MultiplayerLobby({
     });
   }
 
+  async function handleRematchGame(game: RemoteGameRow) {
+    await runAction(async () => {
+      await createRematch(game.id);
+      await refreshGames({ surfaceError: false });
+      setMessage('Rematch sent.');
+      setSelectedCompletedGameId(null);
+      setPage('games');
+    });
+  }
+
   async function handleSendCode() {
     const normalizedEmail = email.trim();
     await runAction(async () => {
@@ -460,6 +480,10 @@ export function MultiplayerLobby({
     games.filter((game) => game.status !== 'complete'),
     profileId,
   );
+  const completedGames = sortCompletedGames(games.filter((game) => game.status === 'complete')).slice(0, 25);
+  const selectedCompletedGame = selectedCompletedGameId
+    ? games.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
+    : null;
   const playerName = profile?.display_name ?? session.user.email ?? 'player';
   const usesWebPullRefresh = Platform.OS === 'web';
   const pullRefreshReady = pullRefreshDistance >= pullRefreshTriggerDistance;
@@ -496,6 +520,113 @@ export function MultiplayerLobby({
       setPullRefreshDistance(0);
     },
   });
+
+  if (page === 'completedGames') {
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={lobbyStyles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            colors={['#FFD329']}
+            onRefresh={() => void handleVisibleRefreshGames()}
+            progressBackgroundColor="#210505"
+            refreshing={isRefreshing}
+            tintColor="#FFD329"
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <ScreenHeader title="Completed Games" onBack={() => setPage('games')} />
+
+        <View style={lobbyStyles.panel}>
+          <View style={lobbyStyles.panelHeader}>
+            <Text style={lobbyStyles.sectionTitle}>Last 25</Text>
+            <Pressable
+              disabled={isRefreshing}
+              onPress={() => void handleVisibleRefreshGames()}
+              style={({ pressed }) => [
+                lobbyStyles.refreshButton,
+                isRefreshing && lobbyStyles.refreshButtonRefreshing,
+                pressed && !isRefreshing && lobbyStyles.pressed,
+              ]}
+              testID="refresh-completed-games-button"
+            >
+              {isRefreshing ? (
+                <View style={lobbyStyles.refreshButtonContent}>
+                  <ActivityIndicator color="#210505" size="small" />
+                  <Text numberOfLines={1} style={lobbyStyles.refreshText}>
+                    Refreshing
+                  </Text>
+                </View>
+              ) : (
+                <Text numberOfLines={1} style={lobbyStyles.refreshText}>
+                  Refresh
+                </Text>
+              )}
+            </Pressable>
+          </View>
+
+          {completedGames.length === 0 ? (
+            <View style={lobbyStyles.emptyState}>
+              <Text style={lobbyStyles.emptyTitle}>No completed games yet</Text>
+              <Text style={lobbyStyles.emptyBody}>Finished games with friends will show up here.</Text>
+            </View>
+          ) : (
+            completedGames.map((game) => (
+              <CompletedGameListItem
+                game={game}
+                isBusy={isBusy || isLoading}
+                key={game.id}
+                onOpenGame={(completedGame) => {
+                  setSelectedCompletedGameId(completedGame.id);
+                  setPage('completedGameDetail');
+                }}
+                onRematchGame={handleRematchGame}
+                profileId={profileId}
+              />
+            ))
+          )}
+        </View>
+
+        {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
+        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>,
+    );
+  }
+
+  if (page === 'completedGameDetail') {
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={lobbyStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <ScreenHeader title="Score Card" onBack={() => setPage('completedGames')} />
+
+        {selectedCompletedGame ? (
+          <CompletedGameScorecard
+            game={selectedCompletedGame}
+            isBusy={isBusy || isLoading}
+            onRematchGame={handleRematchGame}
+            profileId={profileId}
+          />
+        ) : (
+          <View style={lobbyStyles.panel}>
+            <View style={lobbyStyles.emptyState}>
+              <Text style={lobbyStyles.emptyTitle}>Game not found</Text>
+              <Text style={lobbyStyles.emptyBody}>Refresh completed games and try again.</Text>
+            </View>
+          </View>
+        )}
+
+        {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
+        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>,
+    );
+  }
 
   if (page === 'startFriend') {
     return renderShell(
@@ -824,6 +955,23 @@ export function MultiplayerLobby({
           )}
         </View>
 
+        <Pressable
+          onPress={() => {
+            setSelectedCompletedGameId(null);
+            setPage('completedGames');
+          }}
+          style={({ pressed }) => [lobbyStyles.historyButton, pressed && lobbyStyles.pressed]}
+          testID="completed-games-button"
+        >
+          <View>
+            <Text style={lobbyStyles.historyButtonText}>Completed Games</Text>
+            <Text style={lobbyStyles.historyButtonMeta}>
+              {completedGames.length} recent {completedGames.length === 1 ? 'game' : 'games'}
+            </Text>
+          </View>
+          <Text style={lobbyStyles.historyButtonChevron}>›</Text>
+        </Pressable>
+
         <View style={lobbyStyles.actionGrid}>
           <Pressable
             onPress={() => setPage('startFriend')}
@@ -945,14 +1093,16 @@ function getWebNavigator() {
   }
 
   return (
-    (globalThis as typeof globalThis & {
-      navigator?: Navigator & {
-        clipboard?: {
-          writeText?: (text: string) => Promise<void>;
+    (
+      globalThis as typeof globalThis & {
+        navigator?: Navigator & {
+          clipboard?: {
+            writeText?: (text: string) => Promise<void>;
+          };
+          share?: (data: { text?: string; title?: string; url?: string }) => Promise<void>;
         };
-        share?: (data: { text?: string; title?: string; url?: string }) => Promise<void>;
-      };
-    }).navigator ?? null
+      }
+    ).navigator ?? null
   );
 }
 
@@ -1130,6 +1280,172 @@ function GameListItem({
   );
 }
 
+function CompletedGameListItem({
+  game,
+  isBusy,
+  onOpenGame,
+  onRematchGame,
+  profileId,
+}: {
+  game: RemoteGameRow;
+  isBusy: boolean;
+  onOpenGame: (game: RemoteGameRow) => void;
+  onRematchGame: (game: RemoteGameRow) => void;
+  profileId: string;
+}) {
+  const { me, opponent } = getGamePlayers(game, profileId);
+  const opponentName = opponent?.name ?? 'Opponent';
+  const myScore = me ? totalScore(me.scorecard) : 0;
+  const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
+
+  return (
+    <Pressable
+      onPress={() => onOpenGame(game)}
+      style={({ pressed }) => [lobbyStyles.gameCard, pressed && lobbyStyles.pressed]}
+      testID={`completed-game-${game.id}`}
+    >
+      <View style={lobbyStyles.gameCardTop}>
+        <View style={lobbyStyles.avatarLarge}>
+          <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={lobbyStyles.gameSummary}>
+          <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
+            {opponentName}
+          </Text>
+          <Text style={lobbyStyles.turnBadge}>{getCompletedResultLabel(myScore, opponentScore)}</Text>
+        </View>
+        <View style={lobbyStyles.scorePill}>
+          <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
+          <Text style={lobbyStyles.scoreDivider}>-</Text>
+          <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+        </View>
+      </View>
+      <View style={lobbyStyles.completedGameFooter}>
+        <Text numberOfLines={1} style={lobbyStyles.waitText}>
+          {formatCompletedDate(game.completed_at ?? game.updated_at)}
+        </Text>
+        <Pressable
+          disabled={isBusy}
+          onPress={(event) => {
+            event.stopPropagation();
+            onRematchGame(game);
+          }}
+          style={({ pressed }) => [lobbyStyles.completedRematchButton, pressed && lobbyStyles.pressed]}
+          testID={`rematch-completed-game-${game.id}`}
+        >
+          <Text style={lobbyStyles.completedRematchText}>Rematch</Text>
+        </Pressable>
+      </View>
+    </Pressable>
+  );
+}
+
+function CompletedGameScorecard({
+  game,
+  isBusy,
+  onRematchGame,
+  profileId,
+}: {
+  game: RemoteGameRow;
+  isBusy: boolean;
+  onRematchGame: (game: RemoteGameRow) => void;
+  profileId: string;
+}) {
+  const { me, opponent } = getGamePlayers(game, profileId);
+  if (!me || !opponent) {
+    return (
+      <View style={lobbyStyles.panel}>
+        <View style={lobbyStyles.emptyState}>
+          <Text style={lobbyStyles.emptyTitle}>Scorecard unavailable</Text>
+          <Text style={lobbyStyles.emptyBody}>This completed game is missing player data.</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const myScore = totalScore(me.scorecard);
+  const opponentScore = totalScore(opponent.scorecard);
+
+  return (
+    <View style={lobbyStyles.panel}>
+      <View style={lobbyStyles.completedScoreHeader}>
+        <View style={lobbyStyles.completedScoreTitleBlock}>
+          <Text numberOfLines={1} style={lobbyStyles.completedScoreTitle}>
+            Vs {opponent.name}
+          </Text>
+          <Text style={lobbyStyles.completedScoreDate}>
+            {formatCompletedDate(game.completed_at ?? game.updated_at)}
+          </Text>
+        </View>
+        <Text style={lobbyStyles.turnBadge}>{getCompletedResultLabel(myScore, opponentScore)}</Text>
+      </View>
+
+      <View style={lobbyStyles.statGrid}>
+        <StatTile label="You" value={String(myScore)} />
+        <StatTile label="Them" value={String(opponentScore)} />
+      </View>
+
+      <View style={lobbyStyles.scorecardTable}>
+        <View style={[lobbyStyles.scorecardRow, lobbyStyles.scorecardHeaderRow]}>
+          <Text style={[lobbyStyles.scorecardCategoryText, lobbyStyles.scorecardHeaderText]}>Category</Text>
+          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>You</Text>
+          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>Them</Text>
+        </View>
+        {scoreCategories.map((category) => (
+          <ScorecardComparisonRow
+            key={category}
+            label={categoryLabels[category]}
+            themValue={formatScorecardScore(opponent.scorecard[category])}
+            youValue={formatScorecardScore(me.scorecard[category])}
+          />
+        ))}
+        <ScorecardComparisonRow
+          emphasized
+          label="Upper bonus"
+          themValue={String(upperBonus(opponent.scorecard))}
+          youValue={String(upperBonus(me.scorecard))}
+        />
+        <ScorecardComparisonRow emphasized label="Total" themValue={String(opponentScore)} youValue={String(myScore)} />
+      </View>
+
+      <Pressable
+        disabled={isBusy}
+        onPress={() => void onRematchGame(game)}
+        style={({ pressed }) => [
+          lobbyStyles.primaryButton,
+          isBusy && lobbyStyles.primaryButtonDisabled,
+          pressed && lobbyStyles.pressed,
+        ]}
+        testID={`rematch-completed-detail-${game.id}`}
+      >
+        <Text style={lobbyStyles.primaryButtonText}>Rematch</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function ScorecardComparisonRow({
+  emphasized = false,
+  label,
+  themValue,
+  youValue,
+}: {
+  emphasized?: boolean;
+  label: string;
+  themValue: string;
+  youValue: string;
+}) {
+  return (
+    <View style={[lobbyStyles.scorecardRow, emphasized && lobbyStyles.scorecardTotalRow]}>
+      <Text numberOfLines={1} style={[lobbyStyles.scorecardCategoryText, emphasized && lobbyStyles.scorecardTotalText]}>
+        {label}
+      </Text>
+      <Text style={[lobbyStyles.scorecardValueText, emphasized && lobbyStyles.scorecardTotalText]}>{youValue}</Text>
+      <Text style={[lobbyStyles.scorecardValueText, emphasized && lobbyStyles.scorecardTotalText]}>{themValue}</Text>
+    </View>
+  );
+}
+
 function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
   if (!stats || stats.games_played === 0) {
     return (
@@ -1211,15 +1527,31 @@ function sortActiveGames(games: RemoteGameRow[], profileId: string) {
   });
 }
 
+function sortCompletedGames(games: RemoteGameRow[]) {
+  return [...games].sort((left, right) => getCompletedGameTime(right) - getCompletedGameTime(left));
+}
+
+function getCompletedGameTime(game: RemoteGameRow) {
+  return new Date(game.completed_at ?? game.updated_at).getTime();
+}
+
+function getGamePlayers(game: RemoteGameRow, profileId: string) {
+  const me = game.state.players.find((player) => player.id === profileId) ?? null;
+  const opponent = game.state.players.find((player) => player.id !== profileId) ?? null;
+  return { me, opponent };
+}
+
+function getCompletedResultLabel(myScore: number, opponentScore: number) {
+  if (myScore === opponentScore) {
+    return 'Tie';
+  }
+
+  return myScore > opponentScore ? 'You won' : 'You lost';
+}
+
 function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
   if (game.status === 'inviting') {
     return 'Waiting for friend';
-  }
-  if (game.status === 'blocked_response' && game.current_player_id === profileId) {
-    return 'Block or replay';
-  }
-  if (game.status === 'response_window' && game.current_player_id === profileId) {
-    return 'Your response';
   }
 
   return game.current_player_id === profileId ? 'Your turn' : 'Their turn';
@@ -1278,6 +1610,23 @@ function formatPct(count: number, gamesPlayed: number) {
 
 function formatNumber(value: number) {
   return Number(value).toFixed(2).replace(/\.00$/, '');
+}
+
+function formatScorecardScore(value: number | null) {
+  return value === null ? '-' : String(value);
+}
+
+function formatCompletedDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Completed game';
+  }
+
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 }
 
 function getInviteLink(inviteCode: string) {
@@ -1441,6 +1790,50 @@ const lobbyStyles = StyleSheet.create({
     letterSpacing: 0,
     textAlign: 'center',
   },
+  completedGameFooter: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  completedRematchButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 8,
+    borderWidth: 3,
+    height: 40,
+    justifyContent: 'center',
+    minWidth: 92,
+    paddingHorizontal: 10,
+  },
+  completedRematchText: {
+    color: '#210505',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  completedScoreDate: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '800',
+    opacity: 0.86,
+  },
+  completedScoreHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  completedScoreTitle: {
+    color: '#FFD329',
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  completedScoreTitleBlock: {
+    flex: 1,
+    gap: 2,
+  },
   gameCardTop: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -1473,6 +1866,37 @@ const lobbyStyles = StyleSheet.create({
     fontWeight: '900',
     marginBottom: 8,
     textAlign: 'center',
+  },
+  historyButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 54,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    width: '100%',
+  },
+  historyButtonChevron: {
+    color: '#FFD329',
+    fontSize: 30,
+    fontWeight: '900',
+    lineHeight: 30,
+  },
+  historyButtonMeta: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '800',
+    opacity: 0.82,
+  },
+  historyButtonText: {
+    color: '#FFD329',
+    fontSize: 16,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   input: {
     backgroundColor: '#FFF3C2',
@@ -1773,6 +2197,54 @@ const lobbyStyles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: 8,
+  },
+  scorecardCategoryText: {
+    color: '#FFF3C2',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  scorecardHeaderRow: {
+    backgroundColor: '#8F3B10',
+    borderBottomWidth: 0,
+  },
+  scorecardHeaderText: {
+    color: '#FFD329',
+    fontSize: 11,
+    textTransform: 'uppercase',
+  },
+  scorecardRow: {
+    alignItems: 'center',
+    borderBottomColor: '#8F3B10',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 30,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  scorecardTable: {
+    backgroundColor: '#3A0A05',
+    borderColor: '#8F3B10',
+    borderRadius: 8,
+    borderWidth: 2,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  scorecardTotalRow: {
+    backgroundColor: '#FFF3C2',
+    borderBottomWidth: 0,
+  },
+  scorecardTotalText: {
+    color: '#210505',
+    fontSize: 13,
+  },
+  scorecardValueText: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'center',
+    width: 54,
   },
   screenHeader: {
     alignItems: 'center',

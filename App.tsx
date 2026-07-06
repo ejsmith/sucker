@@ -10,7 +10,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -66,6 +65,7 @@ import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
 import { getPhoneStageStyle } from './src/ui/phoneStage';
 import { useAppActivity } from './src/ui/useAppActivity';
+import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
 import {
   createRollingLaunch,
   defaultRollingLaunch,
@@ -363,7 +363,7 @@ function createRemoteGameRequest(gameId: string): RemoteGameRequest {
 }
 
 function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const remoteStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
   const isAppActive = useAppActivity();
@@ -609,7 +609,7 @@ function LocalGameScreen({
   remoteLastTurnId?: string | null;
   remoteStatus?: RemoteGameStatus;
 }) {
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const [devViewportPresetKey, setDevViewportPresetKey] =
     useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
@@ -801,6 +801,8 @@ function LocalGameScreen({
     safeAreaInsets.top,
     safeAreaInsets.bottom,
   );
+  const stableScreenHostStyle =
+    Platform.OS === 'web' ? { minHeight: effectiveWindowHeight, minWidth: effectiveWindowWidth } : null;
   const showDevViewportControls = isWebDevViewportControlsEnabled();
   const compactPhoneLayout = effectiveWindowHeight < 760 || effectiveWindowWidth < 390;
   const roomyPhoneLayout = !compactPhoneLayout && effectiveWindowHeight >= 870 && effectiveWindowWidth >= 400;
@@ -1944,7 +1946,7 @@ function LocalGameScreen({
   }
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'bottom']} style={[styles.safeArea, stableScreenHostStyle]}>
       <StatusBar style="light" />
       {showDevViewportControls && (
         <DevViewportPresetControls

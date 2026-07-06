@@ -4,6 +4,10 @@ import { Platform } from 'react-native';
 import App from './App';
 
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  upsertMeta(
+    'viewport',
+    'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content',
+  );
   upsertMeta('apple-mobile-web-app-capable', 'yes');
   upsertMeta('apple-mobile-web-app-title', 'Sucker!');
   upsertMeta('apple-mobile-web-app-status-bar-style', 'black-translucent');
