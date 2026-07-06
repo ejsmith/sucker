@@ -2155,7 +2155,7 @@ function LocalGameScreen({
           >
             {game.dice.map((die, index) => {
               const isFlying = isRolling && rollingDieIndexes.includes(index);
-              const showDie = game.rollNumber > 0 || isRolling;
+              const showDie = activePlayerViewIndex === 0 && (game.rollNumber > 0 || isRolling);
               const showSlotDie = showDie && !isFlying;
 
               return (
