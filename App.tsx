@@ -2157,6 +2157,7 @@ function LocalGameScreen({
               const isFlying = isRolling && rollingDieIndexes.includes(index);
               const showDie = activePlayerViewIndex === 0 && (game.rollNumber > 0 || isRolling);
               const showSlotDie = showDie && !isFlying;
+              const showHeldDie = showDie && game.held[index];
 
               return (
                 <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
@@ -2170,7 +2171,7 @@ function LocalGameScreen({
                       styles.dieSlot,
                       compactPhoneLayout && styles.compactDieSlot,
                       isFlying && styles.settlingDieSlot,
-                      game.held[index] && styles.heldDie,
+                      showHeldDie && styles.heldDie,
                       pressed && styles.pressed,
                     ]}
                   >
@@ -2181,7 +2182,7 @@ function LocalGameScreen({
                           source={whiteDiceImages[die]}
                           style={[
                             styles.dieImage,
-                            game.held[index] && styles.heldDieImage,
+                            showHeldDie && styles.heldDieImage,
                             isScoring && styles.scoringSourceDieImage,
                           ]}
                           onError={() => {
