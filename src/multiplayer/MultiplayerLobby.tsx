@@ -36,6 +36,7 @@ import {
   syncAppBadgeCount,
 } from './notifications';
 import { searchProfiles } from './profiles';
+import { getAllTimeOpponentRecord, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
@@ -82,6 +83,7 @@ export function MultiplayerLobby({
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [games, setGames] = useState<RemoteGameRow[]>([]);
   const [computerStats, setComputerStats] = useState<ComputerStatsRow>(null);
+  const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
@@ -121,6 +123,14 @@ export function MultiplayerLobby({
         setGames(nextGames);
         setNow(Date.now());
         await syncAppBadgeCount(profile ? countGamesAwaitingTurn(nextGames, profile.id) : 0);
+
+        try {
+          setAllTimeOpponentRecord(await getAllTimeOpponentRecord());
+        } catch (recordError) {
+          if (surfaceError) {
+            setMessage(recordError instanceof Error ? recordError.message : 'Unable to refresh all-time record.');
+          }
+        }
       } catch (refreshError) {
         if (surfaceError) {
           setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
@@ -539,6 +549,7 @@ export function MultiplayerLobby({
       >
         <SuckerLobbyTitle />
         <ScreenHeader title="Completed Games" onBack={() => setPage('games')} />
+        <AllTimeRecordCard record={allTimeOpponentRecord} />
 
         <View style={lobbyStyles.panel}>
           <View style={lobbyStyles.panelHeader}>
@@ -1553,6 +1564,19 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
   );
 }
 
+function AllTimeRecordCard({ record }: { record: AllTimeOpponentRecord | null }) {
+  return (
+    <View style={lobbyStyles.panel} testID="completed-all-time-record">
+      <Text style={lobbyStyles.sectionTitle}>All Time Record</Text>
+      <View style={lobbyStyles.statGrid}>
+        <StatTile label="Record" value={record ? formatWinLossRecord(record) : '--'} />
+        <StatTile label="Games" value={record ? String(record.gamesPlayed) : '--'} />
+        <StatTile label="Win %" value={record ? formatWinRate(record) : '--'} />
+      </View>
+    </View>
+  );
+}
+
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
     <View style={lobbyStyles.statTile}>
@@ -1661,6 +1685,19 @@ function formatPct(count: number, gamesPlayed: number) {
   }
 
   return `${Math.round((count / gamesPlayed) * 100)}%`;
+}
+
+function formatWinLossRecord(record: AllTimeOpponentRecord) {
+  const baseRecord = `${record.wins}-${record.losses}`;
+  return record.ties > 0 ? `${baseRecord}-${record.ties}` : baseRecord;
+}
+
+function formatWinRate(record: AllTimeOpponentRecord) {
+  if (record.gamesPlayed === 0) {
+    return '0%';
+  }
+
+  return `${Math.round((record.wins / record.gamesPlayed) * 100)}%`;
 }
 
 function formatNumber(value: number) {
