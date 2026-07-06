@@ -1246,7 +1246,14 @@ function GameListItem({
               <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
                 {opponentName}
               </Text>
-              <Text style={[lobbyStyles.turnBadge, isMyTurn && lobbyStyles.turnBadgeHot]}>{status}</Text>
+              <Text
+                style={[
+                  lobbyStyles.turnBadge,
+                  isMyTurn ? lobbyStyles.turnBadgeYourTurn : status === 'Their turn' && lobbyStyles.turnBadgeTheirTurn,
+                ]}
+              >
+                {status}
+              </Text>
             </View>
             <View style={lobbyStyles.gameCardActions}>
               <View style={lobbyStyles.scorePill}>
@@ -1297,11 +1304,18 @@ function CompletedGameListItem({
   const opponentName = opponent?.name ?? 'Opponent';
   const myScore = me ? totalScore(me.scorecard) : 0;
   const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
+  const resultTone = getCompletedResultTone(myScore, opponentScore);
 
   return (
     <Pressable
       onPress={() => onOpenGame(game)}
-      style={({ pressed }) => [lobbyStyles.gameCard, pressed && lobbyStyles.pressed]}
+      style={({ pressed }) => [
+        lobbyStyles.gameCard,
+        resultTone === 'win' && lobbyStyles.completedGameWin,
+        resultTone === 'loss' && lobbyStyles.completedGameLoss,
+        resultTone === 'tie' && lobbyStyles.completedGameTie,
+        pressed && lobbyStyles.pressed,
+      ]}
       testID={`completed-game-${game.id}`}
     >
       <View style={lobbyStyles.gameCardTop}>
@@ -1312,9 +1326,25 @@ function CompletedGameListItem({
           <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
             {opponentName}
           </Text>
-          <Text style={lobbyStyles.turnBadge}>{getCompletedResultLabel(myScore, opponentScore)}</Text>
+          <Text
+            style={[
+              lobbyStyles.resultBadge,
+              resultTone === 'win' && lobbyStyles.resultBadgeWin,
+              resultTone === 'loss' && lobbyStyles.resultBadgeLoss,
+              resultTone === 'tie' && lobbyStyles.resultBadgeTie,
+            ]}
+          >
+            {getCompletedResultLabel(myScore, opponentScore)}
+          </Text>
         </View>
-        <View style={lobbyStyles.scorePill}>
+        <View
+          style={[
+            lobbyStyles.scorePill,
+            resultTone === 'win' && lobbyStyles.completedScorePillWin,
+            resultTone === 'loss' && lobbyStyles.completedScorePillLoss,
+            resultTone === 'tie' && lobbyStyles.completedScorePillTie,
+          ]}
+        >
           <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
           <Text style={lobbyStyles.scoreDivider}>-</Text>
           <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
@@ -1365,9 +1395,17 @@ function CompletedGameScorecard({
 
   const myScore = totalScore(me.scorecard);
   const opponentScore = totalScore(opponent.scorecard);
+  const resultTone = getCompletedResultTone(myScore, opponentScore);
 
   return (
-    <View style={lobbyStyles.panel}>
+    <View
+      style={[
+        lobbyStyles.panel,
+        resultTone === 'win' && lobbyStyles.completedDetailWin,
+        resultTone === 'loss' && lobbyStyles.completedDetailLoss,
+        resultTone === 'tie' && lobbyStyles.completedDetailTie,
+      ]}
+    >
       <View style={lobbyStyles.completedScoreHeader}>
         <View style={lobbyStyles.completedScoreTitleBlock}>
           <Text numberOfLines={1} style={lobbyStyles.completedScoreTitle}>
@@ -1377,7 +1415,16 @@ function CompletedGameScorecard({
             {formatCompletedDate(game.completed_at ?? game.updated_at)}
           </Text>
         </View>
-        <Text style={lobbyStyles.turnBadge}>{getCompletedResultLabel(myScore, opponentScore)}</Text>
+        <Text
+          style={[
+            lobbyStyles.resultBadge,
+            resultTone === 'win' && lobbyStyles.resultBadgeWin,
+            resultTone === 'loss' && lobbyStyles.resultBadgeLoss,
+            resultTone === 'tie' && lobbyStyles.resultBadgeTie,
+          ]}
+        >
+          {getCompletedResultLabel(myScore, opponentScore)}
+        </Text>
       </View>
 
       <View style={lobbyStyles.statGrid}>
@@ -1547,6 +1594,14 @@ function getCompletedResultLabel(myScore: number, opponentScore: number) {
   }
 
   return myScore > opponentScore ? 'You won' : 'You lost';
+}
+
+function getCompletedResultTone(myScore: number, opponentScore: number) {
+  if (myScore === opponentScore) {
+    return 'tie';
+  }
+
+  return myScore > opponentScore ? 'win' : 'loss';
 }
 
 function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
@@ -1779,7 +1834,12 @@ const lobbyStyles = StyleSheet.create({
     padding: 8,
   },
   gameCardMyTurn: {
+    backgroundColor: '#FFF8D5',
     borderColor: '#FFD329',
+    shadowColor: '#5A1308',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.28,
+    shadowRadius: 0,
   },
   gameCardActions: {
     alignItems: 'flex-end',
@@ -1795,6 +1855,27 @@ const lobbyStyles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  completedGameLoss: {
+    backgroundColor: '#FFE2D6',
+    borderColor: '#C62B22',
+  },
+  completedGameTie: {
+    backgroundColor: '#FFF3C2',
+    borderColor: '#B97812',
+  },
+  completedGameWin: {
+    backgroundColor: '#F1FFD8',
+    borderColor: '#2F8F3E',
+  },
+  completedDetailLoss: {
+    borderColor: '#F05A4A',
+  },
+  completedDetailTie: {
+    borderColor: '#FFB000',
+  },
+  completedDetailWin: {
+    borderColor: '#7DD957',
   },
   completedRematchButton: {
     alignItems: 'center',
@@ -2309,6 +2390,18 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
   },
+  completedScorePillLoss: {
+    backgroundColor: '#FFB6A6',
+    borderColor: '#C62B22',
+  },
+  completedScorePillTie: {
+    backgroundColor: '#FFE08A',
+    borderColor: '#B97812',
+  },
+  completedScorePillWin: {
+    backgroundColor: '#DFF7A8',
+    borderColor: '#2F8F3E',
+  },
   scroll: {
     width: '100%',
   },
@@ -2480,18 +2573,54 @@ const lobbyStyles = StyleSheet.create({
   },
   turnBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#8F3B10',
+    backgroundColor: '#5A1308',
     borderRadius: 6,
-    color: '#FFF3C2',
+    borderWidth: 2,
+    borderColor: '#8F3B10',
+    color: '#D9A25B',
     fontSize: 12,
     fontWeight: '900',
     overflow: 'hidden',
     paddingHorizontal: 7,
     paddingVertical: 3,
   },
-  turnBadgeHot: {
+  turnBadgeTheirTurn: {
+    backgroundColor: '#5A1308',
+    borderColor: '#8F3B10',
+    color: '#D9A25B',
+  },
+  turnBadgeYourTurn: {
     backgroundColor: '#F12D22',
-    color: '#FFD329',
+    borderColor: '#FFD329',
+    color: '#FFF3C2',
+    textShadowColor: '#7A1208',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  resultBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 6,
+    borderWidth: 2,
+    fontSize: 12,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  resultBadgeLoss: {
+    backgroundColor: '#C62B22',
+    borderColor: '#7A1208',
+    color: '#FFF3C2',
+  },
+  resultBadgeTie: {
+    backgroundColor: '#FFE08A',
+    borderColor: '#B97812',
+    color: '#5A1308',
+  },
+  resultBadgeWin: {
+    backgroundColor: '#7DD957',
+    borderColor: '#2F8F3E',
+    color: '#183B12',
   },
   waitText: {
     color: '#8F3B10',
