@@ -85,14 +85,7 @@ test('two players can create an invite and play turns through the web UI', async
   await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
 
   await openGameFromNotification(bobPage, gameId);
-  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png', {
-    mask: [
-      bobPage.getByTestId('dice-tray'),
-      bobPage.getByTestId('opponent-score-box-ones'),
-      bobPage.getByTestId('player-strip'),
-      bobPage.getByTestId('section-bonus-panel'),
-    ],
-  });
+  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png');
   await expect(bobPage.getByTestId('roll-button')).toBeEnabled();
   await bobPage.getByTestId('roll-button').click();
   await expect(bobPage.getByTestId('home-score-box-twos')).toBeVisible();
