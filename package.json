@@ -49,6 +49,7 @@
     "test:integration:supabase": "node scripts/test-supabase-integration.cjs",
     "test:e2e:web": "node scripts/test-web-e2e.cjs",
     "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs",
+    "ai-lab": "tsc --project tsconfig.rules.json && node scripts/ai-lab.cjs",
     "simulate:computer": "tsc --project tsconfig.rules.json && node scripts/simulate-computer.cjs",
     "tournament:computer": "tsc --project tsconfig.rules.json && node scripts/tournament-computer.cjs",
     "tournament:sucker-tokens": "tsc --project tsconfig.rules.json && node scripts/tournament-sucker-tokens.cjs"

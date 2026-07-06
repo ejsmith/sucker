@@ -123,6 +123,65 @@ export function measureComputerHeadToHead({
   };
 }
 
+export function measureComputerHeadToHeadSideBalanced({
+  candidateStrategy,
+  gameCount = 1000,
+  opponentStrategy = defaultComputerStrategy,
+  seed = 1,
+}: {
+  candidateStrategy: ComputerStrategyConfig;
+  gameCount?: number;
+  opponentStrategy?: ComputerStrategyConfig;
+  seed?: number;
+}): ComputerHeadToHeadResult {
+  let candidateScoreTotal = 0;
+  let opponentScoreTotal = 0;
+  let wins = 0;
+  let losses = 0;
+  let ties = 0;
+
+  for (let index = 0; index < gameCount; index += 1) {
+    const candidateSecond = simulateComputerHeadToHead(seed + index, candidateStrategy, opponentStrategy);
+    candidateScoreTotal += candidateSecond.candidateScore;
+    opponentScoreTotal += candidateSecond.opponentScore;
+
+    if (candidateSecond.candidateScore > candidateSecond.opponentScore) {
+      wins += 1;
+    } else if (candidateSecond.candidateScore < candidateSecond.opponentScore) {
+      losses += 1;
+    } else {
+      ties += 1;
+    }
+
+    const candidateFirst = simulateComputerHeadToHead(seed + index, opponentStrategy, candidateStrategy);
+    candidateScoreTotal += candidateFirst.opponentScore;
+    opponentScoreTotal += candidateFirst.candidateScore;
+
+    if (candidateFirst.opponentScore > candidateFirst.candidateScore) {
+      wins += 1;
+    } else if (candidateFirst.opponentScore < candidateFirst.candidateScore) {
+      losses += 1;
+    } else {
+      ties += 1;
+    }
+  }
+
+  const balancedGameCount = gameCount * 2;
+  const averageScore = candidateScoreTotal / balancedGameCount;
+  const averageOpponentScore = opponentScoreTotal / balancedGameCount;
+
+  return {
+    averageMargin: averageScore - averageOpponentScore,
+    averageOpponentScore,
+    averageScore,
+    gameCount: balancedGameCount,
+    losses,
+    ties,
+    winRate: wins / balancedGameCount,
+    wins,
+  };
+}
+
 export function simulateComputerHeadToHead(
   seed = 1,
   candidateStrategy: ComputerStrategyConfig = defaultComputerStrategy,
