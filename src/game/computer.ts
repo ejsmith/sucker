@@ -43,9 +43,58 @@ export type ComputerTurnResult = {
   };
 };
 
+export type ComputerCategoryTrace = {
+  category: ScoreCategory;
+  priority: number;
+  score: number;
+  value: number;
+};
+
+export type ComputerFinalAction = { category: ScoreCategory; type: 'score' | 'scratch' };
+export type ComputerTurnDecisionAction = ComputerFinalAction | { type: 'extraRoll' } | { type: 'mulligan' };
+
+export type ComputerDecisionTrace = {
+  availableCategoryCount: number;
+  bestCategory: ComputerCategoryTrace | null;
+  dice: GameState['dice'];
+  extraRollsBought: number;
+  finalAction: ComputerFinalAction | null;
+  held: GameState['held'] | null;
+  maxRolls: number;
+  mulligansUsed: number;
+  openCategories: ScoreCategory[];
+  playerScore: number;
+  rankedCategories: ComputerCategoryTrace[];
+  rollNumber: number;
+  scorecard: GameState['players'][number]['scorecard'] | null;
+  shouldBuyExtraRoll: boolean;
+  shouldMulligan: boolean;
+  shouldStopRolling: boolean;
+  stage: 'after_roll' | 'decision';
+  suckerTokens: number;
+};
+
+export type ComputerDecisionTraceContext = {
+  decisionAction?: ComputerTurnDecisionAction;
+  extraRollsBought?: number;
+  mulligansUsed?: number;
+  stage?: ComputerDecisionTrace['stage'];
+};
+
+export type ComputerDecisionTraceHandler = (trace: ComputerDecisionTrace) => void;
+
 export type ComputerStrategyConfig = {
   chanceEarlyPenalty: number;
+  extraRollMaxPurchases: number;
   extraRollMaxScore: number;
+  extraRollMinTokens: number;
+  extraRollReserveTokens: number;
+  extraRollSuckerChaseMaxPurchases: number;
+  finalActionRolloutOpenCategoryMax: number;
+  finalActionRolloutSimulations: number;
+  holdRolloutRollNumberMax: number;
+  holdRolloutSimulations: number;
+  holdRolloutTokenValue: number;
   madeCategoryBonuses: Partial<Record<ScoreCategory, number>>;
   mulliganMaxScore: number;
   suckerBlockerMinScore: number;
@@ -53,11 +102,17 @@ export type ComputerStrategyConfig = {
   suckerPunchComebackMinScore: number;
   suckerPunchMinScore: number;
   suckerPunchReserveTokens: number;
+  suckerPunchUnblockableMinScore: number;
+  suckerDealBeforeTokenSpending: boolean;
   suckerDealChanceMaxScore: number;
   suckerDealMaxSacrificeScore: number;
   suckerDealMinOpenCategories: number;
   stopScoreThreshold: number;
   suckerCategoryBonus: number;
+  turnDecisionRolloutIncludesExtraRoll: boolean;
+  turnDecisionRolloutIncludesMulligan: boolean;
+  turnDecisionRolloutOpenCategoryMax: number;
+  turnDecisionRolloutSimulations: number;
   upperPressureHoldMultiplier: number;
   upperPressureScratchCostBonus: number;
   upperShortfallPenalty: number;
@@ -65,7 +120,16 @@ export type ComputerStrategyConfig = {
 
 export const defaultComputerStrategy: ComputerStrategyConfig = {
   chanceEarlyPenalty: 8,
+  extraRollMaxPurchases: 3,
   extraRollMaxScore: 20,
+  extraRollMinTokens: 4,
+  extraRollReserveTokens: 1,
+  extraRollSuckerChaseMaxPurchases: 0,
+  finalActionRolloutOpenCategoryMax: 2,
+  finalActionRolloutSimulations: 12,
+  holdRolloutRollNumberMax: 1,
+  holdRolloutSimulations: 48,
+  holdRolloutTokenValue: 2,
   madeCategoryBonuses: {
     fourOfAKind: 4,
     fullHouse: 6,
@@ -73,17 +137,23 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
     smallStraight: 5,
     threeOfAKind: 1,
   },
-  mulliganMaxScore: 12,
+  mulliganMaxScore: 6,
   suckerBlockerMinScore: 20,
   suckerPunchComebackMinCategories: 8,
   suckerPunchComebackMinScore: 30,
   suckerPunchMinScore: 50,
   suckerPunchReserveTokens: 0,
+  suckerPunchUnblockableMinScore: 999,
+  suckerDealBeforeTokenSpending: true,
   suckerDealChanceMaxScore: 20,
   suckerDealMaxSacrificeScore: 3,
   suckerDealMinOpenCategories: 8,
   stopScoreThreshold: 35,
   suckerCategoryBonus: 8,
+  turnDecisionRolloutIncludesExtraRoll: true,
+  turnDecisionRolloutIncludesMulligan: true,
+  turnDecisionRolloutOpenCategoryMax: 0,
+  turnDecisionRolloutSimulations: 0,
   upperPressureHoldMultiplier: 1.5,
   upperPressureScratchCostBonus: 4,
   upperShortfallPenalty: 0.9,
@@ -250,8 +320,9 @@ export function playComputerTurn(
   pendingTurn: LocalPendingTurn | null = null,
   random: () => number = Math.random,
   strategy: ComputerStrategyConfig = defaultComputerStrategy,
+  onTrace?: ComputerDecisionTraceHandler,
 ): ComputerTurnResult {
-  return playAutomatedTurn(game, computerPlayerIndex, pendingTurn, random, strategy);
+  return playAutomatedTurn(game, computerPlayerIndex, pendingTurn, random, strategy, onTrace);
 }
 
 export function playAutomatedTurn(
@@ -260,6 +331,7 @@ export function playAutomatedTurn(
   pendingTurn: LocalPendingTurn | null = null,
   random: () => number = Math.random,
   strategy: ComputerStrategyConfig = defaultComputerStrategy,
+  onTrace?: ComputerDecisionTraceHandler,
 ): ComputerTurnResult {
   if (game.currentPlayerIndex !== automatedPlayerIndex || game.phase === 'complete') {
     return { game, pendingTurn };
@@ -290,16 +362,30 @@ export function playAutomatedTurn(
     pendingTurn = null;
   }
 
+  if (availableCategories(game.players[automatedPlayerIndex].scorecard).length === 0) {
+    return { game, pendingTurn: null };
+  }
+
   let nextGame = {
     ...game,
     held: [false, false, false, false, false] as typeof game.held,
   };
   let mulligansUsed = 0;
   let extraRollsBought = 0;
+  let finalAction: ComputerFinalAction | null = null;
 
   while (true) {
     while (nextGame.rollNumber < maxAvailableRolls(nextGame)) {
       nextGame = rollCurrentDice(nextGame, random);
+      if (onTrace) {
+        onTrace(
+          traceComputerDecision(nextGame, automatedPlayerIndex, strategy, {
+            extraRollsBought,
+            mulligansUsed,
+            stage: 'after_roll',
+          }),
+        );
+      }
       const choice = getBestComputerCategoryChoice(
         nextGame.dice,
         nextGame.players[automatedPlayerIndex].scorecard,
@@ -317,37 +403,279 @@ export function playAutomatedTurn(
 
     const computer = nextGame.players[automatedPlayerIndex];
     const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard, strategy);
-    const suckerDealCategory = chooseSuckerDealCategory(nextGame, automatedPlayerIndex, choice, strategy);
-    if (suckerDealCategory) {
+    const decisionAction = chooseComputerTurnDecisionAction(
+      nextGame,
+      automatedPlayerIndex,
+      choice,
+      extraRollsBought,
+      mulligansUsed,
+      strategy,
+    );
+    if (onTrace) {
+      onTrace(
+        traceComputerDecision(nextGame, automatedPlayerIndex, strategy, {
+          decisionAction,
+          extraRollsBought,
+          mulligansUsed,
+          stage: 'decision',
+        }),
+      );
+    }
+
+    if (decisionAction.type === 'score' || decisionAction.type === 'scratch') {
+      finalAction = decisionAction;
       break;
     }
 
-    if (shouldComputerUseMulligan(nextGame, automatedPlayerIndex, choice, mulligansUsed, strategy)) {
+    if (decisionAction.type === 'mulligan') {
       nextGame = mulliganCurrentTurn(nextGame);
       mulligansUsed += 1;
       continue;
     }
 
-    if (shouldComputerBuyExtraRoll(nextGame, automatedPlayerIndex, choice, extraRollsBought, strategy)) {
+    if (decisionAction.type === 'extraRoll') {
       nextGame = purchaseExtraRoll(nextGame);
       extraRollsBought += 1;
       continue;
     }
-
-    break;
   }
 
-  const action = chooseComputerFinalAction(nextGame, automatedPlayerIndex, strategy);
+  const action = finalAction ?? chooseComputerFinalAction(nextGame, automatedPlayerIndex, strategy);
   return action.type === 'scratch'
     ? scratchLocalTurn(nextGame, action.category)
     : scoreLocalTurn(nextGame, action.category);
+}
+
+export function traceComputerDecision(
+  game: GameState,
+  automatedPlayerIndex = computerPlayerIndex,
+  strategy: ComputerStrategyConfig = defaultComputerStrategy,
+  context: ComputerDecisionTraceContext = {},
+): ComputerDecisionTrace {
+  const player = game.players[automatedPlayerIndex];
+  const rankedCategories = player ? getRankedComputerCategoryChoices(game.dice, player.scorecard, strategy) : [];
+  const bestCategory = rankedCategories[0] ?? null;
+  const openCategories = player ? availableCategories(player.scorecard) : [];
+  const maxRolls = maxAvailableRolls(game);
+  const mulligansUsed = context.mulligansUsed ?? 0;
+  const extraRollsBought = context.extraRollsBought ?? 0;
+  const decisionAction = context.decisionAction;
+  const held =
+    player && game.rollNumber > 0 && game.rollNumber < maxRolls
+      ? chooseComputerHeldDice(game, automatedPlayerIndex, strategy)
+      : null;
+  const shouldStopRolling =
+    Boolean(player && bestCategory && game.rollNumber > 0) &&
+    shouldComputerStopRolling(game, automatedPlayerIndex, bestCategory, strategy);
+  const heuristicShouldBuyExtraRoll = Boolean(
+    player && bestCategory && shouldComputerBuyExtraRoll(game, automatedPlayerIndex, bestCategory, extraRollsBought, strategy),
+  );
+  const heuristicShouldMulligan = Boolean(
+    player && bestCategory && shouldComputerUseMulligan(game, automatedPlayerIndex, bestCategory, mulligansUsed, strategy),
+  );
+  const shouldBuyExtraRoll = decisionAction ? decisionAction.type === 'extraRoll' : heuristicShouldBuyExtraRoll;
+  const shouldMulligan = decisionAction ? decisionAction.type === 'mulligan' : heuristicShouldMulligan;
+  const finalAction =
+    decisionAction?.type === 'score' || decisionAction?.type === 'scratch'
+      ? decisionAction
+      : player && bestCategory && game.rollNumber > 0 && !shouldBuyExtraRoll && !shouldMulligan
+        ? chooseComputerFinalAction(game, automatedPlayerIndex, strategy)
+        : null;
+
+  return {
+    availableCategoryCount: player ? availableCategories(player.scorecard).length : 0,
+    bestCategory,
+    dice: game.dice,
+    extraRollsBought,
+    finalAction,
+    held,
+    maxRolls,
+    mulligansUsed,
+    openCategories,
+    playerScore: player ? totalScore(player.scorecard) : 0,
+    rankedCategories,
+    rollNumber: game.rollNumber,
+    scorecard: player ? { ...player.scorecard } : null,
+    shouldBuyExtraRoll,
+    shouldMulligan,
+    shouldStopRolling,
+    stage: context.stage ?? 'decision',
+    suckerTokens: player?.suckerTokens ?? 0,
+  };
+}
+
+function chooseComputerTurnDecisionAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  choice: ComputerCategoryChoice,
+  extraRollsBought: number,
+  mulligansUsed: number,
+  strategy: ComputerStrategyConfig,
+): ComputerTurnDecisionAction {
+  const heuristicAction = chooseHeuristicComputerTurnDecisionAction(
+    game,
+    automatedPlayerIndex,
+    choice,
+    extraRollsBought,
+    mulligansUsed,
+    strategy,
+  );
+
+  if (!shouldUseTurnDecisionRollout(game, automatedPlayerIndex, strategy)) {
+    return heuristicAction;
+  }
+
+  return chooseRolloutTurnDecisionAction(game, automatedPlayerIndex, strategy, heuristicAction, mulligansUsed);
+}
+
+function chooseHeuristicComputerTurnDecisionAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  choice: ComputerCategoryChoice,
+  extraRollsBought: number,
+  mulligansUsed: number,
+  strategy: ComputerStrategyConfig,
+): ComputerTurnDecisionAction {
+  const suckerDealCategory = chooseSuckerDealCategory(game, automatedPlayerIndex, choice, strategy);
+  if (strategy.suckerDealBeforeTokenSpending && suckerDealCategory) {
+    return { category: suckerDealCategory, type: 'scratch' };
+  }
+
+  if (shouldComputerUseMulligan(game, automatedPlayerIndex, choice, mulligansUsed, strategy)) {
+    return { type: 'mulligan' };
+  }
+
+  if (shouldComputerBuyExtraRoll(game, automatedPlayerIndex, choice, extraRollsBought, strategy)) {
+    return { type: 'extraRoll' };
+  }
+
+  if (suckerDealCategory) {
+    return { category: suckerDealCategory, type: 'scratch' };
+  }
+
+  return chooseComputerFinalAction(game, automatedPlayerIndex, strategy);
+}
+
+function shouldUseTurnDecisionRollout(game: GameState, automatedPlayerIndex: number, strategy: ComputerStrategyConfig) {
+  return (
+    strategy.turnDecisionRolloutSimulations > 0 &&
+    strategy.turnDecisionRolloutOpenCategoryMax > 0 &&
+    game.phase !== 'complete' &&
+    game.rollNumber > 0 &&
+    availableCategories(game.players[automatedPlayerIndex].scorecard).length <=
+      strategy.turnDecisionRolloutOpenCategoryMax
+  );
+}
+
+function chooseRolloutTurnDecisionAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+  heuristicAction: ComputerTurnDecisionAction,
+  mulligansUsed: number,
+): ComputerTurnDecisionAction {
+  const candidates = getTurnDecisionActionCandidates(game, automatedPlayerIndex, heuristicAction, mulligansUsed, strategy);
+  if (candidates.length <= 1) {
+    return heuristicAction;
+  }
+
+  return candidates
+    .map((action) => ({
+      action,
+      result: measureTurnDecisionRollout(
+        game,
+        automatedPlayerIndex,
+        action,
+        strategy,
+        Math.max(1, Math.floor(strategy.turnDecisionRolloutSimulations)),
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        right.result.winRate - left.result.winRate ||
+        right.result.averageMargin - left.result.averageMargin ||
+        right.result.averageScore - left.result.averageScore ||
+        turnDecisionTieBreakScore(right.action, game, automatedPlayerIndex, strategy) -
+          turnDecisionTieBreakScore(left.action, game, automatedPlayerIndex, strategy),
+    )[0].action;
+}
+
+function getTurnDecisionActionCandidates(
+  game: GameState,
+  automatedPlayerIndex: number,
+  heuristicAction: ComputerTurnDecisionAction,
+  mulligansUsed: number,
+  strategy: ComputerStrategyConfig,
+): ComputerTurnDecisionAction[] {
+  const byKey = new Map<string, ComputerTurnDecisionAction>();
+  const addAction = (action: ComputerTurnDecisionAction) => {
+    byKey.set(turnDecisionActionKey(action), action);
+  };
+
+  addAction(heuristicAction);
+  for (const action of getFinalActionCandidates(
+    game,
+    automatedPlayerIndex,
+    chooseHeuristicComputerFinalAction(game, automatedPlayerIndex, strategy),
+  )) {
+    addAction(action);
+  }
+
+  if (strategy.turnDecisionRolloutIncludesExtraRoll && canLegallyBuyExtraRoll(game, automatedPlayerIndex)) {
+    addAction({ type: 'extraRoll' });
+  }
+
+  if (strategy.turnDecisionRolloutIncludesMulligan && canLegallyUseMulligan(game, automatedPlayerIndex, mulligansUsed)) {
+    addAction({ type: 'mulligan' });
+  }
+
+  return [...byKey.values()];
+}
+
+function turnDecisionActionKey(action: ComputerTurnDecisionAction) {
+  return action.type === 'score' || action.type === 'scratch' ? `${action.type}:${action.category}` : action.type;
+}
+
+function canLegallyBuyExtraRoll(game: GameState, automatedPlayerIndex: number) {
+  const player = game.players[automatedPlayerIndex];
+  return (
+    game.phase !== 'complete' &&
+    game.rollNumber >= maxAvailableRolls(game) &&
+    Boolean(player) &&
+    player.suckerTokens >= suckerTokenCosts.extraRoll
+  );
+}
+
+function canLegallyUseMulligan(game: GameState, automatedPlayerIndex: number, mulligansUsed: number) {
+  const player = game.players[automatedPlayerIndex];
+  return (
+    game.phase !== 'complete' &&
+    game.rollNumber > 0 &&
+    mulligansUsed === 0 &&
+    Boolean(player) &&
+    player.suckerTokens >= suckerTokenCosts.mulligan
+  );
 }
 
 function chooseComputerFinalAction(
   game: GameState,
   automatedPlayerIndex: number,
   strategy: ComputerStrategyConfig,
-): { category: ScoreCategory; type: 'score' | 'scratch' } {
+): ComputerFinalAction {
+  const heuristicAction = chooseHeuristicComputerFinalAction(game, automatedPlayerIndex, strategy);
+
+  if (!shouldUseFinalActionRollout(game, automatedPlayerIndex, strategy)) {
+    return heuristicAction;
+  }
+
+  return chooseRolloutFinalAction(game, automatedPlayerIndex, strategy, heuristicAction);
+}
+
+function chooseHeuristicComputerFinalAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+): ComputerFinalAction {
   const scorecard = game.players[automatedPlayerIndex].scorecard;
   const choice = getBestComputerCategoryChoice(game.dice, scorecard, strategy);
   const suckerDealCategory = chooseSuckerDealCategory(game, automatedPlayerIndex, choice, strategy);
@@ -356,7 +684,279 @@ function chooseComputerFinalAction(
     return { category: suckerDealCategory, type: 'scratch' };
   }
 
+  if (choice.score === 0) {
+    return { category: choice.category, type: 'scratch' };
+  }
+
   return { category: choice.category, type: 'score' };
+}
+
+function shouldUseFinalActionRollout(game: GameState, automatedPlayerIndex: number, strategy: ComputerStrategyConfig) {
+  return (
+    strategy.finalActionRolloutSimulations > 0 &&
+    strategy.finalActionRolloutOpenCategoryMax > 0 &&
+    game.phase !== 'complete' &&
+    game.rollNumber > 0 &&
+    availableCategories(game.players[automatedPlayerIndex].scorecard).length <=
+      strategy.finalActionRolloutOpenCategoryMax
+  );
+}
+
+function chooseRolloutFinalAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+  heuristicAction: ComputerFinalAction,
+): ComputerFinalAction {
+  const candidates = getFinalActionCandidates(game, automatedPlayerIndex, heuristicAction);
+  if (candidates.length <= 1) {
+    return heuristicAction;
+  }
+
+  return candidates
+    .map((action) => ({
+      action,
+      result: measureFinalActionRollout(game, automatedPlayerIndex, action, strategy),
+    }))
+    .sort(
+      (left, right) =>
+        right.result.winRate - left.result.winRate ||
+        right.result.averageMargin - left.result.averageMargin ||
+        right.result.averageScore - left.result.averageScore ||
+        finalActionTieBreakScore(right.action, game, automatedPlayerIndex, strategy) -
+          finalActionTieBreakScore(left.action, game, automatedPlayerIndex, strategy),
+    )[0].action;
+}
+
+function getFinalActionCandidates(
+  game: GameState,
+  automatedPlayerIndex: number,
+  heuristicAction: ComputerFinalAction,
+): ComputerFinalAction[] {
+  const scorecard = game.players[automatedPlayerIndex].scorecard;
+  const byKey = new Map<string, ComputerFinalAction>();
+  const addAction = (action: ComputerFinalAction) => {
+    if (scorecard[action.category] === null) {
+      byKey.set(`${action.type}:${action.category}`, action);
+    }
+  };
+
+  addAction(heuristicAction);
+  for (const category of availableCategories(scorecard)) {
+    addAction({ category, type: 'scratch' });
+    if (scoreCategoryForScorecard(game.dice, category, scorecard) > 0) {
+      addAction({ category, type: 'score' });
+    }
+  }
+
+  return [...byKey.values()];
+}
+
+function measureFinalActionRollout(
+  game: GameState,
+  automatedPlayerIndex: number,
+  action: ComputerFinalAction,
+  strategy: ComputerStrategyConfig,
+) {
+  return measureTurnDecisionRollout(
+    game,
+    automatedPlayerIndex,
+    action,
+    strategy,
+    Math.max(1, Math.floor(strategy.finalActionRolloutSimulations)),
+  );
+}
+
+function measureTurnDecisionRollout(
+  game: GameState,
+  automatedPlayerIndex: number,
+  action: ComputerTurnDecisionAction,
+  strategy: ComputerStrategyConfig,
+  simulationCount: number,
+) {
+  const simulationStrategy = {
+    ...strategy,
+    finalActionRolloutOpenCategoryMax: 0,
+    finalActionRolloutSimulations: 0,
+    holdRolloutRollNumberMax: 0,
+    holdRolloutSimulations: 0,
+    turnDecisionRolloutOpenCategoryMax: 0,
+    turnDecisionRolloutSimulations: 0,
+  };
+  let wins = 0;
+  let ties = 0;
+  let scoreTotal = 0;
+  let opponentScoreTotal = 0;
+
+  for (let index = 0; index < simulationCount; index += 1) {
+    const random = createRolloutRandom(rolloutSeedForDecisionAction(game, automatedPlayerIndex, action, index));
+    const result = simulateTurnDecisionRollout(game, automatedPlayerIndex, action, simulationStrategy, random);
+    scoreTotal += result.playerScore;
+    opponentScoreTotal += result.opponentScore;
+
+    if (result.playerScore > result.opponentScore) {
+      wins += 1;
+    } else if (result.playerScore === result.opponentScore) {
+      ties += 1;
+    }
+  }
+
+  const averageScore = scoreTotal / simulationCount;
+  const averageOpponentScore = opponentScoreTotal / simulationCount;
+
+  return {
+    averageMargin: averageScore - averageOpponentScore,
+    averageScore,
+    winRate: (wins + ties * 0.5) / simulationCount,
+  };
+}
+
+function simulateTurnDecisionRollout(
+  game: GameState,
+  automatedPlayerIndex: number,
+  action: ComputerTurnDecisionAction,
+  strategy: ComputerStrategyConfig,
+  random: () => number,
+) {
+  const applied = applyTurnDecisionActionForRollout(game, action);
+  let nextGame = applied.game;
+  let pendingTurn = applied.pendingTurn;
+  let guard = 0;
+
+  while (nextGame.phase !== 'complete' && guard < 100) {
+    if (!pendingTurn && availableCategories(nextGame.players[nextGame.currentPlayerIndex].scorecard).length === 0) {
+      nextGame = advanceRolloutToNextOpenPlayer(nextGame);
+      pendingTurn = null;
+      guard += 1;
+      continue;
+    }
+
+    const activePlayerIndex = nextGame.currentPlayerIndex;
+    const result = playAutomatedTurn(nextGame, activePlayerIndex, pendingTurn, random, strategy);
+    nextGame = result.game;
+    pendingTurn = result.pendingTurn;
+    guard += 1;
+  }
+
+  const opponentIndex = nextGame.players.findIndex((_player, index) => index !== automatedPlayerIndex);
+  return {
+    opponentScore: opponentIndex >= 0 ? totalScore(nextGame.players[opponentIndex].scorecard) : 0,
+    playerScore: totalScore(nextGame.players[automatedPlayerIndex].scorecard),
+  };
+}
+
+function advanceRolloutToNextOpenPlayer(game: GameState): GameState {
+  const nextPlayerIndex = game.players.findIndex((player) => availableCategories(player.scorecard).length > 0);
+  if (nextPlayerIndex < 0) {
+    return {
+      ...game,
+      phase: 'complete',
+    };
+  }
+
+  return {
+    ...game,
+    currentPlayerIndex: nextPlayerIndex,
+    dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
+    held: [false, false, false, false, false],
+    phase: 'rolling',
+    rollNumber: 0,
+  };
+}
+
+function applyTurnDecisionActionForRollout(game: GameState, action: ComputerTurnDecisionAction): ComputerTurnResult {
+  if (action.type === 'extraRoll') {
+    return { game: purchaseExtraRoll(game), pendingTurn: null };
+  }
+
+  if (action.type === 'mulligan') {
+    return { game: mulliganCurrentTurn(game), pendingTurn: null };
+  }
+
+  if (action.type === 'scratch') {
+    return scratchLocalTurn(game, action.category);
+  }
+
+  return scoreLocalTurn(game, action.category);
+}
+
+function finalActionTieBreakScore(
+  action: ComputerFinalAction,
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+) {
+  if (action.type === 'scratch') {
+    return -computerCategoryOpportunityCost(action.category, game.players[automatedPlayerIndex].scorecard, strategy);
+  }
+
+  return computerCategoryValue(game.dice, action.category, game.players[automatedPlayerIndex].scorecard, strategy);
+}
+
+function turnDecisionTieBreakScore(
+  action: ComputerTurnDecisionAction,
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+) {
+  if (action.type === 'score' || action.type === 'scratch') {
+    return finalActionTieBreakScore(action, game, automatedPlayerIndex, strategy);
+  }
+
+  return action.type === 'extraRoll' ? -suckerTokenCosts.extraRoll : -suckerTokenCosts.mulligan;
+}
+
+function rolloutSeedForDecisionAction(
+  game: GameState,
+  automatedPlayerIndex: number,
+  action: ComputerTurnDecisionAction,
+  iteration: number,
+) {
+  let hash = 2166136261;
+  hash = hashRolloutValue(hash, automatedPlayerIndex + 1);
+  hash = hashRolloutValue(hash, game.currentPlayerIndex + 1);
+  hash = hashRolloutValue(hash, game.rollNumber + 1);
+  hash = hashRolloutValue(hash, game.extraRollsAvailable + 1);
+  hash = hashRolloutValue(hash, action.type === 'score' || action.type === 'scratch' ? scoreCategories.indexOf(action.category) + 1 : 0);
+  hash = hashRolloutValue(hash, rolloutActionTypeCode(action));
+  hash = hashRolloutValue(hash, iteration + 1);
+
+  for (const die of game.dice) {
+    hash = hashRolloutValue(hash, die);
+  }
+
+  for (const player of game.players) {
+    hash = hashRolloutValue(hash, player.suckerTokens + 1);
+    for (const category of scoreCategories) {
+      hash = hashRolloutValue(hash, (player.scorecard[category] ?? -1) + 2);
+    }
+  }
+
+  return hash >>> 0;
+}
+
+function rolloutActionTypeCode(action: ComputerTurnDecisionAction) {
+  return (
+    {
+      extraRoll: 3,
+      mulligan: 4,
+      score: 1,
+      scratch: 2,
+    } satisfies Record<ComputerTurnDecisionAction['type'], number>
+  )[action.type];
+}
+
+function hashRolloutValue(hash: number, value: number) {
+  return Math.imul(hash ^ value, 16777619) >>> 0;
+}
+
+function createRolloutRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
 }
 
 function chooseSuckerDealCategory(
@@ -402,6 +1002,14 @@ function getBestComputerCategoryChoice(
   scorecard: GameState['players'][number]['scorecard'],
   strategy: ComputerStrategyConfig,
 ): ComputerCategoryChoice {
+  return getRankedComputerCategoryChoices(dice, scorecard, strategy)[0];
+}
+
+function getRankedComputerCategoryChoices(
+  dice: GameState['dice'],
+  scorecard: GameState['players'][number]['scorecard'],
+  strategy: ComputerStrategyConfig,
+): ComputerCategoryChoice[] {
   return availableCategories(scorecard)
     .map((category) => ({
       category,
@@ -409,7 +1017,7 @@ function getBestComputerCategoryChoice(
       value: computerCategoryValue(dice, category, scorecard, strategy),
       priority: computerCategoryPriority(category),
     }))
-    .sort((left, right) => right.value - left.value || right.score - left.score || right.priority - left.priority)[0];
+    .sort((left, right) => right.value - left.value || right.score - left.score || right.priority - left.priority);
 }
 
 function computerCategoryPriority(category: ScoreCategory) {
@@ -515,15 +1123,20 @@ function shouldAutomatedUseSuckerPunch(
     : 0;
   const tokenBalanceAfterPunch = computer.suckerTokens - suckerTokenCosts.suckerPunch;
   const canKeepBlockerReserve = tokenBalanceAfterPunch >= strategy.suckerPunchReserveTokens;
+  const scorerCanBlock = scorer.suckerTokens >= suckerTokenCosts.suckerBlocker;
   const isPremiumTurn =
     pendingTurn.hadSuckerBonus ||
     (pendingTurn.category === 'sucker' && pendingTurn.score >= strategy.suckerPunchMinScore);
+  const isUnblockableHighValueTurn = !scorerCanBlock && pendingTurn.score >= strategy.suckerPunchUnblockableMinScore;
   const isLateComebackSwing =
     scoredCategories >= strategy.suckerPunchComebackMinCategories &&
     playerScore > computerScore &&
     pendingTurn.score >= strategy.suckerPunchComebackMinScore;
 
-  return (isPremiumTurn || isLateComebackSwing) && (canKeepBlockerReserve || pendingTurn.hadSuckerBonus);
+  return (
+    (isPremiumTurn || isUnblockableHighValueTurn || isLateComebackSwing) &&
+    (canKeepBlockerReserve || pendingTurn.hadSuckerBonus || isUnblockableHighValueTurn)
+  );
 }
 
 export function shouldComputerUseSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn) {
@@ -584,23 +1197,24 @@ function shouldComputerBuyExtraRoll(
   strategy: ComputerStrategyConfig,
 ) {
   const computer = game.players[automatedPlayerIndex];
+  const tokenBalanceAfterExtraRoll = computer ? computer.suckerTokens - suckerTokenCosts.extraRoll : 0;
   if (
     game.rollNumber < maxAvailableRolls(game) ||
     !computer ||
     computer.suckerTokens < suckerTokenCosts.extraRoll ||
-    extraRollsBought >= 2
+    tokenBalanceAfterExtraRoll < strategy.extraRollReserveTokens
   ) {
     return false;
   }
 
   const maxMatch = maxMatchingDice(game.dice);
   if (maxMatch >= 4 && computer.scorecard.sucker === null) {
-    return true;
+    return extraRollsBought < strategy.extraRollSuckerChaseMaxPurchases;
   }
 
   return (
-    extraRollsBought === 0 &&
-    computer.suckerTokens > suckerTokenCosts.mulligan &&
+    extraRollsBought < strategy.extraRollMaxPurchases &&
+    computer.suckerTokens >= strategy.extraRollMinTokens &&
     choice.score < strategy.extraRollMaxScore
   );
 }
@@ -621,6 +1235,37 @@ function shouldComputerUseMulligan(
 }
 
 function chooseComputerHeldDice(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+): GameState['held'] {
+  const heuristicHeld = chooseHeuristicComputerHeldDice(game, automatedPlayerIndex, strategy);
+  if (shouldKeepObviousHeuristicHold(game, automatedPlayerIndex, heuristicHeld)) {
+    return heuristicHeld;
+  }
+
+  if (!shouldUseHoldRollout(game, automatedPlayerIndex, strategy)) {
+    return heuristicHeld;
+  }
+
+  return chooseRolloutHeldDice(game, automatedPlayerIndex, strategy, heuristicHeld);
+}
+
+function shouldKeepObviousHeuristicHold(
+  game: GameState,
+  automatedPlayerIndex: number,
+  heuristicHeld: GameState['held'],
+) {
+  const scorecard = game.players[automatedPlayerIndex]?.scorecard;
+  if (!scorecard || scorecard.largeStraight !== null) {
+    return false;
+  }
+
+  const largeStraightHold = bestStraightHold(game.dice, 5);
+  return countHeld(largeStraightHold) >= 4 && heldDiceKey(heuristicHeld) === heldDiceKey(largeStraightHold);
+}
+
+function chooseHeuristicComputerHeldDice(
   game: GameState,
   automatedPlayerIndex: number,
   strategy: ComputerStrategyConfig,
@@ -653,6 +1298,255 @@ function chooseComputerHeldDice(
 
   const faceToChase = bestFaceToChase(dice, scorecard, strategy);
   return dice.map((die) => die === faceToChase) as GameState['held'];
+}
+
+function shouldUseHoldRollout(game: GameState, automatedPlayerIndex: number, strategy: ComputerStrategyConfig) {
+  return (
+    strategy.holdRolloutSimulations > 0 &&
+    strategy.holdRolloutRollNumberMax > 0 &&
+    game.phase !== 'complete' &&
+    game.rollNumber > 0 &&
+    game.rollNumber < maxAvailableRolls(game) &&
+    game.rollNumber <= strategy.holdRolloutRollNumberMax &&
+    Boolean(game.players[automatedPlayerIndex])
+  );
+}
+
+function chooseRolloutHeldDice(
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+  heuristicHeld: GameState['held'],
+): GameState['held'] {
+  const candidates = getHeldDiceCandidates(game, automatedPlayerIndex, heuristicHeld);
+  if (candidates.length <= 1) {
+    return heuristicHeld;
+  }
+
+  const simulationCount = Math.max(1, Math.floor(strategy.holdRolloutSimulations));
+  return candidates
+    .map((held) => ({
+      held,
+      isHeuristic: heldDiceKey(held) === heldDiceKey(heuristicHeld),
+      result: measureHeldDiceRollout(game, automatedPlayerIndex, held, strategy, simulationCount),
+    }))
+    .sort(
+      (left, right) =>
+        right.result.averageUtility - left.result.averageUtility ||
+        Number(right.isHeuristic) - Number(left.isHeuristic) ||
+        countHeld(right.held) - countHeld(left.held),
+    )[0].held;
+}
+
+function getHeldDiceCandidates(
+  game: GameState,
+  automatedPlayerIndex: number,
+  heuristicHeld: GameState['held'],
+): GameState['held'][] {
+  const dice = game.dice;
+  const scorecard = game.players[automatedPlayerIndex].scorecard;
+  const openCategories = availableCategories(scorecard);
+  const byKey = new Map<string, GameState['held']>();
+  const addHeld = (held: GameState['held']) => {
+    byKey.set(heldDiceKey(held), held);
+  };
+
+  addHeld(heuristicHeld);
+  addHeld([false, false, false, false, false]);
+
+  for (const face of [1, 2, 3, 4, 5, 6] as const) {
+    if (dice.includes(face)) {
+      addHeld(dice.map((die) => die === face) as GameState['held']);
+    }
+  }
+
+  if (openCategories.includes('largeStraight')) {
+    for (const run of straightRuns.large) {
+      addHeld(holdUniqueFaces(dice, run));
+    }
+  }
+
+  if (openCategories.includes('smallStraight')) {
+    for (const run of straightRuns.small) {
+      addHeld(holdUniqueFaces(dice, run));
+    }
+  }
+
+  if (openCategories.includes('fullHouse')) {
+    addHeld(bestFullHouseHold(dice));
+  }
+
+  return [...byKey.values()];
+}
+
+function measureHeldDiceRollout(
+  game: GameState,
+  automatedPlayerIndex: number,
+  held: GameState['held'],
+  strategy: ComputerStrategyConfig,
+  simulationCount: number,
+) {
+  const beforePlayer = game.players[automatedPlayerIndex];
+  const beforeScore = totalScore(beforePlayer.scorecard);
+  const beforeTokens = beforePlayer.suckerTokens;
+  const simulationStrategy = {
+    ...strategy,
+    finalActionRolloutOpenCategoryMax: 0,
+    finalActionRolloutSimulations: 0,
+    holdRolloutRollNumberMax: 0,
+    holdRolloutSimulations: 0,
+    turnDecisionRolloutOpenCategoryMax: 0,
+    turnDecisionRolloutSimulations: 0,
+  };
+  let utilityTotal = 0;
+  let scoreDeltaTotal = 0;
+  let tokenDeltaTotal = 0;
+
+  for (let index = 0; index < simulationCount; index += 1) {
+    const random = createRolloutRandom(rolloutSeedForHeldDice(game, automatedPlayerIndex, held, index));
+    const result = simulateCurrentTurnFromHeldDice(
+      game,
+      automatedPlayerIndex,
+      held,
+      simulationStrategy,
+      random,
+    );
+    const resultGame = result.game;
+    const afterPlayer = resultGame.players[automatedPlayerIndex];
+    const scoreDelta = totalScore(afterPlayer.scorecard) - beforeScore;
+    const tokenDelta = afterPlayer.suckerTokens - beforeTokens;
+    scoreDeltaTotal += scoreDelta;
+    tokenDeltaTotal += tokenDelta;
+    utilityTotal += (result.turnUtility ?? scoreDelta) + tokenDelta * strategy.holdRolloutTokenValue;
+  }
+
+  return {
+    averageScoreDelta: scoreDeltaTotal / simulationCount,
+    averageTokenDelta: tokenDeltaTotal / simulationCount,
+    averageUtility: utilityTotal / simulationCount,
+  };
+}
+
+function simulateCurrentTurnFromHeldDice(
+  game: GameState,
+  automatedPlayerIndex: number,
+  held: GameState['held'],
+  strategy: ComputerStrategyConfig,
+  random: () => number,
+): { game: GameState; turnUtility: number | null } {
+  let nextGame = {
+    ...game,
+    held,
+  };
+  let mulligansUsed = 0;
+  let extraRollsBought = 0;
+  let guard = 0;
+
+  while (nextGame.phase !== 'complete' && guard < 20) {
+    while (nextGame.rollNumber < maxAvailableRolls(nextGame)) {
+      nextGame = rollCurrentDice(nextGame, random);
+      const choice = getBestComputerCategoryChoice(
+        nextGame.dice,
+        nextGame.players[automatedPlayerIndex].scorecard,
+        strategy,
+      );
+      if (shouldComputerStopRolling(nextGame, automatedPlayerIndex, choice, strategy)) {
+        break;
+      }
+
+      nextGame = {
+        ...nextGame,
+        held: chooseComputerHeldDice(nextGame, automatedPlayerIndex, strategy),
+      };
+    }
+
+    const computer = nextGame.players[automatedPlayerIndex];
+    if (!computer || availableCategories(computer.scorecard).length === 0) {
+      return { game: nextGame, turnUtility: null };
+    }
+
+    const choice = getBestComputerCategoryChoice(nextGame.dice, computer.scorecard, strategy);
+    const action = chooseComputerTurnDecisionAction(
+      nextGame,
+      automatedPlayerIndex,
+      choice,
+      extraRollsBought,
+      mulligansUsed,
+      strategy,
+    );
+
+    if (action.type === 'score') {
+      return {
+        game: scoreLocalTurn(nextGame, action.category).game,
+        turnUtility: finalActionUtility(action, nextGame, automatedPlayerIndex, strategy),
+      };
+    }
+
+    if (action.type === 'scratch') {
+      return {
+        game: scratchLocalTurn(nextGame, action.category).game,
+        turnUtility: finalActionUtility(action, nextGame, automatedPlayerIndex, strategy),
+      };
+    }
+
+    if (action.type === 'mulligan') {
+      nextGame = mulliganCurrentTurn(nextGame);
+      mulligansUsed += 1;
+      guard += 1;
+      continue;
+    }
+
+    nextGame = purchaseExtraRoll(nextGame);
+    extraRollsBought += 1;
+    guard += 1;
+  }
+
+  return { game: nextGame, turnUtility: null };
+}
+
+function heldDiceKey(held: GameState['held']) {
+  return held.map((value) => (value ? '1' : '0')).join('');
+}
+
+function finalActionUtility(
+  action: ComputerFinalAction,
+  game: GameState,
+  automatedPlayerIndex: number,
+  strategy: ComputerStrategyConfig,
+) {
+  const scorecard = game.players[automatedPlayerIndex].scorecard;
+  if (action.type === 'scratch') {
+    return -computerCategoryOpportunityCost(action.category, scorecard, strategy);
+  }
+
+  return computerCategoryValue(game.dice, action.category, scorecard, strategy);
+}
+
+function rolloutSeedForHeldDice(
+  game: GameState,
+  automatedPlayerIndex: number,
+  _held: GameState['held'],
+  iteration: number,
+) {
+  let hash = 2166136261;
+  hash = hashRolloutValue(hash, automatedPlayerIndex + 1);
+  hash = hashRolloutValue(hash, game.currentPlayerIndex + 1);
+  hash = hashRolloutValue(hash, game.rollNumber + 1);
+  hash = hashRolloutValue(hash, game.extraRollsAvailable + 1);
+  hash = hashRolloutValue(hash, iteration + 1);
+
+  for (const die of game.dice) {
+    hash = hashRolloutValue(hash, die);
+  }
+
+  for (const player of game.players) {
+    hash = hashRolloutValue(hash, player.suckerTokens + 1);
+    for (const category of scoreCategories) {
+      hash = hashRolloutValue(hash, (player.scorecard[category] ?? -1) + 2);
+    }
+  }
+
+  return hash >>> 0;
 }
 
 function bestFaceToChase(
