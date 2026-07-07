@@ -17,6 +17,7 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getComputerStats } from './computerStats';
 import {
@@ -1237,12 +1238,33 @@ function rememberWebPushPromptDismissed() {
 function ScreenHeader({ onBack, title }: { onBack: () => void; title: string }) {
   return (
     <View style={lobbyStyles.screenHeader}>
-      <Pressable onPress={onBack} style={({ pressed }) => [lobbyStyles.backButton, pressed && lobbyStyles.pressed]}>
-        <Text style={lobbyStyles.backButtonText}>‹</Text>
+      <Pressable
+        accessibilityLabel={`Back from ${title}`}
+        accessibilityRole="button"
+        onPress={onBack}
+        style={({ pressed }) => [lobbyStyles.backButton, pressed && lobbyStyles.pressed]}
+        testID="screen-header-back-button"
+      >
+        <BackChevronIcon />
       </Pressable>
       <Text style={lobbyStyles.screenTitle}>{title}</Text>
       <View style={lobbyStyles.backButtonSpacer} />
     </View>
+  );
+}
+
+function BackChevronIcon() {
+  return (
+    <Svg height={20} viewBox="0 0 24 24" width={20}>
+      <Path
+        d="M15 18 9 12l6-6"
+        fill="none"
+        stroke="#210505"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={5}
+      />
+    </Svg>
   );
 }
 
@@ -1914,12 +1936,6 @@ const lobbyStyles = StyleSheet.create({
   },
   backButtonSpacer: {
     width: 42,
-  },
-  backButtonText: {
-    color: '#210505',
-    fontSize: 36,
-    fontWeight: '900',
-    lineHeight: 36,
   },
   deleteAccountButton: {
     backgroundColor: '#3A0A05',
