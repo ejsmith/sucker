@@ -36,17 +36,19 @@ import {
   syncAppBadgeCount,
 } from './notifications';
 import { searchProfiles } from './profiles';
-import { getAllTimeOpponentRecord, type AllTimeOpponentRecord } from './stats';
+import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle } from '../ui/phoneStage';
+import { StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
-type LobbyPage = 'games' | 'profile' | 'startFriend' | 'completedGames' | 'completedGameDetail';
+type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
+type LobbyPage = 'games' | 'profile' | 'startFriend' | 'completedGames' | 'completedGameDetail' | 'completedGameStats';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://sucker.games/invite';
 const privacyPolicyUrl = 'https://sucker.games/privacy.html';
@@ -84,6 +86,7 @@ export function MultiplayerLobby({
   const [games, setGames] = useState<RemoteGameRow[]>([]);
   const [computerStats, setComputerStats] = useState<ComputerStatsRow>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
+  const [completedGameStats, setCompletedGameStats] = useState<HeadToHeadStatsSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
@@ -494,6 +497,20 @@ export function MultiplayerLobby({
   const selectedCompletedGame = selectedCompletedGameId
     ? games.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
     : null;
+  async function handleOpenCompletedGameStats(game: RemoteGameRow) {
+    const { opponent } = getGamePlayers(game, profileId);
+    if (!opponent) {
+      setMessage('Stats are unavailable for this game.');
+      return;
+    }
+
+    await runAction(async () => {
+      setCompletedGameStats(await getHeadToHeadStats(opponent.id));
+      setSelectedCompletedGameId(game.id);
+      setPage('completedGameStats');
+    });
+  }
+
   const playerName = profile?.display_name ?? session.user.email ?? 'player';
   const usesWebPullRefresh = Platform.OS === 'web';
   const pullRefreshReady = pullRefreshDistance >= pullRefreshTriggerDistance;
@@ -621,6 +638,7 @@ export function MultiplayerLobby({
           <CompletedGameScorecard
             game={selectedCompletedGame}
             isBusy={isBusy || isLoading}
+            onOpenStats={handleOpenCompletedGameStats}
             onRematchGame={handleRematchGame}
             profileId={profileId}
           />
@@ -635,6 +653,43 @@ export function MultiplayerLobby({
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
         {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>,
+    );
+  }
+
+  if (page === 'completedGameStats') {
+    const { me, opponent } = selectedCompletedGame
+      ? getGamePlayers(selectedCompletedGame, profileId)
+      : { me: null, opponent: null };
+
+    if (selectedCompletedGame && me && opponent) {
+      return renderShell(
+        <StatsPage
+          currentOpponentName={opponent.name}
+          currentScore={totalScore(me.scorecard)}
+          onClose={() => setPage('completedGameDetail')}
+          opponentScore={totalScore(opponent.scorecard)}
+          opponentStats={completedGameStats?.opponent ?? null}
+          stats={completedGameStats?.mine ?? null}
+          statsKind="headToHead"
+        />,
+      );
+    }
+
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={lobbyStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <ScreenHeader title="Stats" onBack={() => setPage('completedGames')} />
+        <View style={lobbyStyles.panel}>
+          <View style={lobbyStyles.emptyState}>
+            <Text style={lobbyStyles.emptyTitle}>Stats unavailable</Text>
+            <Text style={lobbyStyles.emptyBody}>Refresh completed games and try again.</Text>
+          </View>
+        </View>
       </ScrollView>,
     );
   }
@@ -976,9 +1031,6 @@ export function MultiplayerLobby({
         >
           <View>
             <Text style={lobbyStyles.historyButtonText}>Completed Games</Text>
-            <Text style={lobbyStyles.historyButtonMeta}>
-              {completedGames.length} recent {completedGames.length === 1 ? 'game' : 'games'}
-            </Text>
           </View>
           <Text style={lobbyStyles.historyButtonChevron}>›</Text>
         </Pressable>
@@ -1384,11 +1436,13 @@ function CompletedGameListItem({
 function CompletedGameScorecard({
   game,
   isBusy,
+  onOpenStats,
   onRematchGame,
   profileId,
 }: {
   game: RemoteGameRow;
   isBusy: boolean;
+  onOpenStats: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
@@ -1466,18 +1520,33 @@ function CompletedGameScorecard({
         <ScorecardComparisonRow emphasized label="Total" themValue={String(opponentScore)} youValue={String(myScore)} />
       </View>
 
-      <Pressable
-        disabled={isBusy}
-        onPress={() => void onRematchGame(game)}
-        style={({ pressed }) => [
-          lobbyStyles.primaryButton,
-          isBusy && lobbyStyles.primaryButtonDisabled,
-          pressed && lobbyStyles.pressed,
-        ]}
-        testID={`rematch-completed-detail-${game.id}`}
-      >
-        <Text style={lobbyStyles.primaryButtonText}>Rematch</Text>
-      </Pressable>
+      <View style={lobbyStyles.completedDetailActions}>
+        <Pressable
+          disabled={isBusy}
+          onPress={() => void onOpenStats(game)}
+          style={({ pressed }) => [
+            lobbyStyles.completedStatsButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`stats-completed-detail-${game.id}`}
+        >
+          <Text style={lobbyStyles.completedStatsText}>Stats</Text>
+        </Pressable>
+        <Pressable
+          disabled={isBusy}
+          onPress={() => void onRematchGame(game)}
+          style={({ pressed }) => [
+            lobbyStyles.primaryButton,
+            lobbyStyles.completedDetailActionButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`rematch-completed-detail-${game.id}`}
+        >
+          <Text style={lobbyStyles.primaryButtonText}>Rematch</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -1908,6 +1977,15 @@ const lobbyStyles = StyleSheet.create({
   completedDetailLoss: {
     borderColor: '#F05A4A',
   },
+  completedDetailActionButton: {
+    flex: 1,
+    width: 'auto',
+  },
+  completedDetailActions: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
   completedDetailTie: {
     borderColor: '#FFB000',
   },
@@ -1951,6 +2029,26 @@ const lobbyStyles = StyleSheet.create({
   completedScoreTitleBlock: {
     flex: 1,
     gap: 2,
+  },
+  completedStatsButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderWidth: 2,
+    flex: 1,
+    height: 60,
+    justifyContent: 'center',
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
+  },
+  completedStatsText: {
+    color: '#FFD329',
+    fontSize: 16,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   gameCardTop: {
     alignItems: 'center',
@@ -2003,12 +2101,6 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '900',
     lineHeight: 30,
-  },
-  historyButtonMeta: {
-    color: '#FFF3C2',
-    fontSize: 12,
-    fontWeight: '800',
-    opacity: 0.82,
   },
   historyButtonText: {
     color: '#FFD329',
