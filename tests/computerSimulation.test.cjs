@@ -27,9 +27,9 @@ test('computer strategy clears a strong 1000-game average', () => {
   const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
 
   assert.equal(result.gameCount, 1000);
-  assert.equal(Number(result.averageScore.toFixed(3)), 300.819);
-  assert.equal(result.lowScore, 138);
-  assert.equal(result.highScore, 579);
+  assert.equal(Number(result.averageScore.toFixed(3)), 302.201);
+  assert.equal(result.lowScore, 146);
+  assert.equal(result.highScore, 583);
 });
 
 test('computer tournament advances the strongest candidate', () => {
@@ -406,6 +406,43 @@ test('computer scratches the lowest opportunity cost category for cheap sucker d
   assert.equal(computer.scorecard.twos, null);
   assert.equal(computer.scorecard.chance, null);
   assert.equal(computer.suckerTokens, 8);
+});
+
+test('computer does not keep farming sucker deals after ones are scratched', () => {
+  const noTokenSpendStrategy = {
+    ...defaultComputerStrategy,
+    extraRollMaxScore: -1,
+    mulliganMaxScore: -1,
+  };
+  const baseGame = createGame(['Player', 'Computer']);
+  const game = {
+    ...baseGame,
+    currentPlayerIndex: computerPlayerIndex,
+    dice: [2, 2, 3, 5, 6],
+    phase: 'scoring',
+    players: baseGame.players.map((player, index) =>
+      index === computerPlayerIndex
+        ? {
+            ...player,
+            scorecard: {
+              ...player.scorecard,
+              ones: 0,
+            },
+            suckerTokens: 7,
+          }
+        : player,
+    ),
+    rollNumber: 4,
+  };
+
+  const result = playComputerTurn(game, null, Math.random, noTokenSpendStrategy);
+  const computer = result.game.players[computerPlayerIndex];
+
+  assert.equal(computer.scorecard.twos, null);
+  assert.equal(computer.scorecard.threes, null);
+  assert.equal(computer.scorecard.chance, 18);
+  assert.equal(computer.suckerTokens, 7);
+  assert.equal(result.pendingTurn.category, 'chance');
 });
 
 test('computer strategy can defer cheap sucker deals until after token spending checks', () => {

@@ -1677,7 +1677,7 @@ function countDice(dice: GameState['dice']): Record<DieValue, number> {
 }
 
 const upperCategories = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'] as const;
-const suckerDealCategories = ['ones', 'twos', 'threes'] as const;
+const suckerDealCategories = ['ones'] as const;
 
 const straightRuns = {
   small: [
