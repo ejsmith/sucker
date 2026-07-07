@@ -8,6 +8,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -243,6 +244,7 @@ const backSwipeEdgeWidth = 28;
 const backSwipeTriggerDistance = 76;
 const backSwipeMinimumMove = 18;
 const backSwipeVelocity = 0.45;
+const nextTurnDialogDelayMs = 1000;
 const upperBonusTarget = 63;
 const bonusValueColor = '#FFD329';
 const awardedBonusColor = bonusValueColor;
@@ -333,28 +335,85 @@ function AppRoutes() {
     const gameId = getInitialNotificationGameId();
     return gameId ? createRemoteGameRequest(gameId) : null;
   });
+  const [sharedGameList, setSharedGameList] = useState<{
+    games: RemoteGameRow[];
+    profileId: string | null;
+  }>({ games: [], profileId: null });
   const openRemoteGame = useCallback((gameId: string) => {
     setShowLocalDemo(false);
     setRemoteGameRequest(createRemoteGameRequest(gameId));
   }, []);
-
+  const setSharedGames = useCallback((profileId: string | null, games: RemoteGameRow[]) => {
+    setSharedGameList({ games: profileId ? games : [], profileId });
+  }, []);
+  const refreshSharedGames = useCallback(
+    async (profileId: string) => {
+      const games = await listMyGames();
+      setSharedGames(profileId, games);
+      return games;
+    },
+    [setSharedGames],
+  );
+  const rememberRemoteGame = useCallback((profileId: string, game: RemoteGameRow) => {
+    setSharedGameList((cache) => ({
+      games: mergeRemoteGameIntoLobbyCache(cache.profileId === profileId ? cache.games : [], game),
+      profileId,
+    }));
+  }, []);
   useWebNotificationClicks(openRemoteGame);
 
   if (isMultiplayerConfigured && remoteGameRequest) {
     return (
       <RemoteGameScreen
         gameId={remoteGameRequest.gameId}
+        games={sharedGameList.games}
+        gamesProfileId={sharedGameList.profileId}
         key={`${remoteGameRequest.gameId}:${remoteGameRequest.requestId}`}
+        onGameChange={rememberRemoteGame}
+        onRefreshGames={refreshSharedGames}
         onExit={() => setRemoteGameRequest(null)}
       />
     );
   }
 
   if (isMultiplayerConfigured && !showLocalDemo) {
-    return <MultiplayerLobby onOpenGame={openRemoteGame} onPlayLocalDemo={() => setShowLocalDemo(true)} />;
+    return (
+      <MultiplayerLobby
+        games={sharedGameList.games}
+        gamesProfileId={sharedGameList.profileId}
+        onGamesChange={setSharedGames}
+        onOpenGame={openRemoteGame}
+        onPlayLocalDemo={() => setShowLocalDemo(true)}
+        onRefreshGames={refreshSharedGames}
+      />
+    );
   }
 
   return <LocalGameScreen onExit={() => setShowLocalDemo(!isMultiplayerConfigured)} />;
+}
+
+function mergeRemoteGameIntoLobbyCache(games: RemoteGameRow[], game: RemoteGameRow) {
+  const nextGames = games.some((currentGame) => currentGame.id === game.id)
+    ? games.map((currentGame) => (currentGame.id === game.id ? game : currentGame))
+    : [game, ...games];
+
+  return nextGames.sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
+}
+
+function shouldShowNextTurnsAfterAction(game: RemoteGameRow, profileId: string) {
+  return game.status !== 'complete' && game.current_player_id !== profileId;
+}
+
+function getNextTurnGames(games: RemoteGameRow[], profileId: string, currentGameId: string) {
+  return games
+    .filter(
+      (game) =>
+        game.id !== currentGameId &&
+        game.current_player_id === profileId &&
+        game.status !== 'complete' &&
+        game.status !== 'inviting',
+    )
+    .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
 }
 
 function createRemoteGameRequest(gameId: string): RemoteGameRequest {
@@ -362,7 +421,21 @@ function createRemoteGameRequest(gameId: string): RemoteGameRequest {
   return { gameId, requestId: remoteGameRequestId };
 }
 
-function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => void }) {
+function RemoteGameScreen({
+  gameId,
+  games,
+  gamesProfileId,
+  onExit,
+  onGameChange,
+  onRefreshGames,
+}: {
+  gameId: string;
+  games: RemoteGameRow[];
+  gamesProfileId: string | null;
+  onExit: () => void;
+  onGameChange: (profileId: string, game: RemoteGameRow) => void;
+  onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
+}) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const remoteStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
@@ -376,7 +449,18 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
+  const [nextTurnPrompt, setNextTurnPrompt] = useState<{ gameId: string; isGameListReady: boolean } | null>(null);
   const wasAppActive = useRef(isAppActive);
+  const profileIdRef = useRef<string | null>(null);
+  const activeGameIdRef = useRef(activeGameId);
+  const nextTurnGames =
+    nextTurnPrompt?.isGameListReady && profileId && gamesProfileId === profileId
+      ? getNextTurnGames(games, profileId, nextTurnPrompt.gameId)
+      : null;
+
+  useEffect(() => {
+    activeGameIdRef.current = activeGameId;
+  }, [activeGameId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -399,8 +483,10 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
           return;
         }
 
+        profileIdRef.current = userData.user.id;
         setProfileId(userData.user.id);
         setRemoteGame(nextGame);
+        onGameChange(userData.user.id, nextGame);
       } catch (loadError) {
         if (isMounted) {
           setError(loadError instanceof Error ? loadError.message : 'Unable to load game.');
@@ -418,6 +504,9 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
       (nextGame) => {
         if (isMounted) {
           setRemoteGame(nextGame);
+          if (profileIdRef.current) {
+            onGameChange(profileIdRef.current, nextGame);
+          }
         }
       },
       (status) => {
@@ -431,7 +520,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
       isMounted = false;
       unsubscribe();
     };
-  }, [activeGameId]);
+  }, [activeGameId, onGameChange]);
 
   useEffect(() => {
     let isMounted = true;
@@ -471,6 +560,9 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
       void getGame(activeGameId)
         .then((nextGame) => {
           setRemoteGame(nextGame);
+          if (profileIdRef.current) {
+            onGameChange(profileIdRef.current, nextGame);
+          }
         })
         .catch((pollError) => {
           setError(pollError instanceof Error ? pollError.message : 'Unable to refresh game.');
@@ -478,7 +570,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [activeGameId, isAppActive, isRealtimeConnected, remoteGame]);
+  }, [activeGameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
 
   useEffect(() => {
     const wasActive = wasAppActive.current;
@@ -498,6 +590,7 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
         setError(null);
         setRemoteGame(nextGame);
         if (profileId) {
+          onGameChange(profileId, nextGame);
           void syncRemoteBadgeCount(profileId);
         }
       })
@@ -510,16 +603,25 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     return () => {
       isCurrent = false;
     };
-  }, [activeGameId, isAppActive, profileId, remoteGame]);
+  }, [activeGameId, isAppActive, onGameChange, profileId, remoteGame]);
 
-  async function runRemoteAction(action: () => Promise<{ game: RemoteGameRow }>) {
+  async function runRemoteAction(
+    action: () => Promise<{ game: RemoteGameRow }>,
+    { showNextTurns = true }: { showNextTurns?: boolean } = {},
+  ) {
     setIsRemoteBusy(true);
     setError(null);
     try {
       const result = await action();
       setRemoteGame(result.game);
       if (profileId) {
-        void syncRemoteBadgeCount(profileId);
+        onGameChange(profileId, result.game);
+        if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
+          void prepareNextTurnPrompt(profileId, result.game.id);
+        } else {
+          setNextTurnPrompt(null);
+          void syncRemoteGameList(profileId);
+        }
       }
       return result.game.state;
     } catch (actionError) {
@@ -530,13 +632,48 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     }
   }
 
+  async function prepareNextTurnPrompt(profileId: string, completedGameId: string) {
+    setNextTurnPrompt({ gameId: completedGameId, isGameListReady: false });
+    try {
+      await syncRemoteGameList(profileId);
+      if (activeGameIdRef.current !== completedGameId) {
+        return;
+      }
+
+      setNextTurnPrompt({ gameId: completedGameId, isGameListReady: true });
+    } catch (promptError) {
+      console.warn('Unable to load next turns', promptError);
+      setNextTurnPrompt(null);
+    }
+  }
+
+  async function syncRemoteGameList(profileId: string) {
+    const games = await onRefreshGames(profileId);
+    await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId));
+    return games;
+  }
+
   async function syncRemoteBadgeCount(profileId: string) {
     try {
-      const games = await listMyGames();
-      await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId));
+      await syncRemoteGameList(profileId);
     } catch (badgeError) {
       console.warn('Unable to refresh app badge count', badgeError);
     }
+  }
+
+  function openNextTurnGame(nextGameId: string) {
+    setNextTurnPrompt(null);
+    setError(null);
+    setIsLoading(true);
+    setRemoteGame(null);
+    setRemoteLastTurn(null);
+    setRemoteLastTurnLoadFailedId(null);
+    setActiveGameId(nextGameId);
+  }
+
+  function exitToLobby() {
+    setNextTurnPrompt(null);
+    onExit();
   }
 
   if (isLoading || !remoteGame || !profileId) {
@@ -557,11 +694,14 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
   const handlers: RemoteActionHandlers = {
     onExtraRoll: (held) => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id, held)),
     onRematch: async () => {
-      return runRemoteAction(async () => {
-        const result = await createRematch(remoteGame.id);
-        setActiveGameId(result.game.id);
-        return result;
-      });
+      return runRemoteAction(
+        async () => {
+          const result = await createRematch(remoteGame.id);
+          setActiveGameId(result.game.id);
+          return result;
+        },
+        { showNextTurns: false },
+      );
     },
     onRoll: (held) => runRemoteAction(() => rollRemoteGame(remoteGame.id, held)),
     onScore: (category, held) => runRemoteAction(() => scoreRemoteCategory(remoteGame.id, category, held)),
@@ -574,7 +714,10 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
     <LocalGameScreen
       isRemoteBusy={isRemoteBusy}
       myProfileId={profileId}
-      onExit={onExit}
+      nextTurnGames={nextTurnGames}
+      onDismissNextTurns={() => setNextTurnPrompt(null)}
+      onExit={exitToLobby}
+      onOpenNextTurnGame={openNextTurnGame}
       remoteError={error}
       remoteGame={remoteGame.state}
       remoteHandlers={handlers}
@@ -589,7 +732,10 @@ function RemoteGameScreen({ gameId, onExit }: { gameId: string; onExit: () => vo
 function LocalGameScreen({
   isRemoteBusy = false,
   myProfileId,
+  nextTurnGames,
+  onDismissNextTurns,
   onExit,
+  onOpenNextTurnGame,
   remoteError,
   remoteGame,
   remoteHandlers,
@@ -600,7 +746,10 @@ function LocalGameScreen({
 }: {
   isRemoteBusy?: boolean;
   myProfileId?: string;
+  nextTurnGames?: RemoteGameRow[] | null;
+  onDismissNextTurns?: () => void;
   onExit?: () => void;
+  onOpenNextTurnGame?: (gameId: string) => void;
   remoteError?: string | null;
   remoteGame?: ReturnType<typeof createGame>;
   remoteHandlers?: RemoteActionHandlers;
@@ -639,6 +788,7 @@ function LocalGameScreen({
   const [isChoosingSuckerDeal, setIsChoosingSuckerDeal] = useState(false);
   const [highlightCategory, setHighlightCategory] = useState<ScoreCategory | null>(null);
   const [isScoring, setIsScoring] = useState(false);
+  const [isNextTurnsDelayComplete, setIsNextTurnsDelayComplete] = useState(false);
   const [scoreFlyDice, setScoreFlyDice] = useState<ScoreFlyDie[]>([]);
   const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
@@ -821,6 +971,9 @@ function LocalGameScreen({
   const opponentScore = totalScore(opponentPlayer.scorecard);
   const isGameOver = game.phase === 'complete';
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
+  const nextTurnsVisible = Boolean(
+    isRemoteGame && nextTurnGames && isNextTurnsDelayComplete && !isRolling && !isScoring && !gameOverVisible,
+  );
   const winnerName =
     homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
   const gameOverTitle = winnerName ? (winnerName === 'You' ? 'You win!' : `${winnerName} wins!`) : 'Tie game!';
@@ -864,6 +1017,16 @@ function LocalGameScreen({
   useEffect(() => {
     liveGameRef.current = game;
   }, [game]);
+
+  useEffect(() => {
+    setIsNextTurnsDelayComplete(false);
+    if (!nextTurnGames || isRolling || isScoring || gameOverVisible) {
+      return;
+    }
+
+    const timer = setTimeout(() => setIsNextTurnsDelayComplete(true), nextTurnDialogDelayMs);
+    return () => clearTimeout(timer);
+  }, [gameOverVisible, isRolling, isScoring, nextTurnGames]);
 
   useEffect(() => {
     if (previousHomeSectionBonusAwarded.current === null) {
@@ -1800,6 +1963,21 @@ function LocalGameScreen({
     onExit?.();
   }
 
+  function handleOpenNextTurnGame(gameId: string) {
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
+    setIsMenuOpen(false);
+    setIsTokenMenuOpen(false);
+    onOpenNextTurnGame?.(gameId);
+  }
+
+  function handleNextTurnsLobby() {
+    setIsMenuOpen(false);
+    setIsTokenMenuOpen(false);
+    onExit?.();
+  }
+
   function handleGameOverStats() {
     setShowStatsPage(true);
     void refreshVisibleStats();
@@ -2617,6 +2795,50 @@ function LocalGameScreen({
             <Text style={styles.remoteErrorNoticeText}>{remoteError}</Text>
           </View>
         )}
+        {nextTurnsVisible && (
+          <View style={styles.nextTurnsOverlay} testID="next-turns-dialog">
+            <View style={styles.nextTurnsPanel}>
+              <Pressable
+                accessibilityLabel="Close next turns"
+                onPress={onDismissNextTurns}
+                style={({ pressed }) => [styles.nextTurnsCloseButton, pressed && styles.pressed]}
+                testID="next-turns-close-button"
+              >
+                <Text style={styles.nextTurnsCloseText}>X</Text>
+              </Pressable>
+              <Text style={styles.nextTurnsEyebrow}>Turn Finished</Text>
+              <Text style={styles.nextTurnsTitle}>Keep playing?</Text>
+              {nextTurnGames && nextTurnGames.length > 0 ? (
+                <ScrollView
+                  contentContainerStyle={styles.nextTurnsListContent}
+                  showsVerticalScrollIndicator={false}
+                  style={styles.nextTurnsList}
+                >
+                  {nextTurnGames.map((nextTurnGame) => (
+                    <NextTurnGameButton
+                      game={nextTurnGame}
+                      key={nextTurnGame.id}
+                      onPress={() => handleOpenNextTurnGame(nextTurnGame.id)}
+                      profileId={myProfileId ?? homePlayer.id}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.nextTurnsEmpty}>
+                  <Text style={styles.nextTurnsEmptyText}>No other turns right now.</Text>
+                </View>
+              )}
+              <Pressable
+                onPress={handleNextTurnsLobby}
+                style={({ pressed }) => [styles.nextTurnsLobbyButton, pressed && styles.pressed]}
+                testID="next-turns-lobby-button"
+              >
+                <View style={styles.buttonInnerShade} />
+                <Text style={styles.nextTurnsLobbyText}>Game Lobby</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
         {gameOverVisible && (
           <View style={styles.gameOverOverlay} testID="game-over-overlay">
             <View style={styles.gameOverPanel} testID="game-over-panel">
@@ -2680,6 +2902,56 @@ function LocalGameScreen({
 }
 
 type PlayerView = ReturnType<typeof createGame>['players'][number];
+
+function NextTurnGameButton({
+  game,
+  onPress,
+  profileId,
+}: {
+  game: RemoteGameRow;
+  onPress: () => void;
+  profileId: string;
+}) {
+  const opponent = game.state.players.find((player) => player.id !== profileId);
+  const me = game.state.players.find((player) => player.id === profileId);
+  const opponentName = opponent?.name ?? 'Opponent';
+  const myScore = me ? totalScore(me.scorecard) : 0;
+  const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.nextTurnGameButton, pressed && styles.pressed]}
+      testID={`next-turn-game-${game.id}`}
+    >
+      <View style={styles.nextTurnAvatar}>
+        <Text style={styles.nextTurnAvatarText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
+      </View>
+      <View style={styles.nextTurnGameText}>
+        <Text numberOfLines={1} style={styles.nextTurnOpponent}>
+          {opponentName}
+        </Text>
+        <Text style={styles.nextTurnStatus}>{getNextTurnStatusLabel(game, profileId)}</Text>
+      </View>
+      <View style={styles.nextTurnScorePill}>
+        <Text style={styles.nextTurnScoreText}>{myScore}</Text>
+        <Text style={styles.nextTurnScoreDivider}>-</Text>
+        <Text style={styles.nextTurnScoreText}>{opponentScore}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function getNextTurnStatusLabel(game: RemoteGameRow, profileId: string) {
+  if (game.status === 'blocked_response' && game.current_player_id === profileId) {
+    return 'Block or replay';
+  }
+  if (game.status === 'response_window' && game.current_player_id === profileId) {
+    return 'Your response';
+  }
+
+  return 'Your turn';
+}
 
 function upperSectionTotal(scorecard: PlayerView['scorecard']) {
   return upperCategories.reduce((sum, category) => sum + (scorecard[category] ?? 0), 0);
@@ -4031,6 +4303,181 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     textAlign: 'center',
+  },
+  nextTurnsOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 0, 0, 0.62)',
+    justifyContent: 'center',
+    padding: 14,
+    zIndex: 94,
+  },
+  nextTurnsPanel: {
+    alignItems: 'stretch',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 14,
+    borderWidth: 4,
+    gap: 10,
+    maxHeight: '78%',
+    padding: 14,
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 0,
+    width: '100%',
+  },
+  nextTurnsCloseButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 18,
+    borderWidth: 2,
+    height: 36,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    width: 36,
+    zIndex: 2,
+  },
+  nextTurnsCloseText: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 16,
+    textAlign: 'center',
+  },
+  nextTurnsEyebrow: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    paddingRight: 42,
+    textTransform: 'uppercase',
+  },
+  nextTurnsTitle: {
+    color: '#FFD329',
+    fontSize: 28,
+    fontWeight: '900',
+    lineHeight: 32,
+    paddingRight: 42,
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  nextTurnsList: {
+    maxHeight: 250,
+    width: '100%',
+  },
+  nextTurnsListContent: {
+    gap: 8,
+    paddingBottom: 2,
+  },
+  nextTurnGameButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderRadius: 9,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 9,
+    minHeight: 64,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  nextTurnAvatar: {
+    alignItems: 'center',
+    backgroundColor: '#D71920',
+    borderColor: '#5A1308',
+    borderRadius: 19,
+    borderWidth: 2,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  nextTurnAvatarText: {
+    color: '#FFD329',
+    fontSize: 16,
+    fontWeight: '900',
+    lineHeight: 18,
+  },
+  nextTurnGameText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nextTurnOpponent: {
+    color: '#210505',
+    fontSize: 16,
+    fontWeight: '900',
+    lineHeight: 19,
+  },
+  nextTurnStatus: {
+    color: '#8F3B10',
+    fontSize: 11,
+    fontWeight: '900',
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  nextTurnScorePill: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#8F3B10',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 4,
+    justifyContent: 'center',
+    minWidth: 70,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  nextTurnScoreText: {
+    color: '#FFD329',
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  nextTurnScoreDivider: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  nextTurnsEmpty: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 243, 194, 0.1)',
+    borderColor: '#8F3B10',
+    borderRadius: 9,
+    borderWidth: 2,
+    minHeight: 74,
+    justifyContent: 'center',
+    padding: 12,
+  },
+  nextTurnsEmptyText: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  nextTurnsLobbyButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 10,
+    borderWidth: 3,
+    justifyContent: 'center',
+    minHeight: 48,
+    overflow: 'hidden',
+  },
+  nextTurnsLobbyText: {
+    color: '#FFD329',
+    fontSize: 17,
+    fontWeight: '900',
+    letterSpacing: 0,
+    lineHeight: 20,
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
   },
   gameOverOverlay: {
     ...StyleSheet.absoluteFillObject,

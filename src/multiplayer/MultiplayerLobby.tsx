@@ -22,7 +22,6 @@ import { getComputerStats } from './computerStats';
 import {
   createGameAgainst,
   createRematch,
-  listMyGames,
   nudgeRemoteGame,
   removeRemoteGame,
   subscribeToGameListChanges,
@@ -65,11 +64,19 @@ const pullRefreshMaxDistance = 72;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
+  games,
+  gamesProfileId,
+  onGamesChange,
   onOpenGame,
   onPlayLocalDemo,
+  onRefreshGames,
 }: {
+  games: RemoteGameRow[];
+  gamesProfileId: string | null;
+  onGamesChange: (profileId: string | null, games: RemoteGameRow[]) => void;
   onOpenGame: (gameId: string) => void;
   onPlayLocalDemo: () => void;
+  onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
@@ -83,7 +90,6 @@ export function MultiplayerLobby({
   const [username, setUsername] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
-  const [games, setGames] = useState<RemoteGameRow[]>([]);
   const [computerStats, setComputerStats] = useState<ComputerStatsRow>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
   const [completedGameStats, setCompletedGameStats] = useState<HeadToHeadStatsSnapshot | null>(null);
@@ -101,6 +107,9 @@ export function MultiplayerLobby({
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const gamesScrollY = useRef(0);
+  const profileId = profile?.id ?? session?.user.id ?? null;
+  const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
+  const visibleGames = isGamesProfileMismatch ? [] : games;
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
   const shellSafeAreaStyle: StyleProp<ViewStyle> = {
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
@@ -121,11 +130,14 @@ export function MultiplayerLobby({
 
   const refreshGames = useCallback(
     async ({ surfaceError = true }: { surfaceError?: boolean } = {}) => {
+      if (!profileId) {
+        return;
+      }
+
       try {
-        const nextGames = await listMyGames();
-        setGames(nextGames);
+        const nextGames = await onRefreshGames(profileId);
         setNow(Date.now());
-        await syncAppBadgeCount(profile ? countGamesAwaitingTurn(nextGames, profile.id) : 0);
+        await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId));
 
         try {
           setAllTimeOpponentRecord(await getAllTimeOpponentRecord());
@@ -140,8 +152,14 @@ export function MultiplayerLobby({
         }
       }
     },
-    [profile],
+    [onRefreshGames, profileId],
   );
+
+  useEffect(() => {
+    if (!isLoading && !session) {
+      onGamesChange(null, []);
+    }
+  }, [isLoading, onGamesChange, session]);
 
   useEffect(() => {
     if (session) {
@@ -156,8 +174,8 @@ export function MultiplayerLobby({
   }, [profile, refreshGames, session]);
 
   useEffect(() => {
-    void syncAppBadgeCount(profile ? countGamesAwaitingTurn(games, profile.id) : 0);
-  }, [games, profile]);
+    void syncAppBadgeCount(profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0);
+  }, [games, isGamesProfileMismatch, profile]);
 
   useEffect(() => {
     if (!session || !isAppActive) {
@@ -205,14 +223,14 @@ export function MultiplayerLobby({
   }, []);
 
   useEffect(() => {
-    const hasActiveGames = games.some((game) => game.status !== 'complete');
+    const hasActiveGames = visibleGames.some((game) => game.status !== 'complete');
     if (!profile || !hasActiveGames || webPushPromptDismissed || !canOfferWebPushPrompt()) {
       setWebPushPromptVisible(false);
       return;
     }
 
     setWebPushPromptVisible(getWebNotificationPermission() === 'default');
-  }, [games, profile, webPushPromptDismissed]);
+  }, [isGamesProfileMismatch, games, profile, webPushPromptDismissed]);
 
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
@@ -295,7 +313,12 @@ export function MultiplayerLobby({
     setRemoveGameToConfirm(null);
     await runAction(async () => {
       await removeRemoteGame(game.id);
-      setGames((currentGames) => currentGames.filter((currentGame) => currentGame.id !== game.id));
+      if (profileId) {
+        onGamesChange(
+          profileId,
+          visibleGames.filter((currentGame) => currentGame.id !== game.id),
+        );
+      }
       setMessage(isInvite ? 'Invite removed.' : 'Game removed.');
       await refreshGames({ surfaceError: false });
     });
@@ -304,11 +327,14 @@ export function MultiplayerLobby({
   async function handleNudgeGame(game: RemoteGameRow) {
     await runAction(async () => {
       await nudgeRemoteGame(game.id);
-      setGames((currentGames) =>
-        currentGames.map((currentGame) =>
-          currentGame.id === game.id ? { ...currentGame, last_nudged_at: new Date().toISOString() } : currentGame,
-        ),
-      );
+      if (profileId) {
+        onGamesChange(
+          profileId,
+          visibleGames.map((currentGame) =>
+            currentGame.id === game.id ? { ...currentGame, last_nudged_at: new Date().toISOString() } : currentGame,
+          ),
+        );
+      }
       setMessage('Nudge sent.');
       await refreshGames({ surfaceError: false });
     });
@@ -488,17 +514,17 @@ export function MultiplayerLobby({
     );
   }
 
-  const profileId = profile?.id ?? session.user.id;
+  const activeProfileId = profileId ?? session.user.id;
   const activeGames = sortActiveGames(
-    games.filter((game) => game.status !== 'complete'),
-    profileId,
+    visibleGames.filter((game) => game.status !== 'complete'),
+    activeProfileId,
   );
-  const completedGames = sortCompletedGames(games.filter((game) => game.status === 'complete')).slice(0, 25);
+  const completedGames = sortCompletedGames(visibleGames.filter((game) => game.status === 'complete')).slice(0, 25);
   const selectedCompletedGame = selectedCompletedGameId
-    ? games.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
+    ? visibleGames.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
     : null;
   async function handleOpenCompletedGameStats(game: RemoteGameRow) {
-    const { opponent } = getGamePlayers(game, profileId);
+    const { opponent } = getGamePlayers(game, activeProfileId);
     if (!opponent) {
       setMessage('Stats are unavailable for this game.');
       return;
@@ -612,7 +638,7 @@ export function MultiplayerLobby({
                   setPage('completedGameDetail');
                 }}
                 onRematchGame={handleRematchGame}
-                profileId={profileId}
+                profileId={activeProfileId}
               />
             ))
           )}
@@ -640,7 +666,7 @@ export function MultiplayerLobby({
             isBusy={isBusy || isLoading}
             onOpenStats={handleOpenCompletedGameStats}
             onRematchGame={handleRematchGame}
-            profileId={profileId}
+            profileId={activeProfileId}
           />
         ) : (
           <View style={lobbyStyles.panel}>
@@ -659,7 +685,7 @@ export function MultiplayerLobby({
 
   if (page === 'completedGameStats') {
     const { me, opponent } = selectedCompletedGame
-      ? getGamePlayers(selectedCompletedGame, profileId)
+      ? getGamePlayers(selectedCompletedGame, activeProfileId)
       : { me: null, opponent: null };
 
     if (selectedCompletedGame && me && opponent) {
@@ -1014,7 +1040,7 @@ export function MultiplayerLobby({
                 onOpenGame={onOpenGame}
                 onRemoveGame={handleRemoveGame}
                 onNudgeGame={handleNudgeGame}
-                profileId={profileId}
+                profileId={activeProfileId}
                 isBusy={isBusy || isLoading}
               />
             ))
