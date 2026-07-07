@@ -240,6 +240,8 @@ const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const remoteRollServerHeadStartMs = 80;
 const rollFinalFaceHoldMs = 120;
+const sectionBonusAfterScoreDelayMs = 160;
+const sectionBonusAnimationDurationMs = 760;
 const backSwipeEdgeWidth = 28;
 const backSwipeTriggerDistance = 76;
 const backSwipeMinimumMove = 18;
@@ -247,6 +249,7 @@ const backSwipeVelocity = 0.45;
 const nextTurnDialogDelayMs = 1000;
 const upperBonusTarget = 63;
 const bonusValueColor = '#FFD329';
+const bonusFlashColor = '#FFF8D5';
 const awardedBonusColor = bonusValueColor;
 const bonusOutlineColor = '#5A1308';
 const awardedBonusOutlineColor = bonusOutlineColor;
@@ -1006,12 +1009,16 @@ function LocalGameScreen({
       revealingRemoteTurnId === remoteLastTurnId),
   );
   const sectionBonusScale = sectionBonusPulse.interpolate({
-    inputRange: [0, 0.45, 1],
-    outputRange: [1, 2, 1],
+    inputRange: [0, 0.28, 0.52, 0.76, 1],
+    outputRange: [1, 2.45, 1.34, 1.1, 1],
+  });
+  const sectionBonusRotate = sectionBonusPulse.interpolate({
+    inputRange: [0, 0.2, 0.4, 0.62, 0.82, 1],
+    outputRange: ['0deg', '-7deg', '7deg', '-4deg', '3deg', '0deg'],
   });
   const sectionBonusColor = sectionBonusPulse.interpolate({
-    inputRange: [0, 0.45, 1],
-    outputRange: [bonusValueColor, bonusValueColor, awardedBonusColor],
+    inputRange: [0, 0.3, 0.58, 1],
+    outputRange: [bonusValueColor, bonusFlashColor, bonusValueColor, awardedBonusColor],
   });
 
   useEffect(() => {
@@ -1041,18 +1048,7 @@ function LocalGameScreen({
       return;
     }
 
-    if (!previousHomeSectionBonusAwarded.current && !disableE2EAnimations) {
-      sectionBonusPulse.setValue(0);
-      Animated.timing(sectionBonusPulse, {
-        toValue: 1,
-        duration: 560,
-        easing: Easing.out(Easing.back(1.7)),
-        useNativeDriver: false,
-      }).start();
-    } else {
-      sectionBonusPulse.setValue(1);
-    }
-
+    sectionBonusPulse.setValue(1);
     previousHomeSectionBonusAwarded.current = true;
   }, [homeSectionBonusAwarded, sectionBonusPulse]);
 
@@ -1989,6 +1985,48 @@ function LocalGameScreen({
     liveGameRef.current = result.game;
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
+    return result;
+  }
+
+  function applyScoreSubmission(
+    category: ScoreCategory,
+    scoringGame: GameState,
+    remoteScorePromise: Promise<GameState | null> | null,
+    optimisticScoredGame: GameState | null,
+  ) {
+    if (remoteScorePromise && optimisticScoredGame) {
+      setLiveRemoteGame(optimisticScoredGame);
+      settleRemoteOptimisticAction(remoteScorePromise, scoringGame);
+    } else {
+      commitLocalScore(category, scoringGame);
+    }
+
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+  }
+
+  async function playSectionBonusAwardAnimationAfterScore(shouldAnimate: boolean) {
+    if (!shouldAnimate) {
+      return;
+    }
+
+    sectionBonusPulse.stopAnimation();
+    if (disableE2EAnimations) {
+      sectionBonusPulse.setValue(1);
+      return;
+    }
+
+    await waitForNextFrame();
+    await wait(sectionBonusAfterScoreDelayMs);
+    sectionBonusPulse.setValue(0);
+    await runAnimation(
+      Animated.timing(sectionBonusPulse, {
+        toValue: 1,
+        duration: sectionBonusAnimationDurationMs,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
+    );
   }
 
   function handleSelectCategory(category: ScoreCategory) {
@@ -2032,13 +2070,18 @@ function LocalGameScreen({
     if (!screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
       if (isRemoteGame && remoteHandlers) {
         const optimisticGame = scoreTurn(scoringGame, category);
-        setLiveRemoteGame(optimisticGame);
-        settleRemoteOptimisticAction(remoteHandlers.onScore(category, scoringGame.held), scoringGame);
+        const shouldAnimateSectionBonus = didAwardUpperBonusForPlayer(scoringGame, optimisticGame, homePlayer.id);
+        const remoteScorePromise = remoteHandlers.onScore(category, scoringGame.held);
+        applyScoreSubmission(category, scoringGame, remoteScorePromise, optimisticGame);
+        await playSectionBonusAwardAnimationAfterScore(shouldAnimateSectionBonus);
       } else {
-        commitLocalScore(category, scoringGame);
+        const result = commitLocalScore(category, scoringGame);
+        setSelectedCategory(null);
+        setIsChoosingSuckerDeal(false);
+        await playSectionBonusAwardAnimationAfterScore(
+          didAwardUpperBonusForPlayer(scoringGame, result.game, homePlayer.id),
+        );
       }
-      setSelectedCategory(null);
-      setIsChoosingSuckerDeal(false);
       return;
     }
 
@@ -2072,28 +2115,26 @@ function LocalGameScreen({
     const remoteScorePromise =
       isRemoteGame && remoteHandlers ? remoteHandlers.onScore(category, scoringGame.held) : null;
     const optimisticScoredGame = remoteScorePromise ? scoreTurn(scoringGame, category) : null;
+    const expectedScoredGame = optimisticScoredGame ?? scoreTurn(scoringGame, category);
+    const shouldAnimateSectionBonus = didAwardUpperBonusForPlayer(scoringGame, expectedScoredGame, homePlayer.id);
     requestAnimationFrame(() => {
-      Animated.stagger(
-        42,
-        flyingDice.map((die) =>
-          Animated.timing(die.progress, {
-            toValue: 1,
-            duration: 700,
-            easing: Easing.inOut(Easing.cubic),
-            useNativeDriver: true,
-          }),
+      void runAnimation(
+        Animated.stagger(
+          42,
+          flyingDice.map((die) =>
+            Animated.timing(die.progress, {
+              toValue: 1,
+              duration: 700,
+              easing: Easing.inOut(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ),
         ),
-      ).start(() => {
+      ).then(async () => {
         setScoreFlyDice([]);
+        applyScoreSubmission(category, scoringGame, remoteScorePromise, optimisticScoredGame);
+        await playSectionBonusAwardAnimationAfterScore(shouldAnimateSectionBonus);
         setIsScoring(false);
-        if (remoteScorePromise && optimisticScoredGame) {
-          setLiveRemoteGame(optimisticScoredGame);
-          settleRemoteOptimisticAction(remoteScorePromise, scoringGame);
-        } else {
-          commitLocalScore(category, scoringGame);
-        }
-        setSelectedCategory(null);
-        setIsChoosingSuckerDeal(false);
       });
     });
   }
@@ -2282,6 +2323,7 @@ function LocalGameScreen({
                   <BonusValueText
                     awarded={homeSectionBonusAwarded}
                     faceColor={sectionBonusColor}
+                    rotate={sectionBonusRotate}
                     scale={sectionBonusScale}
                   />
                 </View>
@@ -2957,6 +2999,20 @@ function upperSectionTotal(scorecard: PlayerView['scorecard']) {
   return upperCategories.reduce((sum, category) => sum + (scorecard[category] ?? 0), 0);
 }
 
+function didAwardUpperBonusForPlayer(beforeGame: GameState, afterGame: GameState, playerId: string) {
+  const beforePlayer = beforeGame.players.find((player) => player.id === playerId);
+  const afterPlayer = afterGame.players.find((player) => player.id === playerId);
+
+  if (!beforePlayer || !afterPlayer) {
+    return false;
+  }
+
+  return (
+    upperSectionTotal(beforePlayer.scorecard) < upperBonusTarget &&
+    upperSectionTotal(afterPlayer.scorecard) >= upperBonusTarget
+  );
+}
+
 function getSafePhoneStageStyle(windowWidth: number, windowHeight: number, topInset: number, bottomInset: number) {
   const safeHeight = Math.max(1, windowHeight - topInset - bottomInset);
 
@@ -2973,16 +3029,18 @@ function getSafePhoneStageStyle(windowWidth: number, windowHeight: number, topIn
 function BonusValueText({
   awarded,
   faceColor,
+  rotate,
   scale,
 }: {
   awarded: boolean;
   faceColor: Animated.AnimatedInterpolation<string | number>;
+  rotate: Animated.AnimatedInterpolation<string | number>;
   scale: Animated.AnimatedInterpolation<number>;
 }) {
   const outlineColor = awarded ? awardedBonusOutlineColor : bonusOutlineColor;
 
   return (
-    <Animated.View style={[styles.bonusValueWrap, { transform: [{ scale }] }]}>
+    <Animated.View style={[styles.bonusValueWrap, { transform: [{ scale }, { rotate }] }]}>
       {bonusOutlineOffsets.map((offset, index) => (
         <Text
           adjustsFontSizeToFit
