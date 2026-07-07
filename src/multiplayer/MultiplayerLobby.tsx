@@ -1059,7 +1059,7 @@ export function MultiplayerLobby({
           <View>
             <Text style={lobbyStyles.historyButtonText}>Completed Games</Text>
           </View>
-          <Text style={lobbyStyles.historyButtonChevron}>›</Text>
+          <ForwardChevronIcon />
         </Pressable>
 
         <View style={lobbyStyles.actionGrid}>
@@ -1263,6 +1263,21 @@ function BackChevronIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={5}
+      />
+    </Svg>
+  );
+}
+
+function ForwardChevronIcon() {
+  return (
+    <Svg height={24} viewBox="0 0 24 24" width={24}>
+      <Path
+        d="m9 6 6 6-6 6"
+        fill="none"
+        stroke="#FFD329"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={4}
       />
     </Svg>
   );
@@ -2137,12 +2152,6 @@ const lobbyStyles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     width: '100%',
-  },
-  historyButtonChevron: {
-    color: '#FFD329',
-    fontSize: 30,
-    fontWeight: '900',
-    lineHeight: 30,
   },
   historyButtonText: {
     color: '#FFD329',

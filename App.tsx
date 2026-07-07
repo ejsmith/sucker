@@ -85,7 +85,7 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from './shared/stats';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 
 type ScoreFlyDie = {
   face: DieValue;
@@ -2156,7 +2156,7 @@ function LocalGameScreen({
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={[styles.backButtonText, compactPhoneLayout && styles.compactBackButtonText]}>‹</Text>
+              <GameBackChevronIcon size={compactPhoneLayout ? 28 : 34} />
             </Pressable>
           )}
           <Pressable
@@ -3463,6 +3463,30 @@ function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
   );
 }
 
+function GameBackChevronIcon({ size }: { size: number }) {
+  return (
+    <Svg height={size} viewBox="0 0 24 24" width={size}>
+      <Path
+        d="M15 18 9 12l6-6"
+        fill="none"
+        stroke="#050505"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={4.6}
+        transform="translate(1.2 1.2)"
+      />
+      <Path
+        d="M15 18 9 12l6-6"
+        fill="none"
+        stroke="#FFF0A6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={4.6}
+      />
+    </Svg>
+  );
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     alignItems: 'center',
@@ -3606,19 +3630,6 @@ const styles = StyleSheet.create({
     height: 40,
     left: 5,
     width: 40,
-  },
-  backButtonText: {
-    color: '#FFF0A6',
-    fontSize: 54,
-    fontWeight: '900',
-    lineHeight: 54,
-    textShadowColor: '#050505',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 0,
-  },
-  compactBackButtonText: {
-    fontSize: 46,
-    lineHeight: 46,
   },
   menuDots: {
     alignItems: 'center',
