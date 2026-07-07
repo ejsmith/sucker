@@ -59,6 +59,7 @@ export type ComputerDecisionTrace = {
   dice: GameState['dice'];
   extraRollsBought: number;
   finalAction: ComputerFinalAction | null;
+  game: GameState;
   held: GameState['held'] | null;
   maxRolls: number;
   mulligansUsed: number;
@@ -85,6 +86,7 @@ export type ComputerDecisionTraceHandler = (trace: ComputerDecisionTrace) => voi
 
 export type ComputerStrategyConfig = {
   chanceEarlyPenalty: number;
+  decisionRolloutUseCommonRandomFutures: boolean;
   extraRollMaxPurchases: number;
   extraRollMaxScore: number;
   extraRollMinTokens: number;
@@ -92,11 +94,24 @@ export type ComputerStrategyConfig = {
   extraRollSuckerChaseMaxPurchases: number;
   finalActionRolloutOpenCategoryMax: number;
   finalActionRolloutSimulations: number;
+  faceChaseCountWeight: number;
+  faceChaseFourOfAKindValue: number;
+  faceChasePipWeight: number;
+  faceChaseSuckerValue: number;
+  faceChaseThreeOfAKindValue: number;
   holdRolloutRollNumberMax: number;
   holdRolloutSimulations: number;
   holdRolloutTokenValue: number;
+  holdRolloutUseActualScoreDelta: boolean;
   madeCategoryBonuses: Partial<Record<ScoreCategory, number>>;
   mulliganMaxScore: number;
+  opportunityCostChance: number;
+  opportunityCostFourOfAKind: number;
+  opportunityCostFullHouse: number;
+  opportunityCostLargeStraight: number;
+  opportunityCostSmallStraight: number;
+  opportunityCostSucker: number;
+  opportunityCostThreeOfAKind: number;
   suckerBlockerMinScore: number;
   suckerPunchComebackMinCategories: number;
   suckerPunchComebackMinScore: number;
@@ -106,6 +121,7 @@ export type ComputerStrategyConfig = {
   suckerDealBeforeTokenSpending: boolean;
   suckerDealChanceMaxScore: number;
   suckerDealMaxSacrificeScore: number;
+  suckerDealMaxTokens: number;
   suckerDealMinOpenCategories: number;
   stopScoreThreshold: number;
   suckerCategoryBonus: number;
@@ -120,6 +136,7 @@ export type ComputerStrategyConfig = {
 
 export const defaultComputerStrategy: ComputerStrategyConfig = {
   chanceEarlyPenalty: 8,
+  decisionRolloutUseCommonRandomFutures: true,
   extraRollMaxPurchases: 3,
   extraRollMaxScore: 20,
   extraRollMinTokens: 4,
@@ -127,9 +144,15 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
   extraRollSuckerChaseMaxPurchases: 0,
   finalActionRolloutOpenCategoryMax: 2,
   finalActionRolloutSimulations: 12,
+  faceChaseCountWeight: 10,
+  faceChaseFourOfAKindValue: 8,
+  faceChasePipWeight: 0.2,
+  faceChaseSuckerValue: 18,
+  faceChaseThreeOfAKindValue: 4,
   holdRolloutRollNumberMax: 1,
   holdRolloutSimulations: 48,
   holdRolloutTokenValue: 2,
+  holdRolloutUseActualScoreDelta: false,
   madeCategoryBonuses: {
     fourOfAKind: 4,
     fullHouse: 6,
@@ -138,6 +161,13 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
     threeOfAKind: 1,
   },
   mulliganMaxScore: 6,
+  opportunityCostChance: 18,
+  opportunityCostFourOfAKind: 24,
+  opportunityCostFullHouse: 23,
+  opportunityCostLargeStraight: 32,
+  opportunityCostSmallStraight: 20,
+  opportunityCostSucker: 45,
+  opportunityCostThreeOfAKind: 18,
   suckerBlockerMinScore: 20,
   suckerPunchComebackMinCategories: 8,
   suckerPunchComebackMinScore: 30,
@@ -147,6 +177,7 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
   suckerDealBeforeTokenSpending: true,
   suckerDealChanceMaxScore: 20,
   suckerDealMaxSacrificeScore: 3,
+  suckerDealMaxTokens: 999,
   suckerDealMinOpenCategories: 8,
   stopScoreThreshold: 35,
   suckerCategoryBonus: 8,
@@ -488,6 +519,7 @@ export function traceComputerDecision(
     dice: game.dice,
     extraRollsBought,
     finalAction,
+    game,
     held,
     maxRolls,
     mulligansUsed,
@@ -789,7 +821,9 @@ function measureTurnDecisionRollout(
   let opponentScoreTotal = 0;
 
   for (let index = 0; index < simulationCount; index += 1) {
-    const random = createRolloutRandom(rolloutSeedForDecisionAction(game, automatedPlayerIndex, action, index));
+    const random = createRolloutRandom(
+      rolloutSeedForDecisionAction(game, automatedPlayerIndex, action, index, strategy.decisionRolloutUseCommonRandomFutures),
+    );
     const result = simulateTurnDecisionRollout(game, automatedPlayerIndex, action, simulationStrategy, random);
     scoreTotal += result.playerScore;
     opponentScoreTotal += result.opponentScore;
@@ -912,14 +946,20 @@ function rolloutSeedForDecisionAction(
   automatedPlayerIndex: number,
   action: ComputerTurnDecisionAction,
   iteration: number,
+  useCommonRandomFutures: boolean,
 ) {
   let hash = 2166136261;
   hash = hashRolloutValue(hash, automatedPlayerIndex + 1);
   hash = hashRolloutValue(hash, game.currentPlayerIndex + 1);
   hash = hashRolloutValue(hash, game.rollNumber + 1);
   hash = hashRolloutValue(hash, game.extraRollsAvailable + 1);
-  hash = hashRolloutValue(hash, action.type === 'score' || action.type === 'scratch' ? scoreCategories.indexOf(action.category) + 1 : 0);
-  hash = hashRolloutValue(hash, rolloutActionTypeCode(action));
+  if (!useCommonRandomFutures) {
+    hash = hashRolloutValue(
+      hash,
+      action.type === 'score' || action.type === 'scratch' ? scoreCategories.indexOf(action.category) + 1 : 0,
+    );
+    hash = hashRolloutValue(hash, rolloutActionTypeCode(action));
+  }
   hash = hashRolloutValue(hash, iteration + 1);
 
   for (const die of game.dice) {
@@ -965,10 +1005,12 @@ function chooseSuckerDealCategory(
   choice: ComputerCategoryChoice,
   strategy: ComputerStrategyConfig,
 ) {
+  const player = game.players[automatedPlayerIndex];
   const scorecard = game.players[automatedPlayerIndex].scorecard;
   if (
     choice.category !== 'chance' ||
     choice.score > strategy.suckerDealChanceMaxScore ||
+    player.suckerTokens > strategy.suckerDealMaxTokens ||
     availableCategories(scorecard).length < strategy.suckerDealMinOpenCategories
   ) {
     return null;
@@ -1066,7 +1108,7 @@ function computerCategoryOpportunityCost(
     return upperBonusPressure(scorecard) ? 12 : 7;
   }
   if (category === 'chance') {
-    return 18;
+    return strategy.opportunityCostChance;
   }
   if (isUpperCategory(category)) {
     return upperBonusPressure(scorecard)
@@ -1075,12 +1117,12 @@ function computerCategoryOpportunityCost(
   }
 
   return {
-    threeOfAKind: 18,
-    fourOfAKind: 24,
-    fullHouse: 23,
-    smallStraight: 20,
-    largeStraight: 32,
-    sucker: 45,
+    threeOfAKind: strategy.opportunityCostThreeOfAKind,
+    fourOfAKind: strategy.opportunityCostFourOfAKind,
+    fullHouse: strategy.opportunityCostFullHouse,
+    smallStraight: strategy.opportunityCostSmallStraight,
+    largeStraight: strategy.opportunityCostLargeStraight,
+    sucker: strategy.opportunityCostSucker,
   }[category];
 }
 
@@ -1417,7 +1459,8 @@ function measureHeldDiceRollout(
     const tokenDelta = afterPlayer.suckerTokens - beforeTokens;
     scoreDeltaTotal += scoreDelta;
     tokenDeltaTotal += tokenDelta;
-    utilityTotal += (result.turnUtility ?? scoreDelta) + tokenDelta * strategy.holdRolloutTokenValue;
+    const scoreUtility = strategy.holdRolloutUseActualScoreDelta ? scoreDelta : (result.turnUtility ?? scoreDelta);
+    utilityTotal += scoreUtility + tokenDelta * strategy.holdRolloutTokenValue;
   }
 
   return {
@@ -1574,10 +1617,10 @@ function faceChaseValue(
     ? face * Math.min(4, count + 1) * (upperBonusPressure(scorecard) ? strategy.upperPressureHoldMultiplier : 1)
     : 0;
   const kindValue =
-    (scorecard.sucker === null ? 18 : 0) +
-    (scorecard.fourOfAKind === null ? 8 : 0) +
-    (scorecard.threeOfAKind === null ? 4 : 0);
-  return count * 10 + face * 0.2 + upperValue + (count >= 2 ? kindValue : 0);
+    (scorecard.sucker === null ? strategy.faceChaseSuckerValue : 0) +
+    (scorecard.fourOfAKind === null ? strategy.faceChaseFourOfAKindValue : 0) +
+    (scorecard.threeOfAKind === null ? strategy.faceChaseThreeOfAKindValue : 0);
+  return count * strategy.faceChaseCountWeight + face * strategy.faceChasePipWeight + upperValue + (count >= 2 ? kindValue : 0);
 }
 
 function bestStraightHold(dice: GameState['dice'], length: 4 | 5): GameState['held'] {
