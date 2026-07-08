@@ -55,6 +55,7 @@ import {
   scoreRemoteCategory,
   scratchRemoteCategory,
   subscribeToGame,
+  subscribeToGameListChanges,
   useRemoteSuckerBlocker,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
@@ -247,6 +248,7 @@ const backSwipeTriggerDistance = 76;
 const backSwipeMinimumMove = 18;
 const backSwipeVelocity = 0.45;
 const nextTurnDialogDelayMs = 1000;
+const nextTurnListRefreshMs = 5000;
 const upperBonusTarget = 63;
 const bonusValueColor = '#FFD329';
 const bonusFlashColor = '#FFF8D5';
@@ -460,6 +462,27 @@ function RemoteGameScreen({
     nextTurnPrompt?.isGameListReady && profileId && gamesProfileId === profileId
       ? getNextTurnGames(games, profileId, nextTurnPrompt.gameId)
       : null;
+  const isNextTurnPromptReady = Boolean(nextTurnPrompt?.isGameListReady);
+
+  const syncRemoteGameList = useCallback(
+    async (profileId: string) => {
+      const games = await onRefreshGames(profileId);
+      await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId));
+      return games;
+    },
+    [onRefreshGames],
+  );
+
+  const syncRemoteBadgeCount = useCallback(
+    async (profileId: string) => {
+      try {
+        await syncRemoteGameList(profileId);
+      } catch (badgeError) {
+        console.warn('Unable to refresh app badge count', badgeError);
+      }
+    },
+    [syncRemoteGameList],
+  );
 
   useEffect(() => {
     activeGameIdRef.current = activeGameId;
@@ -606,7 +629,44 @@ function RemoteGameScreen({
     return () => {
       isCurrent = false;
     };
-  }, [activeGameId, isAppActive, onGameChange, profileId, remoteGame]);
+  }, [activeGameId, isAppActive, onGameChange, profileId, remoteGame, syncRemoteBadgeCount]);
+
+  useEffect(() => {
+    if (!profileId || !isAppActive || !isNextTurnPromptReady) {
+      return;
+    }
+
+    const activeProfileId = profileId;
+    let isCurrent = true;
+    let isRefreshRunning = false;
+
+    async function refreshNextTurnGames() {
+      if (isRefreshRunning) {
+        return;
+      }
+
+      isRefreshRunning = true;
+      try {
+        await syncRemoteGameList(activeProfileId);
+      } catch (refreshError) {
+        if (isCurrent) {
+          console.warn('Unable to refresh next turns', refreshError);
+        }
+      } finally {
+        isRefreshRunning = false;
+      }
+    }
+
+    void refreshNextTurnGames();
+    const unsubscribe = subscribeToGameListChanges(() => void refreshNextTurnGames());
+    const timer = setInterval(() => void refreshNextTurnGames(), nextTurnListRefreshMs);
+
+    return () => {
+      isCurrent = false;
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, [isAppActive, isNextTurnPromptReady, profileId, syncRemoteGameList]);
 
   async function runRemoteAction(
     action: () => Promise<{ game: RemoteGameRow }>,
@@ -647,20 +707,6 @@ function RemoteGameScreen({
     } catch (promptError) {
       console.warn('Unable to load next turns', promptError);
       setNextTurnPrompt(null);
-    }
-  }
-
-  async function syncRemoteGameList(profileId: string) {
-    const games = await onRefreshGames(profileId);
-    await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId));
-    return games;
-  }
-
-  async function syncRemoteBadgeCount(profileId: string) {
-    try {
-      await syncRemoteGameList(profileId);
-    } catch (badgeError) {
-      console.warn('Unable to refresh app badge count', badgeError);
     }
   }
 
@@ -974,8 +1020,9 @@ function LocalGameScreen({
   const opponentScore = totalScore(opponentPlayer.scorecard);
   const isGameOver = game.phase === 'complete';
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
+  const hasNextTurnPrompt = nextTurnGames !== null && nextTurnGames !== undefined;
   const nextTurnsVisible = Boolean(
-    isRemoteGame && nextTurnGames && isNextTurnsDelayComplete && !isRolling && !isScoring && !gameOverVisible,
+    isRemoteGame && hasNextTurnPrompt && isNextTurnsDelayComplete && !isRolling && !isScoring && !gameOverVisible,
   );
   const winnerName =
     homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
@@ -1027,13 +1074,13 @@ function LocalGameScreen({
 
   useEffect(() => {
     setIsNextTurnsDelayComplete(false);
-    if (!nextTurnGames || isRolling || isScoring || gameOverVisible) {
+    if (!hasNextTurnPrompt || isRolling || isScoring || gameOverVisible) {
       return;
     }
 
     const timer = setTimeout(() => setIsNextTurnsDelayComplete(true), nextTurnDialogDelayMs);
     return () => clearTimeout(timer);
-  }, [gameOverVisible, isRolling, isScoring, nextTurnGames]);
+  }, [gameOverVisible, hasNextTurnPrompt, isRolling, isScoring]);
 
   useEffect(() => {
     if (previousHomeSectionBonusAwarded.current === null) {
@@ -2973,7 +3020,7 @@ function NextTurnGameButton({
         <Text numberOfLines={1} style={styles.nextTurnOpponent}>
           {opponentName}
         </Text>
-        <Text style={styles.nextTurnStatus}>{getNextTurnStatusLabel(game, profileId)}</Text>
+        <Text style={styles.nextTurnStatus}>Your turn</Text>
       </View>
       <View style={styles.nextTurnScorePill}>
         <Text style={styles.nextTurnScoreText}>{myScore}</Text>
@@ -2982,17 +3029,6 @@ function NextTurnGameButton({
       </View>
     </Pressable>
   );
-}
-
-function getNextTurnStatusLabel(game: RemoteGameRow, profileId: string) {
-  if (game.status === 'blocked_response' && game.current_player_id === profileId) {
-    return 'Block or replay';
-  }
-  if (game.status === 'response_window' && game.current_player_id === profileId) {
-    return 'Your response';
-  }
-
-  return 'Your turn';
 }
 
 function upperSectionTotal(scorecard: PlayerView['scorecard']) {
