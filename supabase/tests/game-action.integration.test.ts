@@ -1,4 +1,4 @@
-import { createClient, type Session, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type Session, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import type { Database } from '../functions/_shared/database.types.ts';
 import {
   scoreCategories,
