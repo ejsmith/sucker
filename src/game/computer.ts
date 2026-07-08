@@ -10,6 +10,7 @@ import {
   scoreCategories,
   scoreCategoryForScorecard,
   scoreTurn,
+  startingSuckerTokens,
   scratchScoreBox,
   suckerTokenCosts,
   totalScore,
@@ -180,7 +181,7 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
   suckerDealBeforeTokenSpending: true,
   suckerDealChanceMaxScore: 20,
   suckerDealMaxSacrificeScore: 3,
-  suckerDealMaxTokens: 999,
+  suckerDealMaxTokens: startingSuckerTokens - 1,
   suckerDealMinOpenCategories: 8,
   stopScoreThreshold: 35,
   suckerCategoryBonus: 8,
@@ -997,11 +998,13 @@ function chooseSuckerDealCategory(
       .filter((category) => scorecard[category] === null)
       .map((category) => ({
         category,
+        opportunityCost: computerCategoryOpportunityCost(category, scorecard, strategy),
         score: scoreCategoryForScorecard(game.dice, category, scorecard),
       }))
       .filter((candidate) => candidate.score <= strategy.suckerDealMaxSacrificeScore)
       .sort(
         (left, right) =>
+          left.opportunityCost - right.opportunityCost ||
           left.score - right.score ||
           suckerDealCategories.indexOf(left.category) - suckerDealCategories.indexOf(right.category),
       )[0]?.category ?? null
@@ -1624,7 +1627,7 @@ function countDice(dice: GameState['dice']): Record<DieValue, number> {
 }
 
 const upperCategories = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'] as const;
-const suckerDealCategories = ['ones', 'twos', 'threes'] as const;
+const suckerDealCategories = ['ones'] as const;
 
 const straightRuns = {
   small: [
