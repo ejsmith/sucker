@@ -1,10 +1,12 @@
 import {
   availableCategories,
   isSuckerRoll,
+  isSuckerPunchEligibleTurn,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
   rollCurrentDice,
+  rollSuckerPunchOutcome,
   scoreCategories,
   scoreCategoryForScorecard,
   scoreTurn,
@@ -14,6 +16,7 @@ import {
   type DieValue,
   type GameState,
   type ScoreCategory,
+  type SuckerPunchOutcome,
 } from './index';
 
 export const computerPlayerIndex = 1;
@@ -34,6 +37,12 @@ export type ComputerTurnResult = {
   game: GameState;
   message?: string | null;
   pendingTurn: LocalPendingTurn | null;
+  suckerPunchAttempt?: {
+    outcome: SuckerPunchOutcome;
+    puncherIndex: number;
+    targetPlayerIndex: number;
+    targetTurnId: string;
+  };
   scoreAnimation?: {
     category: ScoreCategory;
     dice: GameState['dice'];
@@ -112,12 +121,9 @@ export type ComputerStrategyConfig = {
   opportunityCostSmallStraight: number;
   opportunityCostSucker: number;
   opportunityCostThreeOfAKind: number;
-  suckerBlockerMinScore: number;
   suckerPunchComebackMinCategories: number;
   suckerPunchComebackMinScore: number;
   suckerPunchMinScore: number;
-  suckerPunchReserveTokens: number;
-  suckerPunchUnblockableMinScore: number;
   suckerDealBeforeTokenSpending: boolean;
   suckerDealChanceMaxScore: number;
   suckerDealMaxSacrificeScore: number;
@@ -168,12 +174,9 @@ export const defaultComputerStrategy: ComputerStrategyConfig = {
   opportunityCostSmallStraight: 20,
   opportunityCostSucker: 45,
   opportunityCostThreeOfAKind: 18,
-  suckerBlockerMinScore: 20,
   suckerPunchComebackMinCategories: 8,
   suckerPunchComebackMinScore: 30,
   suckerPunchMinScore: 50,
-  suckerPunchReserveTokens: 0,
-  suckerPunchUnblockableMinScore: 999,
   suckerDealBeforeTokenSpending: true,
   suckerDealChanceMaxScore: 20,
   suckerDealMaxSacrificeScore: 3,
@@ -244,7 +247,8 @@ export function applyLocalSuckerPunch(
   game: GameState,
   pendingTurn: LocalPendingTurn,
   puncherIndex: number,
-): { game: GameState; pendingTurn: LocalPendingTurn } {
+  random: () => number = Math.random,
+): { game: GameState; outcome: SuckerPunchOutcome | null; pendingTurn: LocalPendingTurn | null } {
   const scorer = game.players[pendingTurn.scorerIndex];
   const puncher = game.players[puncherIndex];
   if (
@@ -252,13 +256,15 @@ export function applyLocalSuckerPunch(
     !scorer ||
     !puncher ||
     pendingTurn.scorerIndex === puncherIndex ||
-    puncher.suckerTokens < suckerTokenCosts.suckerPunch
+    puncher.suckerTokens < suckerTokenCosts.suckerPunch ||
+    !isSuckerPunchEligibleTurn(pendingTurn.category, pendingTurn.dice, pendingTurn.score)
   ) {
-    return { game, pendingTurn };
+    return { game, outcome: null, pendingTurn };
   }
 
+  const outcome = rollSuckerPunchOutcome(random);
   const players = game.players.map((player, index) => {
-    if (index === pendingTurn.scorerIndex) {
+    if (outcome.landed && index === pendingTurn.scorerIndex) {
       return {
         ...player,
         scorecard: {
@@ -279,6 +285,17 @@ export function applyLocalSuckerPunch(
     return player;
   });
 
+  if (!outcome.landed) {
+    return {
+      game: {
+        ...game,
+        players,
+      },
+      outcome,
+      pendingTurn: null,
+    };
+  }
+
   return {
     game: {
       ...game,
@@ -295,54 +312,7 @@ export function applyLocalSuckerPunch(
       puncherIndex,
       status: 'punched',
     },
-  };
-}
-
-export function applyLocalSuckerBlocker(
-  game: GameState,
-  pendingTurn: LocalPendingTurn,
-  blockerIndex: number,
-): GameState {
-  const blocker = game.players[blockerIndex];
-  if (
-    pendingTurn.status !== 'punched' ||
-    pendingTurn.scorerIndex !== blockerIndex ||
-    !blocker ||
-    blocker.suckerTokens < suckerTokenCosts.suckerBlocker
-  ) {
-    return game;
-  }
-
-  const players = game.players.map((player, index) => {
-    if (index !== blockerIndex) {
-      return player;
-    }
-
-    const suckerBonusCategories =
-      pendingTurn.hadSuckerBonus && !player.suckerBonusCategories.includes(pendingTurn.category)
-        ? [...player.suckerBonusCategories, pendingTurn.category]
-        : player.suckerBonusCategories;
-
-    return {
-      ...player,
-      scorecard: {
-        ...player.scorecard,
-        [pendingTurn.category]: pendingTurn.score,
-      },
-      suckerBonusCategories,
-      suckerTokens: Math.max(0, player.suckerTokens - suckerTokenCosts.suckerBlocker),
-    };
-  });
-
-  return {
-    ...game,
-    currentPlayerIndex: pendingTurn.responderIndex,
-    dice: [1, 1, 1, 1, 1],
-    extraRollsAvailable: 0,
-    held: [false, false, false, false, false],
-    phase: 'rolling',
-    players,
-    rollNumber: 0,
+    outcome,
   };
 }
 
@@ -368,33 +338,38 @@ export function playAutomatedTurn(
     return { game, pendingTurn };
   }
 
+  let suckerPunchAttempt: ComputerTurnResult['suckerPunchAttempt'] | undefined;
   if (pendingTurn?.status === 'submitted' && pendingTurn.responderIndex === automatedPlayerIndex) {
     if (shouldAutomatedUseSuckerPunch(game, pendingTurn, automatedPlayerIndex, strategy)) {
-      const punched = applyLocalSuckerPunch(game, pendingTurn, automatedPlayerIndex);
-      return {
-        game: punched.game,
-        message: 'Computer used Sucker Punch. Block it or replay the turn.',
-        pendingTurn: punched.pendingTurn,
-      };
-    }
+      const punched = applyLocalSuckerPunch(game, pendingTurn, automatedPlayerIndex, random);
+      if (punched.outcome) {
+        suckerPunchAttempt = {
+          outcome: punched.outcome,
+          puncherIndex: automatedPlayerIndex,
+          targetPlayerIndex: pendingTurn.scorerIndex,
+          targetTurnId: pendingTurn.id,
+        };
+      }
 
-    pendingTurn = null;
-  }
+      if (punched.outcome?.landed) {
+        return {
+          game: punched.game,
+          message: 'Computer landed a Sucker Punch. Replay the turn.',
+          pendingTurn: punched.pendingTurn,
+          suckerPunchAttempt,
+        };
+      }
 
-  if (pendingTurn?.status === 'punched' && pendingTurn.scorerIndex === automatedPlayerIndex) {
-    if (shouldAutomatedUseSuckerBlocker(game, pendingTurn, automatedPlayerIndex, strategy)) {
-      return {
-        game: applyLocalSuckerBlocker(game, pendingTurn, automatedPlayerIndex),
-        message: 'Computer used Sucker Blocker. The score stands.',
-        pendingTurn: null,
-      };
+      if (punched.outcome) {
+        game = punched.game;
+      }
     }
 
     pendingTurn = null;
   }
 
   if (availableCategories(game.players[automatedPlayerIndex].scorecard).length === 0) {
-    return { game, pendingTurn: null };
+    return { game, pendingTurn: null, suckerPunchAttempt };
   }
 
   let nextGame = {
@@ -472,9 +447,10 @@ export function playAutomatedTurn(
   }
 
   const action = finalAction ?? chooseComputerFinalAction(nextGame, automatedPlayerIndex, strategy);
-  return action.type === 'scratch'
+  const result = action.type === 'scratch'
     ? scratchLocalTurn(nextGame, action.category)
     : scoreLocalTurn(nextGame, action.category);
+  return suckerPunchAttempt ? { ...result, suckerPunchAttempt } : result;
 }
 
 export function traceComputerDecision(
@@ -1156,6 +1132,10 @@ function shouldAutomatedUseSuckerPunch(
     return false;
   }
 
+  if (!isSuckerPunchEligibleTurn(pendingTurn.category, pendingTurn.dice, pendingTurn.score)) {
+    return false;
+  }
+
   const opponent = game.players[pendingTurn.scorerIndex];
   const playerScore = opponent ? totalScore(opponent.scorecard) : 0;
   const computerScore = totalScore(computer.scorecard);
@@ -1163,45 +1143,15 @@ function shouldAutomatedUseSuckerPunch(
   const scoredCategories = scorer.scorecard
     ? scoreCategories.filter((category) => scorer.scorecard[category] !== null).length
     : 0;
-  const tokenBalanceAfterPunch = computer.suckerTokens - suckerTokenCosts.suckerPunch;
-  const canKeepBlockerReserve = tokenBalanceAfterPunch >= strategy.suckerPunchReserveTokens;
-  const scorerCanBlock = scorer.suckerTokens >= suckerTokenCosts.suckerBlocker;
   const isPremiumTurn =
     pendingTurn.hadSuckerBonus ||
     (pendingTurn.category === 'sucker' && pendingTurn.score >= strategy.suckerPunchMinScore);
-  const isUnblockableHighValueTurn = !scorerCanBlock && pendingTurn.score >= strategy.suckerPunchUnblockableMinScore;
   const isLateComebackSwing =
     scoredCategories >= strategy.suckerPunchComebackMinCategories &&
     playerScore > computerScore &&
     pendingTurn.score >= strategy.suckerPunchComebackMinScore;
 
-  return (
-    (isPremiumTurn || isUnblockableHighValueTurn || isLateComebackSwing) &&
-    (canKeepBlockerReserve || pendingTurn.hadSuckerBonus || isUnblockableHighValueTurn)
-  );
-}
-
-export function shouldComputerUseSuckerBlocker(game: GameState, pendingTurn: LocalPendingTurn) {
-  return shouldAutomatedUseSuckerBlocker(game, pendingTurn, computerPlayerIndex, defaultComputerStrategy);
-}
-
-function shouldAutomatedUseSuckerBlocker(
-  game: GameState,
-  pendingTurn: LocalPendingTurn,
-  automatedPlayerIndex: number,
-  strategy: ComputerStrategyConfig,
-) {
-  const computer = game.players[automatedPlayerIndex];
-  if (!computer || computer.suckerTokens < suckerTokenCosts.suckerBlocker) {
-    return false;
-  }
-
-  return (
-    pendingTurn.score >= strategy.suckerBlockerMinScore ||
-    pendingTurn.category === 'sucker' ||
-    pendingTurn.category === 'largeStraight' ||
-    pendingTurn.hadSuckerBonus
-  );
+  return isPremiumTurn || isLateComebackSwing;
 }
 
 function shouldComputerStopRolling(

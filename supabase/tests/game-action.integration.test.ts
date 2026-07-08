@@ -142,7 +142,7 @@ Deno.test('game-action nudges the current player only after the wait window and 
   );
 });
 
-Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker state', async () => {
+Deno.test('game-action persists extra roll, mulligan, and sucker punch chance state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
 
@@ -154,7 +154,7 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
 
   const firstScore = (
     await invokeGameAction(alice, {
-      category: 'chance',
+      category: 'sucker',
       gameId: game.id,
       held: falseHeld,
       type: 'score_category',
@@ -173,7 +173,7 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
   await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
   const secondScore = (
     await invokeGameAction(alice, {
-      category: 'chance',
+      category: 'sucker',
       gameId: game.id,
       held: falseHeld,
       type: 'score_category',
@@ -189,26 +189,10 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
       type: 'sucker_punch',
     })
   ).game as GameRow;
-  assertEquals(punched.status, 'blocked_response');
+  assertEquals(punched.status, 'active');
   assertEquals(punched.current_player_id, alice.id);
   assertPlayerTokens(punched, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
   assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'punched');
-
-  const blocked = (
-    await invokeGameAction(alice, {
-      gameId: game.id,
-      turnId: secondScore.last_turn_id,
-      type: 'sucker_blocker',
-    })
-  ).game as GameRow;
-  assertEquals(blocked.status, 'active');
-  assertEquals(blocked.current_player_id, bob.id);
-  assertPlayerTokens(
-    blocked,
-    alice.id,
-    startingSuckerTokens - suckerTokenCosts.extraRoll - suckerTokenCosts.mulligan - suckerTokenCosts.suckerBlocker,
-  );
-  assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'blocked');
 
   const events = await loadTokenEvents(game.id);
   assertEquals(
@@ -216,7 +200,6 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
     [
       ['mulligan', alice.id, -suckerTokenCosts.mulligan],
       ['sucker_punch', bob.id, -suckerTokenCosts.suckerPunch],
-      ['sucker_blocker', alice.id, -suckerTokenCosts.suckerBlocker],
     ],
   );
 
@@ -233,10 +216,10 @@ Deno.test('game-action persists extra roll, mulligan, sucker punch, and blocker 
     actions.map((action) => action.action_type),
     'sucker_punch',
   );
-  assertIncludes(
-    actions.map((action) => action.action_type),
-    'sucker_blocker',
-  );
+  const punchAction = actions.find((action) => action.action_type === 'sucker_punch');
+  assertEquals(actionPayloadValue(punchAction?.payload, 'landed'), true);
+  assertEquals(actionPayloadValue(punchAction?.payload, 'chanceDie'), 6);
+  assertEquals(actionPayloadValue(punchAction?.payload, 'chancePercent'), 90);
 });
 
 Deno.test('game-action scoring zero does not award a sucker token', async () => {
@@ -271,7 +254,7 @@ Deno.test('game-action lets a punched player replay instead of blocking', async 
   await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
   const firstScore = (
     await invokeGameAction(alice, {
-      category: 'chance',
+      category: 'sucker',
       gameId: game.id,
       held: falseHeld,
       type: 'score_category',
@@ -287,7 +270,7 @@ Deno.test('game-action lets a punched player replay instead of blocking', async 
       type: 'sucker_punch',
     })
   ).game as GameRow;
-  assertEquals(punched.status, 'blocked_response');
+  assertEquals(punched.status, 'active');
   assertEquals(punched.current_player_id, alice.id);
   assertEquals((await loadTurn(firstScore.last_turn_id)).status, 'punched');
 
@@ -298,7 +281,7 @@ Deno.test('game-action lets a punched player replay instead of blocking', async 
 
   const replayScore = (
     await invokeGameAction(alice, {
-      category: 'chance',
+      category: 'sucker',
       gameId: game.id,
       held: falseHeld,
       type: 'score_category',
@@ -669,6 +652,12 @@ function assertIncludes<T>(values: T[], expected: T) {
   if (!values.includes(expected)) {
     throw new Error(`Expected ${JSON.stringify(values)} to include ${JSON.stringify(expected)}.`);
   }
+}
+
+function actionPayloadValue(payload: unknown, key: string) {
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)[key]
+    : undefined;
 }
 
 function assertEquals(actual: unknown, expected: unknown) {

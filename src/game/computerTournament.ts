@@ -176,33 +176,25 @@ export function createSuckerTokenStrategyCandidates(): ComputerStrategyCandidate
   for (const suckerPunchMinScore of [50]) {
     for (const suckerPunchComebackMinCategories of [8, 9, 10, 11]) {
       for (const suckerPunchComebackMinScore of [30, 35, 40, 45]) {
-        for (const suckerPunchReserveTokens of [0, 2, 4]) {
-          for (const suckerBlockerMinScore of [20, 25, 30, 35]) {
-            for (const extraRollMaxScore of [16, 18, 20]) {
-              for (const mulliganMaxScore of [12, 14, 16, 18]) {
-                candidates.push({
-                  name: [
-                    `punch${suckerPunchMinScore}`,
-                    `late${suckerPunchComebackMinCategories}`,
-                    `comeback${suckerPunchComebackMinScore}`,
-                    `reserve${suckerPunchReserveTokens}`,
-                    `block${suckerBlockerMinScore}`,
-                    `extra${extraRollMaxScore}`,
-                    `mul${mulliganMaxScore}`,
-                  ].join('-'),
-                  strategy: {
-                    ...defaultComputerStrategy,
-                    extraRollMaxScore,
-                    mulliganMaxScore,
-                    suckerBlockerMinScore,
-                    suckerPunchComebackMinCategories,
-                    suckerPunchComebackMinScore,
-                    suckerPunchMinScore,
-                    suckerPunchReserveTokens,
-                  },
-                });
-              }
-            }
+        for (const extraRollMaxScore of [16, 18, 20]) {
+          for (const mulliganMaxScore of [12, 14, 16, 18]) {
+            candidates.push({
+              name: [
+                `punch${suckerPunchMinScore}`,
+                `late${suckerPunchComebackMinCategories}`,
+                `comeback${suckerPunchComebackMinScore}`,
+                `extra${extraRollMaxScore}`,
+                `mul${mulliganMaxScore}`,
+              ].join('-'),
+              strategy: {
+                ...defaultComputerStrategy,
+                extraRollMaxScore,
+                mulliganMaxScore,
+                suckerPunchComebackMinCategories,
+                suckerPunchComebackMinScore,
+                suckerPunchMinScore,
+              },
+            });
           }
         }
       }
@@ -261,13 +253,10 @@ function strategyKey(strategy: ComputerStrategyConfig) {
     opportunityCostSucker: strategy.opportunityCostSucker,
     opportunityCostThreeOfAKind: strategy.opportunityCostThreeOfAKind,
     stopScoreThreshold: strategy.stopScoreThreshold,
-    suckerBlockerMinScore: strategy.suckerBlockerMinScore,
     suckerCategoryBonus: strategy.suckerCategoryBonus,
     suckerPunchComebackMinCategories: strategy.suckerPunchComebackMinCategories,
     suckerPunchComebackMinScore: strategy.suckerPunchComebackMinScore,
     suckerPunchMinScore: strategy.suckerPunchMinScore,
-    suckerPunchReserveTokens: strategy.suckerPunchReserveTokens,
-    suckerPunchUnblockableMinScore: strategy.suckerPunchUnblockableMinScore,
     suckerDealBeforeTokenSpending: strategy.suckerDealBeforeTokenSpending,
     suckerDealChanceMaxScore: strategy.suckerDealChanceMaxScore,
     suckerDealMaxSacrificeScore: strategy.suckerDealMaxSacrificeScore,

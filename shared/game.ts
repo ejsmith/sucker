@@ -77,9 +77,24 @@ export const startingSuckerTokens = 10;
 export const suckerTokenCosts = {
   extraRoll: 1,
   mulligan: 3,
-  suckerBlocker: 3,
   suckerPunch: 3,
 } as const;
+
+export const suckerPunchChanceByDie = {
+  1: 20,
+  2: 35,
+  3: 50,
+  4: 65,
+  5: 75,
+  6: 90,
+} as const satisfies Record<DieValue, number>;
+
+export type SuckerPunchOutcome = {
+  chanceDie: DieValue;
+  chancePercent: number;
+  landed: boolean;
+  rollPercent: number;
+};
 
 const upperValues = {
   ones: 1,
@@ -268,8 +283,39 @@ export function rollDie(random: () => number = Math.random): DieValue {
   return (Math.floor(random() * 6) + 1) as DieValue;
 }
 
+export function rollSuckerPunchOutcome(random: () => number = Math.random): SuckerPunchOutcome {
+  return resolveSuckerPunchOutcome(rollDie(random), random);
+}
+
+export function resolveSuckerPunchOutcome(
+  chanceDie: DieValue,
+  random: () => number = Math.random,
+): SuckerPunchOutcome {
+  const chancePercent = suckerPunchChanceByDie[chanceDie];
+  const rollPercent = Math.floor(random() * 100) + 1;
+
+  return {
+    chanceDie,
+    chancePercent,
+    landed: rollPercent <= chancePercent,
+    rollPercent,
+  };
+}
+
 export function isSuckerRoll(dice: Dice): boolean {
   return dice.every((die) => die === dice[0]);
+}
+
+export function isSuckerPunchEligibleTurn(category: ScoreCategory, dice: Dice, score: number): boolean {
+  if (!isSuckerRoll(dice)) {
+    return false;
+  }
+
+  if (category === 'sucker') {
+    return score > 0;
+  }
+
+  return score >= scoreCategory(dice, category) + 50;
 }
 
 export function toDice(values: unknown): Dice {

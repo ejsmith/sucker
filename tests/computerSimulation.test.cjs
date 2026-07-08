@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  applyLocalSuckerPunch,
   computerPlayerIndex,
   defaultComputerStrategy,
   playComputerTurn,
@@ -27,7 +28,7 @@ test('computer strategy clears a strong 1000-game average', () => {
   const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
 
   assert.equal(result.gameCount, 1000);
-  assert.equal(Number(result.averageScore.toFixed(3)), 294.932);
+  assert.equal(Number(result.averageScore.toFixed(3)), 292.639);
   assert.equal(result.lowScore, 144);
   assert.equal(result.highScore, 579);
 });
@@ -337,26 +338,42 @@ test('computer does not sucker punch early non-sucker scores', () => {
   assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40)), false);
 });
 
-test('computer sucker punches high-value turns when the opponent cannot block', () => {
-  const game = createSubmittedPlayerTurn('largeStraight', 40, { scorerTokens: 2 });
-  const aggressiveStrategy = {
-    ...defaultComputerStrategy,
-    suckerPunchUnblockableMinScore: 40,
-  };
-
-  assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40), aggressiveStrategy), true);
-});
-
 test('computer uses sucker punch on sucker scores', () => {
   const game = createSubmittedPlayerTurn('sucker', 50);
 
   assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('sucker', 50)), true);
 });
 
-test('computer can sucker punch late comeback swings', () => {
+test('computer does not sucker punch non-sucker late comeback swings', () => {
   const game = createLateSubmittedPlayerTurn('largeStraight', 40);
 
-  assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40)), true);
+  assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40)), false);
+});
+
+test('local sucker punch hit removes the target score and starts replay', () => {
+  const game = createSubmittedPlayerTurn('sucker', 50);
+  const pendingTurn = createPendingPlayerTurn('sucker', 50);
+  const result = applyLocalSuckerPunch(game, pendingTurn, computerPlayerIndex, sequenceRandom([0.99, 0]));
+
+  assert.equal(result.outcome.landed, true);
+  assert.equal(result.outcome.chanceDie, 6);
+  assert.equal(result.game.currentPlayerIndex, 0);
+  assert.equal(result.game.players[0].scorecard.sucker, null);
+  assert.equal(result.game.players[computerPlayerIndex].suckerTokens, startingSuckerTokens - 3);
+  assert.equal(result.pendingTurn.status, 'punched');
+});
+
+test('local blocked sucker punch keeps the target score and attacker turn', () => {
+  const game = createSubmittedPlayerTurn('sucker', 50);
+  const pendingTurn = createPendingPlayerTurn('sucker', 50);
+  const result = applyLocalSuckerPunch(game, pendingTurn, computerPlayerIndex, sequenceRandom([0, 0.99]));
+
+  assert.equal(result.outcome.landed, false);
+  assert.equal(result.outcome.chanceDie, 1);
+  assert.equal(result.game.currentPlayerIndex, computerPlayerIndex);
+  assert.equal(result.game.players[0].scorecard.sucker, 50);
+  assert.equal(result.game.players[computerPlayerIndex].suckerTokens, startingSuckerTokens - 3);
+  assert.equal(result.pendingTurn, null);
 });
 
 test('computer takes a cheap sucker deal instead of early low chance', () => {
@@ -463,7 +480,7 @@ function createSubmittedPlayerTurn(category, score, options = {}) {
 function createPendingPlayerTurn(category, score) {
   return {
     category,
-    dice: [1, 2, 3, 4, 5],
+    dice: category === 'sucker' ? [1, 1, 1, 1, 1] : [1, 2, 3, 4, 5],
     hadSuckerBonus: false,
     id: `test-${category}`,
     responderIndex: computerPlayerIndex,
@@ -471,6 +488,11 @@ function createPendingPlayerTurn(category, score) {
     scorerIndex: 0,
     status: 'submitted',
   };
+}
+
+function sequenceRandom(values) {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)];
 }
 
 function createLateSubmittedPlayerTurn(category, score) {

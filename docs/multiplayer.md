@@ -121,8 +121,7 @@ Implemented:
   - scratching a category for a Sucker Token
   - Extra Roll
   - Mulligan
-  - Sucker Punch
-  - Sucker Blocker
+  - chance-based Sucker Punch landed/blocked outcomes
   - writing turn/action/token audit rows
   - recording game results and head-to-head stats at game completion
 
@@ -162,7 +161,7 @@ hosted Supabase, or production link infrastructure:
   two staging users, create/accept an invite, play one turn each, and confirm
   `games`, `turns`, `turn_actions`, token events, and head-to-head stats update.
 - Push notifications: verify foreground, background, and terminated app delivery
-  on iOS and Android devices for turn handoff, Sucker Punch, Sucker Blocker, and
+  on iOS and Android devices for turn handoff, landed Sucker Punch, blocked Sucker Punch, and
   game-over events.
 - Native deep links: verify `sucker://invite/<INVITE_CODE>` and
   `https://sucker.games/invite/<INVITE_CODE>` open the app and prefill/join the

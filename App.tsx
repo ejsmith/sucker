@@ -18,6 +18,7 @@ import {
   availableCategories,
   categoryLabels,
   createGame,
+  isSuckerPunchEligibleTurn,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -33,21 +34,20 @@ import {
   totalScore,
 } from './src/game';
 import {
-  applyLocalSuckerBlocker,
   applyLocalSuckerPunch,
   computerPlayerIndex,
   playComputerTurn,
   scoreLocalTurn,
-  shouldComputerUseSuckerBlocker,
   type ComputerTurnResult,
   type LocalPendingTurn,
 } from './src/game/computer';
-import type { DieValue, GameState, ScoreCategory } from './src/game';
+import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { isMultiplayerConfigured } from './src/multiplayer';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import {
   buyRemoteExtraRoll,
   createRematch,
+  getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
   listMyGames,
@@ -55,7 +55,6 @@ import {
   scoreRemoteCategory,
   scratchRemoteCategory,
   subscribeToGame,
-  useRemoteSuckerBlocker,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
 import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
@@ -169,14 +168,23 @@ function waitForNextFrame() {
 }
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
+type RemoteSuckerPunchResult = {
+  game: ReturnType<typeof createGame> | null;
+  outcome?: SuckerPunchOutcome | null;
+};
+type SuckerPunchDialogState = {
+  outcome?: SuckerPunchOutcome;
+  phase: 'ready' | 'rolling' | 'result';
+  scope: 'local' | 'remote';
+  targetTurnId: string;
+};
 type RemoteActionHandlers = {
   onExtraRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onRematch: () => Promise<ReturnType<typeof createGame> | null>;
   onRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onScore: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onScratch: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
-  onSuckerBlocker: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
-  onSuckerPunch: (turnId: string) => Promise<ReturnType<typeof createGame> | null>;
+  onSuckerPunch: (turnId: string) => Promise<RemoteSuckerPunchResult | null>;
 };
 type RemoteGameRequest = {
   gameId: string;
@@ -612,6 +620,14 @@ function RemoteGameScreen({
     action: () => Promise<{ game: RemoteGameRow }>,
     { showNextTurns = true }: { showNextTurns?: boolean } = {},
   ) {
+    const result = await runRemoteActionResult(action, { showNextTurns });
+    return result?.game.state ?? null;
+  }
+
+  async function runRemoteActionResult<Result extends { game: RemoteGameRow }>(
+    action: () => Promise<Result>,
+    { showNextTurns = true }: { showNextTurns?: boolean } = {},
+  ) {
     setIsRemoteBusy(true);
     setError(null);
     try {
@@ -626,7 +642,7 @@ function RemoteGameScreen({
           void syncRemoteGameList(profileId);
         }
       }
-      return result.game.state;
+      return result;
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Unable to update game.');
       return null;
@@ -709,8 +725,10 @@ function RemoteGameScreen({
     onRoll: (held) => runRemoteAction(() => rollRemoteGame(remoteGame.id, held)),
     onScore: (category, held) => runRemoteAction(() => scoreRemoteCategory(remoteGame.id, category, held)),
     onScratch: (category, held) => runRemoteAction(() => scratchRemoteCategory(remoteGame.id, category, held)),
-    onSuckerBlocker: (turnId) => runRemoteAction(() => useRemoteSuckerBlocker(remoteGame.id, turnId)),
-    onSuckerPunch: (turnId) => runRemoteAction(() => useRemoteSuckerPunch(remoteGame.id, turnId)),
+    onSuckerPunch: async (turnId) => {
+      const result = await runRemoteActionResult(() => useRemoteSuckerPunch(remoteGame.id, turnId));
+      return result ? { game: result.game.state, outcome: result.suckerPunchOutcome ?? null } : null;
+    },
   };
 
   return (
@@ -768,8 +786,10 @@ function LocalGameScreen({
   const [localGame, setLocalGame] = useState(() => createGame(playerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
-  const [showSuckerBlockedNotice, setShowSuckerBlockedNotice] = useState(false);
+  const [suckerBlockedNotice, setSuckerBlockedNotice] = useState<{ text: string; title: string } | null>(null);
   const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
+  const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(null);
+  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(1);
   const isRemoteGame = Boolean(remoteGame && remoteHandlers && myProfileId);
   const [visibleRemoteGame, setVisibleRemoteGame] = useState(
     remoteGame ? concealActiveOpponentDice(remoteGame, myProfileId) : null,
@@ -807,11 +827,10 @@ function LocalGameScreen({
   const localSuckerStatActions = useRef<SuckerStatAction[]>([]);
   const localSuckerStatTurns = useRef<SuckerStatTurn[]>([]);
   const lastRemotePunchNoticeId = useRef<string | null>(null);
-  const lastRemoteBlockNoticeId = useRef<string | null>(null);
+  const lastRemoteBlockedPunchNoticeId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
   const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRemoteTurnId = useRef<string | null>(null);
-  const previousRemoteStatus = useRef<RemoteGameStatus | undefined>(remoteStatus);
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const bgFloat = useRef(new Animated.Value(0)).current;
   const selectedPulse = useRef(new Animated.Value(0)).current;
@@ -822,6 +841,7 @@ function LocalGameScreen({
     setIsMenuOpen(false);
     setIsTokenMenuOpen(false);
     setShowStatsPage(false);
+    setSuckerPunchDialog(null);
     onExit?.();
   }, [onExit]);
   const backSwipeResponder = useRef(
@@ -875,7 +895,8 @@ function LocalGameScreen({
     game.rollNumber < maxAvailableRolls(game) &&
     !isComputerTurn &&
     isMyRemoteTurn &&
-    isRemoteActionPlayable;
+    isRemoteActionPlayable &&
+    !suckerPunchDialog;
   const isRemoteInteractionPending = isRemoteBusy || isAwaitingRemoteRoll;
   const canRoll = canRollVisually && !isRolling && !isScoring && !isRemoteInteractionPending;
   const homePlayer = game.players[myPlayerIndex] ?? game.players[0];
@@ -892,14 +913,16 @@ function LocalGameScreen({
     !isComputerTurn &&
     isMyRemoteTurn &&
     isRemoteActionPlayable &&
-    !isRemoteInteractionPending;
+    !isRemoteInteractionPending &&
+    !suckerPunchDialog;
   const canOpenTokenMenu =
     game.phase !== 'complete' &&
     !isRolling &&
     !isScoring &&
     !isComputerTurn &&
     isMyRemoteTurn &&
-    !isRemoteInteractionPending;
+    !isRemoteInteractionPending &&
+    !suckerPunchDialog;
   const myTokenCount = homePlayer.suckerTokens;
   const canUseLocalExtraRoll =
     !isRemoteGame &&
@@ -920,31 +943,29 @@ function LocalGameScreen({
     myTokenCount >= suckerTokenCosts.mulligan;
   const canStartSuckerDeal =
     canOpenTokenMenu && !pendingTurn && game.rollNumber > 0 && openCategories.length > 0 && isRemoteActionPlayable;
+  const isLocalPendingTurnPunchable = Boolean(
+    pendingTurn &&
+      isSuckerPunchEligibleTurn(pendingTurn.category, pendingTurn.dice, pendingTurn.score),
+  );
+  const isRemoteLastTurnPunchable = Boolean(
+    remoteLastTurn &&
+      isSuckerPunchEligibleTurn(remoteLastTurn.category, remoteLastTurn.dice, remoteLastTurn.score),
+  );
   const canUseLocalSuckerPunch =
     !isRemoteGame &&
     canOpenTokenMenu &&
     pendingTurn?.status === 'submitted' &&
+    isLocalPendingTurnPunchable &&
     pendingTurn.responderIndex === myPlayerIndex &&
     pendingTurn.scorerIndex !== myPlayerIndex &&
     myTokenCount >= suckerTokenCosts.suckerPunch;
-  const canUseLocalSuckerBlocker =
-    !isRemoteGame &&
-    canOpenTokenMenu &&
-    pendingTurn?.status === 'punched' &&
-    pendingTurn.scorerIndex === myPlayerIndex &&
-    myTokenCount >= suckerTokenCosts.suckerBlocker;
   const canUseRemoteSuckerPunch =
     isRemoteGame &&
     canOpenTokenMenu &&
     remoteStatus === 'response_window' &&
     Boolean(remoteLastTurnId) &&
+    isRemoteLastTurnPunchable &&
     myTokenCount >= suckerTokenCosts.suckerPunch;
-  const canUseRemoteSuckerBlocker =
-    isRemoteGame &&
-    canOpenTokenMenu &&
-    remoteStatus === 'blocked_response' &&
-    Boolean(remoteLastTurnId) &&
-    myTokenCount >= suckerTokenCosts.suckerBlocker;
   const devViewportPreset = getDevViewportPreset(devViewportPresetKey);
   const effectiveWindowWidth = devViewportPreset?.width ?? windowWidth;
   const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
@@ -1172,22 +1193,22 @@ function LocalGameScreen({
   }, [showSuckerPunchNotice]);
 
   useEffect(() => {
-    if (!showSuckerBlockedNotice) {
+    if (!suckerBlockedNotice) {
       return;
     }
 
-    const timer = setTimeout(() => setShowSuckerBlockedNotice(false), 1700);
+    const timer = setTimeout(() => setSuckerBlockedNotice(null), 1700);
     return () => clearTimeout(timer);
-  }, [showSuckerBlockedNotice]);
+  }, [suckerBlockedNotice]);
 
   useEffect(() => {
     if (
       !isRemoteGame ||
-      remoteStatus !== 'blocked_response' ||
       !remoteLastTurnId ||
       !remoteLastTurn ||
       remoteLastTurn.id !== remoteLastTurnId ||
-      remoteLastTurn.player_id !== myProfileId
+      remoteLastTurn.player_id !== myProfileId ||
+      remoteLastTurn.status !== 'punched'
     ) {
       return;
     }
@@ -1201,24 +1222,39 @@ function LocalGameScreen({
   }, [isRemoteGame, myProfileId, remoteLastTurn, remoteLastTurnId, remoteStatus]);
 
   useEffect(() => {
-    const previousStatus = previousRemoteStatus.current;
-    previousRemoteStatus.current = remoteStatus;
-    const serverCurrentPlayerId = remoteGame?.players[remoteGame.currentPlayerIndex]?.id;
-
     if (
       !isRemoteGame ||
-      previousStatus !== 'blocked_response' ||
-      remoteStatus !== 'active' ||
-      serverCurrentPlayerId !== myProfileId ||
-      !remoteLastTurnId ||
-      lastRemoteBlockNoticeId.current === remoteLastTurnId
+      !myProfileId ||
+      remoteStatus !== 'response_window' ||
+      !remoteGame ||
+      !remoteLastTurn ||
+      remoteLastTurn.player_id === myProfileId ||
+      remoteGame.players[remoteGame.currentPlayerIndex]?.id !== myProfileId
     ) {
       return;
     }
 
-    lastRemoteBlockNoticeId.current = remoteLastTurnId;
-    setShowSuckerBlockedNotice(true);
-  }, [isRemoteGame, myProfileId, remoteGame, remoteLastTurnId, remoteStatus]);
+    let isMounted = true;
+    void getLatestRemoteBlockedSuckerPunch(remoteGame.id, myProfileId, remoteLastTurn.turn_index - 1)
+      .then((blockedPunch) => {
+        if (!isMounted || !blockedPunch || lastRemoteBlockedPunchNoticeId.current === blockedPunch.id) {
+          return;
+        }
+
+        lastRemoteBlockedPunchNoticeId.current = blockedPunch.id;
+        setSuckerBlockedNotice({
+          text: 'Sucker Punch!',
+          title: 'You blocked',
+        });
+      })
+      .catch((blockedPunchError) => {
+        console.warn('Unable to load blocked Sucker Punch notice', blockedPunchError);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isRemoteGame, myProfileId, remoteGame, remoteLastTurn, remoteStatus]);
 
   useEffect(() => {
     if (isRemoteGame) {
@@ -1394,7 +1430,7 @@ function LocalGameScreen({
     if (!isRemoteGame && pendingTurn) {
       setLocalPendingTurn(null);
       setShowSuckerPunchNotice(false);
-      setShowSuckerBlockedNotice(false);
+      setSuckerBlockedNotice(null);
       setSuckerRollNoticeTitle(null);
     }
     setHighlightCategory(null);
@@ -1544,12 +1580,25 @@ function LocalGameScreen({
 
   function finishComputerTurnResult(result: ComputerTurnResult) {
     recordLocalScoreTurn(result);
-    if (result.pendingTurn?.status === 'punched' && result.pendingTurn.puncherIndex !== undefined) {
-      const puncher = result.game.players[result.pendingTurn.puncherIndex];
-      const scorer = result.game.players[result.pendingTurn.scorerIndex];
-      if (puncher && scorer) {
-        recordLocalAction('sucker_punch', puncher.id, buildSuckerPunchActionPayload(scorer.id));
-        updateLocalScoreTurnStatus(result.pendingTurn.id, 'punched');
+    if (result.suckerPunchAttempt) {
+      const puncher = result.game.players[result.suckerPunchAttempt.puncherIndex];
+      const target = result.game.players[result.suckerPunchAttempt.targetPlayerIndex];
+      if (puncher && target) {
+        recordLocalAction(
+          'sucker_punch',
+          puncher.id,
+          buildSuckerPunchActionPayload(target.id, result.suckerPunchAttempt.outcome, {
+            id: result.suckerPunchAttempt.targetTurnId,
+          }),
+        );
+      }
+      if (result.suckerPunchAttempt.outcome.landed) {
+        updateLocalScoreTurnStatus(result.suckerPunchAttempt.targetTurnId, 'punched');
+      } else if (result.suckerPunchAttempt.targetPlayerIndex === myPlayerIndex) {
+        setSuckerBlockedNotice({
+          text: 'Sucker Punch!',
+          title: 'You blocked',
+        });
       }
     }
     setLocalGame(result.game);
@@ -1867,68 +1916,120 @@ function LocalGameScreen({
     setLocalPendingTurn(null);
   }
 
-  async function handleUseSuckerPunch() {
+  function handleUseSuckerPunch() {
     if (canUseLocalSuckerPunch && pendingTurn) {
       setIsTokenMenuOpen(false);
       setSelectedCategory(null);
       setIsChoosingSuckerDeal(false);
-      const scorer = game.players[pendingTurn.scorerIndex];
-      if (scorer) {
-        recordLocalAction('sucker_punch', homePlayer.id, buildSuckerPunchActionPayload(scorer.id));
-      }
-      const punched = applyLocalSuckerPunch(game, pendingTurn, myPlayerIndex);
-      updateLocalScoreTurnStatus(pendingTurn.id, 'punched');
-      if (shouldComputerUseSuckerBlocker(punched.game, punched.pendingTurn)) {
-        const blockedGame = applyLocalSuckerBlocker(punched.game, punched.pendingTurn, computerPlayerIndex);
-        updateLocalScoreTurnStatus(pendingTurn.id, 'blocked');
-        setLocalGame(blockedGame);
-        setLocalPendingTurn(null);
-        setShowSuckerBlockedNotice(true);
-        return;
-      }
-
-      const replayed = playComputerTurn(punched.game, null);
-      setLocalGame(punched.game);
-      setLocalPendingTurn(punched.pendingTurn);
-      setIsComputerThinking(true);
-      setTimeout(() => {
-        void animateComputerTurnResult(replayed);
-      }, computerThinkingDelayMs);
+      setSuckerPunchChanceFace(1);
+      setSuckerPunchDialog({ phase: 'ready', scope: 'local', targetTurnId: pendingTurn.id });
       return;
     }
 
-    if (!canUseRemoteSuckerPunch || !remoteHandlers || !remoteLastTurnId) {
+    if (!canUseRemoteSuckerPunch || !remoteLastTurnId) {
       return;
     }
 
     setIsTokenMenuOpen(false);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
-    await remoteHandlers.onSuckerPunch(remoteLastTurnId);
+    setSuckerPunchChanceFace(1);
+    setSuckerPunchDialog({ phase: 'ready', scope: 'remote', targetTurnId: remoteLastTurnId });
   }
 
-  async function handleUseSuckerBlocker() {
-    if (canUseLocalSuckerBlocker && pendingTurn) {
-      setIsTokenMenuOpen(false);
-      setSelectedCategory(null);
-      setIsChoosingSuckerDeal(false);
-      recordLocalAction('sucker_blocker', homePlayer.id);
-      const blockedGame = applyLocalSuckerBlocker(game, pendingTurn, myPlayerIndex);
-      updateLocalScoreTurnStatus(pendingTurn.id, 'blocked');
-      setLocalGame(blockedGame);
-      setLocalPendingTurn(null);
-      setShowSuckerPunchNotice(false);
+  async function handleRollSuckerPunchChance() {
+    const dialog = suckerPunchDialog;
+    if (!dialog || dialog.phase !== 'ready') {
       return;
     }
 
-    if (!canUseRemoteSuckerBlocker || !remoteHandlers || !remoteLastTurnId) {
+    setSuckerPunchDialog({ ...dialog, phase: 'rolling' });
+
+    let outcome: SuckerPunchOutcome | null = null;
+    let completeAfterResult: (() => void) | null = null;
+    const scrambleTimer = setInterval(() => {
+      setSuckerPunchChanceFace(rollDisplayDie());
+    }, 70);
+
+    try {
+      await wait(650);
+
+      if (dialog.scope === 'local') {
+        const targetTurn = pendingTurn;
+        const scorer = targetTurn ? game.players[targetTurn.scorerIndex] : null;
+        const isStillPunchable =
+          Boolean(targetTurn) &&
+          targetTurn?.id === dialog.targetTurnId &&
+          targetTurn.status === 'submitted' &&
+          isSuckerPunchEligibleTurn(targetTurn.category, targetTurn.dice, targetTurn.score) &&
+          targetTurn.responderIndex === myPlayerIndex &&
+          targetTurn.scorerIndex !== myPlayerIndex &&
+          myTokenCount >= suckerTokenCosts.suckerPunch;
+
+        if (!targetTurn || !scorer || !isStillPunchable) {
+          return;
+        }
+
+        const punched = applyLocalSuckerPunch(game, targetTurn, myPlayerIndex);
+        if (!punched.outcome) {
+          return;
+        }
+
+        outcome = punched.outcome;
+
+        recordLocalAction(
+          'sucker_punch',
+          homePlayer.id,
+          buildSuckerPunchActionPayload(scorer.id, punched.outcome, { id: targetTurn.id }),
+        );
+
+        completeAfterResult = () => {
+          if (!punched.outcome?.landed) {
+            setLocalGame(punched.game);
+            setLocalPendingTurn(null);
+            return;
+          }
+
+          updateLocalScoreTurnStatus(targetTurn.id, 'punched');
+          const replayed = playComputerTurn(punched.game, null);
+          setLocalGame(punched.game);
+          setLocalPendingTurn(punched.pendingTurn);
+          setIsComputerThinking(true);
+          setTimeout(() => {
+            void animateComputerTurnResult(replayed);
+          }, computerThinkingDelayMs);
+        };
+      } else {
+        if (!remoteHandlers || remoteStatus !== 'response_window' || remoteLastTurnId !== dialog.targetTurnId) {
+          return;
+        }
+
+        const result = await remoteHandlers.onSuckerPunch(dialog.targetTurnId);
+        if (!result?.outcome) {
+          return;
+        }
+
+        outcome = result.outcome;
+        if (result.game) {
+          completeAfterResult = () => setLiveRemoteGame(result.game as ReturnType<typeof createGame>);
+        }
+      }
+    } finally {
+      clearInterval(scrambleTimer);
+    }
+
+    if (!outcome) {
+      setSuckerPunchDialog(null);
       return;
     }
 
-    setIsTokenMenuOpen(false);
-    setSelectedCategory(null);
-    setIsChoosingSuckerDeal(false);
-    await remoteHandlers.onSuckerBlocker(remoteLastTurnId);
+    setSuckerPunchChanceFace(outcome.chanceDie);
+    setSuckerPunchDialog({ ...dialog, outcome, phase: 'result' });
+    await wait(950);
+    setSuckerPunchDialog((current) =>
+      current?.targetTurnId === dialog.targetTurnId && current.phase === 'result' ? null : current,
+    );
+    completeAfterResult?.();
   }
 
   async function handleRematch() {
@@ -1939,8 +2040,9 @@ function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
     setShowSuckerPunchNotice(false);
-    setShowSuckerBlockedNotice(false);
+    setSuckerBlockedNotice(null);
     setSuckerRollNoticeTitle(null);
+    setSuckerPunchDialog(null);
 
     if (isRemoteGame && remoteHandlers) {
       await remoteHandlers.onRematch();
@@ -2610,28 +2712,24 @@ function LocalGameScreen({
                 cost={suckerTokenCosts.suckerPunch}
                 description={
                   isRemoteGame
-                    ? 'Force your opponent to replay their latest turn.'
-                    : 'Force the computer to replay its latest turn.'
+                    ? 'Roll for a chance to make your opponent replay their Sucker.'
+                    : 'Roll for a chance to make the computer replay its Sucker.'
                 }
                 disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
                 label="Sucker Punch"
                 onPress={() => void handleUseSuckerPunch()}
                 testID="token-option-sucker-punch"
               />
-              <TokenMenuOption
-                cost={suckerTokenCosts.suckerBlocker}
-                description={
-                  isRemoteGame
-                    ? 'Block the Sucker Punch and keep your score.'
-                    : 'Block the computer’s Sucker Punch and keep your score.'
-                }
-                disabled={!canUseLocalSuckerBlocker && !canUseRemoteSuckerBlocker}
-                label="Block Sucker Punch"
-                onPress={() => void handleUseSuckerBlocker()}
-                testID="token-option-sucker-blocker"
-              />
             </View>
           </View>
+        )}
+        {suckerPunchDialog && (
+          <SuckerPunchChanceDialog
+            face={suckerPunchChanceFace}
+            onRoll={() => void handleRollSuckerPunchChance()}
+            outcome={suckerPunchDialog.outcome}
+            phase={suckerPunchDialog.phase}
+          />
         )}
         {opponentTurnReveal && (
           <View pointerEvents="none" style={[styles.opponentTurnRevealOverlay, { top: opponentTurnReveal.top }]}>
@@ -2816,11 +2914,11 @@ function LocalGameScreen({
             </View>
           </View>
         )}
-        {showSuckerBlockedNotice && (
+        {suckerBlockedNotice && (
           <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
             <View style={styles.suckerPunchNotice}>
-              <Text style={styles.suckerPunchNoticeTitle}>Your punch was</Text>
-              <Text style={styles.suckerPunchNoticeText}>Blocked!</Text>
+              <Text style={styles.suckerPunchNoticeTitle}>{suckerBlockedNotice.title}</Text>
+              <Text style={styles.suckerPunchNoticeText}>{suckerBlockedNotice.text}</Text>
             </View>
           </View>
         )}
@@ -2973,7 +3071,7 @@ function NextTurnGameButton({
         <Text numberOfLines={1} style={styles.nextTurnOpponent}>
           {opponentName}
         </Text>
-        <Text style={styles.nextTurnStatus}>{getNextTurnStatusLabel(game, profileId)}</Text>
+        <Text style={styles.nextTurnStatus}>Your turn</Text>
       </View>
       <View style={styles.nextTurnScorePill}>
         <Text style={styles.nextTurnScoreText}>{myScore}</Text>
@@ -2982,17 +3080,6 @@ function NextTurnGameButton({
       </View>
     </Pressable>
   );
-}
-
-function getNextTurnStatusLabel(game: RemoteGameRow, profileId: string) {
-  if (game.status === 'blocked_response' && game.current_player_id === profileId) {
-    return 'Block or replay';
-  }
-  if (game.status === 'response_window' && game.current_player_id === profileId) {
-    return 'Your response';
-  }
-
-  return 'Your turn';
 }
 
 function upperSectionTotal(scorecard: PlayerView['scorecard']) {
@@ -3097,6 +3184,49 @@ function TokenMenuOption({
         <Text style={[styles.tokenOptionDescription, disabled && styles.disabledTokenOptionText]}>{description}</Text>
       </View>
     </Pressable>
+  );
+}
+
+function SuckerPunchChanceDialog({
+  face,
+  onRoll,
+  outcome,
+  phase,
+}: {
+  face: DieValue;
+  onRoll: () => void;
+  outcome?: SuckerPunchOutcome;
+  phase: SuckerPunchDialogState['phase'];
+}) {
+  const isResult = phase === 'result';
+  const title = isResult ? (outcome?.landed ? 'Punch landed!' : 'Punch blocked!') : 'Sucker Punch';
+  const buttonLabel = phase === 'rolling' ? 'ROLLING' : isResult ? (outcome?.landed ? 'LANDED' : 'BLOCKED') : 'ROLL';
+
+  return (
+    <View style={styles.suckerPunchChanceOverlay} testID="sucker-punch-chance-dialog">
+      <View style={styles.suckerPunchChancePanel}>
+        <Text adjustsFontSizeToFit allowFontScaling={false} numberOfLines={1} style={styles.suckerPunchChanceTitle}>
+          {title}
+        </Text>
+
+        <View style={styles.suckerPunchChanceDieShell}>
+          <Image source={whiteDiceImages[face]} style={styles.suckerPunchChanceDieImage} />
+        </View>
+
+        <Pressable
+          disabled={phase !== 'ready'}
+          onPress={onRoll}
+          style={({ pressed }) => [
+            styles.suckerPunchRollButton,
+            phase === 'rolling' && styles.disabledSuckerPunchRollButton,
+            pressed && styles.pressed,
+          ]}
+          testID="sucker-punch-chance-roll-button"
+        >
+          <Text style={styles.suckerPunchRollButtonText}>{buttonLabel}</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -4304,6 +4434,80 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     textShadowColor: '#FFF3C2',
     textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  suckerPunchChanceOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 0, 0, 0.66)',
+    justifyContent: 'center',
+    padding: 16,
+    zIndex: 96,
+  },
+  suckerPunchChancePanel: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 14,
+    borderWidth: 4,
+    gap: 14,
+    maxWidth: 286,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 0,
+    transform: [{ rotate: '-1deg' }],
+    width: '100%',
+  },
+  suckerPunchChanceTitle: {
+    color: '#FFD329',
+    fontSize: 28,
+    fontWeight: '900',
+    lineHeight: 32,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  suckerPunchChanceDieShell: {
+    alignItems: 'center',
+    height: 116,
+    justifyContent: 'center',
+    width: 116,
+  },
+  suckerPunchChanceDieImage: {
+    height: 112,
+    resizeMode: 'contain',
+    width: 112,
+  },
+  suckerPunchRollButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 10,
+    borderWidth: 3,
+    height: 48,
+    justifyContent: 'center',
+    marginTop: 4,
+    shadowColor: '#050505',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 0,
+    width: '100%',
+  },
+  disabledSuckerPunchRollButton: {
+    opacity: 0.72,
+  },
+  suckerPunchRollButtonText: {
+    color: '#FFF3C2',
+    fontSize: 20,
+    fontWeight: '900',
+    lineHeight: 23,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 0,
   },
   suckerPunchNoticeOverlay: {

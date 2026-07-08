@@ -17,6 +17,7 @@ const {
   purchaseExtraRoll,
   rollsRemaining,
   startingSuckerTokens,
+  suckerPunchChanceByDie,
   suckerTokenCosts,
 } = require('../.build/src/game');
 
@@ -68,6 +69,17 @@ test('players start with sucker tokens and can roll up to four times', () => {
 
   const blocked = rollDeterministic(game);
   assert.equal(blocked.rollNumber, 4);
+});
+
+test('sucker punch chance ladder steps from 20 to 90 percent', () => {
+  assert.deepEqual(suckerPunchChanceByDie, {
+    1: 20,
+    2: 35,
+    3: 50,
+    4: 65,
+    5: 75,
+    6: 90,
+  });
 });
 
 test('scoring a sucker does not earn a sucker token', () => {

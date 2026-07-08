@@ -91,6 +91,8 @@ function buildLocalTestEnv(statusEnv = readSupabaseStatusEnv()) {
     SUCKER_E2E_FIXED_DIE: '1',
     SUCKER_E2E_NUDGE_COOLDOWN_MS: '1000',
     SUCKER_E2E_NUDGE_WAIT_MS: '1000',
+    SUCKER_E2E_SUCKER_PUNCH_DIE: '6',
+    SUCKER_E2E_SUCKER_PUNCH_ROLL: '1',
     E2E_BASE_URL: process.env.E2E_BASE_URL || 'http://127.0.0.1:8081',
   };
 }

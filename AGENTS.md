@@ -17,8 +17,9 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - Suckers do not award tokens.
 - Extra Roll costs 1 token and can be chained while tokens remain.
 - Mulligan costs 3 tokens.
-- Sucker Punch costs 3 tokens.
-- Sucker Blocker costs 3 tokens.
+- Sucker Punch costs 3 tokens and can target only the opponent's latest Sucker-scoring turn.
+- Sucker Punch rolls one die for hit chance: 1 = 20%, 2 = 35%, 3 = 50%, 4 = 65%, 5 = 75%, 6 = 90%.
+- Sucker Blocker is retired; do not add new blocker gameplay.
 - Scratching a category awards 1 token.
 
 ## App And Stack

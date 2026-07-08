@@ -127,7 +127,7 @@ npm run test:integration:supabase
 - Two players per game
 - One active turn at a time
 - Five dice, up to four standard rolls per turn
-- Sucker Tokens power extra rolls, mulligans, Sucker Punch, and Sucker Blocker
+- Sucker Tokens power extra rolls, mulligans, and chance-based Sucker Punch attempts
 - Scratching a category awards one token
 - Suckers do not award tokens
 

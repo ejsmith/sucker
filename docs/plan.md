@@ -21,8 +21,9 @@
 ## Token Abilities
 
 - Mulligan costs 3 tokens and replays the current player's just-completed turn before submission.
-- Sucker Punch costs 3 tokens and targets the opponent's most recently submitted turn before the current player takes their next turn.
-- Sucker Blocker costs 3 tokens and cancels an incoming Sucker Punch.
+- Sucker Punch costs 3 tokens and targets the opponent's most recently submitted Sucker-scoring turn before the current player takes their next turn.
+- A Sucker Punch rolls one die for hit chance: 1 = 20%, 2 = 35%, 3 = 50%, 4 = 65%, 5 = 75%, 6 = 90%.
+- A landed punch makes the target replay; a blocked punch keeps the target score and lets the attacker take their normal turn.
 
 ## Async Flow
 
@@ -30,8 +31,8 @@
 2. Player selects a category.
 3. Player may Mulligan.
 4. Turn is submitted.
-5. Opponent gets a response window for Sucker Punch.
-6. Target gets a response window for Sucker Blocker if punched.
+5. Opponent gets a response window for Sucker Punch if the turn scored a Sucker.
+6. Landed punches send the target into replay; blocked punches return play to the attacker.
 7. Turn finalizes and the next player is notified.
 
 ## Milestones
@@ -41,7 +42,7 @@
 
 2. Token actions
    - Add local Mulligan flow.
-   - Add pending Sucker Punch and Blocker states.
+   - Add pending Sucker Punch and blocked-punch states.
 
 3. Async backend
    - Store games, players, turns, token events, and response windows in Supabase.
@@ -59,7 +60,6 @@ Each matchup should show:
 - Highest score.
 - Average score.
 - Times Sucker Punched.
-- Times Sucker Blocked.
 - Mulligans/re-rolls used.
 - Forced re-rolls received.
 - Percent of games with upper section bonus.
