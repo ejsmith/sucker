@@ -117,6 +117,74 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('local computer token menu enables turn-start actions after computer scores a turn', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  await context.addInitScript(() => {
+    Math.random = () => 0;
+  });
+  const page = await context.newPage();
+
+  await page.goto(e2eBaseUrl);
+  await page.getByTestId('play-computer-button').click();
+  await expect(page.getByTestId('game-screen')).toBeVisible();
+
+  await waitForPressableEnabled(page.getByTestId('token-menu-button'));
+  await page.getByTestId('token-menu-button').click();
+  await waitForPressableEnabled(page.getByTestId('token-option-extra-roll'));
+  await waitForPressableEnabled(page.getByTestId('token-option-mulligan'));
+  await waitForPressableEnabled(page.getByTestId('token-option-sucker-deal'));
+  await expectPressableDisabled(page.getByTestId('token-option-sucker-punch'));
+  await page.getByTestId('token-menu-close-button').click();
+
+  await page.getByTestId('roll-button').click();
+  await waitForPressableEnabled(page.getByTestId('home-score-box-ones'));
+  await page.getByTestId('home-score-box-ones').click();
+  await expect(page.getByTestId('play-score-button')).toBeEnabled();
+  await page.getByTestId('play-score-button').click();
+
+  await expect(page.getByTestId('opponent-score-box-sucker')).toContainText('50', { timeout: 15_000 });
+  await waitForPressableEnabled(page.getByTestId('token-menu-button'));
+  await page.getByTestId('token-menu-button').click();
+
+  await waitForPressableEnabled(page.getByTestId('token-option-extra-roll'));
+  await waitForPressableEnabled(page.getByTestId('token-option-mulligan'));
+  await waitForPressableEnabled(page.getByTestId('token-option-sucker-deal'));
+  const suckerPunchOption = page.getByTestId('token-option-sucker-punch');
+  await waitForPressableEnabled(suckerPunchOption);
+  await suckerPunchOption.click();
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toBeVisible();
+  const suckerPunchDieTrack = page.getByTestId('sucker-punch-chance-die-track');
+  await expect(suckerPunchDieTrack).toBeVisible();
+  await expect
+    .poll(async () =>
+      page.getByTestId('sucker-punch-chance-dialog').evaluate((node) => {
+        const panel = node.firstElementChild;
+        return panel ? getComputedStyle(panel).transform : null;
+      }),
+    )
+    .toBe('none');
+  await page.getByTestId('sucker-punch-chance-roll-button').click();
+  await expect
+    .poll(async () => suckerPunchDieTrack.evaluate((node) => getComputedStyle(node).transform), {
+      intervals: [50, 50, 50, 100],
+      timeout: 800,
+    })
+    .not.toBe('none');
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Rolled [1-6]/, {
+    timeout: 3_000,
+  });
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/\d+% chance to land\./);
+  await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
+  await page.getByTestId('sucker-punch-chance-roll-button').click();
+  await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROWING');
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Punch landed!|Punch blocked!/, {
+    timeout: 3_000,
+  });
+  await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('CONTINUE');
+  await page.getByTestId('sucker-punch-chance-roll-button').click();
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toBeHidden();
+});
+
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   await context.addInitScript(() => {
@@ -253,6 +321,14 @@ async function waitForPressableEnabled(locator: Locator) {
       return locator.evaluate((node) => node.getAttribute('aria-disabled') === 'true');
     })
     .toBe(false);
+}
+
+async function expectPressableDisabled(locator: Locator) {
+  await expect
+    .poll(async () => {
+      return locator.evaluate((node) => node.getAttribute('aria-disabled') === 'true');
+    })
+    .toBe(true);
 }
 
 async function openGameFromLobby(page: Page, gameId: string) {

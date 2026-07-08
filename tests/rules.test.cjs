@@ -126,6 +126,17 @@ test('sucker deal scratches a selected score box and earns one token', () => {
   assert.equal(next.rollNumber, 0);
 });
 
+test('sucker deal can scratch a selected score box before rolling', () => {
+  const game = createGame(['Erin', 'Sam']);
+
+  const next = scratchScoreBox(game, 'largeStraight');
+
+  assert.equal(next.players[0].scorecard.largeStraight, 0);
+  assert.equal(next.players[0].suckerTokens, startingSuckerTokens + 1);
+  assert.equal(next.currentPlayerIndex, 1);
+  assert.equal(next.rollNumber, 0);
+});
+
 test('extra sucker adds 50 when sucker is already scored elsewhere', () => {
   const game = {
     ...createGame(['Erin', 'Sam']),
@@ -167,6 +178,16 @@ test('extra roll spends a token and adds one roll after available rolls are used
   assert.deepEqual(next.dice, [game.dice[0], 6, game.dice[2], 6, 6]);
 });
 
+test('extra roll can be bought before rolling', () => {
+  const game = createGame(['Erin', 'Sam']);
+
+  const purchased = purchaseExtraRoll(game);
+
+  assert.equal(purchased.rollNumber, 0);
+  assert.equal(rollsRemaining(purchased), maxRollsPerTurn + 1);
+  assert.equal(purchased.players[0].suckerTokens, startingSuckerTokens - suckerTokenCosts.extraRoll);
+});
+
 test('mulligan spends tokens and resets the current turn', () => {
   const game = {
     ...createGame(['Erin', 'Sam']),
@@ -183,6 +204,16 @@ test('mulligan spends tokens and resets the current turn', () => {
   assert.equal(next.players[0].suckerTokens, startingSuckerTokens - suckerTokenCosts.mulligan);
   assert.deepEqual(next.dice, [1, 1, 1, 1, 1]);
   assert.deepEqual(next.held, [false, false, false, false, false]);
+});
+
+test('mulligan can be bought before rolling', () => {
+  const game = createGame(['Erin', 'Sam']);
+
+  const next = mulliganCurrentTurn(game);
+
+  assert.equal(next.rollNumber, 0);
+  assert.equal(next.phase, 'rolling');
+  assert.equal(next.players[0].suckerTokens, startingSuckerTokens - suckerTokenCosts.mulligan);
 });
 
 test('dice cannot be held before first roll', () => {

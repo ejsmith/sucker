@@ -177,7 +177,7 @@ export function scoreTurn(game: GameState, category: ScoreCategory): GameState {
 
 export function scratchScoreBox(game: GameState, category: ScoreCategory): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
-  if (currentPlayer.scorecard[category] !== null || game.rollNumber === 0 || game.phase === 'complete') {
+  if (currentPlayer.scorecard[category] !== null || game.phase === 'complete') {
     return game;
   }
 
@@ -196,7 +196,6 @@ export function purchaseExtraRoll(game: GameState): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
   if (
     game.phase === 'complete' ||
-    game.rollNumber < maxAvailableRolls(game) ||
     !currentPlayer ||
     currentPlayer.suckerTokens < suckerTokenCosts.extraRoll
   ) {
@@ -214,7 +213,6 @@ export function mulliganCurrentTurn(game: GameState): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
   if (
     game.phase === 'complete' ||
-    game.rollNumber === 0 ||
     !currentPlayer ||
     currentPlayer.suckerTokens < suckerTokenCosts.mulligan
   ) {
@@ -304,18 +302,6 @@ export function resolveSuckerPunchOutcome(
 
 export function isSuckerRoll(dice: Dice): boolean {
   return dice.every((die) => die === dice[0]);
-}
-
-export function isSuckerPunchEligibleTurn(category: ScoreCategory, dice: Dice, score: number): boolean {
-  if (!isSuckerRoll(dice)) {
-    return false;
-  }
-
-  if (category === 'sucker') {
-    return score > 0;
-  }
-
-  return score >= scoreCategory(dice, category) + 50;
 }
 
 export function toDice(values: unknown): Dice {

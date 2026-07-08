@@ -4,8 +4,8 @@ import type { Database } from '../_shared/database.types.ts';
 import {
   createEmptyScorecard,
   type Dice,
+  type DieValue,
   type GameState,
-  isSuckerPunchEligibleTurn,
   isSuckerRoll,
   maxRollsPerTurn,
   type Player,
@@ -84,7 +84,7 @@ type Action =
     }
   | { type: 'pass_response'; gameId: string }
   | { type: 'mulligan'; gameId: string }
-  | { type: 'sucker_punch'; gameId: string; turnId: string }
+  | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 
 const corsHeaders = {
@@ -179,7 +179,7 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
     case 'mulligan':
       return mulliganTurn(admin, actorId, action.gameId);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, action.chanceDie);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -1107,7 +1107,7 @@ async function scoreRemoteTurn(
   assertCurrentPlayer(state, actorId);
 
   const currentPlayer = state.players[state.currentPlayerIndex];
-  if (state.rollNumber === 0 || state.phase === 'complete') {
+  if ((!scratch && state.rollNumber === 0) || state.phase === 'complete') {
     throw new Error('Roll before playing a score.');
   }
   if (currentPlayer.scorecard[category] !== null) {
@@ -1300,7 +1300,13 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
   return { game: updatedGame };
 }
 
-async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string, turnId: string) {
+async function suckerPunchTurn(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  turnId: string,
+  requestedChanceDie?: DieValue,
+) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
     throw new Error('Sucker Punch can only target the opponent’s latest submitted turn.');
@@ -1310,9 +1316,6 @@ async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string,
   if (turn.player_id === actorId) {
     throw new Error('You cannot Sucker Punch your own turn.');
   }
-  if (!isSuckerPunchEligibleTurn(toScoreCategory(turn.category), toDice(turn.dice), turn.score)) {
-    throw new Error('Sucker Punch can only target a Sucker-scoring turn.');
-  }
 
   const state = game.state;
   const actor = findPlayer(state, actorId);
@@ -1320,7 +1323,15 @@ async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string,
     throw new Error(`You need ${suckerTokenCosts.suckerPunch} Sucker Tokens to Sucker Punch.`);
   }
 
-  const outcome = resolveSuckerPunchOutcome(rollDie(edgeSuckerPunchDieRandom), edgeSuckerPunchOutcomeRandom);
+  if (
+    requestedChanceDie !== undefined &&
+    (!Number.isInteger(requestedChanceDie) || requestedChanceDie < 1 || requestedChanceDie > 6)
+  ) {
+    throw new Error('Sucker Punch chance die must be between 1 and 6.');
+  }
+
+  const chanceDie = requestedChanceDie ?? rollDie(edgeSuckerPunchDieRandom);
+  const outcome = resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom);
   let nextState = updatePlayerTokens(state, actorId, -suckerTokenCosts.suckerPunch);
   if (outcome.landed) {
     nextState = removeScoredTurn(nextState, turn, turn.player_id, 0);
@@ -1626,8 +1637,8 @@ function rollGame(state: GameState, actorId: string, submittedHeld?: GameState['
 function purchaseExtraRoll(state: GameState, actorId: string, submittedHeld?: GameState['held']): GameState {
   assertCurrentPlayer(state, actorId);
   const player = findPlayer(state, actorId);
-  if (state.phase === 'complete' || state.rollNumber < maxAvailableRolls(state)) {
-    throw new Error('Extra Roll is available after you use every available roll.');
+  if (state.phase === 'complete') {
+    throw new Error('Extra Roll is not available after the game is complete.');
   }
   if (player.suckerTokens < suckerTokenCosts.extraRoll) {
     throw new Error(`You need ${suckerTokenCosts.extraRoll} Sucker Token to buy an Extra Roll.`);

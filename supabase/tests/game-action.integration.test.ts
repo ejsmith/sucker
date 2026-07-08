@@ -173,7 +173,7 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
   const secondScore = (
     await invokeGameAction(alice, {
-      category: 'sucker',
+      category: 'ones',
       gameId: game.id,
       held: falseHeld,
       type: 'score_category',
@@ -193,6 +193,7 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertEquals(punched.current_player_id, alice.id);
   assertPlayerTokens(punched, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
   assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'punched');
+  assertEquals(punched.state.players.find((player) => player.id === alice.id)?.scorecard.ones, null);
 
   const events = await loadTokenEvents(game.id);
   assertEquals(

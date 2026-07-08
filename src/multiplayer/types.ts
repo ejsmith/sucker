@@ -1,4 +1,4 @@
-import type { Dice, GameState, ScoreCategory, SuckerPunchOutcome } from '../game';
+import type { Dice, DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from '../game';
 
 export type RemoteGameStatus = 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
 
@@ -89,6 +89,7 @@ export type MultiplayerAction =
       type: 'sucker_punch';
       gameId: string;
       turnId: string;
+      chanceDie?: DieValue;
     };
 
 export type MultiplayerActionResult = {

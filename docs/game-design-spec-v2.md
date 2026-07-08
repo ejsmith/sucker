@@ -169,12 +169,12 @@ Cost: 3 Tokens
 
 Description
 
-Attempt to force the opponent to replay their most recently completed Sucker-scoring turn.
+Attempt to force the opponent to replay their most recently completed turn.
 
 Rules
 
 - Can only target the opponent’s immediately previous turn
-- The target turn must have scored a Sucker or extra Sucker bonus
+- The target turn may have scored or scratched any category
 - Cannot target older turns
 - The chance die is rolled in a dedicated dialog over the game board, not in the normal dice tray or slots
 - The attacking player rolls one die to set the hit chance:
@@ -253,7 +253,7 @@ After a turn is submitted:
 1. Opponent receives notification
 2. Opponent may:
    - Accept result
-   - Use Sucker Punch if the submitted turn scored a Sucker
+   - Use Sucker Punch against the submitted turn
 3. If Sucker Punch lands:
    - Submitted score is removed
    - Target replays the turn

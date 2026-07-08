@@ -1,12 +1,12 @@
 import {
   availableCategories,
   isSuckerRoll,
-  isSuckerPunchEligibleTurn,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
   rollCurrentDice,
   rollSuckerPunchOutcome,
+  resolveSuckerPunchOutcome,
   scoreCategories,
   scoreCategoryForScorecard,
   scoreTurn,
@@ -249,6 +249,7 @@ export function applyLocalSuckerPunch(
   pendingTurn: LocalPendingTurn,
   puncherIndex: number,
   random: () => number = Math.random,
+  chanceDie?: DieValue,
 ): { game: GameState; outcome: SuckerPunchOutcome | null; pendingTurn: LocalPendingTurn | null } {
   const scorer = game.players[pendingTurn.scorerIndex];
   const puncher = game.players[puncherIndex];
@@ -257,13 +258,12 @@ export function applyLocalSuckerPunch(
     !scorer ||
     !puncher ||
     pendingTurn.scorerIndex === puncherIndex ||
-    puncher.suckerTokens < suckerTokenCosts.suckerPunch ||
-    !isSuckerPunchEligibleTurn(pendingTurn.category, pendingTurn.dice, pendingTurn.score)
+    puncher.suckerTokens < suckerTokenCosts.suckerPunch
   ) {
     return { game, outcome: null, pendingTurn };
   }
 
-  const outcome = rollSuckerPunchOutcome(random);
+  const outcome = chanceDie ? resolveSuckerPunchOutcome(chanceDie, random) : rollSuckerPunchOutcome(random);
   const players = game.players.map((player, index) => {
     if (outcome.landed && index === pendingTurn.scorerIndex) {
       return {
@@ -1132,10 +1132,6 @@ function shouldAutomatedUseSuckerPunch(
 ) {
   const computer = game.players[automatedPlayerIndex];
   if (!computer || computer.suckerTokens < suckerTokenCosts.suckerPunch) {
-    return false;
-  }
-
-  if (!isSuckerPunchEligibleTurn(pendingTurn.category, pendingTurn.dice, pendingTurn.score)) {
     return false;
   }
 

@@ -1,7 +1,15 @@
 import { supabase } from './supabase';
 import type { Database } from './database.types';
 import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
-import { scoreCategories, type GameState, type ScoreCategory, toDice, toGameState, toHeldDice } from '../game';
+import {
+  scoreCategories,
+  type DieValue,
+  type GameState,
+  type ScoreCategory,
+  toDice,
+  toGameState,
+  toHeldDice,
+} from '../game';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -192,8 +200,8 @@ export async function useRemoteMulligan(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'mulligan' });
 }
 
-export async function useRemoteSuckerPunch(gameId: string, turnId: string) {
-  return applyMultiplayerAction({ gameId, turnId, type: 'sucker_punch' });
+export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
+  return applyMultiplayerAction({ chanceDie, gameId, turnId, type: 'sucker_punch' });
 }
 
 export async function nudgeRemoteGame(gameId: string) {

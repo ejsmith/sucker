@@ -28,8 +28,8 @@ test('computer strategy clears a strong 1000-game average', () => {
   const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
 
   assert.equal(result.gameCount, 1000);
-  assert.equal(Number(result.averageScore.toFixed(3)), 301.661);
-  assert.equal(result.lowScore, 119);
+  assert.equal(Number(result.averageScore.toFixed(3)), 301.638);
+  assert.equal(result.lowScore, 146);
   assert.equal(result.highScore, 579);
 });
 
@@ -344,21 +344,21 @@ test('computer uses sucker punch on sucker scores', () => {
   assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('sucker', 50)), true);
 });
 
-test('computer does not sucker punch non-sucker late comeback swings', () => {
+test('computer can sucker punch non-sucker late comeback swings', () => {
   const game = createLateSubmittedPlayerTurn('largeStraight', 40);
 
-  assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40)), false);
+  assert.equal(shouldComputerUseSuckerPunch(game, createPendingPlayerTurn('largeStraight', 40)), true);
 });
 
-test('local sucker punch hit removes the target score and starts replay', () => {
-  const game = createSubmittedPlayerTurn('sucker', 50);
-  const pendingTurn = createPendingPlayerTurn('sucker', 50);
+test('local sucker punch hit removes a non-sucker target score and starts replay', () => {
+  const game = createSubmittedPlayerTurn('largeStraight', 40);
+  const pendingTurn = createPendingPlayerTurn('largeStraight', 40);
   const result = applyLocalSuckerPunch(game, pendingTurn, computerPlayerIndex, sequenceRandom([0.99, 0]));
 
   assert.equal(result.outcome.landed, true);
   assert.equal(result.outcome.chanceDie, 6);
   assert.equal(result.game.currentPlayerIndex, 0);
-  assert.equal(result.game.players[0].scorecard.sucker, null);
+  assert.equal(result.game.players[0].scorecard.largeStraight, null);
   assert.equal(result.game.players[computerPlayerIndex].suckerTokens, startingSuckerTokens - 3);
   assert.equal(result.pendingTurn.status, 'punched');
 });
