@@ -1285,15 +1285,40 @@ function LocalGameScreen({
     }, 1250);
   }
 
-  function showSuckerPunchNoticeAndWipe({ category, playerId, score, turnId }: Omit<SuckerPunchWipe, 'progress'>) {
-    setSuckerPunchWipe({
+  function createSuckerPunchWipe({ category, playerId, score, turnId }: Omit<SuckerPunchWipe, 'progress'>) {
+    return {
       category,
       playerId,
       progress: new Animated.Value(0),
       score,
       turnId,
+    };
+  }
+
+  function runSuckerPunchScoreWipe(wipe: SuckerPunchWipe) {
+    requestAnimationFrame(() => {
+      void runAnimation(
+        Animated.timing(wipe.progress, {
+          toValue: 1,
+          duration: suckerPunchScoreWipeDurationMs,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ).then(() => {
+        setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
+      });
     });
+  }
+
+  function showSuckerPunchNoticeAndWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
+    setSuckerPunchWipe(createSuckerPunchWipe(details));
     setShowSuckerPunchNotice(true);
+  }
+
+  function showSuckerPunchScoreWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
+    const wipe = createSuckerPunchWipe(details);
+    setSuckerPunchWipe(wipe);
+    runSuckerPunchScoreWipe(wipe);
   }
 
   useEffect(() => {
@@ -1338,18 +1363,7 @@ function LocalGameScreen({
         return;
       }
 
-      requestAnimationFrame(() => {
-        void runAnimation(
-          Animated.timing(wipe.progress, {
-            toValue: 1,
-            duration: suckerPunchScoreWipeDurationMs,
-            easing: Easing.inOut(Easing.cubic),
-            useNativeDriver: true,
-          }),
-        ).then(() => {
-          setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
-        });
-      });
+      runSuckerPunchScoreWipe(wipe);
     }, suckerPunchNoticeDurationMs);
     return () => clearTimeout(timer);
   }, [showSuckerPunchNotice, suckerPunchWipe]);
@@ -2273,10 +2287,21 @@ function LocalGameScreen({
           return;
         }
 
+        const targetScore =
+          displayScoreWithoutSuckerBonus(
+            scorer.scorecard[targetTurn.category],
+            (scorer.suckerBonusCategories ?? []).includes(targetTurn.category),
+          ) ?? targetTurn.score;
         updateLocalScoreTurnStatus(targetTurn.id, 'punched');
         const replayed = playComputerTurn(punched.game, null);
         setLocalGame(punched.game);
         setLocalPendingTurn(punched.pendingTurn);
+        showSuckerPunchScoreWipe({
+          category: targetTurn.category,
+          playerId: scorer.id,
+          score: targetScore,
+          turnId: targetTurn.id,
+        });
         setIsComputerThinking(true);
         setTimeout(() => {
           void animateComputerTurnResult(replayed);
@@ -2298,7 +2323,25 @@ function LocalGameScreen({
 
       outcome = result.outcome;
       if (result.game) {
-        completeAfterResult = () => setLiveRemoteGame(result.game as ReturnType<typeof createGame>);
+        const targetTurn = remoteLastTurn;
+        const targetPlayer = targetTurn ? game.players.find((player) => player.id === targetTurn.player_id) : null;
+        const targetScore = targetTurn
+          ? displayScoreWithoutSuckerBonus(
+              targetPlayer?.scorecard[targetTurn.category] ?? null,
+              Boolean(targetPlayer?.suckerBonusCategories?.includes(targetTurn.category)),
+            ) ?? targetTurn.score
+          : null;
+        completeAfterResult = () => {
+          setLiveRemoteGame(result.game as ReturnType<typeof createGame>);
+          if (outcome?.landed && targetTurn && targetScore !== null) {
+            showSuckerPunchScoreWipe({
+              category: targetTurn.category,
+              playerId: targetTurn.player_id,
+              score: targetScore,
+              turnId: targetTurn.id,
+            });
+          }
+        };
       }
     }
 
@@ -3747,7 +3790,6 @@ function ScoreCell({
             styles.scoreBox,
             compactLayout && styles.compactScoreBox,
             homeLockedScore !== null && styles.lockedScoreBox,
-            homeWipe && styles.suckerPunchWipeScoreBox,
             highlighted && activePlayerIndex === 0 && styles.selectedScoreBox,
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
@@ -3816,46 +3858,62 @@ function SuckerPunchScoreWipe({
   progress: Animated.Value;
   score: number;
 }) {
+  const exitDirection = home ? -1 : 1;
   const scoreOpacity = progress.interpolate({
-    inputRange: [0, 0.1, 0.62, 1],
-    outputRange: [1, 1, 1, 0],
+    inputRange: [0, 0.16, 0.48, 0.82, 1],
+    outputRange: [1, 1, 1, 0, 0],
   });
   const scoreScale = progress.interpolate({
-    inputRange: [0, 0.16, 0.48, 1],
-    outputRange: [1, 1.38, 0.92, 0.22],
+    inputRange: [0, 0.14, 0.38, 0.72, 1],
+    outputRange: [1, 0.74, 0.9, 0.58, 0.48],
   });
   const scoreTranslateX = progress.interpolate({
-    inputRange: [0, 0.18, 0.58, 1],
-    outputRange: [0, -8, 16, 82],
+    inputRange: [0, 0.12, 0.42, 0.82, 1],
+    outputRange: [0, -exitDirection * 4, exitDirection * 6, exitDirection * 64, exitDirection * 82],
   });
   const scoreTranslateY = progress.interpolate({
-    inputRange: [0, 0.18, 0.6, 1],
-    outputRange: [0, 3, -2, -22],
+    inputRange: [0, 0.14, 0.48, 1],
+    outputRange: [0, 3, -2, 5],
   });
   const scoreRotate = progress.interpolate({
-    inputRange: [0, 0.18, 0.5, 1],
-    outputRange: ['0deg', '-9deg', '7deg', '27deg'],
+    inputRange: [0, 0.14, 0.46, 1],
+    outputRange: ['0deg', `${-exitDirection * 7}deg`, `${exitDirection * 6}deg`, `${exitDirection * 13}deg`],
   });
-  const flashOpacity = progress.interpolate({
-    inputRange: [0, 0.1, 0.26, 1],
-    outputRange: [0, 0.82, 0, 0],
+  const impactOpacity = progress.interpolate({
+    inputRange: [0, 0.05, 0.26, 0.54, 1],
+    outputRange: [0, 1, 0.9, 0, 0],
   });
-  const slashOpacity = progress.interpolate({
-    inputRange: [0, 0.08, 0.68, 1],
-    outputRange: [0, 1, 1, 0],
+  const impactScale = progress.interpolate({
+    inputRange: [0, 0.12, 0.32, 1],
+    outputRange: [0.32, 1.18, 0.84, 0.4],
   });
-  const slashScale = progress.interpolate({
-    inputRange: [0, 0.15, 0.62, 1],
-    outputRange: [0.15, 1.32, 1, 2.1],
-  });
-  const slashTranslateX = progress.interpolate({
-    inputRange: [0, 0.16, 0.66, 1],
-    outputRange: [-62, -4, 10, 64],
+  const impactTranslateX = progress.interpolate({
+    inputRange: [0, 0.16, 1],
+    outputRange: [-exitDirection * 25, -exitDirection * 11, -exitDirection * 6],
   });
 
   return (
-    <Animated.View pointerEvents="none" style={styles.suckerPunchScoreWipe}>
-      <Animated.View style={[styles.suckerPunchWipeFlash, { opacity: flashOpacity }]} />
+    <Animated.View pointerEvents="none" style={styles.suckerPunchScoreWipe} testID="sucker-punch-score-wipe">
+      <Animated.View
+        style={[
+          styles.suckerPunchWipeImpact,
+          {
+            opacity: impactOpacity,
+            transform: [{ translateX: impactTranslateX }, { scale: impactScale }],
+          },
+        ]}
+      >
+        <Svg height={36} viewBox="0 0 36 36" width={36}>
+          <Path
+            d="M18 1 22 11 33 6 27 16 35 18 27 22 33 31 22 27 18 35 14 27 3 31 9 22 1 18 9 14 3 5 14 11Z"
+            fill="#FFD329"
+            stroke="#F12D22"
+            strokeLinejoin="round"
+            strokeWidth={3}
+          />
+          <Circle cx={18} cy={18} fill="#F12D22" r={4} />
+        </Svg>
+      </Animated.View>
       <Animated.Text
         allowFontScaling={false}
         numberOfLines={1}
@@ -3876,25 +3934,6 @@ function SuckerPunchScoreWipe({
       >
         {score}
       </Animated.Text>
-      <Animated.View
-        style={[
-          styles.suckerPunchWipeSlash,
-          {
-            opacity: slashOpacity,
-            transform: [{ translateX: slashTranslateX }, { rotate: '-22deg' }, { scaleX: slashScale }],
-          },
-        ]}
-      />
-      <Animated.View
-        style={[
-          styles.suckerPunchWipeSlash,
-          styles.suckerPunchWipeSlashSecond,
-          {
-            opacity: slashOpacity,
-            transform: [{ translateX: slashTranslateX }, { rotate: '24deg' }, { scaleX: slashScale }],
-          },
-        ]}
-      />
     </Animated.View>
   );
 }
@@ -4593,47 +4632,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     width: '100%',
   },
-  suckerPunchWipeScoreBox: {
-    backgroundColor: '#FFE08A',
-    borderColor: '#F12D22',
-  },
   suckerPunchScoreWipe: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'visible',
+    overflow: 'hidden',
     zIndex: 8,
   },
-  suckerPunchWipeFlash: {
-    backgroundColor: 'rgba(255, 243, 194, 0.95)',
-    borderRadius: 36,
-    height: 72,
-    position: 'absolute',
-    width: 72,
-  },
   suckerPunchWipeScoreText: {
-    textShadowColor: '#F12D22',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 0,
     zIndex: 1,
   },
-  suckerPunchWipeSlash: {
-    backgroundColor: '#F12D22',
-    borderColor: '#5A1308',
-    borderRadius: 4,
-    borderWidth: 1,
-    height: 6,
+  suckerPunchWipeImpact: {
+    alignItems: 'center',
+    height: 36,
+    justifyContent: 'center',
     position: 'absolute',
-    shadowColor: '#050505',
-    shadowOffset: { width: 1, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 0,
-    width: '154%',
-    zIndex: 2,
-  },
-  suckerPunchWipeSlashSecond: {
-    backgroundColor: '#FFD329',
-    height: 4,
+    width: 36,
+    zIndex: 3,
   },
   compactOpponentScoreText: {
     fontSize: 26,

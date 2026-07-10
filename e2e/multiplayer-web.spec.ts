@@ -201,6 +201,10 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('CONTINUE');
   await page.getByTestId('sucker-punch-chance-roll-button').click();
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toBeHidden();
+  const punchedOpponentScore = page.getByTestId('opponent-score-box-sucker');
+  await expect(punchedOpponentScore).toContainText('50');
+  await page.waitForTimeout(1_250);
+  await expect(punchedOpponentScore).not.toContainText('50');
 });
 
 test('landed Sucker Punch wipes the score after the notification', async ({ browser }) => {
@@ -222,9 +226,9 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
   const notice = page.getByTestId('sucker-punch-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
   await expect(notice).toBeHidden({ timeout: 5_000 });
-  await page.waitForTimeout(220);
+  await page.waitForTimeout(120);
   await expect(suckerScoreBox).toContainText('50');
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1_250);
   await expect(suckerScoreBox).not.toContainText('50');
 });
 
