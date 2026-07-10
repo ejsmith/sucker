@@ -888,6 +888,7 @@ function LocalGameScreen({
   const localSuckerStatTurns = useRef<SuckerStatTurn[]>([]);
   const lastRemotePunchNoticeId = useRef<string | null>(null);
   const lastRemoteBlockedPunchNoticeId = useRef<string | null>(null);
+  const remoteBlockedPunchRevealCheckTurnId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
   const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRemoteTurnId = useRef<string | null>(null);
@@ -951,6 +952,12 @@ function LocalGameScreen({
   const isRemoteResponseTurn =
     isRemoteGame && isMyRemoteTurn && (remoteStatus === 'response_window' || remoteStatus === 'blocked_response');
   const isRemoteActionPlayable = !isRemoteGame || remoteStatus === 'active' || isRemoteResponseTurn;
+  const isRemoteTurnRevealPending = Boolean(
+    isRemoteGame &&
+      remoteLastTurnId &&
+      visibleRemoteTurnId.current !== remoteLastTurnId &&
+      remoteLastTurnLoadFailedId !== remoteLastTurnId,
+  );
   const isComputerTurn = !isRemoteGame && game.currentPlayerIndex === computerPlayerIndex && game.phase !== 'complete';
   const openCategories = availableCategories(currentPlayer.scorecard);
   const canRollVisually =
@@ -959,6 +966,7 @@ function LocalGameScreen({
     !isComputerTurn &&
     isMyRemoteTurn &&
     isRemoteActionPlayable &&
+    !isRemoteTurnRevealPending &&
     !suckerPunchDialog;
   const isRemoteInteractionPending = isRemoteBusy || isAwaitingRemoteRoll;
   const canRoll = canRollVisually && !isRolling && !isScoring && !isRemoteInteractionPending;
@@ -984,6 +992,7 @@ function LocalGameScreen({
     !isScoring &&
     !isComputerTurn &&
     isMyRemoteTurn &&
+    !isRemoteTurnRevealPending &&
     !isRemoteInteractionPending &&
     !suckerPunchDialog;
   const myTokenCount = homePlayer.suckerTokens;
@@ -1309,11 +1318,12 @@ function LocalGameScreen({
       return;
     }
 
-    if (remoteBlockedPunchRevealGate?.turnId === remoteLastTurn.id) {
+    if (remoteBlockedPunchRevealCheckTurnId.current === remoteLastTurn.id) {
       return;
     }
 
     const revealTurnId = remoteLastTurn.id;
+    remoteBlockedPunchRevealCheckTurnId.current = revealTurnId;
     setRemoteBlockedPunchRevealGate({ status: 'checking', turnId: revealTurnId });
 
     let isMounted = true;
@@ -1348,7 +1358,6 @@ function LocalGameScreen({
     };
   }, [
     myProfileId,
-    remoteBlockedPunchRevealGate,
     remoteGame,
     remoteLastTurn,
     shouldCheckRemoteBlockedPunchBeforeReveal,

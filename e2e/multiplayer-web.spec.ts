@@ -84,10 +84,27 @@ test('two players can create an invite and play turns through the web UI', async
 
   await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
 
+  let releaseTurnRequest = () => {};
+  const turnRequestGate = new Promise<void>((resolve) => {
+    releaseTurnRequest = resolve;
+  });
+  const turnRoute = /\/rest\/v1\/turns\?/;
+  await bobPage.route(turnRoute, async (route) => {
+    await turnRequestGate;
+    await route.continue();
+  });
   await openGameFromNotification(bobPage, gameId);
-  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png');
+  await expectPressableDisabled(bobPage.getByTestId('roll-button'));
+  const turnResponse = bobPage.waitForResponse(
+    (response) => response.url().includes('/rest/v1/turns?') && response.request().method() === 'GET',
+  );
+  releaseTurnRequest();
+  await turnResponse;
+  await bobPage.unroute(turnRoute);
+  await expect(bobPage.getByTestId('opponent-score-box-ones')).not.toHaveText('', { timeout: 5_000 });
   const bobRollButton = bobPage.getByTestId('roll-button');
   await waitForPressableEnabled(bobRollButton);
+  await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png');
   await bobRollButton.click();
   const bobTwosScoreBox = bobPage.getByTestId('home-score-box-twos');
   await waitForPressableEnabled(bobTwosScoreBox);
