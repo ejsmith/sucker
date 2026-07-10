@@ -242,6 +242,7 @@ const suckerLobbyHeaderImage = require('./assets/sucker-lobby-header.png');
 const suckerGameBannerImage = require('./assets/sucker-game-header-clean.png');
 const suckerTokenImage = require('./assets/sucker-token.png');
 const suckerPunchLandedImage = require('./assets/sucker-punch-landed.png');
+const suckerPunchBlockedImage = require('./assets/sucker-punch-blocked.png');
 
 const backgroundDiePositions = [
   { left: 22, top: 8 },
@@ -3382,6 +3383,7 @@ function SuckerPunchChanceDialog({
 }) {
   const isResult = phase === 'result';
   const didLand = Boolean(outcome?.landed);
+  const didBlock = isResult && !didLand;
   const isRolled = phase === 'rolled';
   const isRollingChance = phase === 'rolling';
   const isThrowing = phase === 'throwing';
@@ -3424,9 +3426,12 @@ function SuckerPunchChanceDialog({
         {isRolled && <Text style={styles.suckerPunchChanceHint}>{chancePercent}% chance to land.</Text>}
         {isThrowing && <Text style={styles.suckerPunchChanceHint}>Will it land?</Text>}
 
-        <View style={didLand ? styles.suckerPunchLandedImageShell : styles.suckerPunchChanceDieShell}>
-          {didLand ? (
-            <Image source={suckerPunchLandedImage} style={styles.suckerPunchLandedImage} />
+        <View style={isResult ? styles.suckerPunchResultImageShell : styles.suckerPunchChanceDieShell}>
+          {isResult ? (
+            <Image
+              source={didBlock ? suckerPunchBlockedImage : suckerPunchLandedImage}
+              style={styles.suckerPunchResultImage}
+            />
           ) : (
             <Animated.View
               style={[
@@ -4724,7 +4729,7 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
     width: 112,
   },
-  suckerPunchLandedImageShell: {
+  suckerPunchResultImageShell: {
     alignItems: 'center',
     aspectRatio: 1,
     borderColor: '#050505',
@@ -4734,7 +4739,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     width: '100%',
   },
-  suckerPunchLandedImage: {
+  suckerPunchResultImage: {
     height: '100%',
     resizeMode: 'cover',
     width: '100%',
