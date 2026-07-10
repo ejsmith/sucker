@@ -272,7 +272,8 @@ const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const suckerBlockedNoticeDurationMs = 1700;
 const suckerPunchNoticeDurationMs = 1700;
-const suckerPunchScoreWipeDurationMs = 900;
+const suckerPunchScoreWipeDelayMs = 180;
+const suckerPunchScoreWipeDurationMs = 1250;
 const remoteRollServerHeadStartMs = 80;
 const rollFinalFaceHoldMs = 120;
 const sectionBonusAfterScoreDelayMs = 160;
@@ -938,6 +939,7 @@ function LocalGameScreen({
   const remoteBlockedPunchRevealCheckTurnId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
   const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suckerPunchWipeStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRemoteTurnId = useRef<string | null>(null);
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const suckerPunchDieAnimation = useRef(new Animated.Value(0)).current;
@@ -952,7 +954,7 @@ function LocalGameScreen({
     setIsTokenMenuOpen(false);
     setShowStatsPage(false);
     setShowSuckerPunchNotice(false);
-    setSuckerPunchWipe(null);
+    clearSuckerPunchWipe();
     suckerPunchResultCompletion.current = null;
     setSuckerPunchDialog(null);
     onExit?.();
@@ -1270,6 +1272,9 @@ function LocalGameScreen({
       if (suckerRollNoticeTimer.current) {
         clearTimeout(suckerRollNoticeTimer.current);
       }
+      if (suckerPunchWipeStartTimer.current) {
+        clearTimeout(suckerPunchWipeStartTimer.current);
+      }
     };
   }, []);
 
@@ -1296,18 +1301,33 @@ function LocalGameScreen({
   }
 
   function runSuckerPunchScoreWipe(wipe: SuckerPunchWipe) {
-    requestAnimationFrame(() => {
-      void runAnimation(
-        Animated.timing(wipe.progress, {
-          toValue: 1,
-          duration: suckerPunchScoreWipeDurationMs,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ).then(() => {
-        setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
+    if (suckerPunchWipeStartTimer.current) {
+      clearTimeout(suckerPunchWipeStartTimer.current);
+    }
+
+    suckerPunchWipeStartTimer.current = setTimeout(() => {
+      suckerPunchWipeStartTimer.current = null;
+      requestAnimationFrame(() => {
+        void runAnimation(
+          Animated.timing(wipe.progress, {
+            toValue: 1,
+            duration: suckerPunchScoreWipeDurationMs,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ).then(() => {
+          setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
+        });
       });
-    });
+    }, suckerPunchScoreWipeDelayMs);
+  }
+
+  function clearSuckerPunchWipe() {
+    if (suckerPunchWipeStartTimer.current) {
+      clearTimeout(suckerPunchWipeStartTimer.current);
+      suckerPunchWipeStartTimer.current = null;
+    }
+    setSuckerPunchWipe(null);
   }
 
   function showSuckerPunchNoticeAndWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
@@ -1848,7 +1868,7 @@ function LocalGameScreen({
   function clearLocalTurnResponseWindow() {
     setLocalPendingTurn(null);
     setShowSuckerPunchNotice(false);
-    setSuckerPunchWipe(null);
+    clearSuckerPunchWipe();
     setSuckerBlockedNotice(null);
     setSuckerRollNoticeTitle(null);
   }
@@ -2358,7 +2378,7 @@ function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
     setShowSuckerPunchNotice(false);
-    setSuckerPunchWipe(null);
+    clearSuckerPunchWipe();
     setSuckerBlockedNotice(null);
     setSuckerRollNoticeTitle(null);
     suckerPunchResultCompletion.current = null;
@@ -3860,36 +3880,32 @@ function SuckerPunchScoreWipe({
 }) {
   const exitDirection = home ? -1 : 1;
   const scoreOpacity = progress.interpolate({
-    inputRange: [0, 0.16, 0.48, 0.82, 1],
-    outputRange: [1, 1, 1, 0, 0],
+    inputRange: [0, 0.5, 0.8, 1],
+    outputRange: [1, 1, 0, 0],
   });
   const scoreScale = progress.interpolate({
-    inputRange: [0, 0.14, 0.38, 0.72, 1],
-    outputRange: [1, 0.74, 0.9, 0.58, 0.48],
+    inputRange: [0, 0.4, 0.76, 1],
+    outputRange: [1, 0.82, 0.58, 0.46],
   });
   const scoreTranslateX = progress.interpolate({
-    inputRange: [0, 0.12, 0.42, 0.82, 1],
-    outputRange: [0, -exitDirection * 4, exitDirection * 6, exitDirection * 64, exitDirection * 82],
+    inputRange: [0, 0.48, 0.82, 1],
+    outputRange: [0, 0, exitDirection * 62, exitDirection * 82],
   });
   const scoreTranslateY = progress.interpolate({
-    inputRange: [0, 0.14, 0.48, 1],
-    outputRange: [0, 3, -2, 5],
+    inputRange: [0, 0.42, 0.76, 1],
+    outputRange: [0, 2, -2, 5],
   });
   const scoreRotate = progress.interpolate({
-    inputRange: [0, 0.14, 0.46, 1],
-    outputRange: ['0deg', `${-exitDirection * 7}deg`, `${exitDirection * 6}deg`, `${exitDirection * 13}deg`],
+    inputRange: [0, 0.42, 0.82, 1],
+    outputRange: ['0deg', `${-exitDirection * 5}deg`, `${exitDirection * 12}deg`, `${exitDirection * 16}deg`],
   });
   const impactOpacity = progress.interpolate({
-    inputRange: [0, 0.05, 0.26, 0.54, 1],
-    outputRange: [0, 1, 0.9, 0, 0],
+    inputRange: [0, 0.06, 0.56, 0.88, 1],
+    outputRange: [0, 1, 1, 0.3, 0],
   });
   const impactScale = progress.interpolate({
-    inputRange: [0, 0.12, 0.32, 1],
-    outputRange: [0.32, 1.18, 0.84, 0.4],
-  });
-  const impactTranslateX = progress.interpolate({
-    inputRange: [0, 0.16, 1],
-    outputRange: [-exitDirection * 25, -exitDirection * 11, -exitDirection * 6],
+    inputRange: [0, 0.2, 0.58, 1],
+    outputRange: [0.2, 1.34, 0.96, 0.12],
   });
 
   return (
@@ -3899,7 +3915,7 @@ function SuckerPunchScoreWipe({
           styles.suckerPunchWipeImpact,
           {
             opacity: impactOpacity,
-            transform: [{ translateX: impactTranslateX }, { scale: impactScale }],
+            transform: [{ scale: impactScale }],
           },
         ]}
       >
