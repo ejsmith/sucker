@@ -203,6 +203,31 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toBeHidden();
 });
 
+test('landed Sucker Punch wipes the score after the notification', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  await context.addInitScript(() => {
+    Math.random = () => 0;
+  });
+  const page = await context.newPage();
+
+  await page.goto(e2eBaseUrl);
+  await page.getByTestId('play-computer-button').click();
+  await page.getByTestId('roll-button').click();
+  const suckerScoreBox = page.getByTestId('home-score-box-sucker');
+  await waitForPressableEnabled(suckerScoreBox);
+  await suckerScoreBox.click();
+  await expect(page.getByTestId('play-score-button')).toBeEnabled();
+  await page.getByTestId('play-score-button').click();
+
+  const notice = page.getByTestId('sucker-punch-notice');
+  await expect(notice).toBeVisible({ timeout: 10_000 });
+  await expect(notice).toBeHidden({ timeout: 5_000 });
+  await page.waitForTimeout(220);
+  await expect(suckerScoreBox).toContainText('50');
+  await page.waitForTimeout(800);
+  await expect(suckerScoreBox).not.toContainText('50');
+});
+
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   await context.addInitScript(() => {

@@ -184,6 +184,13 @@ type SuckerBlockedNotice = {
   text: string;
   title: string;
 };
+type SuckerPunchWipe = {
+  category: ScoreCategory;
+  playerId: string;
+  progress: Animated.Value;
+  score: number;
+  turnId: string;
+};
 type RemoteBlockedPunchRevealGate = {
   status: 'checking' | 'clear' | 'showing';
   turnId: string;
@@ -199,6 +206,11 @@ type RemoteActionHandlers = {
 type RemoteGameRequest = {
   gameId: string;
   requestId: number;
+};
+type NextTurnPrompt = {
+  gameId: string;
+  gameUpdatedAt: string;
+  isGameListReady: boolean;
 };
 let remoteGameRequestId = 0;
 const playerNames = ['You', 'Computer'];
@@ -259,6 +271,8 @@ const computerScoreRevealDurationMs = 520;
 const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const suckerBlockedNoticeDurationMs = 1700;
+const suckerPunchNoticeDurationMs = 1700;
+const suckerPunchScoreWipeDurationMs = 900;
 const remoteRollServerHeadStartMs = 80;
 const rollFinalFaceHoldMs = 120;
 const sectionBonusAfterScoreDelayMs = 160;
@@ -429,6 +443,14 @@ function shouldShowNextTurnsAfterAction(game: RemoteGameRow, profileId: string) 
   return game.status !== 'complete' && game.current_player_id !== profileId;
 }
 
+function shouldDismissNextTurnPrompt(prompt: NextTurnPrompt, game: RemoteGameRow, profileId: string) {
+  return (
+    game.id === prompt.gameId &&
+    new Date(game.updated_at).getTime() > new Date(prompt.gameUpdatedAt).getTime() &&
+    !shouldShowNextTurnsAfterAction(game, profileId)
+  );
+}
+
 function getNextTurnGames(games: RemoteGameRow[], profileId: string, currentGameId: string) {
   return games
     .filter(
@@ -474,7 +496,7 @@ function RemoteGameScreen({
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
-  const [nextTurnPrompt, setNextTurnPrompt] = useState<{ gameId: string; isGameListReady: boolean } | null>(null);
+  const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
   const wasAppActive = useRef(isAppActive);
   const profileIdRef = useRef<string | null>(null);
   const activeGameIdRef = useRef(activeGameId);
@@ -507,6 +529,19 @@ function RemoteGameScreen({
   useEffect(() => {
     activeGameIdRef.current = activeGameId;
   }, [activeGameId]);
+
+  useEffect(() => {
+    if (
+      !nextTurnPrompt ||
+      !remoteGame ||
+      !profileId ||
+      !shouldDismissNextTurnPrompt(nextTurnPrompt, remoteGame, profileId)
+    ) {
+      return;
+    }
+
+    setNextTurnPrompt(null);
+  }, [nextTurnPrompt, profileId, remoteGame]);
 
   useEffect(() => {
     let isMounted = true;
@@ -708,7 +743,7 @@ function RemoteGameScreen({
       if (profileId) {
         onGameChange(profileId, result.game);
         if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
-          void prepareNextTurnPrompt(profileId, result.game.id);
+          void prepareNextTurnPrompt(profileId, result.game);
         } else {
           setNextTurnPrompt(null);
           void syncRemoteGameList(profileId);
@@ -723,15 +758,26 @@ function RemoteGameScreen({
     }
   }
 
-  async function prepareNextTurnPrompt(profileId: string, completedGameId: string) {
-    setNextTurnPrompt({ gameId: completedGameId, isGameListReady: false });
+  async function prepareNextTurnPrompt(profileId: string, completedGame: RemoteGameRow) {
+    const prompt: NextTurnPrompt = {
+      gameId: completedGame.id,
+      gameUpdatedAt: completedGame.updated_at,
+      isGameListReady: false,
+    };
+    setNextTurnPrompt(prompt);
     try {
-      await syncRemoteGameList(profileId);
-      if (activeGameIdRef.current !== completedGameId) {
+      const games = await syncRemoteGameList(profileId);
+      const refreshedGame = games.find((game) => game.id === prompt.gameId);
+      if (activeGameIdRef.current !== prompt.gameId) {
         return;
       }
 
-      setNextTurnPrompt({ gameId: completedGameId, isGameListReady: true });
+      if (!refreshedGame || shouldDismissNextTurnPrompt(prompt, refreshedGame, profileId)) {
+        setNextTurnPrompt(null);
+        return;
+      }
+
+      setNextTurnPrompt({ ...prompt, isGameListReady: true });
     } catch (promptError) {
       console.warn('Unable to load next turns', promptError);
       setNextTurnPrompt(null);
@@ -844,6 +890,7 @@ function LocalGameScreen({
   const [localGame, setLocalGame] = useState(() => createGame(playerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
+  const [suckerPunchWipe, setSuckerPunchWipe] = useState<SuckerPunchWipe | null>(null);
   const [suckerBlockedNotice, setSuckerBlockedNotice] = useState<SuckerBlockedNotice | null>(null);
   const [remoteBlockedPunchRevealGate, setRemoteBlockedPunchRevealGate] =
     useState<RemoteBlockedPunchRevealGate | null>(null);
@@ -904,6 +951,8 @@ function LocalGameScreen({
     setIsMenuOpen(false);
     setIsTokenMenuOpen(false);
     setShowStatsPage(false);
+    setShowSuckerPunchNotice(false);
+    setSuckerPunchWipe(null);
     suckerPunchResultCompletion.current = null;
     setSuckerPunchDialog(null);
     onExit?.();
@@ -1236,6 +1285,17 @@ function LocalGameScreen({
     }, 1250);
   }
 
+  function showSuckerPunchNoticeAndWipe({ category, playerId, score, turnId }: Omit<SuckerPunchWipe, 'progress'>) {
+    setSuckerPunchWipe({
+      category,
+      playerId,
+      progress: new Animated.Value(0),
+      score,
+      turnId,
+    });
+    setShowSuckerPunchNotice(true);
+  }
+
   useEffect(() => {
     if (isRemoteGame) {
       return;
@@ -1271,9 +1331,28 @@ function LocalGameScreen({
       return;
     }
 
-    const timer = setTimeout(() => setShowSuckerPunchNotice(false), 1700);
+    const wipe = suckerPunchWipe;
+    const timer = setTimeout(() => {
+      setShowSuckerPunchNotice(false);
+      if (!wipe) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        void runAnimation(
+          Animated.timing(wipe.progress, {
+            toValue: 1,
+            duration: suckerPunchScoreWipeDurationMs,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ).then(() => {
+          setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
+        });
+      });
+    }, suckerPunchNoticeDurationMs);
     return () => clearTimeout(timer);
-  }, [showSuckerPunchNotice]);
+  }, [showSuckerPunchNotice, suckerPunchWipe]);
 
   useEffect(() => {
     if (!suckerBlockedNotice) {
@@ -1310,7 +1389,12 @@ function LocalGameScreen({
     }
 
     lastRemotePunchNoticeId.current = remoteLastTurnId;
-    setShowSuckerPunchNotice(true);
+    showSuckerPunchNoticeAndWipe({
+      category: remoteLastTurn.category,
+      playerId: remoteLastTurn.player_id,
+      score: remoteLastTurn.score,
+      turnId: remoteLastTurn.id,
+    });
   }, [isRemoteGame, myProfileId, remoteLastTurn, remoteLastTurnId, remoteStatus]);
 
   useEffect(() => {
@@ -1693,6 +1777,8 @@ function LocalGameScreen({
 
   function finishComputerTurnResult(result: ComputerTurnResult) {
     recordLocalScoreTurn(result);
+    const punchedTurn =
+      result.suckerPunchAttempt?.outcome.landed && result.pendingTurn?.status === 'punched' ? result.pendingTurn : null;
     if (result.suckerPunchAttempt) {
       const puncher = result.game.players[result.suckerPunchAttempt.puncherIndex];
       const target = result.game.players[result.suckerPunchAttempt.targetPlayerIndex];
@@ -1711,8 +1797,16 @@ function LocalGameScreen({
     }
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
-    if (result.pendingTurn?.status === 'punched' && result.pendingTurn.scorerIndex === myPlayerIndex) {
-      setShowSuckerPunchNotice(true);
+    if (punchedTurn && punchedTurn.scorerIndex === myPlayerIndex) {
+      const player = result.game.players[punchedTurn.scorerIndex];
+      if (player) {
+        showSuckerPunchNoticeAndWipe({
+          category: punchedTurn.category,
+          playerId: player.id,
+          score: displayScoreWithoutSuckerBonus(punchedTurn.score, punchedTurn.hadSuckerBonus) ?? punchedTurn.score,
+          turnId: punchedTurn.id,
+        });
+      }
     }
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
@@ -1740,6 +1834,7 @@ function LocalGameScreen({
   function clearLocalTurnResponseWindow() {
     setLocalPendingTurn(null);
     setShowSuckerPunchNotice(false);
+    setSuckerPunchWipe(null);
     setSuckerBlockedNotice(null);
     setSuckerRollNoticeTitle(null);
   }
@@ -2220,6 +2315,7 @@ function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
     setShowSuckerPunchNotice(false);
+    setSuckerPunchWipe(null);
     setSuckerBlockedNotice(null);
     setSuckerRollNoticeTitle(null);
     suckerPunchResultCompletion.current = null;
@@ -2594,6 +2690,7 @@ function LocalGameScreen({
                 scoreBoxRefs.current[scoreCategoryName] = node;
               }}
               selectedPulse={selectedPulse}
+              suckerPunchWipe={suckerPunchWipe}
               compactLayout={compactPhoneLayout}
             />
           ))}
@@ -2642,6 +2739,7 @@ function LocalGameScreen({
                 scoreBoxRefs.current[scoreCategoryName] = node;
               }}
               selectedPulse={selectedPulse}
+              suckerPunchWipe={suckerPunchWipe}
               compactLayout={compactPhoneLayout}
             />
           </View>
@@ -3091,7 +3189,7 @@ function LocalGameScreen({
           </View>
         )}
         {showSuckerPunchNotice && (
-          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
+          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay} testID="sucker-punch-notice">
             <View style={styles.suckerPunchNotice}>
               <Text style={styles.suckerPunchNoticeTitle}>You got</Text>
               <Text style={styles.suckerPunchNoticeText}>Sucker Punched!</Text>
@@ -3527,6 +3625,7 @@ type ScorePairProps = {
   setOpponentScoreRef: (category: ScoreCategory, node: ViewRef | null) => void;
   setScoreBoxRef: (category: ScoreCategory, node: ViewRef | null) => void;
   selectedPulse: Animated.Value;
+  suckerPunchWipe: SuckerPunchWipe | null;
   compactLayout: boolean;
 };
 
@@ -3563,6 +3662,7 @@ function ScoreCell({
   setOpponentScoreRef,
   setScoreBoxRef,
   selectedPulse,
+  suckerPunchWipe,
   compactLayout,
 }: ScoreCellProps) {
   const homeLockedScore = homePlayer.scorecard[category];
@@ -3587,6 +3687,10 @@ function ScoreCell({
   const opponentSuckerBonus = opponentLockedSuckerBonus || (activePlayerIndex === 1 && previewHasSuckerBonus);
   const homeDisplayScore = displayScoreWithoutSuckerBonus(homeLockedScore, homeLockedSuckerBonus);
   const opponentDisplayScore = displayScoreWithoutSuckerBonus(opponentLockedScore, opponentLockedSuckerBonus);
+  const homeWipe =
+    suckerPunchWipe?.category === category && suckerPunchWipe.playerId === homePlayer.id ? suckerPunchWipe : null;
+  const opponentWipe =
+    suckerPunchWipe?.category === category && suckerPunchWipe.playerId === opponentPlayer.id ? suckerPunchWipe : null;
   const scoreText =
     homeDisplayScore !== null ? String(homeDisplayScore) : homePreviewScore !== null ? String(homePreviewScore) : '';
   const opponentScoreText =
@@ -3643,6 +3747,7 @@ function ScoreCell({
             styles.scoreBox,
             compactLayout && styles.compactScoreBox,
             homeLockedScore !== null && styles.lockedScoreBox,
+            homeWipe && styles.suckerPunchWipeScoreBox,
             highlighted && activePlayerIndex === 0 && styles.selectedScoreBox,
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
@@ -3650,17 +3755,21 @@ function ScoreCell({
           testID={`home-score-box-${category}`}
         >
           {homeSuckerBonus && <SuckerBonusBadge />}
-          <Text
-            allowFontScaling={false}
-            numberOfLines={1}
-            style={[
-              styles.scoreBoxText,
-              compactLayout && styles.compactScoreBoxText,
-              homePreviewScore !== null && styles.previewScoreText,
-            ]}
-          >
-            {scoreText}
-          </Text>
+          {homeWipe ? (
+            <SuckerPunchScoreWipe compact={compactLayout} home progress={homeWipe.progress} score={homeWipe.score} />
+          ) : (
+            <Text
+              allowFontScaling={false}
+              numberOfLines={1}
+              style={[
+                styles.scoreBoxText,
+                compactLayout && styles.compactScoreBoxText,
+                homePreviewScore !== null && styles.previewScoreText,
+              ]}
+            >
+              {scoreText}
+            </Text>
+          )}
         </Pressable>
       </Animated.View>
       <Pressable
@@ -3671,19 +3780,122 @@ function ScoreCell({
         testID={`opponent-score-box-${category}`}
       >
         {opponentSuckerBonus && <SuckerBonusBadge compact />}
-        <Text
-          allowFontScaling={false}
-          numberOfLines={1}
-          style={[
-            styles.opponentScoreText,
-            compactLayout && styles.compactOpponentScoreText,
-            opponentPreviewScore !== null && styles.previewScoreText,
-          ]}
-        >
-          {opponentScoreText}
-        </Text>
+        {opponentWipe ? (
+          <SuckerPunchScoreWipe
+            compact={compactLayout}
+            home={false}
+            progress={opponentWipe.progress}
+            score={opponentWipe.score}
+          />
+        ) : (
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            style={[
+              styles.opponentScoreText,
+              compactLayout && styles.compactOpponentScoreText,
+              opponentPreviewScore !== null && styles.previewScoreText,
+            ]}
+          >
+            {opponentScoreText}
+          </Text>
+        )}
       </Pressable>
     </View>
+  );
+}
+
+function SuckerPunchScoreWipe({
+  compact,
+  home,
+  progress,
+  score,
+}: {
+  compact: boolean;
+  home: boolean;
+  progress: Animated.Value;
+  score: number;
+}) {
+  const scoreOpacity = progress.interpolate({
+    inputRange: [0, 0.1, 0.62, 1],
+    outputRange: [1, 1, 1, 0],
+  });
+  const scoreScale = progress.interpolate({
+    inputRange: [0, 0.16, 0.48, 1],
+    outputRange: [1, 1.38, 0.92, 0.22],
+  });
+  const scoreTranslateX = progress.interpolate({
+    inputRange: [0, 0.18, 0.58, 1],
+    outputRange: [0, -8, 16, 82],
+  });
+  const scoreTranslateY = progress.interpolate({
+    inputRange: [0, 0.18, 0.6, 1],
+    outputRange: [0, 3, -2, -22],
+  });
+  const scoreRotate = progress.interpolate({
+    inputRange: [0, 0.18, 0.5, 1],
+    outputRange: ['0deg', '-9deg', '7deg', '27deg'],
+  });
+  const flashOpacity = progress.interpolate({
+    inputRange: [0, 0.1, 0.26, 1],
+    outputRange: [0, 0.82, 0, 0],
+  });
+  const slashOpacity = progress.interpolate({
+    inputRange: [0, 0.08, 0.68, 1],
+    outputRange: [0, 1, 1, 0],
+  });
+  const slashScale = progress.interpolate({
+    inputRange: [0, 0.15, 0.62, 1],
+    outputRange: [0.15, 1.32, 1, 2.1],
+  });
+  const slashTranslateX = progress.interpolate({
+    inputRange: [0, 0.16, 0.66, 1],
+    outputRange: [-62, -4, 10, 64],
+  });
+
+  return (
+    <Animated.View pointerEvents="none" style={styles.suckerPunchScoreWipe}>
+      <Animated.View style={[styles.suckerPunchWipeFlash, { opacity: flashOpacity }]} />
+      <Animated.Text
+        allowFontScaling={false}
+        numberOfLines={1}
+        style={[
+          home ? styles.scoreBoxText : styles.opponentScoreText,
+          compact && (home ? styles.compactScoreBoxText : styles.compactOpponentScoreText),
+          styles.suckerPunchWipeScoreText,
+          {
+            opacity: scoreOpacity,
+            transform: [
+              { translateX: scoreTranslateX },
+              { translateY: scoreTranslateY },
+              { rotate: scoreRotate },
+              { scale: scoreScale },
+            ],
+          },
+        ]}
+      >
+        {score}
+      </Animated.Text>
+      <Animated.View
+        style={[
+          styles.suckerPunchWipeSlash,
+          {
+            opacity: slashOpacity,
+            transform: [{ translateX: slashTranslateX }, { rotate: '-22deg' }, { scaleX: slashScale }],
+          },
+        ]}
+      />
+      <Animated.View
+        style={[
+          styles.suckerPunchWipeSlash,
+          styles.suckerPunchWipeSlashSecond,
+          {
+            opacity: slashOpacity,
+            transform: [{ translateX: slashTranslateX }, { rotate: '24deg' }, { scaleX: slashScale }],
+          },
+        ]}
+      />
+    </Animated.View>
   );
 }
 
@@ -4380,6 +4592,48 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     textAlign: 'center',
     width: '100%',
+  },
+  suckerPunchWipeScoreBox: {
+    backgroundColor: '#FFE08A',
+    borderColor: '#F12D22',
+  },
+  suckerPunchScoreWipe: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+    zIndex: 8,
+  },
+  suckerPunchWipeFlash: {
+    backgroundColor: 'rgba(255, 243, 194, 0.95)',
+    borderRadius: 36,
+    height: 72,
+    position: 'absolute',
+    width: 72,
+  },
+  suckerPunchWipeScoreText: {
+    textShadowColor: '#F12D22',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+    zIndex: 1,
+  },
+  suckerPunchWipeSlash: {
+    backgroundColor: '#F12D22',
+    borderColor: '#5A1308',
+    borderRadius: 4,
+    borderWidth: 1,
+    height: 6,
+    position: 'absolute',
+    shadowColor: '#050505',
+    shadowOffset: { width: 1, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 0,
+    width: '154%',
+    zIndex: 2,
+  },
+  suckerPunchWipeSlashSecond: {
+    backgroundColor: '#FFD329',
+    height: 4,
   },
   compactOpponentScoreText: {
     fontSize: 26,
