@@ -241,6 +241,7 @@ const suckerScorecardWordmarkImage = require('./assets/sucker-scorecard-wordmark
 const suckerLobbyHeaderImage = require('./assets/sucker-lobby-header.png');
 const suckerGameBannerImage = require('./assets/sucker-game-header-clean.png');
 const suckerTokenImage = require('./assets/sucker-token.png');
+const suckerPunchReadyImage = require('./assets/sucker-punch-ready.png');
 const suckerPunchLandedImage = require('./assets/sucker-punch-landed.png');
 const suckerPunchBlockedImage = require('./assets/sucker-punch-blocked.png');
 
@@ -3387,6 +3388,7 @@ function SuckerPunchChanceDialog({
   const isRolled = phase === 'rolled';
   const isRollingChance = phase === 'rolling';
   const isThrowing = phase === 'throwing';
+  const showPunchImage = isRolled || isResult;
   const chancePercent = suckerPunchChanceByDie[face];
   const title = isResult
     ? outcome?.landed
@@ -3426,10 +3428,10 @@ function SuckerPunchChanceDialog({
         {isRolled && <Text style={styles.suckerPunchChanceHint}>{chancePercent}% chance to land.</Text>}
         {isThrowing && <Text style={styles.suckerPunchChanceHint}>Will it land?</Text>}
 
-        <View style={isResult ? styles.suckerPunchResultImageShell : styles.suckerPunchChanceDieShell}>
-          {isResult ? (
+        <View style={showPunchImage ? styles.suckerPunchResultImageShell : styles.suckerPunchChanceDieShell}>
+          {showPunchImage ? (
             <Image
-              source={didBlock ? suckerPunchBlockedImage : suckerPunchLandedImage}
+              source={isRolled ? suckerPunchReadyImage : didBlock ? suckerPunchBlockedImage : suckerPunchLandedImage}
               style={styles.suckerPunchResultImage}
             />
           ) : (
