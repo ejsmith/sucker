@@ -226,7 +226,7 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
   const notice = page.getByTestId('sucker-punch-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
   await expect(notice).toBeHidden({ timeout: 5_000 });
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(200);
   await expect(suckerScoreBox).toContainText('50');
   await page.waitForTimeout(1_700);
   await expect(suckerScoreBox).not.toContainText('50');

@@ -272,7 +272,7 @@ const computerScoreRevealPauseMs = 2000;
 const computerScoreAnimationDurationMs = 950;
 const suckerBlockedNoticeDurationMs = 1700;
 const suckerPunchNoticeDurationMs = 1700;
-const suckerPunchScoreWipeDelayMs = 180;
+const suckerPunchScoreWipeDelayMs = 240;
 const suckerPunchScoreWipeDurationMs = 1250;
 const remoteRollServerHeadStartMs = 80;
 const rollFinalFaceHoldMs = 120;
@@ -3880,32 +3880,32 @@ function SuckerPunchScoreWipe({
 }) {
   const exitDirection = home ? -1 : 1;
   const scoreOpacity = progress.interpolate({
-    inputRange: [0, 0.5, 0.8, 1],
-    outputRange: [1, 1, 0, 0],
+    inputRange: [0, 0.72, 0.98, 1],
+    outputRange: [1, 1, 0.12, 0],
   });
   const scoreScale = progress.interpolate({
-    inputRange: [0, 0.4, 0.76, 1],
-    outputRange: [1, 0.82, 0.58, 0.46],
+    inputRange: [0, 0.7, 0.96, 1],
+    outputRange: [1, 0.84, 0.54, 0.46],
   });
   const scoreTranslateX = progress.interpolate({
-    inputRange: [0, 0.48, 0.82, 1],
+    inputRange: [0, 0.7, 0.96, 1],
     outputRange: [0, 0, exitDirection * 62, exitDirection * 82],
   });
   const scoreTranslateY = progress.interpolate({
-    inputRange: [0, 0.42, 0.76, 1],
-    outputRange: [0, 2, -2, 5],
+    inputRange: [0, 0.7, 0.96, 1],
+    outputRange: [0, 1, -2, 5],
   });
   const scoreRotate = progress.interpolate({
-    inputRange: [0, 0.42, 0.82, 1],
-    outputRange: ['0deg', `${-exitDirection * 5}deg`, `${exitDirection * 12}deg`, `${exitDirection * 16}deg`],
+    inputRange: [0, 0.7, 0.96, 1],
+    outputRange: ['0deg', `${-exitDirection * 3}deg`, `${exitDirection * 12}deg`, `${exitDirection * 16}deg`],
   });
   const impactOpacity = progress.interpolate({
-    inputRange: [0, 0.06, 0.56, 0.88, 1],
-    outputRange: [0, 1, 1, 0.3, 0],
+    inputRange: [0, 0.08, 0.62, 0.9, 1],
+    outputRange: [0, 1, 1, 0.28, 0],
   });
   const impactScale = progress.interpolate({
-    inputRange: [0, 0.2, 0.58, 1],
-    outputRange: [0.2, 1.34, 0.96, 0.12],
+    inputRange: [0, 0.24, 0.68, 1],
+    outputRange: [0, 1.42, 0.94, 0],
   });
 
   return (
@@ -3919,7 +3919,7 @@ function SuckerPunchScoreWipe({
           },
         ]}
       >
-        <Svg height={36} viewBox="0 0 36 36" width={36}>
+        <Svg height={36} style={styles.suckerPunchWipeImpactGraphic} viewBox="0 0 36 36" width={36}>
           <Path
             d="M18 1 22 11 33 6 27 16 35 18 27 22 33 31 22 27 18 35 14 27 3 31 9 22 1 18 9 14 3 5 14 11Z"
             fill="#FFD329"
@@ -4651,6 +4651,7 @@ const styles = StyleSheet.create({
   suckerPunchScoreWipe: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     overflow: 'hidden',
     zIndex: 8,
@@ -4660,11 +4661,15 @@ const styles = StyleSheet.create({
   },
   suckerPunchWipeImpact: {
     alignItems: 'center',
+    backgroundColor: 'transparent',
     height: 36,
     justifyContent: 'center',
     position: 'absolute',
     width: 36,
     zIndex: 3,
+  },
+  suckerPunchWipeImpactGraphic: {
+    backgroundColor: 'transparent',
   },
   compactOpponentScoreText: {
     fontSize: 26,
