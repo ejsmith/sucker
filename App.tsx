@@ -262,7 +262,6 @@ const computerScoreAnimationDurationMs = 950;
 const suckerBlockedNoticeDurationMs = 1700;
 const remoteRollServerHeadStartMs = 80;
 const rollFinalFaceHoldMs = 120;
-const suckerPunchRollResultPauseMs = 1150;
 const sectionBonusAfterScoreDelayMs = 160;
 const sectionBonusAnimationDurationMs = 760;
 const backSwipeEdgeWidth = 28;
@@ -2202,7 +2201,6 @@ function LocalGameScreen({
 
     setSuckerPunchChanceFace(outcome.chanceDie);
     suckerPunchResultCompletion.current = completeAfterResult;
-    await wait(suckerPunchRollResultPauseMs);
     setSuckerPunchDialog({ ...dialog, outcome, phase: 'result' });
   }
 
@@ -3388,7 +3386,7 @@ function SuckerPunchChanceDialog({
   const isRolled = phase === 'rolled';
   const isRollingChance = phase === 'rolling';
   const isThrowing = phase === 'throwing';
-  const showPunchImage = isRolled || isResult;
+  const showPunchImage = isRolled || isThrowing || isResult;
   const chancePercent = suckerPunchChanceByDie[face];
   const title = isResult
     ? outcome?.landed
@@ -3431,8 +3429,15 @@ function SuckerPunchChanceDialog({
         <View style={showPunchImage ? styles.suckerPunchResultImageShell : styles.suckerPunchChanceDieShell}>
           {showPunchImage ? (
             <Image
-              source={isRolled ? suckerPunchReadyImage : didBlock ? suckerPunchBlockedImage : suckerPunchLandedImage}
+              source={
+                isRolled || isThrowing
+                  ? suckerPunchReadyImage
+                  : didBlock
+                    ? suckerPunchBlockedImage
+                    : suckerPunchLandedImage
+              }
               style={styles.suckerPunchResultImage}
+              testID={isResult ? 'sucker-punch-result-image' : 'sucker-punch-ready-image'}
             />
           ) : (
             <Animated.View
