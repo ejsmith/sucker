@@ -77,9 +77,24 @@ export const startingSuckerTokens = 10;
 export const suckerTokenCosts = {
   extraRoll: 1,
   mulligan: 3,
-  suckerBlocker: 3,
   suckerPunch: 3,
 } as const;
+
+export const suckerPunchChanceByDie = {
+  1: 20,
+  2: 35,
+  3: 50,
+  4: 65,
+  5: 75,
+  6: 90,
+} as const satisfies Record<DieValue, number>;
+
+export type SuckerPunchOutcome = {
+  chanceDie: DieValue;
+  chancePercent: number;
+  landed: boolean;
+  rollPercent: number;
+};
 
 const upperValues = {
   ones: 1,
@@ -162,7 +177,7 @@ export function scoreTurn(game: GameState, category: ScoreCategory): GameState {
 
 export function scratchScoreBox(game: GameState, category: ScoreCategory): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
-  if (currentPlayer.scorecard[category] !== null || game.rollNumber === 0 || game.phase === 'complete') {
+  if (currentPlayer.scorecard[category] !== null || game.phase === 'complete') {
     return game;
   }
 
@@ -181,7 +196,6 @@ export function purchaseExtraRoll(game: GameState): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
   if (
     game.phase === 'complete' ||
-    game.rollNumber < maxAvailableRolls(game) ||
     !currentPlayer ||
     currentPlayer.suckerTokens < suckerTokenCosts.extraRoll
   ) {
@@ -199,7 +213,6 @@ export function mulliganCurrentTurn(game: GameState): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
   if (
     game.phase === 'complete' ||
-    game.rollNumber === 0 ||
     !currentPlayer ||
     currentPlayer.suckerTokens < suckerTokenCosts.mulligan
   ) {
@@ -266,6 +279,25 @@ export function upperBonus(scorecard: Scorecard): number {
 
 export function rollDie(random: () => number = Math.random): DieValue {
   return (Math.floor(random() * 6) + 1) as DieValue;
+}
+
+export function rollSuckerPunchOutcome(random: () => number = Math.random): SuckerPunchOutcome {
+  return resolveSuckerPunchOutcome(rollDie(random), random);
+}
+
+export function resolveSuckerPunchOutcome(
+  chanceDie: DieValue,
+  random: () => number = Math.random,
+): SuckerPunchOutcome {
+  const chancePercent = suckerPunchChanceByDie[chanceDie];
+  const rollPercent = Math.floor(random() * 100) + 1;
+
+  return {
+    chanceDie,
+    chancePercent,
+    landed: rollPercent <= chancePercent,
+    rollPercent,
+  };
 }
 
 export function isSuckerRoll(dice: Dice): boolean {

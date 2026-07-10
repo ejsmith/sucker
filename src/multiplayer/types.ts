@@ -1,4 +1,4 @@
-import type { Dice, GameState, ScoreCategory } from '../game';
+import type { Dice, DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from '../game';
 
 export type RemoteGameStatus = 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
 
@@ -89,11 +89,7 @@ export type MultiplayerAction =
       type: 'sucker_punch';
       gameId: string;
       turnId: string;
-    }
-  | {
-      type: 'sucker_blocker';
-      gameId: string;
-      turnId: string;
+      chanceDie?: DieValue;
     };
 
 export type MultiplayerActionResult = {
@@ -101,6 +97,7 @@ export type MultiplayerActionResult = {
   dice?: Dice;
   inviteCode?: string;
   notificationProfileIds?: string[];
+  suckerPunchOutcome?: SuckerPunchOutcome;
 };
 
 export type RemoveGameActionResult = {

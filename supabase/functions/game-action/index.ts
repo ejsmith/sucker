@@ -1,18 +1,21 @@
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
 import {
   createEmptyScorecard,
   type Dice,
+  type DieValue,
   type GameState,
   isSuckerRoll,
   maxRollsPerTurn,
   type Player,
+  resolveSuckerPunchOutcome,
   rollDie,
   scoreCategories,
   type ScoreCategory,
   scoreCategoryForScorecard,
   startingSuckerTokens,
+  type SuckerPunchOutcome,
   suckerTokenCosts,
   toDice,
   toGameState,
@@ -39,6 +42,7 @@ type ActionResult = {
   inviteCode?: string;
   notificationProfileIds?: string[];
   removedGameId?: string;
+  suckerPunchOutcome?: SuckerPunchOutcome;
 };
 type NotificationContent = {
   body: string;
@@ -80,7 +84,7 @@ type Action =
     }
   | { type: 'pass_response'; gameId: string }
   | { type: 'mulligan'; gameId: string }
-  | { type: 'sucker_punch'; gameId: string; turnId: string }
+  | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 
 const corsHeaders = {
@@ -175,7 +179,7 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
     case 'mulligan':
       return mulliganTurn(admin, actorId, action.gameId);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, action.chanceDie);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -233,7 +237,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
   const tokens = (pushTokens ?? []) as PushTokenRow[];
   const badgeCounts = await loadBadgeCounts(admin, uniqueProfileIds);
   const messages = tokens.flatMap((pushToken) => {
-    const content = buildNotificationContent(action, game, latestTurn, actorId, pushToken.profile_id);
+    const content = buildNotificationContent(action, result, game, latestTurn, actorId, pushToken.profile_id);
     if (!content) {
       return [];
     }
@@ -260,6 +264,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       admin,
       webPushSubscriptions as WebPushSubscriptionRow[] | null,
       action,
+      result,
       game,
       latestTurn,
       actorId,
@@ -274,6 +279,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
       admin,
       webPushSubscriptions as WebPushSubscriptionRow[] | null,
       action,
+      result,
       game,
       latestTurn,
       actorId,
@@ -311,6 +317,7 @@ async function sendWebPushNotifications(
   admin: DbClient,
   subscriptions: WebPushSubscriptionRow[] | null,
   action: Action,
+  result: ActionResult,
   game: GameRow,
   latestTurn: TurnRow | null,
   actorId: string,
@@ -327,7 +334,7 @@ async function sendWebPushNotifications(
 
   await Promise.all(
     subscriptions.map(async (subscription) => {
-      const content = buildNotificationContent(action, game, latestTurn, actorId, subscription.profile_id);
+      const content = buildNotificationContent(action, result, game, latestTurn, actorId, subscription.profile_id);
       if (!content) {
         return;
       }
@@ -443,6 +450,7 @@ function getGameNotificationUrl(gameId: string) {
 
 function buildNotificationContent(
   action: Action,
+  result: ActionResult,
   game: GameRow,
   latestTurn: TurnRow | null,
   actorId: string,
@@ -471,6 +479,13 @@ function buildNotificationContent(
     case 'scratch_category':
       return buildTurnSubmittedNotification(action, actorName, latestTurn);
     case 'sucker_punch':
+      if (result.suckerPunchOutcome?.landed === false) {
+        return {
+          body: `${actorName} tried to Sucker Punch you, but you blocked it.`,
+          title: 'Sucker Punch blocked!',
+        };
+      }
+
       return {
         body: `${actorName} forced you to replay your last turn.`,
         title: 'You got Sucker Punched!',
@@ -1092,7 +1107,7 @@ async function scoreRemoteTurn(
   assertCurrentPlayer(state, actorId);
 
   const currentPlayer = state.players[state.currentPlayerIndex];
-  if (state.rollNumber === 0 || state.phase === 'complete') {
+  if ((!scratch && state.rollNumber === 0) || state.phase === 'complete') {
     throw new Error('Roll before playing a score.');
   }
   if (currentPlayer.scorecard[category] !== null) {
@@ -1285,7 +1300,13 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
   return { game: updatedGame };
 }
 
-async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string, turnId: string) {
+async function suckerPunchTurn(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  turnId: string,
+  requestedChanceDie?: DieValue,
+) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
     throw new Error('Sucker Punch can only target the opponent’s latest submitted turn.');
@@ -1302,79 +1323,25 @@ async function suckerPunchTurn(admin: DbClient, actorId: string, gameId: string,
     throw new Error(`You need ${suckerTokenCosts.suckerPunch} Sucker Tokens to Sucker Punch.`);
   }
 
-  let nextState = removeScoredTurn(state, turn, turn.player_id, 0);
-  nextState = updatePlayerTokens(nextState, actorId, -suckerTokenCosts.suckerPunch);
+  if (
+    requestedChanceDie !== undefined &&
+    (!Number.isInteger(requestedChanceDie) || requestedChanceDie < 1 || requestedChanceDie > 6)
+  ) {
+    throw new Error('Sucker Punch chance die must be between 1 and 6.');
+  }
+
+  const chanceDie = requestedChanceDie ?? rollDie(edgeSuckerPunchDieRandom);
+  const outcome = resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom);
+  let nextState = updatePlayerTokens(state, actorId, -suckerTokenCosts.suckerPunch);
+  if (outcome.landed) {
+    nextState = removeScoredTurn(nextState, turn, turn.player_id, 0);
+  }
+  const nextPlayerId = outcome.landed ? turn.player_id : actorId;
 
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
-      current_player_id: turn.player_id,
-      state: nextState,
-      status: 'blocked_response',
-    })
-    .eq('id', gameId)
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  await Promise.all([
-    updateTurnStatus(admin, turn.id, 'punched'),
-    insertTokenEvent(admin, {
-      event_type: 'sucker_punch',
-      game_id: gameId,
-      player_id: actorId,
-      target_turn_id: turn.id,
-      token_delta: -suckerTokenCosts.suckerPunch,
-    }),
-    syncGamePlayers(admin, gameId, nextState, false),
-    insertAction(admin, gameId, actorId, 'sucker_punch', {
-      turnId: turn.id,
-      ...buildSuckerPunchActionPayload(turn.player_id),
-    }),
-  ]);
-
-  return { game: updatedGame, notificationProfileIds: [turn.player_id] };
-}
-
-async function blockSuckerPunch(admin: DbClient, actorId: string, gameId: string, turnId: string) {
-  const game = await loadGameForActor(admin, gameId, actorId);
-  if (game.status !== 'blocked_response' || game.last_turn_id !== turnId) {
-    throw new Error('There is no Sucker Punch to block.');
-  }
-
-  const turn = await loadTurn(admin, turnId);
-  if (turn.player_id !== actorId || turn.status !== 'punched') {
-    throw new Error('You can only block a Sucker Punch against your latest turn.');
-  }
-
-  const state = game.state;
-  const target = findPlayer(state, actorId);
-  if (target.suckerTokens < suckerTokenCosts.suckerBlocker) {
-    throw new Error(`You need ${suckerTokenCosts.suckerBlocker} Sucker Tokens to use Sucker Blocker.`);
-  }
-
-  const restoredState = restoreScoredTurn(state, turn, -suckerTokenCosts.suckerBlocker);
-  const nextPlayer = restoredState.players.find((player) => player.id !== actorId);
-  if (!nextPlayer) {
-    throw new Error('Unable to find the next player.');
-  }
-  const nextState: GameState = {
-    ...restoredState,
-    currentPlayerIndex: restoredState.players.findIndex((player) => player.id === nextPlayer.id),
-    dice: [1, 1, 1, 1, 1],
-    extraRollsAvailable: 0,
-    held: [false, false, false, false, false],
-    phase: 'rolling',
-    rollNumber: 0,
-  };
-
-  const { data: updatedGame, error } = await admin
-    .from('games')
-    .update({
-      current_player_id: nextPlayer.id,
+      current_player_id: nextPlayerId,
       state: nextState,
       status: 'active',
     })
@@ -1387,21 +1354,35 @@ async function blockSuckerPunch(admin: DbClient, actorId: string, gameId: string
   }
 
   await Promise.all([
-    updateTurnStatus(admin, turn.id, 'blocked'),
+    outcome.landed ? updateTurnStatus(admin, turn.id, 'punched') : Promise.resolve(),
     insertTokenEvent(admin, {
-      event_type: 'sucker_blocker',
+      event_type: 'sucker_punch',
       game_id: gameId,
       player_id: actorId,
       target_turn_id: turn.id,
-      token_delta: -suckerTokenCosts.suckerBlocker,
+      token_delta: -suckerTokenCosts.suckerPunch,
     }),
     syncGamePlayers(admin, gameId, nextState, false),
-    insertAction(admin, gameId, actorId, 'sucker_blocker', {
-      turnId: turn.id,
+    insertAction(admin, gameId, actorId, 'sucker_punch', {
+      ...buildSuckerPunchActionPayload(turn.player_id, outcome, {
+        id: turn.id,
+        turnIndex: turn.turn_index,
+      }),
     }),
   ]);
 
-  return { game: updatedGame, notificationProfileIds: [nextPlayer.id] };
+  return { game: updatedGame, notificationProfileIds: [turn.player_id], suckerPunchOutcome: outcome };
+}
+
+async function blockSuckerPunch(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  turnId: string,
+): Promise<ActionResult> {
+  await loadGameForActor(admin, gameId, actorId);
+  await loadTurn(admin, turnId);
+  throw new Error('Sucker Blocker has been retired.');
 }
 
 async function loadGameForActor(admin: DbClient, gameId: string, actorId: string): Promise<GameRow> {
@@ -1656,8 +1637,8 @@ function rollGame(state: GameState, actorId: string, submittedHeld?: GameState['
 function purchaseExtraRoll(state: GameState, actorId: string, submittedHeld?: GameState['held']): GameState {
   assertCurrentPlayer(state, actorId);
   const player = findPlayer(state, actorId);
-  if (state.phase === 'complete' || state.rollNumber < maxAvailableRolls(state)) {
-    throw new Error('Extra Roll is available after you use every available roll.');
+  if (state.phase === 'complete') {
+    throw new Error('Extra Roll is not available after the game is complete.');
   }
   if (player.suckerTokens < suckerTokenCosts.extraRoll) {
     throw new Error(`You need ${suckerTokenCosts.extraRoll} Sucker Token to buy an Extra Roll.`);
@@ -1695,6 +1676,24 @@ function edgeRollRandom(): number {
   const fixedDie = Number(Deno.env.get('SUCKER_E2E_FIXED_DIE'));
   if (Number.isInteger(fixedDie) && fixedDie >= 1 && fixedDie <= 6) {
     return (fixedDie - 1) / 6;
+  }
+
+  return cryptoRandom();
+}
+
+function edgeSuckerPunchDieRandom(): number {
+  const fixedDie = Number(Deno.env.get('SUCKER_E2E_SUCKER_PUNCH_DIE'));
+  if (Number.isInteger(fixedDie) && fixedDie >= 1 && fixedDie <= 6) {
+    return (fixedDie - 1) / 6;
+  }
+
+  return cryptoRandom();
+}
+
+function edgeSuckerPunchOutcomeRandom(): number {
+  const fixedRoll = Number(Deno.env.get('SUCKER_E2E_SUCKER_PUNCH_ROLL'));
+  if (Number.isInteger(fixedRoll) && fixedRoll >= 1 && fixedRoll <= 100) {
+    return (fixedRoll - 1) / 100;
   }
 
   return cryptoRandom();

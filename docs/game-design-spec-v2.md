@@ -112,7 +112,6 @@ Tokens are a limited strategic resource.
 Players must decide whether to spend tokens:
 
 - Improving their own rolls
-- Defending against attacks
 - Attacking opponents
 
 ⸻
@@ -170,36 +169,34 @@ Cost: 3 Tokens
 
 Description
 
-Force the opponent to replay their most recently completed turn.
+Attempt to force the opponent to replay their most recently completed turn.
 
 Rules
 
 - Can only target the opponent’s immediately previous turn
+- The target turn may have scored or scratched any category
 - Cannot target older turns
-- Original score is removed
-- Opponent must replay the turn
+- The chance die is rolled in a dedicated dialog over the game board, not in the normal dice tray or slots
+- The attacking player rolls one die to set the hit chance:
+  - 1 = 20%
+  - 2 = 35%
+  - 3 = 50%
+  - 4 = 65%
+  - 5 = 75%
+  - 6 = 90%
+- If the punch lands:
+  - Original score is removed
+  - Opponent must replay the turn
+- If the punch is blocked:
+  - Original score remains intact
+  - Attacking player keeps the turn and plays normally
+  - Opponent later sees a blocked-punch notice
 
 Timing
 
 Must be used before the attacking player starts their next turn.
 
 Unused opportunities expire.
-
-⸻
-
-Sucker Blocker
-
-Cost: 3 Tokens
-
-Description
-
-Cancel a Sucker Punch.
-
-Rules
-
-- May only be used in response to a Sucker Punch
-- Original turn result remains intact
-- Consumes 3 tokens
 
 ⸻
 
@@ -256,10 +253,14 @@ After a turn is submitted:
 1. Opponent receives notification
 2. Opponent may:
    - Accept result
-   - Use Sucker Punch
-3. If Sucker Punch is used:
-   - Defender may use Sucker Blocker
-4. Turn becomes finalized
+   - Use Sucker Punch against the submitted turn
+3. If Sucker Punch lands:
+   - Submitted score is removed
+   - Target replays the turn
+4. If Sucker Punch is blocked:
+   - Submitted score remains
+   - Attacker starts their normal turn
+5. Turn becomes finalized
 
 ⸻
 
@@ -272,12 +273,12 @@ Turn Events
 - Your turn.
 - Opponent completed their turn.
 - Opponent rolled a SUCKER!
+- Opponent tried to Sucker Punch you, but you blocked it.
 
 Attack Events
 
 - You were Sucker Punched!
 - Sucker Punch successful.
-- Sucker Blocker activated.
 - Sucker Punch blocked.
 
 Game Events
@@ -307,7 +308,7 @@ Tactical Player
 Defensive Player
 
 - Maintains token reserves
-- Prioritizes Sucker Blockers
+- Chooses carefully when to accept or risk a Sucker Punch attempt
 - Minimizes risk
 
 ⸻

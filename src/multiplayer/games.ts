@@ -1,7 +1,15 @@
 import { supabase } from './supabase';
 import type { Database } from './database.types';
 import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
-import { scoreCategories, type GameState, type ScoreCategory, toDice, toGameState, toHeldDice } from '../game';
+import {
+  scoreCategories,
+  type DieValue,
+  type GameState,
+  type ScoreCategory,
+  toDice,
+  toGameState,
+  toHeldDice,
+} from '../game';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -36,6 +44,40 @@ export async function getTurn(turnId: string) {
   }
 
   return toRemoteTurnRow(data);
+}
+
+export async function getLatestRemoteBlockedSuckerPunch(
+  gameId: string,
+  targetPlayerId: string,
+  targetTurnIndex: number,
+) {
+  const { data, error } = await supabase
+    .from('turn_actions')
+    .select('id, actor_id, created_at, payload')
+    .eq('game_id', gameId)
+    .eq('action_type', 'sucker_punch')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (error) {
+    throw error;
+  }
+
+  return (
+    (data as Pick<TurnActionRow, 'actor_id' | 'created_at' | 'id' | 'payload'>[] | null)?.find((action) => {
+      const payload = action.payload;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return false;
+      }
+
+      const values = payload as Record<string, unknown>;
+      return (
+        values.targetPlayerId === targetPlayerId &&
+        values.landed === false &&
+        values.targetTurnIndex === targetTurnIndex
+      );
+    }) ?? null
+  );
 }
 
 export async function applyMultiplayerAction(action: MultiplayerAction): Promise<MultiplayerActionResult> {
@@ -158,12 +200,8 @@ export async function useRemoteMulligan(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'mulligan' });
 }
 
-export async function useRemoteSuckerPunch(gameId: string, turnId: string) {
-  return applyMultiplayerAction({ gameId, turnId, type: 'sucker_punch' });
-}
-
-export async function useRemoteSuckerBlocker(gameId: string, turnId: string) {
-  return applyMultiplayerAction({ gameId, turnId, type: 'sucker_blocker' });
+export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
+  return applyMultiplayerAction({ chanceDie, gameId, turnId, type: 'sucker_punch' });
 }
 
 export async function nudgeRemoteGame(gameId: string) {

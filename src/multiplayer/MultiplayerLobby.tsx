@@ -1682,7 +1682,7 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
       </View>
       <View style={lobbyStyles.statRow}>
         <Text style={lobbyStyles.statLine}>Punches {stats.sucker_punches_used ?? 0}</Text>
-        <Text style={lobbyStyles.statLine}>Blocks {stats.sucker_blockers_used ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>Punched {stats.sucker_punches_received ?? 0}</Text>
       </View>
       <View style={lobbyStyles.statRow}>
         <Text style={lobbyStyles.statLine}>Hunts {stats.sucker_hunts ?? 0}</Text>

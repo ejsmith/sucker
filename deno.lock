@@ -1,0 +1,43 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@supabase/supabase-js@2": "2.110.1"
+  },
+  "jsr": {
+    "@supabase/supabase-js@2.110.1": {
+      "integrity": "2d28e53e105c7686fa563980fca398f6c0d37aaf30ac1beb32b2407bb9e36862"
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@expo/metro-runtime@~6.1.2",
+        "npm:@playwright/test@^1.61.0",
+        "npm:@react-native-async-storage/async-storage@2.2.0",
+        "npm:@supabase/supabase-js@^2.110.1",
+        "npm:@types/react@~19.1.10",
+        "npm:eslint-config-expo@10.0",
+        "npm:eslint-config-prettier@^10.1.8",
+        "npm:eslint-plugin-prettier@^5.5.6",
+        "npm:eslint@^9.39.4",
+        "npm:expo-constants@~18.0.13",
+        "npm:expo-dev-client@~6.0.21",
+        "npm:expo-device@~8.0.10",
+        "npm:expo-notifications@~0.32.17",
+        "npm:expo-status-bar@~3.0.9",
+        "npm:expo@54.0",
+        "npm:prettier@^3.8.4",
+        "npm:react-dom@19.1.0",
+        "npm:react-native-safe-area-context@5.6",
+        "npm:react-native-svg@15.12.1",
+        "npm:react-native-url-polyfill@3",
+        "npm:react-native-web@0.21",
+        "npm:react-native@0.81.5",
+        "npm:react@19.1.0",
+        "npm:supabase@^2.109.1",
+        "npm:typescript@~5.9.2",
+        "npm:web-push@^3.6.7"
+      ]
+    }
+  }
+}

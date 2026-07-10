@@ -140,11 +140,6 @@ export function StatsPage({
                     value={formatSkillStat(stats, 'sucker_punches_used')}
                   />
                   <StatsComparisonLine
-                    label="Blocks"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_blockers_used')}
-                    value={formatSkillStat(stats, 'sucker_blockers_used')}
-                  />
-                  <StatsComparisonLine
                     label="Sucker hunts"
                     opponentValue={formatSkillStat(opponentStats, 'sucker_hunts')}
                     value={formatSkillStat(stats, 'sucker_hunts')}
@@ -173,7 +168,6 @@ export function StatsPage({
                   <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
                   <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
                   <StatsValueLine label="Sucker punches" value={String(stats.sucker_punches_used ?? 0)} />
-                  <StatsValueLine label="Blocks" value={String(stats.sucker_blockers_used ?? 0)} />
                   <StatsValueLine label="Sucker hunts" value={String(stats.sucker_hunts ?? 0)} />
                   <StatsValueLine label="Hunt misses" value={String(stats.sucker_hunt_misses ?? 0)} />
                   <StatsValueLine
@@ -217,7 +211,6 @@ type SkillStatKey =
   | 'comeback_wins'
   | 'extra_rolls_used'
   | 'mulligans_used'
-  | 'sucker_blockers_used'
   | 'sucker_hunt_misses'
   | 'sucker_hunts'
   | 'sucker_punches_used';

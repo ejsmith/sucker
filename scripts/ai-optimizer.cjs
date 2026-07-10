@@ -293,15 +293,12 @@ function mutateStrategy(base, random) {
   mutateNumber(strategy, 'opportunityCostSucker', [35, 40, 45, 50, 55], random, 0.3);
   mutateNumber(strategy, 'opportunityCostThreeOfAKind', [14, 18, 22, 26], random, 0.3);
   mutateNumber(strategy, 'stopScoreThreshold', [30, 32, 35, 38, 40], random, 0.3);
-  mutateNumber(strategy, 'suckerBlockerMinScore', [15, 20, 25, 30], random, 0.3);
   mutateNumber(strategy, 'suckerDealChanceMaxScore', [16, 18, 20, 22], random, 0.35);
   mutateNumber(strategy, 'suckerDealMaxSacrificeScore', [1, 2, 3], random, 0.35);
   mutateNumber(strategy, 'suckerDealMaxTokens', [6, 8, 10, 12, 999], random, 0.35);
   mutateNumber(strategy, 'suckerDealMinOpenCategories', [6, 8, 10], random, 0.35);
   mutateNumber(strategy, 'suckerPunchComebackMinCategories', [6, 8, 10], random, 0.3);
   mutateNumber(strategy, 'suckerPunchComebackMinScore', [20, 30, 40], random, 0.3);
-  mutateNumber(strategy, 'suckerPunchReserveTokens', [0, 1, 2, 3], random, 0.3);
-  mutateNumber(strategy, 'suckerPunchUnblockableMinScore', [30, 40, 50, 999], random, 0.3);
   mutateBoolean(strategy, 'turnDecisionRolloutIncludesExtraRoll', random, 0.15);
   mutateBoolean(strategy, 'turnDecisionRolloutIncludesMulligan', random, 0.15);
   mutateNumber(strategy, 'turnDecisionRolloutOpenCategoryMax', [0, 1, 2], random, 0.35);

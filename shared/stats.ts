@@ -4,6 +4,7 @@ import {
   type GameState,
   type Player,
   type ScoreCategory,
+  type SuckerPunchOutcome,
   suckerTokenCosts,
   toScoreCategory,
   totalScore,
@@ -12,6 +13,7 @@ import {
 
 export const blowoutPointMargin = 75;
 export const comebackPointMargin = 50;
+const retiredSuckerBlockerTokenCost = 3;
 
 export type SuckerStatActionType = 'extra_roll' | 'roll' | 'mulligan' | 'sucker_punch' | 'sucker_blocker';
 
@@ -121,7 +123,7 @@ export function calculateSuckerActionStats(actions: SuckerStatAction[], playerId
           break;
         case 'sucker_blocker':
           stats.sucker_blockers_used += 1;
-          stats.sucker_tokens_spent += suckerTokenCosts.suckerBlocker;
+          stats.sucker_tokens_spent += retiredSuckerBlockerTokenCost;
           break;
         case 'sucker_punch':
           stats.sucker_punches_used += 1;
@@ -141,7 +143,9 @@ export function calculateSuckerActionStats(actions: SuckerStatAction[], playerId
 
     if (action.action_type === 'sucker_punch' && actionPayloadValue(action.payload, 'targetPlayerId') === playerId) {
       stats.sucker_punches_received += 1;
-      stats.forced_rerolls += 1;
+      if (actionPayloadValue(action.payload, 'landed') !== false) {
+        stats.forced_rerolls += 1;
+      }
     }
   }
 
@@ -183,8 +187,24 @@ export function buildRollActionPayload(dice: Dice) {
   return { dice };
 }
 
-export function buildSuckerPunchActionPayload(targetPlayerId: string) {
-  return { targetPlayerId };
+export function buildSuckerPunchActionPayload(
+  targetPlayerId: string,
+  outcome?: SuckerPunchOutcome | null,
+  targetTurn?: { id?: string | null; turnIndex?: number | null },
+) {
+  return {
+    targetPlayerId,
+    ...(targetTurn?.id ? { targetTurnId: targetTurn.id, turnId: targetTurn.id } : {}),
+    ...(typeof targetTurn?.turnIndex === 'number' ? { targetTurnIndex: targetTurn.turnIndex } : {}),
+    ...(outcome
+      ? {
+          chanceDie: outcome.chanceDie,
+          chancePercent: outcome.chancePercent,
+          landed: outcome.landed,
+          rollPercent: outcome.rollPercent,
+        }
+      : {}),
+  };
 }
 
 export function isSuckerHuntExtraRoll(game: GameState, playerId: string) {

@@ -7,6 +7,7 @@ import {
   scoreTurn,
   scratchScoreBox,
   startingSuckerTokens,
+  suckerPunchChanceByDie,
   suckerTokenCosts,
   toGameState,
   type Dice,
@@ -47,6 +48,12 @@ Deno.test('Edge shared game rules award a token for scratches, not zero scores',
   const scratched = scratchScoreBox(scratchGame, 'sucker');
   assertEquals(scratched.players[0].scorecard.sucker, 0);
   assertEquals(scratched.players[0].suckerTokens, startingSuckerTokens + 1);
+});
+
+Deno.test('Edge shared game rules expose the Sucker Punch chance ladder', () => {
+  assertEquals(suckerPunchChanceByDie[1], 20);
+  assertEquals(suckerPunchChanceByDie[5], 75);
+  assertEquals(suckerPunchChanceByDie[6], 90);
 });
 
 Deno.test('Edge shared game state defaults legacy missing extra rolls to zero', () => {
