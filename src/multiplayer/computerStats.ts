@@ -87,6 +87,7 @@ export async function recordComputerGameResult(game: GameState, actions: SuckerS
     sucker_blockers_used: playerResult.sucker_blockers_used,
     sucker_hunt_misses: playerResult.sucker_hunt_misses,
     sucker_hunts: playerResult.sucker_hunts,
+    sucker_punches_landed: playerResult.sucker_punches_landed,
     sucker_punches_used: playerResult.sucker_punches_used,
     sucker_tokens_leftover: playerResult.sucker_tokens_leftover,
     sucker_tokens_spent: playerResult.sucker_tokens_spent,

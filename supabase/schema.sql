@@ -165,6 +165,7 @@ create table public.game_player_results (
   mulligans_used integer not null default 0,
   sucker_hunts integer not null default 0,
   sucker_hunt_misses integer not null default 0,
+  sucker_punches_landed integer not null default 0,
   sucker_punches_used integer not null default 0,
   sucker_punches_received integer not null default 0,
   sucker_blockers_used integer not null default 0,
@@ -199,6 +200,7 @@ create table public.head_to_head_stats (
   mulligans_used integer not null default 0,
   sucker_hunts integer not null default 0,
   sucker_hunt_misses integer not null default 0,
+  sucker_punches_landed integer not null default 0,
   sucker_punches_used integer not null default 0,
   sucker_punches_received integer not null default 0,
   sucker_blockers_used integer not null default 0,
@@ -245,6 +247,7 @@ create table public.computer_stats (
   mulligans_used integer not null default 0,
   sucker_hunts integer not null default 0,
   sucker_hunt_misses integer not null default 0,
+  sucker_punches_landed integer not null default 0,
   sucker_punches_used integer not null default 0,
   sucker_blockers_used integer not null default 0,
   sucker_tokens_spent integer not null default 0,
@@ -283,7 +286,8 @@ select
   case when games_played = 0 then 0 else round(full_house_games::numeric / games_played * 100, 2) end as full_house_pct,
   case when games_played = 0 then 0 else round(small_straight_games::numeric / games_played * 100, 2) end as small_straight_pct,
   case when games_played = 0 then 0 else round(large_straight_games::numeric / games_played * 100, 2) end as large_straight_pct,
-  buzzer_beater_wins
+  buzzer_beater_wins,
+  case when sucker_punches_used = 0 then 0 else round(sucker_punches_landed::numeric / sucker_punches_used * 100, 2) end as sucker_punch_landed_pct
 from public.head_to_head_stats;
 
 create or replace function public.touch_updated_at()
@@ -351,6 +355,7 @@ create or replace function public.record_computer_game_result(
   mulligans_used integer,
   sucker_hunts integer,
   sucker_hunt_misses integer,
+  sucker_punches_landed integer,
   sucker_punches_used integer,
   sucker_blockers_used integer,
   sucker_tokens_spent integer,
@@ -392,6 +397,7 @@ begin
     mulligans_used,
     sucker_hunts,
     sucker_hunt_misses,
+    sucker_punches_landed,
     sucker_punches_used,
     sucker_blockers_used,
     sucker_tokens_spent,
@@ -432,6 +438,7 @@ begin
     greatest(mulligans_used, 0),
     greatest(sucker_hunts, 0),
     greatest(sucker_hunt_misses, 0),
+    greatest(sucker_punches_landed, 0),
     greatest(sucker_punches_used, 0),
     greatest(sucker_blockers_used, 0),
     greatest(sucker_tokens_spent, 0),
@@ -471,6 +478,7 @@ begin
     mulligans_used = public.computer_stats.mulligans_used + excluded.mulligans_used,
     sucker_hunts = public.computer_stats.sucker_hunts + excluded.sucker_hunts,
     sucker_hunt_misses = public.computer_stats.sucker_hunt_misses + excluded.sucker_hunt_misses,
+    sucker_punches_landed = public.computer_stats.sucker_punches_landed + excluded.sucker_punches_landed,
     sucker_punches_used = public.computer_stats.sucker_punches_used + excluded.sucker_punches_used,
     sucker_blockers_used = public.computer_stats.sucker_blockers_used + excluded.sucker_blockers_used,
     sucker_tokens_spent = public.computer_stats.sucker_tokens_spent + excluded.sucker_tokens_spent,
@@ -695,6 +703,7 @@ grant execute on function public.record_computer_game_result(
   boolean,
   boolean,
   boolean,
+  integer,
   integer,
   integer,
   integer,

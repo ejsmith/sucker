@@ -10,6 +10,7 @@ import {
   toGameState,
   toHeldDice,
 } from '../game';
+import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -22,8 +23,22 @@ export async function listMyGames() {
     throw error;
   }
 
-  const lastNudges = await loadLastNudges(data.map((game) => game.id));
-  return data.map((game) => toRemoteGameRow(game, lastNudges.get(game.id) ?? null));
+  const gameIds = data.map((game) => game.id);
+  const completedGameIds = data
+    .filter((game) => game.status === 'complete')
+    .sort(
+      (left, right) =>
+        Date.parse(right.completed_at ?? right.updated_at) - Date.parse(left.completed_at ?? left.updated_at),
+    )
+    .slice(0, 25)
+    .map((game) => game.id);
+  const [lastNudges, suckerTokensSpent] = await Promise.all([
+    loadLastNudges(gameIds),
+    loadSuckerTokensSpent(completedGameIds),
+  ]);
+  return data.map((game) =>
+    toRemoteGameRow(game, lastNudges.get(game.id) ?? null, suckerTokensSpent.get(game.id) ?? {}),
+  );
 }
 
 export async function getGame(gameId: string) {
@@ -298,7 +313,11 @@ async function loadLastNudges(gameIds: string[]) {
   return lastNudges;
 }
 
-function toRemoteGameRow(row: GameRow, lastNudgedAt: string | null = null) {
+function toRemoteGameRow(
+  row: GameRow,
+  lastNudgedAt: string | null = null,
+  suckerTokensSpent: Record<string, number> = {},
+) {
   return {
     completed_at: row.completed_at,
     created_at: row.created_at,
@@ -309,9 +328,47 @@ function toRemoteGameRow(row: GameRow, lastNudgedAt: string | null = null) {
     last_nudged_at: lastNudgedAt,
     state: toGameState(row.state),
     status: row.status,
+    sucker_tokens_spent: suckerTokensSpent,
     updated_at: row.updated_at,
     winner_id: row.winner_id,
   };
+}
+
+async function loadSuckerTokensSpent(gameIds: string[]) {
+  const spentByGame = new Map<string, Record<string, number>>();
+  if (gameIds.length === 0) {
+    return spentByGame;
+  }
+
+  const { data, error } = await supabase
+    .from('turn_actions')
+    .select('action_type, actor_id, game_id, payload')
+    .in('game_id', gameIds)
+    .in('action_type', ['extra_roll', 'mulligan', 'sucker_punch', 'sucker_blocker'])
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  const actionsByGame = new Map<string, SuckerStatAction[]>();
+  for (const action of data ?? []) {
+    const actions = actionsByGame.get(action.game_id) ?? [];
+    actions.push(action as SuckerStatAction);
+    actionsByGame.set(action.game_id, actions);
+  }
+
+  for (const [gameId, actions] of actionsByGame) {
+    const playerIds = new Set(actions.map((action) => action.actor_id));
+    spentByGame.set(
+      gameId,
+      Object.fromEntries(
+        [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
+      ),
+    );
+  }
+
+  return spentByGame;
 }
 
 function toRemoteTurnRow(row: TurnRow): RemoteTurnRow {

@@ -1761,6 +1761,25 @@ function CompletedGameScorecard({
         <ScorecardComparisonRow emphasized label="Total" themValue={String(opponentScore)} youValue={String(myScore)} />
       </View>
 
+      <View style={lobbyStyles.scorecardTable}>
+        <View style={[lobbyStyles.scorecardRow, lobbyStyles.scorecardHeaderRow]}>
+          <Text style={[lobbyStyles.scorecardCategoryText, lobbyStyles.scorecardHeaderText]}>Sucker tokens</Text>
+          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>You</Text>
+          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>Them</Text>
+        </View>
+        <ScorecardComparisonRow
+          label="Used"
+          themValue={String(game.sucker_tokens_spent[opponent.id] ?? 0)}
+          youValue={String(game.sucker_tokens_spent[me.id] ?? 0)}
+        />
+        <ScorecardComparisonRow
+          emphasized
+          label="Leftover"
+          themValue={String(opponent.suckerTokens)}
+          youValue={String(me.suckerTokens)}
+        />
+      </View>
+
       <View style={lobbyStyles.completedDetailActions}>
         <Pressable
           disabled={isBusy}
@@ -1862,8 +1881,10 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
         <Text style={lobbyStyles.statLine}>Buzzer beaters {stats.buzzer_beater_wins ?? 0}</Text>
       </View>
       <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Punches {stats.sucker_punches_used ?? 0}</Text>
-        <Text style={lobbyStyles.statLine}>Punched {stats.sucker_punches_received ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>Punches thrown {stats.sucker_punches_used ?? 0}</Text>
+        <Text style={lobbyStyles.statLine}>
+          Landed {formatPct(stats.sucker_punches_landed ?? 0, stats.sucker_punches_used ?? 0)}
+        </Text>
       </View>
       <View style={lobbyStyles.statRow}>
         <Text style={lobbyStyles.statLine}>Hunts {stats.sucker_hunts ?? 0}</Text>

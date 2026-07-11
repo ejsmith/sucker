@@ -1786,6 +1786,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         mulligans_used: result.mulligans_used,
         sucker_hunt_misses: result.sucker_hunt_misses,
         sucker_hunts: result.sucker_hunts,
+        sucker_punches_landed: result.sucker_punches_landed,
         sucker_punches_used: result.sucker_punches_used,
         sucker_punches_received: result.sucker_punches_received,
         sucker_blockers_used: result.sucker_blockers_used,
@@ -1826,6 +1827,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         sucker_blockers_used: existing.sucker_blockers_used + result.sucker_blockers_used,
         sucker_games: existing.sucker_games + (result.sucker_count > 0 ? 1 : 0),
         sucker_punches_received: existing.sucker_punches_received + result.sucker_punches_received,
+        sucker_punches_landed: existing.sucker_punches_landed + result.sucker_punches_landed,
         sucker_punches_used: existing.sucker_punches_used + result.sucker_punches_used,
         sucker_tokens_leftover: existing.sucker_tokens_leftover + result.sucker_tokens_leftover,
         average_sucker_tokens_leftover: Number(

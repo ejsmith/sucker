@@ -74,6 +74,92 @@ export function StatsPage({
               />
             </View>
             <View style={styles.statsDetailCard}>
+              {statsKind === 'headToHead' ? (
+                <>
+                  <StatsComparisonHeader title="Sucker Skills" />
+                  <StatsComparisonLine
+                    label="Blowout wins"
+                    opponentValue={formatSkillStat(opponentStats, 'blowout_wins')}
+                    value={formatSkillStat(stats, 'blowout_wins')}
+                  />
+                  <StatsComparisonLine
+                    label="Comeback wins"
+                    opponentValue={formatSkillStat(opponentStats, 'comeback_wins')}
+                    value={formatSkillStat(stats, 'comeback_wins')}
+                  />
+                  <StatsComparisonLine
+                    label="Buzzer beaters"
+                    opponentValue={formatSkillStat(opponentStats, 'buzzer_beater_wins')}
+                    value={formatSkillStat(stats, 'buzzer_beater_wins')}
+                  />
+                  <StatsComparisonLine
+                    label="Extra rolls"
+                    opponentValue={formatSkillStat(opponentStats, 'extra_rolls_used')}
+                    value={formatSkillStat(stats, 'extra_rolls_used')}
+                  />
+                  <StatsComparisonLine
+                    label="Mulligans"
+                    opponentValue={formatSkillStat(opponentStats, 'mulligans_used')}
+                    value={formatSkillStat(stats, 'mulligans_used')}
+                  />
+                  <StatsComparisonLine
+                    label="Sucker punches thrown"
+                    opponentValue={formatSkillStat(opponentStats, 'sucker_punches_used')}
+                    value={formatSkillStat(stats, 'sucker_punches_used')}
+                  />
+                  <StatsComparisonLine
+                    label="Sucker punches landed"
+                    opponentValue={formatSkillPct(opponentStats, 'sucker_punch_landed_pct')}
+                    value={formatSkillPct(stats, 'sucker_punch_landed_pct')}
+                  />
+                  <StatsComparisonLine
+                    label="Sucker hunts"
+                    opponentValue={formatSkillStat(opponentStats, 'sucker_hunts')}
+                    value={formatSkillStat(stats, 'sucker_hunts')}
+                  />
+                  <StatsComparisonLine
+                    label="Hunt misses"
+                    opponentValue={formatSkillStat(opponentStats, 'sucker_hunt_misses')}
+                    value={formatSkillStat(stats, 'sucker_hunt_misses')}
+                  />
+                  <StatsComparisonLine
+                    label="Avg tokens used"
+                    opponentValue={formatSkillStat(opponentStats, 'average_sucker_tokens_spent')}
+                    value={formatSkillStat(stats, 'average_sucker_tokens_spent')}
+                  />
+                  <StatsComparisonLine
+                    label="Avg tokens left"
+                    opponentValue={formatSkillStat(opponentStats, 'average_sucker_tokens_leftover')}
+                    value={formatSkillStat(stats, 'average_sucker_tokens_leftover')}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
+                  <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
+                  <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
+                  <StatsValueLine label="Buzzer beaters" value={String(stats.buzzer_beater_wins ?? 0)} />
+                  <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
+                  <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
+                  <StatsValueLine label="Sucker punches thrown" value={String(stats.sucker_punches_used ?? 0)} />
+                  <StatsValueLine
+                    label="Sucker punches landed"
+                    value={formatStatsPct(stats.sucker_punches_landed ?? 0, stats.sucker_punches_used ?? 0)}
+                  />
+                  <StatsValueLine label="Sucker hunts" value={String(stats.sucker_hunts ?? 0)} />
+                  <StatsValueLine label="Hunt misses" value={String(stats.sucker_hunt_misses ?? 0)} />
+                  <StatsValueLine
+                    label="Avg tokens used"
+                    value={formatStatNumber(stats.average_sucker_tokens_spent ?? 0)}
+                  />
+                  <StatsValueLine
+                    label="Avg tokens left"
+                    value={formatStatNumber(stats.average_sucker_tokens_leftover ?? 0)}
+                  />
+                </>
+              )}
+            </View>
+            <View style={styles.statsDetailCard}>
               <StatsComparisonHeader title="Category Rates" />
               <StatsComparisonLine
                 label="Upper bonus"
@@ -111,83 +197,6 @@ export function StatsPage({
                 value={formatCategoryRate(stats, statsKind, null, 'large_straight')}
               />
             </View>
-            <View style={styles.statsDetailCard}>
-              {statsKind === 'headToHead' ? (
-                <>
-                  <StatsComparisonHeader title="Sucker Skills" />
-                  <StatsComparisonLine
-                    label="Blowout wins"
-                    opponentValue={formatSkillStat(opponentStats, 'blowout_wins')}
-                    value={formatSkillStat(stats, 'blowout_wins')}
-                  />
-                  <StatsComparisonLine
-                    label="Comeback wins"
-                    opponentValue={formatSkillStat(opponentStats, 'comeback_wins')}
-                    value={formatSkillStat(stats, 'comeback_wins')}
-                  />
-                  <StatsComparisonLine
-                    label="Buzzer beaters"
-                    opponentValue={formatSkillStat(opponentStats, 'buzzer_beater_wins')}
-                    value={formatSkillStat(stats, 'buzzer_beater_wins')}
-                  />
-                  <StatsComparisonLine
-                    label="Extra rolls"
-                    opponentValue={formatSkillStat(opponentStats, 'extra_rolls_used')}
-                    value={formatSkillStat(stats, 'extra_rolls_used')}
-                  />
-                  <StatsComparisonLine
-                    label="Mulligans"
-                    opponentValue={formatSkillStat(opponentStats, 'mulligans_used')}
-                    value={formatSkillStat(stats, 'mulligans_used')}
-                  />
-                  <StatsComparisonLine
-                    label="Sucker punches"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_punches_used')}
-                    value={formatSkillStat(stats, 'sucker_punches_used')}
-                  />
-                  <StatsComparisonLine
-                    label="Sucker hunts"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_hunts')}
-                    value={formatSkillStat(stats, 'sucker_hunts')}
-                  />
-                  <StatsComparisonLine
-                    label="Hunt misses"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_hunt_misses')}
-                    value={formatSkillStat(stats, 'sucker_hunt_misses')}
-                  />
-                  <StatsComparisonLine
-                    label="Avg tokens used"
-                    opponentValue={formatSkillStat(opponentStats, 'average_sucker_tokens_spent')}
-                    value={formatSkillStat(stats, 'average_sucker_tokens_spent')}
-                  />
-                  <StatsComparisonLine
-                    label="Avg tokens left"
-                    opponentValue={formatSkillStat(opponentStats, 'average_sucker_tokens_leftover')}
-                    value={formatSkillStat(stats, 'average_sucker_tokens_leftover')}
-                  />
-                </>
-              ) : (
-                <>
-                  <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
-                  <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
-                  <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
-                  <StatsValueLine label="Buzzer beaters" value={String(stats.buzzer_beater_wins ?? 0)} />
-                  <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
-                  <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
-                  <StatsValueLine label="Sucker punches" value={String(stats.sucker_punches_used ?? 0)} />
-                  <StatsValueLine label="Sucker hunts" value={String(stats.sucker_hunts ?? 0)} />
-                  <StatsValueLine label="Hunt misses" value={String(stats.sucker_hunt_misses ?? 0)} />
-                  <StatsValueLine
-                    label="Avg tokens used"
-                    value={formatStatNumber(stats.average_sucker_tokens_spent ?? 0)}
-                  />
-                  <StatsValueLine
-                    label="Avg tokens left"
-                    value={formatStatNumber(stats.average_sucker_tokens_leftover ?? 0)}
-                  />
-                </>
-              )}
-            </View>
           </>
         ) : (
           <View style={styles.statsEmptyCard}>
@@ -222,6 +231,8 @@ type SkillStatKey =
   | 'sucker_hunt_misses'
   | 'sucker_hunts'
   | 'sucker_punches_used';
+
+type SkillPctKey = 'sucker_punch_landed_pct';
 
 function getOpponentAverage(
   stats: NonNullable<StatsSnapshot>,
@@ -323,6 +334,10 @@ function formatStatsPct(count: number, gamesPlayed: number) {
 
 function formatSkillStat(row: HeadToHeadStatsRow | null | undefined, key: SkillStatKey) {
   return formatStatNumber(Number(row?.[key] ?? 0));
+}
+
+function formatSkillPct(row: HeadToHeadStatsRow | null | undefined, key: SkillPctKey) {
+  return `${formatStatNumber(Number(row?.[key] ?? 0))}%`;
 }
 
 function formatStatNumber(value: number) {

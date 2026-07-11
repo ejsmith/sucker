@@ -101,6 +101,7 @@ type GamePlayerResult = {
   sucker_hunt_misses?: number;
   sucker_hunts?: number;
   sucker_punches_received?: number;
+  sucker_punches_landed?: number;
   sucker_punches_used?: number;
   sucker_tokens_leftover?: number;
   sucker_tokens_spent?: number;
@@ -145,6 +146,7 @@ type HeadToHeadStatsTable = {
     sucker_hunt_misses?: number;
     sucker_hunts?: number;
     sucker_punches_received?: number;
+    sucker_punches_landed?: number;
     sucker_punches_used?: number;
     sucker_tokens_leftover?: number;
     sucker_tokens_spent?: number;

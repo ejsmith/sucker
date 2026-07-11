@@ -68,6 +68,7 @@ import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multi
 import { getPhoneStageStyle } from './src/ui/phoneStage';
 import { useAppActivity } from './src/ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
+import { WebPortraitGuard } from './src/ui/WebPortraitGuard';
 import {
   createRollingLaunch,
   defaultRollingLaunch,
@@ -370,7 +371,9 @@ function replaceWebDevViewportPreset(key: DevViewportPresetSelection) {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppRoutes />
+      <WebPortraitGuard>
+        <AppRoutes />
+      </WebPortraitGuard>
     </SafeAreaProvider>
   );
 }

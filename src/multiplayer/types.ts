@@ -12,6 +12,7 @@ export type RemoteGameRow = {
   last_nudged_at: string | null;
   state: GameState;
   status: RemoteGameStatus;
+  sucker_tokens_spent: Record<string, number>;
   updated_at: string;
   winner_id: string | null;
 };

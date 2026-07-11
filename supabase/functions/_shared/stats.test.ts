@@ -1,5 +1,19 @@
 import { createGame, type Player } from './game.ts';
-import { didPlayerPullAheadOnFinalTurn, type SuckerStatTurn } from './stats.ts';
+import { calculateSuckerActionStats, didPlayerPullAheadOnFinalTurn, type SuckerStatTurn } from './stats.ts';
+
+Deno.test('Sucker Punch stats separate throws from landed punches', () => {
+  const stats = calculateSuckerActionStats(
+    [
+      { action_type: 'sucker_punch', actor_id: 'player', payload: { landed: true } },
+      { action_type: 'sucker_punch', actor_id: 'player', payload: { landed: false } },
+      { action_type: 'sucker_punch', actor_id: 'player', payload: {} },
+    ],
+    'player',
+  );
+
+  assertEquals(stats.sucker_punches_used, 3);
+  assertEquals(stats.sucker_punches_landed, 2);
+});
 
 Deno.test('Buzzer Beater requires the player to take the lead on their final valid turn', () => {
   const players = createPlayers();

@@ -297,6 +297,7 @@ export type Database = {
           sucker_hunt_misses: number;
           sucker_hunts: number;
           sucker_punches_received: number;
+          sucker_punches_landed: number;
           sucker_punches_used: number;
           sucker_tokens_leftover: number;
           sucker_tokens_spent: number;
@@ -340,6 +341,7 @@ export type Database = {
           small_straight_games: number;
           sucker_games: number;
           sucker_blockers_used: number;
+          sucker_punches_landed: number;
           sucker_punches_used: number;
           sucker_hunt_misses: number;
           sucker_hunts: number;
@@ -381,6 +383,7 @@ export type Database = {
           small_straight_games?: number;
           sucker_games?: number;
           sucker_blockers_used?: number;
+          sucker_punches_landed?: number;
           sucker_punches_used?: number;
           sucker_hunt_misses?: number;
           sucker_hunts?: number;
@@ -420,6 +423,7 @@ export type Database = {
           small_straight_games?: number;
           sucker_games?: number;
           sucker_blockers_used?: number;
+          sucker_punches_landed?: number;
           sucker_punches_used?: number;
           sucker_hunt_misses?: number;
           sucker_hunts?: number;
@@ -457,6 +461,7 @@ export type Database = {
           sucker_hunts: number;
           sucker_pct: number;
           sucker_punches_received: number;
+          sucker_punch_landed_pct: number;
           sucker_punches_used: number;
           three_of_a_kind_pct: number;
           upper_bonus_pct: number;
@@ -492,6 +497,7 @@ export type Database = {
           sucker_blockers_used: number;
           sucker_hunt_misses: number;
           sucker_hunts: number;
+          sucker_punches_landed: number;
           sucker_punches_used: number;
           sucker_tokens_leftover: number;
           sucker_tokens_spent: number;

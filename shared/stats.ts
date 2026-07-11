@@ -40,6 +40,7 @@ export type SuckerActionStats = {
   sucker_hunt_misses: number;
   sucker_hunts: number;
   sucker_punches_received: number;
+  sucker_punches_landed: number;
   sucker_punches_used: number;
   sucker_tokens_spent: number;
 };
@@ -53,6 +54,7 @@ export function createEmptySuckerActionStats(): SuckerActionStats {
     sucker_hunt_misses: 0,
     sucker_hunts: 0,
     sucker_punches_received: 0,
+    sucker_punches_landed: 0,
     sucker_punches_used: 0,
     sucker_tokens_spent: 0,
   };
@@ -128,6 +130,9 @@ export function calculateSuckerActionStats(actions: SuckerStatAction[], playerId
           break;
         case 'sucker_punch':
           stats.sucker_punches_used += 1;
+          if (actionPayloadValue(action.payload, 'landed') !== false) {
+            stats.sucker_punches_landed += 1;
+          }
           stats.sucker_tokens_spent += suckerTokenCosts.suckerPunch;
           break;
         default:
