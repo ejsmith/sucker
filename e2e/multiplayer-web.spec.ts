@@ -232,6 +232,65 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
   await expect(suckerScoreBox).not.toContainText('50');
 });
 
+test('a player can add and remove a profile avatar in the PWA', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const player = await createUser(`avatar-${runId}`, 'Avatar E2E');
+  const impersonator = await createUser(`avatar-copy-${runId}`, 'Avatar Copy E2E');
+  const page = await openAuthedPage(browser, player);
+
+  await page.getByTestId('profile-button').click();
+  await expect(page.getByTestId('profile-avatar')).toBeVisible();
+  await expect(page.getByTestId('profile-avatar-image')).toHaveCount(0);
+
+  await page.getByTestId('profile-avatar-button').click();
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.getByTestId('choose-avatar-library').click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles('assets/icon.png');
+
+  await expect(page.getByText('Profile photo updated.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('profile-avatar-image')).toBeVisible();
+  await expect(page.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('profile-avatar.png');
+  await expect
+    .poll(async () => {
+      const { data, error } = await admin.from('profiles').select('avatar_url').eq('id', player.id).single();
+      assertNoError(error);
+      return data?.avatar_url ?? null;
+    })
+    .toMatch(/\/storage\/v1\/object\/public\/avatars\//);
+  const { data: avatarProfile, error: avatarProfileError } = await admin
+    .from('profiles')
+    .select('avatar_url')
+    .eq('id', player.id)
+    .single();
+  assertNoError(avatarProfileError);
+  const avatarUrl = avatarProfile?.avatar_url ?? null;
+
+  const { error: copyError } = await admin
+    .from('profiles')
+    .update({ avatar_url: avatarUrl })
+    .eq('id', impersonator.id);
+  assertNoError(copyError);
+  const impersonatorPage = await openAuthedPage(browser, impersonator);
+  await impersonatorPage.getByTestId('profile-button').click();
+  await expect(impersonatorPage.getByTestId('profile-avatar-image')).toHaveCount(0);
+
+  await page.reload();
+  await page.getByTestId('profile-button').click();
+  await expect(page.getByTestId('profile-avatar-image')).toBeVisible();
+  await page.getByTestId('profile-avatar-button').click();
+  await page.getByTestId('remove-avatar').click();
+  await expect(page.getByText('Profile photo removed.')).toBeVisible();
+  await expect(page.getByTestId('profile-avatar-image')).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const { data, error } = await admin.storage.from('avatars').list(player.id);
+      assertNoError(error);
+      return data?.filter((object) => object.name !== '.emptyFolderPlaceholder').length ?? 0;
+    })
+    .toBe(0);
+});
+
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   await context.addInitScript(() => {
