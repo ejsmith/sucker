@@ -908,7 +908,8 @@ function LocalGameScreen({
   const safeAreaInsets = useSafeAreaInsets();
   const [devViewportPresetKey, setDevViewportPresetKey] =
     useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
-  const [localGame, setLocalGame] = useState(() => createGame([localPlayerName?.trim() || playerNames[0], playerNames[1]]));
+  const localPlayerNames = [localPlayerName?.trim() || playerNames[0], playerNames[1]];
+  const [localGame, setLocalGame] = useState(() => createGame(localPlayerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
   const [suckerPunchWipe, setSuckerPunchWipe] = useState<SuckerPunchWipe | null>(null);
@@ -2435,7 +2436,7 @@ function LocalGameScreen({
     recordedComputerGameIds.current.clear();
     localSuckerStatActions.current = [];
     localSuckerStatTurns.current = [];
-    setLocalGame(createGame(playerNames));
+    setLocalGame(createGame(localPlayerNames));
   }
 
   function handleCloseGameOver() {
