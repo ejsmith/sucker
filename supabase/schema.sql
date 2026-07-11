@@ -159,6 +159,7 @@ create table public.game_player_results (
   large_straight_count integer not null default 0,
   blowout_win integer not null default 0,
   blowout_loss integer not null default 0,
+  buzzer_beater_win integer not null default 0,
   comeback_win integer not null default 0,
   extra_rolls_used integer not null default 0,
   mulligans_used integer not null default 0,
@@ -192,6 +193,7 @@ create table public.head_to_head_stats (
   large_straight_games integer not null default 0,
   blowout_wins integer not null default 0,
   blowout_losses integer not null default 0,
+  buzzer_beater_wins integer not null default 0,
   comeback_wins integer not null default 0,
   extra_rolls_used integer not null default 0,
   mulligans_used integer not null default 0,
@@ -237,6 +239,7 @@ create table public.computer_stats (
   large_straight_games integer not null default 0,
   blowout_wins integer not null default 0,
   blowout_losses integer not null default 0,
+  buzzer_beater_wins integer not null default 0,
   comeback_wins integer not null default 0,
   extra_rolls_used integer not null default 0,
   mulligans_used integer not null default 0,
@@ -279,7 +282,8 @@ select
   case when games_played = 0 then 0 else round(four_of_a_kind_games::numeric / games_played * 100, 2) end as four_of_a_kind_pct,
   case when games_played = 0 then 0 else round(full_house_games::numeric / games_played * 100, 2) end as full_house_pct,
   case when games_played = 0 then 0 else round(small_straight_games::numeric / games_played * 100, 2) end as small_straight_pct,
-  case when games_played = 0 then 0 else round(large_straight_games::numeric / games_played * 100, 2) end as large_straight_pct
+  case when games_played = 0 then 0 else round(large_straight_games::numeric / games_played * 100, 2) end as large_straight_pct,
+  buzzer_beater_wins
 from public.head_to_head_stats;
 
 create or replace function public.touch_updated_at()
@@ -341,6 +345,7 @@ create or replace function public.record_computer_game_result(
   computer_scored_full_house boolean,
   computer_scored_small_straight boolean,
   computer_scored_large_straight boolean,
+  buzzer_beater_wins integer,
   comeback_wins integer,
   extra_rolls_used integer,
   mulligans_used integer,
@@ -381,6 +386,7 @@ begin
     large_straight_games,
     blowout_wins,
     blowout_losses,
+    buzzer_beater_wins,
     comeback_wins,
     extra_rolls_used,
     mulligans_used,
@@ -420,6 +426,7 @@ begin
     case when scored_large_straight then 1 else 0 end,
     case when player_score - computer_score >= 75 then 1 else 0 end,
     case when computer_score - player_score >= 75 then 1 else 0 end,
+    greatest(buzzer_beater_wins, 0),
     greatest(comeback_wins, 0),
     greatest(extra_rolls_used, 0),
     greatest(mulligans_used, 0),
@@ -458,6 +465,7 @@ begin
     large_straight_games = public.computer_stats.large_straight_games + excluded.large_straight_games,
     blowout_wins = public.computer_stats.blowout_wins + excluded.blowout_wins,
     blowout_losses = public.computer_stats.blowout_losses + excluded.blowout_losses,
+    buzzer_beater_wins = public.computer_stats.buzzer_beater_wins + excluded.buzzer_beater_wins,
     comeback_wins = public.computer_stats.comeback_wins + excluded.comeback_wins,
     extra_rolls_used = public.computer_stats.extra_rolls_used + excluded.extra_rolls_used,
     mulligans_used = public.computer_stats.mulligans_used + excluded.mulligans_used,
@@ -687,6 +695,7 @@ grant execute on function public.record_computer_game_result(
   boolean,
   boolean,
   boolean,
+  integer,
   integer,
   integer,
   integer,

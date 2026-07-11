@@ -85,6 +85,7 @@ export function buildCompletedPlayerStats({
     ...actionStats,
     blowout_loss: !won && blowoutMargin ? 1 : 0,
     blowout_win: won && blowoutMargin ? 1 : 0,
+    buzzer_beater_win: won && didPlayerPullAheadOnFinalTurn(turns, players, player.id) ? 1 : 0,
     comeback_win: won && didPlayerComeBack(turns, players, player.id) ? 1 : 0,
     final_score: playerScore,
     four_of_a_kind_count: scoredPositive(player.scorecard.fourOfAKind),
@@ -154,11 +155,7 @@ export function calculateSuckerActionStats(actions: SuckerStatAction[], playerId
 
 export function didPlayerComeBack(turns: SuckerStatTurn[], players: Player[], playerId: string) {
   const scorecards = Object.fromEntries(players.map((player) => [player.id, createEmptyScorecard()]));
-  const orderedTurns = [...turns]
-    .filter(
-      (turn) => !turn.status || turn.status === 'submitted' || turn.status === 'blocked' || turn.status === 'finalized',
-    )
-    .sort((left, right) => left.turn_index - right.turn_index);
+  const orderedTurns = getEffectiveStatTurns(turns);
 
   for (const turn of orderedTurns) {
     const scorecard = scorecards[turn.player_id];
@@ -177,6 +174,43 @@ export function didPlayerComeBack(turns: SuckerStatTurn[], players: Player[], pl
   }
 
   return false;
+}
+
+export function didPlayerPullAheadOnFinalTurn(turns: SuckerStatTurn[], players: Player[], playerId: string) {
+  const scorecards = Object.fromEntries(players.map((player) => [player.id, createEmptyScorecard()]));
+  const orderedTurns = getEffectiveStatTurns(turns);
+  const lastPlayerTurn = [...orderedTurns].reverse().find((turn) => turn.player_id === playerId);
+  if (!lastPlayerTurn) {
+    return false;
+  }
+
+  for (const turn of orderedTurns) {
+    const scorecard = scorecards[turn.player_id];
+    if (!scorecard) {
+      continue;
+    }
+
+    if (turn === lastPlayerTurn) {
+      const playerScoreBefore = totalScore(scorecards[playerId]);
+      const opponentScore = Math.max(
+        ...players.filter((player) => player.id !== playerId).map((player) => totalScore(scorecards[player.id])),
+      );
+      scorecard[toScoreCategory(turn.category)] = turn.score;
+      return playerScoreBefore <= opponentScore && totalScore(scorecards[playerId]) > opponentScore;
+    }
+
+    scorecard[toScoreCategory(turn.category)] = turn.score;
+  }
+
+  return false;
+}
+
+function getEffectiveStatTurns(turns: SuckerStatTurn[]) {
+  return [...turns]
+    .filter(
+      (turn) => !turn.status || turn.status === 'submitted' || turn.status === 'blocked' || turn.status === 'finalized',
+    )
+    .sort((left, right) => left.turn_index - right.turn_index);
 }
 
 export function buildExtraRollActionPayload(game: GameState, playerId: string) {

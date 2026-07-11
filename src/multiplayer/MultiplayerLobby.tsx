@@ -47,6 +47,7 @@ import { StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
+import { formatRecord } from '../ui/statsFormat';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
@@ -65,6 +66,8 @@ const minimumVisibleRefreshMs = 450;
 const pullRefreshMinimumMove = 14;
 const pullRefreshTriggerDistance = 44;
 const pullRefreshMaxDistance = 72;
+const gameCardActionWidth = 104;
+const gameCardActionHeight = 36;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -1557,7 +1560,7 @@ function GameListItem({
               </Text>
             </View>
             <View style={lobbyStyles.gameCardActions}>
-              <View style={lobbyStyles.scorePill}>
+              <View style={lobbyStyles.scorePill} testID={`score-game-${game.id}`}>
                 <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
                 <Text style={lobbyStyles.scoreDivider}>-</Text>
                 <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
@@ -1828,7 +1831,7 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
     <View style={lobbyStyles.panel}>
       <Text style={lobbyStyles.sectionTitle}>Vs Computer</Text>
       <View style={lobbyStyles.statGrid}>
-        <StatTile label="Record" value={`${stats.wins}-${stats.losses}`} />
+        <StatTile label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
         <StatTile label="Games" value={String(stats.games_played)} />
         <StatTile label="Avg" value={String(stats.average_score)} />
         <StatTile label="High" value={String(stats.highest_score)} />
@@ -1854,6 +1857,9 @@ function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
       <View style={lobbyStyles.statRow}>
         <Text style={lobbyStyles.statLine}>Blowouts {stats.blowout_wins ?? 0}</Text>
         <Text style={lobbyStyles.statLine}>Comebacks {stats.comeback_wins ?? 0}</Text>
+      </View>
+      <View style={lobbyStyles.statRow}>
+        <Text style={lobbyStyles.statLine}>Buzzer beaters {stats.buzzer_beater_wins ?? 0}</Text>
       </View>
       <View style={lobbyStyles.statRow}>
         <Text style={lobbyStyles.statLine}>Punches {stats.sucker_punches_used ?? 0}</Text>
@@ -1995,8 +2001,7 @@ function formatPct(count: number, gamesPlayed: number) {
 }
 
 function formatWinLossRecord(record: AllTimeOpponentRecord) {
-  const baseRecord = `${record.wins}-${record.losses}`;
-  return record.ties > 0 ? `${baseRecord}-${record.ties}` : baseRecord;
+  return formatRecord(record.wins, record.losses, record.gamesPlayed);
 }
 
 function formatWinRate(record: AllTimeOpponentRecord) {
@@ -2252,8 +2257,8 @@ const lobbyStyles = StyleSheet.create({
     borderColor: '#8F3B10',
     borderRadius: 8,
     borderWidth: 3,
-    gap: 6,
-    padding: 8,
+    gap: 2,
+    padding: 6,
   },
   gameCardMyTurn: {
     backgroundColor: '#FFF8D5',
@@ -2265,7 +2270,8 @@ const lobbyStyles = StyleSheet.create({
   },
   gameCardActions: {
     alignItems: 'flex-end',
-    gap: 4,
+    gap: 3,
+    width: gameCardActionWidth,
   },
   codeInput: {
     fontSize: 22,
@@ -2591,11 +2597,10 @@ const lobbyStyles = StyleSheet.create({
     backgroundColor: '#FFD329',
     borderColor: '#FFF3C2',
     borderRadius: 8,
-    borderWidth: 3,
-    height: 44,
+    borderWidth: 2,
+    height: gameCardActionHeight,
     justifyContent: 'center',
-    minWidth: 96,
-    paddingHorizontal: 10,
+    width: gameCardActionWidth,
   },
   nudgeButtonDisabled: {
     opacity: 0.55,
@@ -2834,9 +2839,10 @@ const lobbyStyles = StyleSheet.create({
     borderWidth: 2,
     flexDirection: 'row',
     gap: 4,
-    minWidth: 72,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    height: gameCardActionHeight,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    width: gameCardActionWidth,
   },
   scorePillText: {
     color: '#210505',
@@ -3038,9 +3044,11 @@ const lobbyStyles = StyleSheet.create({
     paddingVertical: 3,
   },
   turnBadgeTheirTurn: {
-    backgroundColor: '#5A1308',
-    borderColor: '#8F3B10',
-    color: '#D9A25B',
+    backgroundColor: '#F3E6B3',
+    borderColor: '#E0D29E',
+    borderWidth: 1,
+    color: '#6F633D',
+    fontWeight: '700',
   },
   turnBadgeYourTurn: {
     backgroundColor: '#F12D22',
@@ -3076,9 +3084,9 @@ const lobbyStyles = StyleSheet.create({
     color: '#183B12',
   },
   waitText: {
-    color: '#8F3B10',
-    fontSize: 12,
-    fontWeight: '900',
+    color: '#806B56',
+    fontSize: 11,
+    fontWeight: '700',
   },
   welcomeText: {
     color: '#FFD329',

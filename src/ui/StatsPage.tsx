@@ -1,6 +1,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import type { getHeadToHeadStats } from '../multiplayer/stats';
+import { formatRecord } from './statsFormat';
 
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -59,7 +60,7 @@ export function StatsPage({
         {hasStats && stats ? (
           <>
             <View style={styles.statsGrid}>
-              <StatBox label="Record" value={`${stats.wins}-${stats.losses}`} />
+              <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
               <StatBox label="Games" value={String(stats.games_played)} />
               <StatBox label="Your Avg" value={String(stats.average_score)} />
               <StatBox
@@ -125,6 +126,11 @@ export function StatsPage({
                     value={formatSkillStat(stats, 'comeback_wins')}
                   />
                   <StatsComparisonLine
+                    label="Buzzer beaters"
+                    opponentValue={formatSkillStat(opponentStats, 'buzzer_beater_wins')}
+                    value={formatSkillStat(stats, 'buzzer_beater_wins')}
+                  />
+                  <StatsComparisonLine
                     label="Extra rolls"
                     opponentValue={formatSkillStat(opponentStats, 'extra_rolls_used')}
                     value={formatSkillStat(stats, 'extra_rolls_used')}
@@ -165,6 +171,7 @@ export function StatsPage({
                   <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
                   <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
                   <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
+                  <StatsValueLine label="Buzzer beaters" value={String(stats.buzzer_beater_wins ?? 0)} />
                   <StatsValueLine label="Extra rolls" value={String(stats.extra_rolls_used ?? 0)} />
                   <StatsValueLine label="Mulligans" value={String(stats.mulligans_used ?? 0)} />
                   <StatsValueLine label="Sucker punches" value={String(stats.sucker_punches_used ?? 0)} />
@@ -208,6 +215,7 @@ type SkillStatKey =
   | 'average_sucker_tokens_leftover'
   | 'average_sucker_tokens_spent'
   | 'blowout_wins'
+  | 'buzzer_beater_wins'
   | 'comeback_wins'
   | 'extra_rolls_used'
   | 'mulligans_used'

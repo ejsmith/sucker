@@ -82,6 +82,7 @@ type TokenEventsTable = {
 type GamePlayerResult = {
   blowout_loss?: number;
   blowout_win?: number;
+  buzzer_beater_win?: number;
   comeback_win?: number;
   completed_at?: string;
   extra_rolls_used?: number;
@@ -125,6 +126,7 @@ type HeadToHeadStatsTable = {
     average_sucker_tokens_spent?: number;
     blowout_losses?: number;
     blowout_wins?: number;
+    buzzer_beater_wins?: number;
     comeback_wins?: number;
     extra_rolls_used?: number;
     forced_rerolls?: number;

@@ -334,6 +334,7 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
 
   assertEquals(latestGame.status, 'complete');
   assertEquals(latestGame.current_player_id, null);
+  assertEquals(latestGame.winner_id, null);
   assertString(latestGame.completed_at);
 
   const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', gameId));
@@ -355,11 +356,19 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     results.every((result) => result.sucker_tokens_leftover === startingSuckerTokens + scoreCategories.length),
     true,
   );
+  assertEquals(
+    results.every((result) => !result.won),
+    true,
+  );
 
   const stats = await selectMany<HeadToHeadStatsRow>(admin.from('head_to_head_stats').select('*'));
   assertEquals(stats.length, 2);
   assertEquals(
     stats.every((row) => row.games_played === 1),
+    true,
+  );
+  assertEquals(
+    stats.every((row) => row.wins === 0 && row.losses === 0),
     true,
   );
 
@@ -437,7 +446,7 @@ Deno.test('game-action creates one rematch and alternates the first player', asy
     true,
   );
   assertEquals(
-    stats.every((row) => row.wins === 1 && row.losses === 1),
+    stats.every((row) => row.wins === 0 && row.losses === 0),
     true,
   );
 

@@ -1150,7 +1150,13 @@ async function scoreRemoteTurn(
     players,
     rollNumber: 0,
   };
-  const winner = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard))[0] : null;
+  const rankedPlayers = complete
+    ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard))
+    : [];
+  const winner =
+    rankedPlayers.length > 1 && totalScore(rankedPlayers[0].scorecard) > totalScore(rankedPlayers[1].scorecard)
+      ? rankedPlayers[0]
+      : null;
 
   const { data: insertedTurn, error: turnError } = await admin
     .from('turns')
@@ -1739,6 +1745,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
   for (const player of players) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = await buildResult(admin, gameId, player, opponent, players, winnerId);
+    const lost = winnerId !== null && !result.won;
     const { error: resultError } = await admin.from('game_player_results').upsert(result);
     if (resultError) {
       throw resultError;
@@ -1760,7 +1767,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         opponent_id: opponent.id,
         games_played: 1,
         wins: result.won ? 1 : 0,
-        losses: result.won ? 0 : 1,
+        losses: lost ? 1 : 0,
         highest_score: result.final_score,
         total_score: result.final_score,
         average_score: result.final_score,
@@ -1773,6 +1780,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         large_straight_games: result.large_straight_count > 0 ? 1 : 0,
         blowout_losses: result.blowout_loss,
         blowout_wins: result.blowout_win,
+        buzzer_beater_wins: result.buzzer_beater_win,
         comeback_wins: result.comeback_win,
         extra_rolls_used: result.extra_rolls_used,
         mulligans_used: result.mulligans_used,
@@ -1806,8 +1814,9 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         large_straight_games: existing.large_straight_games + (result.large_straight_count > 0 ? 1 : 0),
         blowout_losses: existing.blowout_losses + result.blowout_loss,
         blowout_wins: existing.blowout_wins + result.blowout_win,
+        buzzer_beater_wins: existing.buzzer_beater_wins + result.buzzer_beater_win,
         comeback_wins: existing.comeback_wins + result.comeback_win,
-        losses: existing.losses + (result.won ? 0 : 1),
+        losses: existing.losses + (lost ? 1 : 0),
         extra_rolls_used: existing.extra_rolls_used + result.extra_rolls_used,
         forced_rerolls: existing.forced_rerolls + result.forced_rerolls,
         mulligans_used: existing.mulligans_used + result.mulligans_used,

@@ -278,6 +278,7 @@ export type Database = {
           average_sucker_tokens_spent: number;
           blowout_losses: number;
           blowout_wins: number;
+          buzzer_beater_wins: number;
           comeback_wins: number;
           extra_rolls_used: number;
           forced_rerolls: number;
@@ -315,6 +316,7 @@ export type Database = {
           average_sucker_tokens_spent: number;
           blowout_losses: number;
           blowout_wins: number;
+          buzzer_beater_wins: number;
           comeback_wins: number;
           computer_average_score: number;
           computer_four_of_a_kind_games: number;
@@ -355,6 +357,7 @@ export type Database = {
           average_sucker_tokens_spent?: number;
           blowout_losses?: number;
           blowout_wins?: number;
+          buzzer_beater_wins?: number;
           comeback_wins?: number;
           computer_average_score?: number;
           computer_four_of_a_kind_games?: number;
@@ -394,6 +397,7 @@ export type Database = {
           average_sucker_tokens_spent?: number;
           blowout_losses?: number;
           blowout_wins?: number;
+          buzzer_beater_wins?: number;
           comeback_wins?: number;
           computer_average_score?: number;
           computer_four_of_a_kind_games?: number;
@@ -434,6 +438,7 @@ export type Database = {
           average_sucker_tokens_spent: number;
           blowout_losses: number;
           blowout_wins: number;
+          buzzer_beater_wins: number;
           comeback_wins: number;
           extra_rolls_used: number;
           forced_rerolls: number;
@@ -473,6 +478,7 @@ export type Database = {
           computer_scored_three_of_a_kind: boolean;
           computer_score: number;
           computer_upper_bonus_awarded: boolean;
+          buzzer_beater_wins: number;
           comeback_wins: number;
           extra_rolls_used: number;
           mulligans_used: number;

@@ -65,6 +65,7 @@ export async function recordComputerGameResult(game: GameState, actions: SuckerS
   });
 
   const { data, error } = await supabase.rpc('record_computer_game_result', {
+    buzzer_beater_wins: playerResult.buzzer_beater_win,
     computer_scored_four_of_a_kind: scoredCategory(computer.scorecard, 'fourOfAKind'),
     computer_scored_full_house: scoredCategory(computer.scorecard, 'fullHouse'),
     computer_scored_large_straight: scoredCategory(computer.scorecard, 'largeStraight'),
