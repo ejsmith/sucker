@@ -3944,6 +3944,7 @@ function SuckerPunchScoreWipe({
             transform: [{ scale: impactScale }],
           },
         ]}
+        testID="sucker-punch-impact"
       >
         <Svg height={36} style={styles.suckerPunchWipeImpactGraphic} viewBox="0 0 36 36" width={36}>
           <Path
@@ -4684,7 +4685,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     height: 36,
     justifyContent: 'center',
+    left: '50%',
+    marginLeft: -18,
+    marginTop: -18,
     position: 'absolute',
+    top: '50%',
     width: 36,
     zIndex: 3,
   },

@@ -228,7 +228,21 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
   await expect(notice).toBeHidden({ timeout: 5_000 });
   await page.waitForTimeout(200);
   await expect(suckerScoreBox).toContainText('50');
-  await page.waitForTimeout(1_700);
+  await page.waitForTimeout(100);
+  const impact = page.getByTestId('sucker-punch-impact');
+  await expect(impact).toBeVisible();
+  const impactCenterBeforeGrowth = await impact.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.waitForTimeout(180);
+  const impactCenterAfterGrowth = await impact.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  expect(impactCenterAfterGrowth.x).toBeCloseTo(impactCenterBeforeGrowth.x, 1);
+  expect(impactCenterAfterGrowth.y).toBeCloseTo(impactCenterBeforeGrowth.y, 1);
+  await page.waitForTimeout(1_420);
   await expect(suckerScoreBox).not.toContainText('50');
 });
 
