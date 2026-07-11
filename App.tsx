@@ -3921,26 +3921,9 @@ function SuckerPunchScoreWipe({
   progress: Animated.Value;
   score: number;
 }) {
-  const exitDirection = home ? -1 : 1;
   const scoreOpacity = progress.interpolate({
-    inputRange: [0, 0.72, 0.98, 1],
-    outputRange: [1, 1, 0.12, 0],
-  });
-  const scoreScale = progress.interpolate({
-    inputRange: [0, 0.7, 0.96, 1],
-    outputRange: [1, 0.84, 0.54, 0.46],
-  });
-  const scoreTranslateX = progress.interpolate({
-    inputRange: [0, 0.7, 0.96, 1],
-    outputRange: [0, 0, exitDirection * 62, exitDirection * 82],
-  });
-  const scoreTranslateY = progress.interpolate({
-    inputRange: [0, 0.7, 0.96, 1],
-    outputRange: [0, 1, -2, 5],
-  });
-  const scoreRotate = progress.interpolate({
-    inputRange: [0, 0.7, 0.96, 1],
-    outputRange: ['0deg', `${-exitDirection * 3}deg`, `${exitDirection * 12}deg`, `${exitDirection * 16}deg`],
+    inputRange: [0, 0.2, 0.26, 1],
+    outputRange: [1, 1, 0, 0],
   });
   const impactOpacity = progress.interpolate({
     inputRange: [0, 0.08, 0.62, 0.9, 1],
@@ -3982,12 +3965,6 @@ function SuckerPunchScoreWipe({
           styles.suckerPunchWipeScoreText,
           {
             opacity: scoreOpacity,
-            transform: [
-              { translateX: scoreTranslateX },
-              { translateY: scoreTranslateY },
-              { rotate: scoreRotate },
-              { scale: scoreScale },
-            ],
           },
         ]}
       >
