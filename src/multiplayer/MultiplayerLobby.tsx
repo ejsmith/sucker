@@ -20,7 +20,6 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getComputerStats } from './computerStats';
 import {
   createGameAgainst,
   createRematch,
@@ -50,7 +49,6 @@ import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { formatRecord } from '../ui/statsFormat';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
-type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
 type LobbyPage = 'games' | 'profile' | 'startFriend' | 'completedGames' | 'completedGameDetail' | 'completedGameStats';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
@@ -106,7 +104,6 @@ export function MultiplayerLobby({
   const [username, setUsername] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
-  const [computerStats, setComputerStats] = useState<ComputerStatsRow>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
   const [completedGameStats, setCompletedGameStats] = useState<HeadToHeadStatsSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -184,7 +181,6 @@ export function MultiplayerLobby({
   useEffect(() => {
     if (session) {
       void refreshGames();
-      void refreshComputerStats();
     }
 
     if (profile) {
@@ -318,11 +314,6 @@ export function MultiplayerLobby({
     } finally {
       setIsBusy(false);
     }
-  }
-
-  async function refreshComputerStats() {
-    const nextStats = await getComputerStats();
-    setComputerStats(nextStats);
   }
 
   async function handleEnableWebNotifications() {
@@ -1010,23 +1001,31 @@ export function MultiplayerLobby({
             </Pressable>
             <Text style={lobbyStyles.avatarHelpText}>Tap to add or change your photo</Text>
           </View>
-          <TextInput
-            onChangeText={setDisplayName}
-            placeholder="Display name"
-            placeholderTextColor="#8A4B12"
-            style={lobbyStyles.input}
-            testID="display-name-input"
-            value={displayName}
-          />
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setUsername}
-            placeholder="Username"
-            placeholderTextColor="#8A4B12"
-            style={lobbyStyles.input}
-            testID="username-input"
-            value={username}
-          />
+          <View style={lobbyStyles.profileField}>
+            <Text style={lobbyStyles.profileFieldLabel}>Display name</Text>
+            <TextInput
+              accessibilityLabel="Display name"
+              onChangeText={setDisplayName}
+              placeholder="Display name"
+              placeholderTextColor="#8A4B12"
+              style={lobbyStyles.input}
+              testID="display-name-input"
+              value={displayName}
+            />
+          </View>
+          <View style={lobbyStyles.profileField}>
+            <Text style={lobbyStyles.profileFieldLabel}>Username</Text>
+            <TextInput
+              accessibilityLabel="Username"
+              autoCapitalize="none"
+              onChangeText={setUsername}
+              placeholder="Username"
+              placeholderTextColor="#8A4B12"
+              style={lobbyStyles.input}
+              testID="username-input"
+              value={username}
+            />
+          </View>
           <Pressable
             disabled={isBusy || displayName.trim().length === 0}
             onPress={() =>
@@ -1044,8 +1043,6 @@ export function MultiplayerLobby({
             <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
           </Pressable>
         </View>
-
-        <ComputerStatsCard stats={computerStats} />
 
         <View style={lobbyStyles.panel}>
           <Text style={lobbyStyles.sectionTitle}>Account</Text>
@@ -1833,71 +1830,6 @@ function ScorecardComparisonRow({
   );
 }
 
-function ComputerStatsCard({ stats }: { stats: ComputerStatsRow }) {
-  if (!stats || stats.games_played === 0) {
-    return (
-      <View style={lobbyStyles.panel}>
-        <Text style={lobbyStyles.sectionTitle}>Vs Computer</Text>
-        <View style={lobbyStyles.emptyState}>
-          <Text style={lobbyStyles.emptyTitle}>No computer games yet</Text>
-          <Text style={lobbyStyles.emptyBody}>Finished local computer games will be tracked here.</Text>
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={lobbyStyles.panel}>
-      <Text style={lobbyStyles.sectionTitle}>Vs Computer</Text>
-      <View style={lobbyStyles.statGrid}>
-        <StatTile label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
-        <StatTile label="Games" value={String(stats.games_played)} />
-        <StatTile label="Avg" value={String(stats.average_score)} />
-        <StatTile label="High" value={String(stats.highest_score)} />
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Upper bonus {formatPct(stats.upper_bonus_games, stats.games_played)}</Text>
-        <Text style={lobbyStyles.statLine}>Sucker {formatPct(stats.sucker_games, stats.games_played)}</Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>3x {formatPct(stats.three_of_a_kind_games, stats.games_played)}</Text>
-        <Text style={lobbyStyles.statLine}>4x {formatPct(stats.four_of_a_kind_games, stats.games_played)}</Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Full {formatPct(stats.full_house_games, stats.games_played)}</Text>
-        <Text style={lobbyStyles.statLine}>
-          Straights {formatPct(stats.small_straight_games + stats.large_straight_games, stats.games_played)}
-        </Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Extra rolls {stats.extra_rolls_used ?? 0}</Text>
-        <Text style={lobbyStyles.statLine}>Mulligans {stats.mulligans_used ?? 0}</Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Blowouts {stats.blowout_wins ?? 0}</Text>
-        <Text style={lobbyStyles.statLine}>Comebacks {stats.comeback_wins ?? 0}</Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Buzzer beaters {stats.buzzer_beater_wins ?? 0}</Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Punches thrown {stats.sucker_punches_used ?? 0}</Text>
-        <Text style={lobbyStyles.statLine}>
-          Landed {formatPct(stats.sucker_punches_landed ?? 0, stats.sucker_punches_used ?? 0)}
-        </Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Hunts {stats.sucker_hunts ?? 0}</Text>
-        <Text style={lobbyStyles.statLine}>Misses {stats.sucker_hunt_misses ?? 0}</Text>
-      </View>
-      <View style={lobbyStyles.statRow}>
-        <Text style={lobbyStyles.statLine}>Avg used {formatNumber(stats.average_sucker_tokens_spent ?? 0)}</Text>
-        <Text style={lobbyStyles.statLine}>Avg left {formatNumber(stats.average_sucker_tokens_leftover ?? 0)}</Text>
-      </View>
-    </View>
-  );
-}
-
 function AllTimeRecordCard({ record }: { record: AllTimeOpponentRecord | null }) {
   return (
     <View style={lobbyStyles.panel} testID="completed-all-time-record">
@@ -2013,14 +1945,6 @@ function waitForVisibleRefresh() {
   });
 }
 
-function formatPct(count: number, gamesPlayed: number) {
-  if (gamesPlayed === 0) {
-    return '0%';
-  }
-
-  return `${Math.round((count / gamesPlayed) * 100)}%`;
-}
-
 function formatWinLossRecord(record: AllTimeOpponentRecord) {
   return formatRecord(record.wins, record.losses, record.gamesPlayed);
 }
@@ -2031,10 +1955,6 @@ function formatWinRate(record: AllTimeOpponentRecord) {
   }
 
   return `${Math.round((record.wins / record.gamesPlayed) * 100)}%`;
-}
-
-function formatNumber(value: number) {
-  return Number(value).toFixed(2).replace(/\.00$/, '');
 }
 
 function formatScorecardScore(value: number | null) {
@@ -2656,6 +2576,16 @@ const lobbyStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingBottom: 6,
+  },
+  profileField: {
+    gap: 3,
+    width: '100%',
+  },
+  profileFieldLabel: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   pullRefreshIndicator: {
     alignItems: 'center',
