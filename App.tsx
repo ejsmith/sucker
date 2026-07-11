@@ -175,6 +175,10 @@ type RemoteSuckerPunchResult = {
   game: ReturnType<typeof createGame> | null;
   outcome?: SuckerPunchOutcome | null;
 };
+type LocalPlayerProfile = {
+  avatarUrl: string | null;
+  displayName: string;
+};
 type SuckerPunchDialogState = {
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
@@ -373,6 +377,7 @@ export default function App() {
 
 function AppRoutes() {
   const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
+  const [localPlayerProfile, setLocalPlayerProfile] = useState<LocalPlayerProfile | null>(null);
   const [remoteGameRequest, setRemoteGameRequest] = useState<RemoteGameRequest | null>(() => {
     const gameId = getInitialNotificationGameId();
     return gameId ? createRemoteGameRequest(gameId) : null;
@@ -425,13 +430,22 @@ function AppRoutes() {
         gamesProfileId={sharedGameList.profileId}
         onGamesChange={setSharedGames}
         onOpenGame={openRemoteGame}
-        onPlayLocalDemo={() => setShowLocalDemo(true)}
+        onPlayLocalDemo={(playerProfile) => {
+          setLocalPlayerProfile(playerProfile);
+          setShowLocalDemo(true);
+        }}
         onRefreshGames={refreshSharedGames}
       />
     );
   }
 
-  return <LocalGameScreen onExit={() => setShowLocalDemo(!isMultiplayerConfigured)} />;
+  return (
+    <LocalGameScreen
+      localPlayerAvatarUrl={localPlayerProfile?.avatarUrl}
+      localPlayerName={localPlayerProfile?.displayName}
+      onExit={() => setShowLocalDemo(!isMultiplayerConfigured)}
+    />
+  );
 }
 
 function mergeRemoteGameIntoLobbyCache(games: RemoteGameRow[], game: RemoteGameRow) {
@@ -859,6 +873,8 @@ function RemoteGameScreen({
 
 function LocalGameScreen({
   isRemoteBusy = false,
+  localPlayerAvatarUrl,
+  localPlayerName,
   myProfileId,
   nextTurnGames,
   onDismissNextTurns,
@@ -873,6 +889,8 @@ function LocalGameScreen({
   remoteStatus,
 }: {
   isRemoteBusy?: boolean;
+  localPlayerAvatarUrl?: string | null;
+  localPlayerName?: string;
   myProfileId?: string;
   nextTurnGames?: RemoteGameRow[] | null;
   onDismissNextTurns?: () => void;
@@ -890,7 +908,7 @@ function LocalGameScreen({
   const safeAreaInsets = useSafeAreaInsets();
   const [devViewportPresetKey, setDevViewportPresetKey] =
     useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
-  const [localGame, setLocalGame] = useState(() => createGame(playerNames));
+  const [localGame, setLocalGame] = useState(() => createGame([localPlayerName?.trim() || playerNames[0], playerNames[1]]));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
   const [suckerPunchWipe, setSuckerPunchWipe] = useState<SuckerPunchWipe | null>(null);
@@ -2715,7 +2733,7 @@ function LocalGameScreen({
               ]}
             >
               <PlayerAvatar
-                avatarUrl={playerAvatars[player.id]}
+                avatarUrl={isRemoteGame ? playerAvatars[player.id] : index === 0 ? localPlayerAvatarUrl : null}
                 name={player.name}
                 size={compactPhoneLayout ? 46 : 54}
                 style={[
@@ -2723,6 +2741,7 @@ function LocalGameScreen({
                   compactPhoneLayout && styles.compactAvatar,
                   player.id === currentPlayer.id && styles.activeAvatar,
                 ]}
+                testID={index === 0 ? 'home-player-avatar' : 'opponent-player-avatar'}
               />
               <Text style={[styles.playerScore, compactPhoneLayout && styles.compactPlayerScore]}>
                 {totalScore(player.scorecard)}

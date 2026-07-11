@@ -79,7 +79,7 @@ export function MultiplayerLobby({
   gamesProfileId: string | null;
   onGamesChange: (profileId: string | null, games: RemoteGameRow[]) => void;
   onOpenGame: (gameId: string) => void;
-  onPlayLocalDemo: () => void;
+  onPlayLocalDemo: (profile: { avatarUrl: string | null; displayName: string }) => void;
   onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
@@ -602,7 +602,12 @@ export function MultiplayerLobby({
         <View style={lobbyStyles.loginActionGroup}>
           <Text style={lobbyStyles.loginSectionTitle}>Solo Game</Text>
           <Pressable
-            onPress={onPlayLocalDemo}
+            onPress={() =>
+              onPlayLocalDemo({
+                avatarUrl: profile?.avatar_url ?? null,
+                displayName: profile?.display_name ?? 'Player',
+              })
+            }
             style={({ pressed }) => [lobbyStyles.soloButton, pressed && lobbyStyles.pressed]}
             testID="play-computer-button"
           >
@@ -1240,7 +1245,12 @@ export function MultiplayerLobby({
             <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
           </Pressable>
           <Pressable
-            onPress={onPlayLocalDemo}
+            onPress={() =>
+              onPlayLocalDemo({
+                avatarUrl: profile?.avatar_url ?? null,
+                displayName: profile?.display_name ?? 'Player',
+              })
+            }
             style={({ pressed }) => [
               lobbyStyles.secondaryButton,
               lobbyStyles.actionButton,

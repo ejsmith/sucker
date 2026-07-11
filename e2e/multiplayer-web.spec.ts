@@ -278,6 +278,11 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
   await page.reload();
   await page.getByTestId('profile-button').click();
   await expect(page.getByTestId('profile-avatar-image')).toBeVisible();
+  await page.getByTestId('screen-header-back-button').click();
+  await page.getByTestId('play-computer-button').click();
+  await expect(page.getByTestId('home-player-avatar-image')).toBeVisible();
+  await page.getByLabel('Back to games').click();
+  await page.getByTestId('profile-button').click();
   await page.getByTestId('profile-avatar-button').click();
   await page.getByTestId('remove-avatar').click();
   await expect(page.getByText('Profile photo removed.')).toBeVisible();
