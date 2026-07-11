@@ -64,7 +64,7 @@ const minimumVisibleRefreshMs = 450;
 const pullRefreshMinimumMove = 14;
 const pullRefreshTriggerDistance = 44;
 const pullRefreshMaxDistance = 72;
-const gameCardActionWidth = 104;
+const gameCardActionWidth = 108;
 const gameCardActionHeight = 36;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
