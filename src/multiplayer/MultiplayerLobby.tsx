@@ -194,29 +194,35 @@ export function MultiplayerLobby({
     if (!profile || pendingAvatarRecoveryProfileId.current === profile.id) return;
     pendingAvatarRecoveryProfileId.current = profile.id;
     let active = true;
-    void recoverPendingAvatar().then(async (selected) => {
-      if (!selected || !active) return;
-      setIsBusy(true);
-      setPendingAvatarUri(selected.uri);
-      try {
-        await uploadAvatar(selected.uri, profile.avatar_url);
-        if (active) {
-          setMessage('Profile photo updated.');
-          setPendingAvatarUri(null);
-          setIsBusy(false);
+    void recoverPendingAvatar()
+      .then(async (selected) => {
+        if (!selected || !active) return;
+        setIsBusy(true);
+        setPendingAvatarUri(selected.uri);
+        try {
+          await uploadAvatar(selected.uri, profile.avatar_url);
+          if (active) {
+            setMessage('Profile photo updated.');
+            setPendingAvatarUri(null);
+            setIsBusy(false);
+          }
+          await refreshProfile();
+        } catch (pendingError) {
+          if (active) {
+            setMessage(pendingError instanceof Error ? pendingError.message : 'Unable to recover the selected photo.');
+          }
+        } finally {
+          if (active) {
+            setPendingAvatarUri(null);
+            setIsBusy(false);
+          }
         }
-        await refreshProfile();
-      } catch (pendingError) {
+      })
+      .catch((pendingError: unknown) => {
         if (active) {
           setMessage(pendingError instanceof Error ? pendingError.message : 'Unable to recover the selected photo.');
         }
-      } finally {
-        if (active) {
-          setPendingAvatarUri(null);
-          setIsBusy(false);
-        }
-      }
-    });
+      });
     return () => {
       active = false;
     };

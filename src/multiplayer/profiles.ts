@@ -2,13 +2,14 @@ import { supabase } from './supabase';
 
 const avatarPublicBase = supabase.storage.from('avatars').getPublicUrl('').data.publicUrl.replace(/\/$/, '');
 
-export function getSafeAvatarUrl(value: string | null | undefined) {
+export function getSafeAvatarUrl(value: string | null | undefined, profileId: string) {
   if (!value) return null;
 
   try {
     const candidate = new URL(value);
     const base = new URL(avatarPublicBase);
-    return candidate.origin === base.origin && candidate.pathname.startsWith(`${base.pathname}/`) ? value : null;
+    const ownerPath = `${base.pathname}/${encodeURIComponent(profileId)}/`;
+    return candidate.origin === base.origin && candidate.pathname.startsWith(ownerPath) ? value : null;
   } catch {
     return null;
   }
@@ -33,7 +34,7 @@ export async function getMyProfile() {
     throw error;
   }
 
-  return { ...data, avatar_url: getSafeAvatarUrl(data.avatar_url) };
+  return { ...data, avatar_url: getSafeAvatarUrl(data.avatar_url, data.id) };
 }
 
 export async function searchProfiles(query: string) {
@@ -52,7 +53,7 @@ export async function searchProfiles(query: string) {
     throw error;
   }
 
-  return data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url) }));
+  return data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url, profile.id) }));
 }
 
 export async function getProfilesByIds(profileIds: string[]) {
@@ -67,5 +68,5 @@ export async function getProfilesByIds(profileIds: string[]) {
     throw error;
   }
 
-  return data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url) }));
+  return data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url, profile.id) }));
 }

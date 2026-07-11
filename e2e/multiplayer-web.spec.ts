@@ -235,6 +235,7 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
 test('a player can add and remove a profile avatar in the PWA', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const player = await createUser(`avatar-${runId}`, 'Avatar E2E');
+  const impersonator = await createUser(`avatar-copy-${runId}`, 'Avatar Copy E2E');
   const page = await openAuthedPage(browser, player);
 
   await page.getByTestId('profile-button').click();
@@ -257,6 +258,22 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
       return data?.avatar_url ?? null;
     })
     .toMatch(/\/storage\/v1\/object\/public\/avatars\//);
+  const { data: avatarProfile, error: avatarProfileError } = await admin
+    .from('profiles')
+    .select('avatar_url')
+    .eq('id', player.id)
+    .single();
+  assertNoError(avatarProfileError);
+  const avatarUrl = avatarProfile?.avatar_url ?? null;
+
+  const { error: copyError } = await admin
+    .from('profiles')
+    .update({ avatar_url: avatarUrl })
+    .eq('id', impersonator.id);
+  assertNoError(copyError);
+  const impersonatorPage = await openAuthedPage(browser, impersonator);
+  await impersonatorPage.getByTestId('profile-button').click();
+  await expect(impersonatorPage.getByTestId('profile-avatar-image')).toHaveCount(0);
 
   await page.reload();
   await page.getByTestId('profile-button').click();
