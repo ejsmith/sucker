@@ -23,6 +23,8 @@
         "npm:expo-constants@~18.0.13",
         "npm:expo-dev-client@~6.0.21",
         "npm:expo-device@~8.0.10",
+        "npm:expo-image-manipulator@~14.0.8",
+        "npm:expo-image-picker@~17.0.11",
         "npm:expo-notifications@~0.32.17",
         "npm:expo-status-bar@~3.0.9",
         "npm:expo@54.0",

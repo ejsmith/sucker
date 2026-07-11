@@ -61,6 +61,7 @@ import {
 import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
 import { getInitialNotificationGameId, useWebNotificationClicks } from './src/multiplayer/notificationNavigation';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
+import { getProfilesByIds } from './src/multiplayer/profiles';
 import { supabase } from './src/multiplayer/supabase';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
@@ -78,6 +79,7 @@ import {
   wait,
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
+import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import {
   buildExtraRollActionPayload,
   buildRollActionPayload,
@@ -911,6 +913,7 @@ function LocalGameScreen({
   const [dismissedGameOverId, setDismissedGameOverId] = useState<string | null>(null);
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
+  const [playerAvatars, setPlayerAvatars] = useState<Record<string, string | null>>({});
   const [failedDiceImages, setFailedDiceImages] = useState<number[]>([]);
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
@@ -1526,6 +1529,27 @@ function LocalGameScreen({
       isMounted = false;
     };
   }, [isRemoteGame, opponentPlayer.id, remoteLastTurnId, remoteStatus]);
+
+  useEffect(() => {
+    if (!isRemoteGame) {
+      setPlayerAvatars({});
+      return;
+    }
+
+    let isMounted = true;
+    void getProfilesByIds(game.players.map((player) => player.id))
+      .then((profiles) => {
+        if (isMounted) {
+          setPlayerAvatars(Object.fromEntries(profiles.map((profile) => [profile.id, profile.avatar_url])));
+        }
+      })
+      .catch(() => {
+        if (isMounted) setPlayerAvatars({});
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [game.id, isAppActive, isRemoteGame, remoteLastTurnId]);
 
   useEffect(() => {
     if (!isRemoteGame) {
@@ -2690,17 +2714,16 @@ function LocalGameScreen({
                 player.id === currentPlayer.id && styles.activePlayer,
               ]}
             >
-              <View
+              <PlayerAvatar
+                avatarUrl={playerAvatars[player.id]}
+                name={player.name}
+                size={compactPhoneLayout ? 46 : 54}
                 style={[
                   styles.avatar,
                   compactPhoneLayout && styles.compactAvatar,
                   player.id === currentPlayer.id && styles.activeAvatar,
                 ]}
-              >
-                <Text style={[styles.avatarText, compactPhoneLayout && styles.compactAvatarText]}>
-                  {player.name.slice(0, 1)}
-                </Text>
-              </View>
+              />
               <Text style={[styles.playerScore, compactPhoneLayout && styles.compactPlayerScore]}>
                 {totalScore(player.scorecard)}
               </Text>

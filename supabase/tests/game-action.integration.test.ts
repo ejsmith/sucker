@@ -33,6 +33,27 @@ const admin = createClient<Database>(supabaseUrl, serviceRoleKey, {
 const supabaseClients: DbClient[] = [admin];
 const falseHeld = [false, false, false, false, false] as GameState['held'];
 
+Deno.test('avatar storage limits writes and deletes to the owning profile folder', async () => {
+  const [alice, bob] = await createUsers('avatar-storage', ['Alice', 'Bob']);
+  const path = `${alice.id}/rls-test.jpg`;
+  const upload = await alice.client.storage.from('avatars').upload(path, new Uint8Array([255, 216, 255, 217]), {
+    contentType: 'image/jpeg',
+  });
+  assertNoError(upload.error);
+
+  const forbiddenDelete = await bob.client.storage.from('avatars').remove([path]);
+  assertEquals(forbiddenDelete.data?.length ?? 0, 0);
+  const stored = await admin.storage.from('avatars').list(alice.id, { search: 'rls-test.jpg' });
+  assertNoError(stored.error);
+  assertEquals(stored.data?.length ?? 0, 1);
+
+  const ownerDelete = await alice.client.storage.from('avatars').remove([path]);
+  assertNoError(ownerDelete.error);
+  const removed = await admin.storage.from('avatars').list(alice.id, { search: 'rls-test.jpg' });
+  assertNoError(removed.error);
+  assertEquals(removed.data?.length ?? 0, 0);
+});
+
 Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', async () => {
   const [alice, bob, charlie] = await createUsers('invite-flow', ['Alice', 'Bob', 'Charlie']);
 

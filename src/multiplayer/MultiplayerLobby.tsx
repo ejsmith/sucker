@@ -1,9 +1,10 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
   Image,
   Linking,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -28,6 +29,7 @@ import {
   subscribeToGameListChanges,
 } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
+import { recoverPendingAvatar, removeAvatar, selectAvatar, uploadAvatar, type AvatarSource } from './avatars';
 import {
   canRegisterWebPush,
   countGamesAwaitingTurn,
@@ -35,7 +37,7 @@ import {
   registerWebPushSubscription,
   syncAppBadgeCount,
 } from './notifications';
-import { searchProfiles } from './profiles';
+import { getProfilesByIds, searchProfiles } from './profiles';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import type { RemoteGameRow } from './types';
@@ -44,6 +46,7 @@ import { getPhoneStageStyle } from '../ui/phoneStage';
 import { StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
+import { PlayerAvatar } from '../ui/PlayerAvatar';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type ComputerStatsRow = Awaited<ReturnType<typeof getComputerStats>>;
@@ -82,8 +85,17 @@ export function MultiplayerLobby({
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const isAppActive = useAppActivity();
-  const { endSession, error, isLoading, profile, saveProfile, sendSignInCode, session, verifySignInCode } =
-    useMultiplayerSession();
+  const {
+    endSession,
+    error,
+    isLoading,
+    profile,
+    refreshProfile,
+    saveProfile,
+    sendSignInCode,
+    session,
+    verifySignInCode,
+  } = useMultiplayerSession();
   const [email, setEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [sentCodeEmail, setSentCodeEmail] = useState<string | null>(null);
@@ -107,10 +119,14 @@ export function MultiplayerLobby({
   const [selectedCompletedGameId, setSelectedCompletedGameId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
+  const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
+  const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
+  const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
   const gamesScrollY = useRef(0);
+  const pendingAvatarRecoveryProfileId = useRef<string | null>(null);
   const profileId = profile?.id ?? session?.user.id ?? null;
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
-  const visibleGames = isGamesProfileMismatch ? [] : games;
+  const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
   const shellSafeAreaStyle: StyleProp<ViewStyle> = {
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
@@ -175,6 +191,56 @@ export function MultiplayerLobby({
   }, [profile, refreshGames, session]);
 
   useEffect(() => {
+    if (!profile || pendingAvatarRecoveryProfileId.current === profile.id) return;
+    pendingAvatarRecoveryProfileId.current = profile.id;
+    let active = true;
+    void recoverPendingAvatar().then(async (selected) => {
+      if (!selected || !active) return;
+      setIsBusy(true);
+      setPendingAvatarUri(selected.uri);
+      try {
+        await uploadAvatar(selected.uri, profile.avatar_url);
+        if (active) {
+          setMessage('Profile photo updated.');
+          setPendingAvatarUri(null);
+          setIsBusy(false);
+        }
+        await refreshProfile();
+      } catch (pendingError) {
+        if (active) {
+          setMessage(pendingError instanceof Error ? pendingError.message : 'Unable to recover the selected photo.');
+        }
+      } finally {
+        if (active) {
+          setPendingAvatarUri(null);
+          setIsBusy(false);
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [profile, refreshProfile]);
+
+  useEffect(() => {
+    const ids = visibleGames.flatMap((game) => game.state.players.map((player) => player.id));
+    if (profile?.id) ids.push(profile.id);
+    let active = true;
+    void getProfilesByIds(ids)
+      .then((profiles) => {
+        if (active) {
+          setProfileAvatars(Object.fromEntries(profiles.map((item) => [item.id, item.avatar_url])));
+        }
+      })
+      .catch(() => {
+        // Initials remain available if profile photos cannot be refreshed.
+      });
+    return () => {
+      active = false;
+    };
+  }, [profile?.avatar_url, profile?.id, visibleGames]);
+
+  useEffect(() => {
     void syncAppBadgeCount(profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0);
   }, [games, isGamesProfileMismatch, profile]);
 
@@ -231,7 +297,7 @@ export function MultiplayerLobby({
     }
 
     setWebPushPromptVisible(getWebNotificationPermission() === 'default');
-  }, [isGamesProfileMismatch, games, profile, webPushPromptDismissed]);
+  }, [profile, visibleGames, webPushPromptDismissed]);
 
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
@@ -297,6 +363,32 @@ export function MultiplayerLobby({
     await runAction(async () => {
       const results = await searchProfiles(query);
       setSearchResults(results.filter((result) => result.id !== profile?.id));
+    });
+  }
+
+  async function handleSelectAvatar(source: AvatarSource) {
+    setAvatarPickerVisible(false);
+    await runAction(async () => {
+      const selected = await selectAvatar(source);
+      if (!selected) return;
+      setPendingAvatarUri(selected.uri);
+      try {
+        await uploadAvatar(selected.uri, profile?.avatar_url);
+        await refreshProfile();
+        setMessage('Profile photo updated.');
+      } finally {
+        setPendingAvatarUri(null);
+      }
+    });
+  }
+
+  async function handleRemoveAvatar() {
+    setAvatarPickerVisible(false);
+    await runAction(async () => {
+      await removeAvatar(profile?.avatar_url);
+      await refreshProfile();
+      setPendingAvatarUri(null);
+      setMessage('Profile photo removed.');
     });
   }
 
@@ -631,6 +723,7 @@ export function MultiplayerLobby({
           ) : (
             completedGames.map((game) => (
               <CompletedGameListItem
+                avatarUrl={profileAvatars[game.state.players.find((player) => player.id !== activeProfileId)?.id ?? '']}
                 game={game}
                 isBusy={isBusy || isLoading}
                 key={game.id}
@@ -754,9 +847,7 @@ export function MultiplayerLobby({
           </View>
           {searchResults.slice(0, 5).map((result) => (
             <View key={result.id} style={lobbyStyles.resultRow}>
-              <View style={lobbyStyles.avatarSmall}>
-                <Text style={lobbyStyles.avatarSmallText}>{result.display_name.slice(0, 1).toUpperCase()}</Text>
-              </View>
+              <PlayerAvatar avatarUrl={result.avatar_url} name={result.display_name} size={34} />
               <View style={lobbyStyles.resultTextBlock}>
                 <Text numberOfLines={1} style={lobbyStyles.resultName}>
                   {result.display_name}
@@ -879,6 +970,32 @@ export function MultiplayerLobby({
 
         <View style={lobbyStyles.panel}>
           <Text style={lobbyStyles.sectionTitle}>Player Info</Text>
+          <View style={lobbyStyles.profileAvatarSection}>
+            <Pressable
+              accessibilityLabel="Change profile photo"
+              disabled={isBusy}
+              onPress={() => setAvatarPickerVisible(true)}
+              style={({ pressed }) => [lobbyStyles.profileAvatarButton, pressed && lobbyStyles.pressed]}
+              testID="profile-avatar-button"
+            >
+              <PlayerAvatar
+                avatarUrl={pendingAvatarUri ?? profile?.avatar_url}
+                name={displayName || 'Player'}
+                size={92}
+                testID="profile-avatar"
+              />
+              {isBusy && pendingAvatarUri ? (
+                <View style={lobbyStyles.avatarBusyOverlay}>
+                  <ActivityIndicator color="#FFD329" />
+                </View>
+              ) : (
+                <View style={lobbyStyles.avatarEditBadge}>
+                  <Text style={lobbyStyles.avatarEditBadgeText}>Edit</Text>
+                </View>
+              )}
+            </Pressable>
+            <Text style={lobbyStyles.avatarHelpText}>Tap to add or change your photo</Text>
+          </View>
           <TextInput
             onChangeText={setDisplayName}
             placeholder="Display name"
@@ -947,6 +1064,47 @@ export function MultiplayerLobby({
         </Pressable>
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
         {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+        <Modal
+          animationType="fade"
+          onRequestClose={() => setAvatarPickerVisible(false)}
+          transparent
+          visible={avatarPickerVisible}
+        >
+          <Pressable style={lobbyStyles.modalBackdrop} onPress={() => setAvatarPickerVisible(false)}>
+            <Pressable onPress={(event) => event.stopPropagation()} style={lobbyStyles.avatarPickerPanel}>
+              <Text style={lobbyStyles.avatarPickerTitle}>Profile Photo</Text>
+              <Pressable
+                onPress={() => void handleSelectAvatar('library')}
+                style={({ pressed }) => [lobbyStyles.avatarPickerAction, pressed && lobbyStyles.pressed]}
+                testID="choose-avatar-library"
+              >
+                <Text style={lobbyStyles.avatarPickerActionText}>Choose from Photos</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void handleSelectAvatar('camera')}
+                style={({ pressed }) => [lobbyStyles.avatarPickerAction, pressed && lobbyStyles.pressed]}
+                testID="choose-avatar-camera"
+              >
+                <Text style={lobbyStyles.avatarPickerActionText}>Take a Photo</Text>
+              </Pressable>
+              {profile?.avatar_url && (
+                <Pressable
+                  onPress={() => void handleRemoveAvatar()}
+                  style={({ pressed }) => [lobbyStyles.avatarPickerAction, pressed && lobbyStyles.pressed]}
+                  testID="remove-avatar"
+                >
+                  <Text style={lobbyStyles.avatarPickerRemoveText}>Remove Photo</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => setAvatarPickerVisible(false)}
+                style={({ pressed }) => [lobbyStyles.avatarPickerCancel, pressed && lobbyStyles.pressed]}
+              >
+                <Text style={lobbyStyles.avatarPickerCancelText}>Cancel</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </ScrollView>,
     );
   }
@@ -1035,6 +1193,7 @@ export function MultiplayerLobby({
           ) : (
             activeGames.map((game) => (
               <GameListItem
+                avatarUrl={profileAvatars[game.state.players.find((player) => player.id !== activeProfileId)?.id ?? '']}
                 game={game}
                 key={game.id}
                 now={now}
@@ -1284,6 +1443,7 @@ function ForwardChevronIcon() {
 }
 
 function GameListItem({
+  avatarUrl,
   game,
   isBusy,
   now,
@@ -1292,6 +1452,7 @@ function GameListItem({
   onNudgeGame,
   profileId,
 }: {
+  avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
   now: number;
@@ -1365,9 +1526,7 @@ function GameListItem({
           testID={`game-card-${game.id}`}
         >
           <View style={lobbyStyles.gameCardTop}>
-            <View style={lobbyStyles.avatarLarge}>
-              <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
-            </View>
+            <PlayerAvatar avatarUrl={avatarUrl} name={opponentName} size={50} />
             <View style={lobbyStyles.gameSummary}>
               <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
                 {opponentName}
@@ -1414,12 +1573,14 @@ function GameListItem({
 }
 
 function CompletedGameListItem({
+  avatarUrl,
   game,
   isBusy,
   onOpenGame,
   onRematchGame,
   profileId,
 }: {
+  avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
   onOpenGame: (game: RemoteGameRow) => void;
@@ -1445,9 +1606,7 @@ function CompletedGameListItem({
       testID={`completed-game-${game.id}`}
     >
       <View style={lobbyStyles.gameCardTop}>
-        <View style={lobbyStyles.avatarLarge}>
-          <Text style={lobbyStyles.avatarLargeText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
-        </View>
+        <PlayerAvatar avatarUrl={avatarUrl} name={opponentName} size={50} />
         <View style={lobbyStyles.gameSummary}>
           <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
             {opponentName}
@@ -1905,6 +2064,90 @@ const lobbyStyles = StyleSheet.create({
     gap: 8,
     width: '100%',
   },
+  avatarBusyOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(33, 5, 5, 0.72)',
+    borderRadius: 46,
+    height: 92,
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    top: 0,
+    width: 92,
+  },
+  avatarEditBadge: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 12,
+    borderWidth: 2,
+    bottom: -2,
+    minWidth: 42,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    position: 'absolute',
+    right: -8,
+  },
+  avatarEditBadgeText: {
+    color: '#210505',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  avatarHelpText: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '800',
+    opacity: 0.85,
+  },
+  avatarPickerAction: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 8,
+    borderWidth: 3,
+    minHeight: 48,
+    justifyContent: 'center',
+    width: '100%',
+  },
+  avatarPickerActionText: {
+    color: '#210505',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  avatarPickerCancel: {
+    alignItems: 'center',
+    minHeight: 42,
+    justifyContent: 'center',
+    width: '100%',
+  },
+  avatarPickerCancelText: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  avatarPickerPanel: {
+    alignItems: 'center',
+    backgroundColor: '#5A1308',
+    borderColor: '#FFD329',
+    borderRadius: 12,
+    borderWidth: 3,
+    gap: 10,
+    margin: 20,
+    maxWidth: 420,
+    padding: 16,
+    width: '90%',
+  },
+  avatarPickerRemoveText: {
+    color: '#8F0000',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  avatarPickerTitle: {
+    color: '#FFD329',
+    fontSize: 21,
+    fontWeight: '900',
+  },
   avatarLarge: {
     alignItems: 'center',
     backgroundColor: '#FFD76B',
@@ -2248,6 +2491,12 @@ const lobbyStyles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
+  modalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 0, 0, 0.72)',
+    flex: 1,
+    justifyContent: 'center',
+  },
   notificationPromptActions: {
     flexDirection: 'row',
     gap: 8,
@@ -2357,6 +2606,14 @@ const lobbyStyles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72,
+  },
+  profileAvatarButton: {
+    position: 'relative',
+  },
+  profileAvatarSection: {
+    alignItems: 'center',
+    gap: 8,
+    paddingBottom: 6,
   },
   pullRefreshIndicator: {
     alignItems: 'center',

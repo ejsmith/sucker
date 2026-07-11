@@ -29,7 +29,17 @@
       "color": "#D90000",
       "icon": "./assets/icon.png"
     },
-    "plugins": ["expo-notifications"],
+    "plugins": [
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Sucker! to access the photo you choose for your profile avatar.",
+          "cameraPermission": "Allow Sucker! to use the camera to take your profile avatar.",
+          "microphonePermission": false
+        }
+      ]
+    ],
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png",
