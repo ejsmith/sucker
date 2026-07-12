@@ -403,12 +403,12 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     textAlign: 'right',
     textTransform: 'uppercase',
-    width: 58,
+    width: 68,
   },
   statsComparisonValues: {
     flexDirection: 'row',
-    gap: 10,
-    width: 126,
+    gap: 8,
+    width: 144,
   },
   statsDetailCard: {
     backgroundColor: '#210505',
@@ -483,14 +483,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     opacity: 0.9,
     textAlign: 'right',
-    width: 58,
+    width: 68,
   },
   statsLineValue: {
     color: '#FFD329',
     fontSize: 16,
     fontWeight: '900',
     textAlign: 'right',
-    width: 58,
+    width: 68,
   },
   statsOverlay: {
     backgroundColor: '#8F0000',
