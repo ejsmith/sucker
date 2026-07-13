@@ -12,6 +12,7 @@ import {
 } from './auth';
 import { registerPushToken } from './notifications';
 import { getMyProfile } from './profiles';
+import { getE2ESession } from './env';
 import { isMultiplayerConfigured, supabase } from './supabase';
 import type { ProfileInput } from './types';
 
@@ -24,6 +25,14 @@ export function useMultiplayerSession() {
   const [session, setSession] = useState<Session | null>(null);
   const lastHandledAuthUrl = useRef<string | null>(null);
   const pushRegisteredProfileId = useRef<string | null>(null);
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
   const refreshProfile = useCallback(async () => {
     if (!isMultiplayerConfigured) {
@@ -31,6 +40,9 @@ export function useMultiplayerSession() {
     }
 
     const nextProfile = await getMyProfile();
+    if (!isMounted.current) {
+      return nextProfile;
+    }
     setProfile(nextProfile);
     if (nextProfile && pushRegisteredProfileId.current !== nextProfile.id) {
       pushRegisteredProfileId.current = nextProfile.id;
@@ -88,7 +100,10 @@ export function useMultiplayerSession() {
           return;
         }
 
-        const currentSession = await getCurrentSession();
+        const testSession = getE2ESession();
+        const currentSession = testSession
+          ? (await supabase.auth.setSession(testSession)).data.session
+          : await getCurrentSession();
         if (!isMounted) {
           return;
         }
@@ -111,6 +126,9 @@ export function useMultiplayerSession() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!isMounted) {
+        return;
+      }
       setSession(nextSession);
       setProfile(null);
       if (nextSession) {

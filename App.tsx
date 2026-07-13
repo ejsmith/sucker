@@ -7,13 +7,12 @@ import {
   ImageSourcePropType,
   PanResponder,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   availableCategories,
   categoryLabels,
@@ -42,7 +41,6 @@ import {
   type LocalPendingTurn,
 } from './src/game/computer';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
-import { isMultiplayerConfigured } from './src/multiplayer';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import {
   buyRemoteExtraRoll,
@@ -50,7 +48,6 @@ import {
   getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
-  listMyGames,
   rollRemoteGame,
   scoreRemoteCategory,
   scratchRemoteCategory,
@@ -58,9 +55,6 @@ import {
   subscribeToGameListChanges,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
-import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
-import { clearCachedGameList, loadCachedGameList, saveCachedGameList } from './src/multiplayer/gameListCache';
-import { getInitialNotificationGameId, useWebNotificationClicks } from './src/multiplayer/notificationNavigation';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
 import { getProfilesByIds } from './src/multiplayer/profiles';
 import { supabase } from './src/multiplayer/supabase';
@@ -69,7 +63,6 @@ import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multi
 import { getPhoneStageStyle } from './src/ui/phoneStage';
 import { useAppActivity } from './src/ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
-import { WebPortraitGuard } from './src/ui/WebPortraitGuard';
 import {
   createRollingLaunch,
   defaultRollingLaunch,
@@ -82,6 +75,8 @@ import {
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
+import { Pressable } from './src/ui/Pressable';
+import { useReducedMotion } from './src/ui/useReducedMotion';
 import {
   buildExtraRollActionPayload,
   buildRollActionPayload,
@@ -369,135 +364,6 @@ function replaceWebDevViewportPreset(key: DevViewportPresetSelection) {
   history.replaceState(null, '', `${location.pathname}${search ? `?${search}` : ''}${location.hash}`);
 }
 
-export default function App() {
-  return (
-    <SafeAreaProvider>
-      <WebPortraitGuard>
-        <AppRoutes />
-      </WebPortraitGuard>
-    </SafeAreaProvider>
-  );
-}
-
-function AppRoutes() {
-  const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
-  const [localPlayerProfile, setLocalPlayerProfile] = useState<LocalPlayerProfile | null>(null);
-  const [remoteGameRequest, setRemoteGameRequest] = useState<RemoteGameRequest | null>(() => {
-    const gameId = getInitialNotificationGameId();
-    return gameId ? createRemoteGameRequest(gameId) : null;
-  });
-  const [sharedGameList, setSharedGameList] = useState<{
-    games: RemoteGameRow[];
-    profileId: string | null;
-  }>({ games: [], profileId: null });
-  const hasChangedSharedGameList = useRef(false);
-  const [isGameListCacheHydrated, setIsGameListCacheHydrated] = useState(false);
-  const openRemoteGame = useCallback((gameId: string) => {
-    setShowLocalDemo(false);
-    setRemoteGameRequest(createRemoteGameRequest(gameId));
-  }, []);
-  const setSharedGames = useCallback((profileId: string | null, games: RemoteGameRow[]) => {
-    hasChangedSharedGameList.current = true;
-    setSharedGameList({ games: profileId ? games : [], profileId });
-  }, []);
-  const refreshSharedGames = useCallback(
-    async (profileId: string) => {
-      const games = await listMyGames();
-      setSharedGames(profileId, games);
-      return games;
-    },
-    [setSharedGames],
-  );
-  const rememberRemoteGame = useCallback((profileId: string, game: RemoteGameRow) => {
-    hasChangedSharedGameList.current = true;
-    setSharedGameList((cache) => ({
-      games: mergeRemoteGameIntoLobbyCache(cache.profileId === profileId ? cache.games : [], game),
-      profileId,
-    }));
-  }, []);
-  useEffect(() => {
-    let active = true;
-
-    void loadCachedGameList()
-      .then((cached) => {
-        if (active && cached && !hasChangedSharedGameList.current) {
-          setSharedGameList(cached);
-        }
-      })
-      .catch((cacheError: unknown) => {
-        console.warn('Unable to restore cached games', cacheError);
-      })
-      .finally(() => {
-        if (active) {
-          setIsGameListCacheHydrated(true);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!isGameListCacheHydrated) {
-      return;
-    }
-
-    const cacheUpdate = sharedGameList.profileId
-      ? saveCachedGameList({ games: sharedGameList.games, profileId: sharedGameList.profileId })
-      : clearCachedGameList();
-    void cacheUpdate.catch((cacheError: unknown) => {
-      console.warn('Unable to update cached games', cacheError);
-    });
-  }, [isGameListCacheHydrated, sharedGameList]);
-  useWebNotificationClicks(openRemoteGame);
-
-  if (isMultiplayerConfigured && remoteGameRequest) {
-    return (
-      <RemoteGameScreen
-        gameId={remoteGameRequest.gameId}
-        games={sharedGameList.games}
-        gamesProfileId={sharedGameList.profileId}
-        key={`${remoteGameRequest.gameId}:${remoteGameRequest.requestId}`}
-        onGameChange={rememberRemoteGame}
-        onRefreshGames={refreshSharedGames}
-        onExit={() => setRemoteGameRequest(null)}
-      />
-    );
-  }
-
-  if (isMultiplayerConfigured && !showLocalDemo) {
-    return (
-      <MultiplayerLobby
-        games={sharedGameList.games}
-        gamesProfileId={sharedGameList.profileId}
-        onGamesChange={setSharedGames}
-        onOpenGame={openRemoteGame}
-        onPlayLocalDemo={(playerProfile) => {
-          setLocalPlayerProfile(playerProfile);
-          setShowLocalDemo(true);
-        }}
-        onRefreshGames={refreshSharedGames}
-      />
-    );
-  }
-
-  return (
-    <LocalGameScreen
-      localPlayerAvatarUrl={localPlayerProfile?.avatarUrl}
-      localPlayerName={localPlayerProfile?.displayName}
-      onExit={() => setShowLocalDemo(!isMultiplayerConfigured)}
-    />
-  );
-}
-
-function mergeRemoteGameIntoLobbyCache(games: RemoteGameRow[], game: RemoteGameRow) {
-  const nextGames = games.some((currentGame) => currentGame.id === game.id)
-    ? games.map((currentGame) => (currentGame.id === game.id ? game : currentGame))
-    : [game, ...games];
-
-  return nextGames.sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
-}
-
 function shouldShowNextTurnsAfterAction(game: RemoteGameRow, profileId: string) {
   return game.status !== 'complete' && game.current_player_id !== profileId;
 }
@@ -522,12 +388,7 @@ function getNextTurnGames(games: RemoteGameRow[], profileId: string, currentGame
     .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
 }
 
-function createRemoteGameRequest(gameId: string): RemoteGameRequest {
-  remoteGameRequestId += 1;
-  return { gameId, requestId: remoteGameRequestId };
-}
-
-function RemoteGameScreen({
+export function RemoteGameScreen({
   gameId,
   games,
   gamesProfileId,
@@ -913,7 +774,7 @@ function RemoteGameScreen({
   );
 }
 
-function LocalGameScreen({
+export function LocalGameScreen({
   isRemoteBusy = false,
   localPlayerAvatarUrl,
   localPlayerName,
@@ -956,8 +817,9 @@ function LocalGameScreen({
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
   const [suckerPunchWipe, setSuckerPunchWipe] = useState<SuckerPunchWipe | null>(null);
   const [suckerBlockedNotice, setSuckerBlockedNotice] = useState<SuckerBlockedNotice | null>(null);
-  const [remoteBlockedPunchRevealGate, setRemoteBlockedPunchRevealGate] =
-    useState<RemoteBlockedPunchRevealGate | null>(null);
+  const [remoteBlockedPunchRevealGate, setRemoteBlockedPunchRevealGate] = useState<RemoteBlockedPunchRevealGate | null>(
+    null,
+  );
   const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
   const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(null);
   const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(1);
@@ -988,6 +850,8 @@ function LocalGameScreen({
   const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
   const isAppActive = useAppActivity();
+  const prefersReducedMotion = useReducedMotion();
+  const shouldReduceMotion = disableE2EAnimations || prefersReducedMotion;
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
   const boardRef = useRef<ViewRef | null>(null);
@@ -1069,9 +933,9 @@ function LocalGameScreen({
   const isRemoteActionPlayable = !isRemoteGame || remoteStatus === 'active' || isRemoteResponseTurn;
   const isRemoteTurnRevealPending = Boolean(
     isRemoteGame &&
-      remoteLastTurnId &&
-      visibleRemoteTurnId.current !== remoteLastTurnId &&
-      remoteLastTurnLoadFailedId !== remoteLastTurnId,
+    remoteLastTurnId &&
+    visibleRemoteTurnId.current !== remoteLastTurnId &&
+    remoteLastTurnLoadFailedId !== remoteLastTurnId,
   );
   const isComputerTurn = !isRemoteGame && game.currentPlayerIndex === computerPlayerIndex && game.phase !== 'complete';
   const openCategories = availableCategories(currentPlayer.scorecard);
@@ -1111,19 +975,10 @@ function LocalGameScreen({
     !isRemoteInteractionPending &&
     !suckerPunchDialog;
   const myTokenCount = homePlayer.suckerTokens;
-  const canUseLocalExtraRoll =
-    !isRemoteGame &&
-    canOpenTokenMenu &&
-    myTokenCount >= suckerTokenCosts.extraRoll;
+  const canUseLocalExtraRoll = !isRemoteGame && canOpenTokenMenu && myTokenCount >= suckerTokenCosts.extraRoll;
   const canUseRemoteExtraRoll =
-    isRemoteGame &&
-    canOpenTokenMenu &&
-    isRemoteActionPlayable &&
-    myTokenCount >= suckerTokenCosts.extraRoll;
-  const canUseLocalMulligan =
-    !isRemoteGame &&
-    canOpenTokenMenu &&
-    myTokenCount >= suckerTokenCosts.mulligan;
+    isRemoteGame && canOpenTokenMenu && isRemoteActionPlayable && myTokenCount >= suckerTokenCosts.extraRoll;
+  const canUseLocalMulligan = !isRemoteGame && canOpenTokenMenu && myTokenCount >= suckerTokenCosts.mulligan;
   const canStartSuckerDeal = canOpenTokenMenu && openCategories.length > 0 && isRemoteActionPlayable;
   const isLocalPendingTurnPunchable = Boolean(pendingTurn);
   const isRemoteLastTurnPunchable = Boolean(remoteLastTurn);
@@ -1190,18 +1045,16 @@ function LocalGameScreen({
   );
   const shouldCheckRemoteBlockedPunchBeforeReveal = Boolean(
     isRemoteGame &&
-      myProfileId &&
-      remoteStatus === 'response_window' &&
-      remoteGame &&
-      remoteLastTurn &&
-      remoteOpponentTurnNeedsReveal &&
-      remoteLastTurn.player_id !== myProfileId &&
-      remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId,
+    myProfileId &&
+    remoteStatus === 'response_window' &&
+    remoteGame &&
+    remoteLastTurn &&
+    remoteOpponentTurnNeedsReveal &&
+    remoteLastTurn.player_id !== myProfileId &&
+    remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId,
   );
   const isRemoteBlockedPunchRevealGateForTurn = Boolean(
-    remoteBlockedPunchRevealGate &&
-      remoteLastTurn &&
-      remoteBlockedPunchRevealGate.turnId === remoteLastTurn.id,
+    remoteBlockedPunchRevealGate && remoteLastTurn && remoteBlockedPunchRevealGate.turnId === remoteLastTurn.id,
   );
   const remoteBlockedPunchRevealGateStatus =
     isRemoteBlockedPunchRevealGateForTurn && remoteBlockedPunchRevealGate
@@ -1272,7 +1125,7 @@ function LocalGameScreen({
   }, [homeSectionBonusAwarded, sectionBonusPulse]);
 
   useEffect(() => {
-    if (disableE2EAnimations || !isAppActive) {
+    if (shouldReduceMotion || !isAppActive) {
       return;
     }
 
@@ -1329,7 +1182,7 @@ function LocalGameScreen({
 
     loops.forEach((loop) => loop.start());
     return () => loops.forEach((loop) => loop.stop());
-  }, [bgFloat, isAppActive, selectedCategory, selectedPulse]);
+  }, [bgFloat, isAppActive, selectedCategory, selectedPulse, shouldReduceMotion]);
 
   useEffect(() => {
     return () => {
@@ -1538,12 +1391,7 @@ function LocalGameScreen({
     return () => {
       isMounted = false;
     };
-  }, [
-    myProfileId,
-    remoteGame,
-    remoteLastTurn,
-    shouldCheckRemoteBlockedPunchBeforeReveal,
-  ]);
+  }, [myProfileId, remoteGame, remoteLastTurn, shouldCheckRemoteBlockedPunchBeforeReveal]);
 
   useEffect(() => {
     if (isRemoteGame) {
@@ -1936,8 +1784,8 @@ function LocalGameScreen({
   function didBlockSuckerPunchAgainstMe(result: ComputerTurnResult) {
     return Boolean(
       result.suckerPunchAttempt &&
-        !result.suckerPunchAttempt.outcome.landed &&
-        result.suckerPunchAttempt.targetPlayerIndex === myPlayerIndex,
+      !result.suckerPunchAttempt.outcome.landed &&
+      result.suckerPunchAttempt.targetPlayerIndex === myPlayerIndex,
     );
   }
 
@@ -2431,10 +2279,10 @@ function LocalGameScreen({
         const targetTurn = remoteLastTurn;
         const targetPlayer = targetTurn ? game.players.find((player) => player.id === targetTurn.player_id) : null;
         const targetScore = targetTurn
-          ? displayScoreWithoutSuckerBonus(
+          ? (displayScoreWithoutSuckerBonus(
               targetPlayer?.scorecard[targetTurn.category] ?? null,
               Boolean(targetPlayer?.suckerBonusCategories?.includes(targetTurn.category)),
-            ) ?? targetTurn.score
+            ) ?? targetTurn.score)
           : null;
         completeAfterResult = () => {
           setLiveRemoteGame(result.game as ReturnType<typeof createGame>);
@@ -2538,7 +2386,7 @@ function LocalGameScreen({
     }
 
     sectionBonusPulse.stopAnimation();
-    if (disableE2EAnimations) {
+    if (shouldReduceMotion) {
       sectionBonusPulse.setValue(1);
       return;
     }
@@ -2911,6 +2759,10 @@ function LocalGameScreen({
               return (
                 <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
                   <Pressable
+                    accessibilityLabel={
+                      showDie ? `Die ${index + 1}: ${die}${showHeldDie ? ', held' : ''}` : `Die ${index + 1}`
+                    }
+                    accessibilityState={{ selected: Boolean(showHeldDie) }}
                     disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending}
                     onPress={() => void handleToggleHold(index)}
                     ref={(node) => {
@@ -3026,6 +2878,7 @@ function LocalGameScreen({
           <View style={[styles.controlsRow, compactPhoneLayout && styles.compactControlsRow]}>
             <View style={[styles.rollButtonWrap, compactPhoneLayout && styles.compactRollButtonWrap]}>
               <Pressable
+                accessibilityLabel={`Roll dice, ${standardRollsLeft} standard rolls left`}
                 disabled={!canRoll}
                 onPress={handleRoll}
                 style={({ pressed }) => [
@@ -3051,6 +2904,7 @@ function LocalGameScreen({
             <View style={[styles.tokenButtonWrap, compactPhoneLayout && styles.compactTokenButtonWrap]}>
               <Pressable
                 accessibilityLabel="Sucker token menu"
+                accessibilityState={{ expanded: isTokenMenuOpen }}
                 disabled={!canOpenTokenMenu}
                 onPress={() => setIsTokenMenuOpen(true)}
                 style={({ pressed }) => [
@@ -3074,6 +2928,7 @@ function LocalGameScreen({
 
             <View style={[styles.playButtonWrap, compactPhoneLayout && styles.compactPlayButtonWrap]}>
               <Pressable
+                accessibilityLabel={selectedCategory ? `Play ${categoryLabels[selectedCategory]}` : 'Play score'}
                 disabled={!canPlaySelected}
                 onPress={handlePlayScore}
                 style={({ pressed }) => [
@@ -3093,8 +2948,8 @@ function LocalGameScreen({
         </View>
         {isTokenMenuOpen && (
           <View style={styles.tokenMenuOverlay} testID="token-menu-overlay">
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
-            <View style={styles.tokenMenuPanel}>
+            <Pressable accessible={false} style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
+            <View accessibilityViewIsModal role="dialog" style={styles.tokenMenuPanel}>
               <View style={styles.tokenMenuHeader}>
                 <Image source={suckerTokenImage} style={styles.tokenMenuIcon} />
                 <View style={styles.tokenMenuHeaderText}>
@@ -3227,12 +3082,7 @@ function LocalGameScreen({
                   },
                 ]}
               >
-                <Text
-                  adjustsFontSizeToFit
-                  allowFontScaling={false}
-                  numberOfLines={1}
-                  style={styles.opponentTurnRevealText}
-                >
+                <Text adjustsFontSizeToFit numberOfLines={1} style={styles.opponentTurnRevealText}>
                   {opponentTurnReveal.playerName} played{' '}
                   <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.score}</Text> on{' '}
                   <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.categoryLabel}</Text>
@@ -3362,12 +3212,14 @@ function LocalGameScreen({
         )}
         {remoteError && (
           <View pointerEvents="none" style={styles.remoteErrorNoticeOverlay}>
-            <Text style={styles.remoteErrorNoticeText}>{remoteError}</Text>
+            <Text accessibilityLiveRegion="assertive" role="alert" style={styles.remoteErrorNoticeText}>
+              {remoteError}
+            </Text>
           </View>
         )}
         {nextTurnsVisible && (
           <View style={styles.nextTurnsOverlay} testID="next-turns-dialog">
-            <View style={styles.nextTurnsPanel}>
+            <View accessibilityViewIsModal role="dialog" style={styles.nextTurnsPanel}>
               <Pressable
                 accessibilityLabel="Close next turns"
                 onPress={onDismissNextTurns}
@@ -3377,7 +3229,9 @@ function LocalGameScreen({
                 <Text style={styles.nextTurnsCloseText}>X</Text>
               </Pressable>
               <Text style={styles.nextTurnsEyebrow}>Turn Finished</Text>
-              <Text style={styles.nextTurnsTitle}>Keep playing?</Text>
+              <Text accessibilityRole="header" style={styles.nextTurnsTitle}>
+                Keep playing?
+              </Text>
               {nextTurnGames && nextTurnGames.length > 0 ? (
                 <ScrollView
                   contentContainerStyle={styles.nextTurnsListContent}
@@ -3411,7 +3265,7 @@ function LocalGameScreen({
         )}
         {gameOverVisible && (
           <View style={styles.gameOverOverlay} testID="game-over-overlay">
-            <View style={styles.gameOverPanel} testID="game-over-panel">
+            <View accessibilityViewIsModal role="dialog" style={styles.gameOverPanel} testID="game-over-panel">
               <Pressable
                 accessibilityLabel="Close game and return to games list"
                 onPress={handleCloseGameOver}
@@ -3421,7 +3275,9 @@ function LocalGameScreen({
                 <Text style={styles.gameOverCloseText}>×</Text>
               </Pressable>
               <Text style={styles.gameOverEyebrow}>Game Over</Text>
-              <Text style={styles.gameOverTitle}>{gameOverTitle}</Text>
+              <Text accessibilityRole="header" style={styles.gameOverTitle}>
+                {gameOverTitle}
+              </Text>
               <View style={styles.gameOverScores}>
                 <View style={styles.gameOverScoreBox} testID="game-over-home-score">
                   <Text style={styles.gameOverScoreName}>{homePlayer.name}</Text>
@@ -3561,7 +3417,6 @@ function BonusValueText({
       {bonusOutlineOffsets.map((offset, index) => (
         <Text
           adjustsFontSizeToFit
-          allowFontScaling={false}
           key={`${offset.x}:${offset.y}:${index}`}
           numberOfLines={1}
           style={[styles.bonusBig, styles.bonusBigOutline, { color: outlineColor, left: offset.x, top: offset.y }]}
@@ -3571,7 +3426,6 @@ function BonusValueText({
       ))}
       <Animated.Text
         adjustsFontSizeToFit
-        allowFontScaling={false}
         numberOfLines={1}
         style={[styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}
       >
@@ -3649,9 +3503,17 @@ function SuckerPunchChanceDialog({
       ? `Rolled ${face}`
       : isThrowing
         ? 'Throwing Punch'
-      : 'Sucker Punch';
+        : 'Sucker Punch';
   const buttonLabel =
-    phase === 'rolling' ? 'ROLLING' : isRolled ? 'THROW PUNCH' : isThrowing ? 'THROWING' : isResult ? 'CONTINUE' : 'ROLL';
+    phase === 'rolling'
+      ? 'ROLLING'
+      : isRolled
+        ? 'THROW PUNCH'
+        : isThrowing
+          ? 'THROWING'
+          : isResult
+            ? 'CONTINUE'
+            : 'ROLL';
   const flyY = rollProgress.interpolate({
     inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
     outputRange: [22, 12, -24, -12, -3, 0],
@@ -3671,8 +3533,8 @@ function SuckerPunchChanceDialog({
 
   return (
     <View style={styles.suckerPunchChanceOverlay} testID="sucker-punch-chance-dialog">
-      <View style={styles.suckerPunchChancePanel}>
-        <Text adjustsFontSizeToFit allowFontScaling={false} numberOfLines={1} style={styles.suckerPunchChanceTitle}>
+      <View accessibilityViewIsModal role="dialog" style={styles.suckerPunchChancePanel}>
+        <Text adjustsFontSizeToFit numberOfLines={1} style={styles.suckerPunchChanceTitle}>
           {title}
         </Text>
         {phase === 'ready' && <Text style={styles.suckerPunchChanceHint}>Higher roll, higher chance.</Text>}
@@ -3748,7 +3610,7 @@ function BonusMeter({ total }: { total: number }) {
             />
           )}
         </Svg>
-        <Text adjustsFontSizeToFit allowFontScaling={false} numberOfLines={1} style={styles.bonusMeterText}>
+        <Text adjustsFontSizeToFit numberOfLines={1} style={styles.bonusMeterText}>
           {clampedTotal}/63
         </Text>
       </View>
@@ -3906,7 +3768,6 @@ function ScoreCell({
             <SuckerPunchScoreWipe compact={compactLayout} home progress={homeWipe.progress} score={homeWipe.score} />
           ) : (
             <Text
-              allowFontScaling={false}
               numberOfLines={1}
               style={[
                 styles.scoreBoxText,
@@ -3936,7 +3797,6 @@ function ScoreCell({
           />
         ) : (
           <Text
-            allowFontScaling={false}
             numberOfLines={1}
             style={[
               styles.opponentScoreText,
@@ -4000,7 +3860,6 @@ function SuckerPunchScoreWipe({
         </Svg>
       </Animated.View>
       <Animated.Text
-        allowFontScaling={false}
         numberOfLines={1}
         style={[
           home ? styles.scoreBoxText : styles.opponentScoreText,
@@ -4335,7 +4194,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   backgroundPattern: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.18,
   },
   backgroundDie: {
@@ -4366,7 +4225,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   topBarBannerClip: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 8,
     overflow: 'hidden',
     zIndex: 1,
@@ -4419,7 +4278,7 @@ const styles = StyleSheet.create({
     top: 7,
   },
   topMenuLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 80,
   },
   topMenu: {
@@ -4712,7 +4571,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   suckerPunchScoreWipe: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -4921,7 +4780,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   rollingDiceOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 8,
   },
   rollingDieTrack: {
@@ -4998,7 +4857,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   scoreDiceOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 24,
   },
   scoreFlyingDie: {
@@ -5014,7 +4873,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scoreNumberOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 25,
   },
   scoreFlyingNumber: {
@@ -5036,7 +4895,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   suckerPunchChanceOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.66)',
     justifyContent: 'center',
@@ -5138,7 +4997,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   suckerPunchNoticeOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
@@ -5205,7 +5064,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   nextTurnsOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.62)',
     justifyContent: 'center',
@@ -5380,7 +5239,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   gameOverOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.68)',
     justifyContent: 'center',
@@ -5614,7 +5473,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   tokenMenuOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.56)',
     justifyContent: 'flex-end',

@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Expo SDK 54 with React Native and TypeScript for iOS and Android.
+- Expo SDK 57 with Expo Router, React Compiler, React Native, and TypeScript for iOS, Android, and web.
 - Supabase for auth, Postgres, realtime game updates, Edge Functions, and push-trigger state.
 - Expo Notifications for async turn and response-window reminders.
 - Shared TypeScript rules in `src/game` for both app play and future server validation.

@@ -1,6 +1,7 @@
 {
   "expo": {
     "name": "Sucker!",
+    "description": "An asynchronous head-to-head dice game with tactical Sucker Tokens.",
     "slug": "sucker",
     "scheme": "sucker",
     "version": "1.0.0",
@@ -20,17 +21,50 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#D90000",
-        "foregroundImage": "./assets/icon.png"
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            { "scheme": "https", "host": "sucker.games", "pathPrefix": "/invite/" },
+            { "scheme": "https", "host": "sucker.games", "pathPrefix": "/auth/callback" }
+          ]
+        }
+      ],
       "package": "com.ejsmith.sucker",
-      "predictiveBackGestureEnabled": false
-    },
-    "notification": {
-      "color": "#D90000",
-      "icon": "./assets/icon.png"
+      "predictiveBackGestureEnabled": true
     },
     "plugins": [
-      "expo-notifications",
+      "expo-router",
+      "expo-image",
+      "expo-status-bar",
+      [
+        "expo-notifications",
+        {
+          "color": "#D90000",
+          "defaultChannel": "game-turns",
+          "icon": "./assets/notification-icon.png"
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#8F0000",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain"
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -53,6 +87,9 @@
       "startUrl": "/"
     },
     "backgroundColor": "#8F0000",
+    "experiments": {
+      "reactCompiler": true
+    },
     "extra": {
       "eas": {
         "projectId": "9e385d7c-1520-4497-b069-f20870551a34"

@@ -448,9 +448,8 @@ export function playAutomatedTurn(
   }
 
   const action = finalAction ?? chooseComputerFinalAction(nextGame, automatedPlayerIndex, strategy);
-  const result = action.type === 'scratch'
-    ? scratchLocalTurn(nextGame, action.category)
-    : scoreLocalTurn(nextGame, action.category);
+  const result =
+    action.type === 'scratch' ? scratchLocalTurn(nextGame, action.category) : scoreLocalTurn(nextGame, action.category);
   return suckerPunchAttempt ? { ...result, suckerPunchAttempt } : result;
 }
 
@@ -476,10 +475,14 @@ export function traceComputerDecision(
     Boolean(player && bestCategory && game.rollNumber > 0) &&
     shouldComputerStopRolling(game, automatedPlayerIndex, bestCategory, strategy);
   const heuristicShouldBuyExtraRoll = Boolean(
-    player && bestCategory && shouldComputerBuyExtraRoll(game, automatedPlayerIndex, bestCategory, extraRollsBought, strategy),
+    player &&
+    bestCategory &&
+    shouldComputerBuyExtraRoll(game, automatedPlayerIndex, bestCategory, extraRollsBought, strategy),
   );
   const heuristicShouldMulligan = Boolean(
-    player && bestCategory && shouldComputerUseMulligan(game, automatedPlayerIndex, bestCategory, mulligansUsed, strategy),
+    player &&
+    bestCategory &&
+    shouldComputerUseMulligan(game, automatedPlayerIndex, bestCategory, mulligansUsed, strategy),
   );
   const shouldBuyExtraRoll = decisionAction ? decisionAction.type === 'extraRoll' : heuristicShouldBuyExtraRoll;
   const shouldMulligan = decisionAction ? decisionAction.type === 'mulligan' : heuristicShouldMulligan;
@@ -583,7 +586,13 @@ function chooseRolloutTurnDecisionAction(
   heuristicAction: ComputerTurnDecisionAction,
   mulligansUsed: number,
 ): ComputerTurnDecisionAction {
-  const candidates = getTurnDecisionActionCandidates(game, automatedPlayerIndex, heuristicAction, mulligansUsed, strategy);
+  const candidates = getTurnDecisionActionCandidates(
+    game,
+    automatedPlayerIndex,
+    heuristicAction,
+    mulligansUsed,
+    strategy,
+  );
   if (candidates.length <= 1) {
     return heuristicAction;
   }
@@ -634,7 +643,10 @@ function getTurnDecisionActionCandidates(
     addAction({ type: 'extraRoll' });
   }
 
-  if (strategy.turnDecisionRolloutIncludesMulligan && canLegallyUseMulligan(game, automatedPlayerIndex, mulligansUsed)) {
+  if (
+    strategy.turnDecisionRolloutIncludesMulligan &&
+    canLegallyUseMulligan(game, automatedPlayerIndex, mulligansUsed)
+  ) {
     addAction({ type: 'mulligan' });
   }
 
@@ -799,7 +811,13 @@ function measureTurnDecisionRollout(
 
   for (let index = 0; index < simulationCount; index += 1) {
     const random = createRolloutRandom(
-      rolloutSeedForDecisionAction(game, automatedPlayerIndex, action, index, strategy.decisionRolloutUseCommonRandomFutures),
+      rolloutSeedForDecisionAction(
+        game,
+        automatedPlayerIndex,
+        action,
+        index,
+        strategy.decisionRolloutUseCommonRandomFutures,
+      ),
     );
     const result = simulateTurnDecisionRollout(game, automatedPlayerIndex, action, simulationStrategy, random);
     scoreTotal += result.playerScore;
@@ -1395,13 +1413,7 @@ function measureHeldDiceRollout(
 
   for (let index = 0; index < simulationCount; index += 1) {
     const random = createRolloutRandom(rolloutSeedForHeldDice(game, automatedPlayerIndex, held, index));
-    const result = simulateCurrentTurnFromHeldDice(
-      game,
-      automatedPlayerIndex,
-      held,
-      simulationStrategy,
-      random,
-    );
+    const result = simulateCurrentTurnFromHeldDice(game, automatedPlayerIndex, held, simulationStrategy, random);
     const resultGame = result.game;
     const afterPlayer = resultGame.players[automatedPlayerIndex];
     const scoreDelta = totalScore(afterPlayer.scorecard) - beforeScore;
@@ -1569,7 +1581,12 @@ function faceChaseValue(
     (scorecard.sucker === null ? strategy.faceChaseSuckerValue : 0) +
     (scorecard.fourOfAKind === null ? strategy.faceChaseFourOfAKindValue : 0) +
     (scorecard.threeOfAKind === null ? strategy.faceChaseThreeOfAKindValue : 0);
-  return count * strategy.faceChaseCountWeight + face * strategy.faceChasePipWeight + upperValue + (count >= 2 ? kindValue : 0);
+  return (
+    count * strategy.faceChaseCountWeight +
+    face * strategy.faceChasePipWeight +
+    upperValue +
+    (count >= 2 ? kindValue : 0)
+  );
 }
 
 function bestStraightHold(dice: GameState['dice'], length: 4 | 5): GameState['held'] {

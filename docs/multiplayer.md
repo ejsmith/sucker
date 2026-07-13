@@ -193,7 +193,8 @@ Keep `{{ .ConfirmationURL }}` as a secondary option for users who can open links
 
 Hosted redirect allow-list values should include:
 
-- `sucker://auth/callback`
+- `https://sucker.games/auth/callback` for production PKCE sign-in
+- `sucker://auth/callback` for development builds only
 - `https://sucker.games/auth/callback`
 - local Expo/web development URLs as needed
 

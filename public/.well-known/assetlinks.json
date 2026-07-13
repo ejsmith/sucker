@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.ejsmith.sucker",
+      "sha256_cert_fingerprints": [
+        "AF:CD:F9:C9:14:74:A4:45:08:14:75:EA:52:25:23:F9:91:A5:22:D0:C4:34:C5:3E:9D:B3:0A:6B:C9:5F:47:C4"
+      ]
+    }
+  }
+]

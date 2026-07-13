@@ -67,7 +67,8 @@ Build and App Store Connect.
 - Confirm `sucker.games` invite pages either open the installed app or show a
   clear install/open fallback.
 - Confirm Supabase redirect allow-list includes:
-  - `sucker://auth/callback`
+  - `https://sucker.games/auth/callback` in production
+  - `sucker://auth/callback` in development builds only
   - `https://sucker.games/auth/callback`
   - `https://play.sucker.games/auth/callback`
 - Run one TestFlight smoke against staging or production Supabase:

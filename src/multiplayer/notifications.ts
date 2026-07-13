@@ -44,9 +44,9 @@ export async function registerPushToken(profileId: string) {
   }
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
+    await Notifications.setNotificationChannelAsync('game-turns', {
       importance: Notifications.AndroidImportance.MAX,
-      name: 'default',
+      name: 'Game turns',
       vibrationPattern: [0, 250, 250, 250],
     });
   }

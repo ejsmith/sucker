@@ -40,8 +40,29 @@ jobs:
       - name: Typecheck app
         run: npm run typecheck
 
+      - name: Lint app
+        run: npm run lint -- --max-warnings=0
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Check Expo dependency alignment
+        run: npm run check:expo
+
+      - name: Run Expo Doctor
+        run: npm run doctor:expo
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Test app rules
         run: npm run test
+
+      - name: Build production web bundle
+        run: npm run build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
   edge:
     name: Edge

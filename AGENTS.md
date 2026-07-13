@@ -25,7 +25,7 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 ## App And Stack
 
 - Expo React Native app, mobile-first, with React Native Web for local browser iteration.
-- `package.json` currently uses Expo `~54.0.0`; use the matching Expo version docs only when the task depends on Expo-specific APIs, configuration, build behavior, or compatibility.
+- `package.json` currently uses Expo SDK 57; use the matching Expo version docs only when the task depends on Expo-specific APIs, configuration, build behavior, or compatibility.
 - Do not check Expo docs for ordinary app code, styling, animation, or game-logic changes.
 - Only run Expo/EAS builds when the user specifically asks for a build; the project is on a limited/free Expo plan.
 - Multiplayer uses Supabase client code in `src/multiplayer`, SQL migrations in `supabase/migrations`, and Edge Functions in `supabase/functions`.

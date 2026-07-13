@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image } from 'expo-image';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 export function PlayerAvatar({
   avatarUrl,
@@ -20,19 +21,21 @@ export function PlayerAvatar({
   return (
     <View
       accessibilityLabel={`${name}'s profile avatar`}
+      accessibilityRole="image"
       style={[styles.frame, { borderRadius: size / 2, height: size, width: size }, style]}
       testID={testID}
     >
       {showImage ? (
         <Image
+          cachePolicy="memory-disk"
+          contentFit="cover"
           onError={() => setFailedUrl(avatarUrl ?? null)}
-          resizeMode="cover"
-          source={{ uri: avatarUrl ?? undefined }}
+          source={avatarUrl}
           style={StyleSheet.absoluteFill}
           testID={testID ? `${testID}-image` : undefined}
         />
       ) : (
-        <Text allowFontScaling={false} style={[styles.initial, { fontSize: Math.max(14, size * 0.44) }]}>
+        <Text style={[styles.initial, { fontSize: Math.max(14, size * 0.44) }]}>
           {name.trim().slice(0, 1).toUpperCase() || '?'}
         </Text>
       )}

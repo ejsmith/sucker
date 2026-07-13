@@ -11,6 +11,8 @@ export function useKeyboardStableWindowDimensions() {
 
   useEffect(() => {
     if (!shouldStabilizeHeight) {
+      // The state mirrors an external viewport measurement and must update after the committed resize.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStableDimensions((currentDimensions) =>
         areSameDimensions(currentDimensions, dimensions) ? currentDimensions : dimensions,
       );
@@ -28,7 +30,7 @@ export function useKeyboardStableWindowDimensions() {
       };
       return areSameDimensions(currentDimensions, nextDimensions) ? currentDimensions : nextDimensions;
     });
-  }, [dimensions.fontScale, dimensions.height, dimensions.scale, dimensions.width, shouldStabilizeHeight]);
+  }, [dimensions, shouldStabilizeHeight]);
 
   if (!shouldStabilizeHeight || didWidthChange(stableDimensions.width, dimensions.width)) {
     return dimensions;

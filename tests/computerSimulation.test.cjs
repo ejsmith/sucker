@@ -118,7 +118,13 @@ test('computer turn trace callback records actual turn-loop decisions', () => {
   };
   const traces = [];
 
-  playComputerTurn(game, null, () => 0, defaultComputerStrategy, (trace) => traces.push(trace));
+  playComputerTurn(
+    game,
+    null,
+    () => 0,
+    defaultComputerStrategy,
+    (trace) => traces.push(trace),
+  );
 
   assert.ok(traces.some((trace) => trace.stage === 'after_roll'));
   assert.ok(traces.some((trace) => trace.stage === 'decision'));
@@ -192,7 +198,8 @@ test('computer strategy can configure chained extra rolls', () => {
     true,
   );
   assert.equal(
-    traceComputerDecision(game, computerPlayerIndex, defaultComputerStrategy, { extraRollsBought: 3 }).shouldBuyExtraRoll,
+    traceComputerDecision(game, computerPlayerIndex, defaultComputerStrategy, { extraRollsBought: 3 })
+      .shouldBuyExtraRoll,
     false,
   );
 });
@@ -319,7 +326,13 @@ test('computer rollout strategy can choose a late-game turn decision', () => {
   };
   const traces = [];
 
-  playComputerTurn(game, null, () => 0, rolloutStrategy, (trace) => traces.push(trace));
+  playComputerTurn(
+    game,
+    null,
+    () => 0,
+    rolloutStrategy,
+    (trace) => traces.push(trace),
+  );
 
   const decisionTrace = traces.find((trace) => trace.stage === 'decision');
   assert.ok(decisionTrace);
@@ -476,7 +489,13 @@ test('computer strategy can defer cheap sucker deals until after token spending 
     suckerDealBeforeTokenSpending: false,
   };
 
-  playComputerTurn(game, null, () => 0, deferredDealStrategy, (trace) => traces.push(trace));
+  playComputerTurn(
+    game,
+    null,
+    () => 0,
+    deferredDealStrategy,
+    (trace) => traces.push(trace),
+  );
 
   const decisionTrace = traces.find((trace) => trace.stage === 'decision');
   assert.equal(decisionTrace.shouldBuyExtraRoll, true);

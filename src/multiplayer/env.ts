@@ -1,4 +1,6 @@
 type BrowserMultiplayerConfig = {
+  accessToken?: string;
+  refreshToken?: string;
   supabaseAnonKey?: string;
   supabaseUrl?: string;
 };
@@ -20,6 +22,16 @@ export type MultiplayerConfig = {
   supabaseAnonKey: string;
   supabaseUrl: string;
 };
+
+export function getE2ESession() {
+  if (typeof process === 'undefined' || process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS !== '1') {
+    return null;
+  }
+  const browserConfig = typeof window !== 'undefined' ? window.__SUCKER_E2E_MULTIPLAYER_CONFIG__ : undefined;
+  return browserConfig?.accessToken && browserConfig.refreshToken
+    ? { access_token: browserConfig.accessToken, refresh_token: browserConfig.refreshToken }
+    : null;
+}
 
 export function getMultiplayerConfig(): MultiplayerConfig {
   const browserConfig = typeof window !== 'undefined' ? window.__SUCKER_E2E_MULTIPLAYER_CONFIG__ : undefined;

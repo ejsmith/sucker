@@ -17,21 +17,23 @@ type TurnRow = Database['public']['Tables']['turns']['Row'];
 type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
 
 export async function listMyGames() {
-  const { data, error } = await supabase.from('games').select('*').order('updated_at', { ascending: false });
+  const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
+    await Promise.all([
+      supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
+      supabase.from('games').select('*').eq('status', 'complete').order('completed_at', { ascending: false }).limit(25),
+    ]);
 
-  if (error) {
-    throw error;
+  if (activeError) {
+    throw activeError;
+  }
+  if (completedError) {
+    throw completedError;
   }
 
+  const data = [...(activeGames ?? []), ...(completedGames ?? [])];
+
   const gameIds = data.map((game) => game.id);
-  const completedGameIds = data
-    .filter((game) => game.status === 'complete')
-    .sort(
-      (left, right) =>
-        Date.parse(right.completed_at ?? right.updated_at) - Date.parse(left.completed_at ?? left.updated_at),
-    )
-    .slice(0, 25)
-    .map((game) => game.id);
+  const completedGameIds = (completedGames ?? []).map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
     loadLastNudges(gameIds),
     loadSuckerTokensSpent(completedGameIds),

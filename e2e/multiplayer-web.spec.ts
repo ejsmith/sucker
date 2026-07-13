@@ -280,10 +280,7 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
   assertNoError(avatarProfileError);
   const avatarUrl = avatarProfile?.avatar_url ?? null;
 
-  const { error: copyError } = await admin
-    .from('profiles')
-    .update({ avatar_url: avatarUrl })
-    .eq('id', impersonator.id);
+  const { error: copyError } = await admin.from('profiles').update({ avatar_url: avatarUrl }).eq('id', impersonator.id);
   assertNoError(copyError);
   const impersonatorPage = await openAuthedPage(browser, impersonator);
   await impersonatorPage.getByTestId('profile-button').click();
@@ -312,6 +309,7 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  const session = await createSession(user.email);
   await context.addInitScript(() => {
     const testWindow = window as Window & { PushManager?: unknown };
     const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
@@ -339,19 +337,29 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     }
   });
   await context.addInitScript(
-    ({ supabaseAnonKey, supabaseUrl }) => {
+    ({ accessToken, refreshToken, supabaseAnonKey, supabaseUrl }) => {
       (
         window as typeof window & {
-          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: { supabaseAnonKey: string; supabaseUrl: string };
+          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: {
+            accessToken: string;
+            refreshToken: string;
+            supabaseAnonKey: string;
+            supabaseUrl: string;
+          };
         }
-      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { supabaseAnonKey, supabaseUrl };
+      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { accessToken, refreshToken, supabaseAnonKey, supabaseUrl };
     },
-    { supabaseAnonKey: anonKey, supabaseUrl },
+    {
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
+      supabaseAnonKey: anonKey,
+      supabaseUrl,
+    },
   );
   const page = await context.newPage();
   const failedResponses = captureFailedResponses(page);
 
-  await page.goto(await generateSignInLink(user.email));
+  await page.goto('/');
   try {
     await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   } catch (error) {
@@ -518,7 +526,7 @@ async function upsertProfile(id: string, displayName: string, username: string) 
   assertNoError(error);
 }
 
-async function generateSignInLink(email: string) {
+async function createSession(email: string) {
   const { data, error } = await admin.auth.admin.generateLink({
     email,
     type: 'magiclink',
@@ -526,12 +534,19 @@ async function generateSignInLink(email: string) {
   });
   assertNoError(error);
 
-  const link = data.properties?.action_link;
-  if (!link) {
-    throw new Error(`Unable to generate sign-in link for ${email}.`);
+  const tokenHash = data.properties?.hashed_token;
+  if (!tokenHash) {
+    throw new Error(`Unable to generate a sign-in token for ${email}.`);
   }
 
-  return link;
+  const client = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: verified, error: verifyError } = await client.auth.verifyOtp({
+    token_hash: tokenHash,
+    type: 'magiclink',
+  });
+  assertNoError(verifyError);
+  if (!verified.session) throw new Error(`Unable to create a test session for ${email}.`);
+  return verified.session;
 }
 
 async function waitForAcceptedGame(inviteCode: string) {

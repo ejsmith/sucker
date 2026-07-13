@@ -1,3 +1,4 @@
+import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
@@ -44,12 +45,29 @@ export function getGameIdFromUrl(url: string | null) {
   return null;
 }
 
-export function useWebNotificationClicks(onNotificationClick: (gameId: string) => void) {
+export function useNotificationClicks(onNotificationClick: (gameId: string) => void) {
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      return undefined;
+      let active = true;
+      void Notifications.getLastNotificationResponseAsync().then((response) => {
+        const gameId = getGameIdFromNativeNotification(response);
+        if (active && gameId) {
+          onNotificationClick(gameId);
+          void Notifications.clearLastNotificationResponseAsync();
+        }
+      });
+      const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        const gameId = getGameIdFromNativeNotification(response);
+        if (gameId) onNotificationClick(gameId);
+      });
+      return () => {
+        active = false;
+        subscription.remove();
+      };
     }
 
+    const initialGameId = getInitialNotificationGameId();
+    if (initialGameId) onNotificationClick(initialGameId);
     const serviceWorker = getWebServiceWorker();
     if (!serviceWorker) {
       return undefined;
@@ -65,6 +83,15 @@ export function useWebNotificationClicks(onNotificationClick: (gameId: string) =
     serviceWorker.addEventListener('message', handleMessage);
     return () => serviceWorker.removeEventListener('message', handleMessage);
   }, [onNotificationClick]);
+}
+
+export const useWebNotificationClicks = useNotificationClicks;
+
+function getGameIdFromNativeNotification(response: Notifications.NotificationResponse | null) {
+  const data = response?.notification.request.content.data;
+  if (!data) return null;
+  if (typeof data.gameId === 'string' && data.gameId.trim()) return data.gameId.trim();
+  return typeof data.url === 'string' ? getGameIdFromUrl(data.url) : null;
 }
 
 function getGameIdFromNotificationMessage(data: unknown) {

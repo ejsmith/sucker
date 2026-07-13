@@ -1150,9 +1150,7 @@ async function scoreRemoteTurn(
     players,
     rollNumber: 0,
   };
-  const rankedPlayers = complete
-    ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard))
-    : [];
+  const rankedPlayers = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard)) : [];
   const winner =
     rankedPlayers.length > 1 && totalScore(rankedPlayers[0].scorecard) > totalScore(rankedPlayers[1].scorecard)
       ? rankedPlayers[0]

@@ -6,7 +6,7 @@ The gameplay source of truth is [docs/game-design-spec-v2.md](docs/game-design-s
 
 ## Stack
 
-- Expo `~54.0.0`
+- Expo SDK 57 with Expo Router and React Compiler
 - React Native and React Native Web
 - TypeScript
 - Supabase for multiplayer state, database migrations, and Edge Functions
@@ -113,6 +113,7 @@ npm run test:integration:supabase
 ## Project Layout
 
 - [App.tsx](App.tsx): main Expo app and game UI
+- [app/](app): Expo Router screens and universal navigation
 - [shared/](shared): platform-neutral game rules and shared types
 - [src/multiplayer/](src/multiplayer): Supabase client-side multiplayer code
 - [supabase/migrations/](supabase/migrations): database migrations

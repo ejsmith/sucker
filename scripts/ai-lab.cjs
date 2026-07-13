@@ -131,9 +131,13 @@ function classifyTrace(trace) {
     } else {
       const scratchedScore = finalActionScore(trace);
       if (scratchedScore === 0) {
-        reasons.push(trace.suckerTokens >= 10 ? 'zero-score-scratch-at-high-token-count' : 'zero-score-scratch-for-token');
+        reasons.push(
+          trace.suckerTokens >= 10 ? 'zero-score-scratch-at-high-token-count' : 'zero-score-scratch-for-token',
+        );
       } else {
-        reasons.push(trace.suckerTokens >= 10 ? 'positive-score-scratch-at-high-token-count' : 'positive-score-scratch-for-token');
+        reasons.push(
+          trace.suckerTokens >= 10 ? 'positive-score-scratch-at-high-token-count' : 'positive-score-scratch-for-token',
+        );
       }
     }
   }
@@ -207,7 +211,17 @@ function countHeld(held) {
 
 function hasStraightCandidate(dice, length) {
   const faces = new Set(dice);
-  const runs = length === 5 ? [[1, 2, 3, 4, 5], [2, 3, 4, 5, 6]] : [[1, 2, 3, 4], [2, 3, 4, 5], [3, 4, 5, 6]];
+  const runs =
+    length === 5
+      ? [
+          [1, 2, 3, 4, 5],
+          [2, 3, 4, 5, 6],
+        ]
+      : [
+          [1, 2, 3, 4],
+          [2, 3, 4, 5],
+          [3, 4, 5, 6],
+        ];
   return runs.some((run) => run.filter((face) => faces.has(face)).length >= length - 1);
 }
 

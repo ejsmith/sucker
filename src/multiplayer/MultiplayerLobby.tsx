@@ -2,12 +2,12 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   ActivityIndicator,
   Animated,
+  BackHandler,
   Image,
   Linking,
   Modal,
   PanResponder,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   Share,
@@ -46,6 +46,7 @@ import { StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
+import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
@@ -114,7 +115,6 @@ export function MultiplayerLobby({
   const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
   const [isPullRefreshActive, setIsPullRefreshActive] = useState(false);
   const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
-  const [webPushPromptVisible, setWebPushPromptVisible] = useState(false);
   const [removeGameToConfirm, setRemoveGameToConfirm] = useState<RemoteGameRow | null>(null);
   const [selectedCompletedGameId, setSelectedCompletedGameId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -122,8 +122,10 @@ export function MultiplayerLobby({
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
   const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
   const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
-  const gamesScrollY = useRef(0);
+  const [isGamesScrolled, setIsGamesScrolled] = useState(false);
   const pendingAvatarRecoveryProfileId = useRef<string | null>(null);
+  const refreshGamesInFlight = useRef<Promise<void> | null>(null);
+  const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileId = profile?.id ?? session?.user.id ?? null;
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
@@ -151,26 +153,48 @@ export function MultiplayerLobby({
         return;
       }
 
-      try {
-        const nextGames = await onRefreshGames(profileId);
-        setNow(Date.now());
-        await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId));
-
-        try {
-          setAllTimeOpponentRecord(await getAllTimeOpponentRecord());
-        } catch (recordError) {
-          if (surfaceError) {
-            setMessage(recordError instanceof Error ? recordError.message : 'Unable to refresh all-time record.');
-          }
-        }
-      } catch (refreshError) {
-        if (surfaceError) {
-          setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
-        }
+      if (refreshGamesInFlight.current) {
+        return refreshGamesInFlight.current;
       }
+
+      const refresh = (async () => {
+        try {
+          const nextGames = await onRefreshGames(profileId);
+          setNow(Date.now());
+          await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId));
+        } catch (refreshError) {
+          if (surfaceError) {
+            setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
+          }
+        } finally {
+          refreshGamesInFlight.current = null;
+        }
+      })();
+      refreshGamesInFlight.current = refresh;
+      return refresh;
     },
     [onRefreshGames, profileId],
   );
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (avatarPickerVisible) {
+        setAvatarPickerVisible(false);
+        return true;
+      }
+      if (removeGameToConfirm) {
+        setRemoveGameToConfirm(null);
+        return true;
+      }
+      if (page !== 'games') {
+        setPage('games');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [avatarPickerVisible, page, removeGameToConfirm]);
 
   useEffect(() => {
     if (!isLoading && !session) {
@@ -179,15 +203,23 @@ export function MultiplayerLobby({
   }, [isLoading, onGamesChange, session]);
 
   useEffect(() => {
-    if (session) {
-      void refreshGames();
-    }
+    if (session) void refreshGames();
+  }, [refreshGames, session]);
 
-    if (profile) {
-      setDisplayName(profile.display_name);
-      setUsername(profile.username ?? '');
-    }
-  }, [profile, refreshGames, session]);
+  useEffect(() => {
+    if (!profile) return;
+    let active = true;
+    void getAllTimeOpponentRecord()
+      .then((record) => {
+        if (active) setAllTimeOpponentRecord(record);
+      })
+      .catch((recordError: unknown) => {
+        if (active) setMessage(recordError instanceof Error ? recordError.message : 'Unable to load all-time record.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [profile]);
 
   useEffect(() => {
     if (!profile || pendingAvatarRecoveryProfileId.current === profile.id) return;
@@ -255,11 +287,23 @@ export function MultiplayerLobby({
     }
 
     void refreshGames({ surfaceError: false });
-    const unsubscribe = subscribeToGameListChanges(() => void refreshGames({ surfaceError: false }));
+    const unsubscribe = subscribeToGameListChanges(() => {
+      if (realtimeRefreshTimer.current) {
+        clearTimeout(realtimeRefreshTimer.current);
+      }
+      realtimeRefreshTimer.current = setTimeout(() => {
+        realtimeRefreshTimer.current = null;
+        void refreshGames({ surfaceError: false });
+      }, 250);
+    });
     const timer = setInterval(() => void refreshGames({ surfaceError: false }), 15_000);
     return () => {
       unsubscribe();
       clearInterval(timer);
+      if (realtimeRefreshTimer.current) {
+        clearTimeout(realtimeRefreshTimer.current);
+        realtimeRefreshTimer.current = null;
+      }
     };
   }, [isAppActive, refreshGames, session]);
 
@@ -294,16 +338,6 @@ export function MultiplayerLobby({
     };
   }, []);
 
-  useEffect(() => {
-    const hasActiveGames = visibleGames.some((game) => game.status !== 'complete');
-    if (!profile || !hasActiveGames || webPushPromptDismissed || !canOfferWebPushPrompt()) {
-      setWebPushPromptVisible(false);
-      return;
-    }
-
-    setWebPushPromptVisible(getWebNotificationPermission() === 'default');
-  }, [profile, visibleGames, webPushPromptDismissed]);
-
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
     setMessage(null);
@@ -323,7 +357,6 @@ export function MultiplayerLobby({
 
     await runAction(async () => {
       const result = await registerWebPushSubscription(profile.id);
-      setWebPushPromptVisible(false);
       if (result) {
         setMessage('Browser notifications enabled.');
       }
@@ -356,7 +389,6 @@ export function MultiplayerLobby({
   function handleDismissWebPushPrompt() {
     rememberWebPushPromptDismissed();
     setWebPushPromptDismissed(true);
-    setWebPushPromptVisible(false);
   }
 
   async function handleSearchProfiles() {
@@ -619,6 +651,13 @@ export function MultiplayerLobby({
     activeProfileId,
   );
   const completedGames = sortCompletedGames(visibleGames.filter((game) => game.status === 'complete')).slice(0, 25);
+  const webPushPromptVisible = Boolean(
+    profile &&
+    activeGames.length > 0 &&
+    !webPushPromptDismissed &&
+    canOfferWebPushPrompt() &&
+    getWebNotificationPermission() === 'default',
+  );
   const selectedCompletedGame = selectedCompletedGameId
     ? visibleGames.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
     : null;
@@ -641,7 +680,7 @@ export function MultiplayerLobby({
   const pullRefreshReady = pullRefreshDistance >= pullRefreshTriggerDistance;
   const pullRefreshVisible = usesWebPullRefresh && (pullRefreshDistance > 0 || isPullRefreshActive);
   const shouldStartPullRefreshGesture = (gestureState: { dx: number; dy: number }) => {
-    if (!usesWebPullRefresh || page !== 'games' || isRefreshing || gamesScrollY.current > 1) {
+    if (!usesWebPullRefresh || page !== 'games' || isRefreshing || isGamesScrolled) {
       return false;
     }
 
@@ -663,7 +702,6 @@ export function MultiplayerLobby({
         void handlePullRefreshGesture();
         return;
       }
-
       setIsPullRefreshActive(false);
       setPullRefreshDistance(0);
     },
@@ -1048,6 +1086,7 @@ export function MultiplayerLobby({
         <View style={lobbyStyles.panel}>
           <Text style={lobbyStyles.sectionTitle}>Account</Text>
           <Pressable
+            accessibilityRole="link"
             onPress={() => void Linking.openURL(privacyPolicyUrl)}
             style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
             testID="privacy-policy-button"
@@ -1055,6 +1094,7 @@ export function MultiplayerLobby({
             <Text style={lobbyStyles.signOutText}>Privacy Policy</Text>
           </Pressable>
           <Pressable
+            accessibilityRole="link"
             onPress={() => void Linking.openURL(accountDeletionUrl)}
             style={({ pressed }) => [
               lobbyStyles.signOutButton,
@@ -1082,8 +1122,13 @@ export function MultiplayerLobby({
           transparent
           visible={avatarPickerVisible}
         >
-          <Pressable style={lobbyStyles.modalBackdrop} onPress={() => setAvatarPickerVisible(false)}>
-            <Pressable onPress={(event) => event.stopPropagation()} style={lobbyStyles.avatarPickerPanel}>
+          <Pressable accessible={false} style={lobbyStyles.modalBackdrop} onPress={() => setAvatarPickerVisible(false)}>
+            <Pressable
+              accessibilityViewIsModal
+              onPress={(event) => event.stopPropagation()}
+              role="dialog"
+              style={lobbyStyles.avatarPickerPanel}
+            >
               <Text style={lobbyStyles.avatarPickerTitle}>Profile Photo</Text>
               <Pressable
                 onPress={() => void handleSelectAvatar('library')}
@@ -1128,7 +1173,8 @@ export function MultiplayerLobby({
         bounces
         contentContainerStyle={[lobbyStyles.scrollContent, lobbyStyles.gamesScrollContent]}
         onScroll={(event) => {
-          gamesScrollY.current = event.nativeEvent.contentOffset.y;
+          const nextIsScrolled = event.nativeEvent.contentOffset.y > 1;
+          setIsGamesScrolled((current) => (current === nextIsScrolled ? current : nextIsScrolled));
         }}
         overScrollMode="always"
         refreshControl={
@@ -1162,7 +1208,11 @@ export function MultiplayerLobby({
             </Text>
           </View>
           <Pressable
-            onPress={() => setPage('profile')}
+            onPress={() => {
+              setDisplayName(profile?.display_name ?? '');
+              setUsername(profile?.username ?? '');
+              setPage('profile');
+            }}
             style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
             testID="profile-button"
           >
@@ -1269,13 +1319,19 @@ export function MultiplayerLobby({
         </View>
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
-        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+        {(message || error) && (
+          <Text accessibilityLiveRegion="polite" role="alert" style={lobbyStyles.message}>
+            {message ?? error}
+          </Text>
+        )}
       </ScrollView>
 
       {webPushPromptVisible && profile && (
         <View style={lobbyStyles.notificationPromptOverlay} testID="turn-notification-prompt">
-          <View style={lobbyStyles.notificationPromptCard}>
-            <Text style={lobbyStyles.notificationPromptTitle}>Turn notifications?</Text>
+          <View accessibilityViewIsModal role="dialog" style={lobbyStyles.notificationPromptCard}>
+            <Text accessibilityRole="header" style={lobbyStyles.notificationPromptTitle}>
+              Turn notifications?
+            </Text>
             <Text style={lobbyStyles.notificationPromptBody}>Get notified when a friend is waiting on you.</Text>
             <View style={lobbyStyles.notificationPromptActions}>
               <Pressable
@@ -1301,8 +1357,8 @@ export function MultiplayerLobby({
 
       {removeGameToConfirm && (
         <View style={lobbyStyles.notificationPromptOverlay} testID="remove-game-confirmation">
-          <View style={lobbyStyles.notificationPromptCard}>
-            <Text style={lobbyStyles.notificationPromptTitle}>
+          <View accessibilityViewIsModal role="dialog" style={lobbyStyles.notificationPromptCard}>
+            <Text accessibilityRole="header" style={lobbyStyles.notificationPromptTitle}>
               {removeGameToConfirm.status === 'inviting' ? 'Remove invite?' : 'Remove game?'}
             </Text>
             <Text style={lobbyStyles.notificationPromptBody}>{getRemoveGameMessage(removeGameToConfirm)}</Text>
@@ -1496,34 +1552,36 @@ function GameListItem({
     game.status === 'inviting'
       ? `Open invite for ${formatElapsed(now, game.updated_at)}`
       : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_event, gestureState) =>
-        Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4,
-      onPanResponderMove: (_event, gestureState) => {
-        const nextX = Math.max(-gameListRemoveActionWidth, Math.min(0, gestureState.dx));
-        translateX.setValue(nextX);
-      },
-      onPanResponderRelease: (_event, gestureState) => {
-        const shouldOpen = gestureState.dx < -gameListRemoveActionWidth / 2 || gestureState.vx < -0.45;
-        Animated.spring(translateX, {
-          bounciness: 0,
-          speed: 18,
-          toValue: shouldOpen ? -gameListRemoveActionWidth : 0,
-          useNativeDriver: true,
-        }).start();
-      },
-      onPanResponderTerminate: () => {
-        Animated.spring(translateX, {
-          bounciness: 0,
-          speed: 18,
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
-      },
-    }),
-  ).current;
+  const [translateX] = useState(() => new Animated.Value(0));
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4,
+        onPanResponderMove: (_event, gestureState) => {
+          const nextX = Math.max(-gameListRemoveActionWidth, Math.min(0, gestureState.dx));
+          translateX.setValue(nextX);
+        },
+        onPanResponderRelease: (_event, gestureState) => {
+          const shouldOpen = gestureState.dx < -gameListRemoveActionWidth / 2 || gestureState.vx < -0.45;
+          Animated.spring(translateX, {
+            bounciness: 0,
+            speed: 18,
+            toValue: shouldOpen ? -gameListRemoveActionWidth : 0,
+            useNativeDriver: true,
+          }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(translateX, {
+            bounciness: 0,
+            speed: 18,
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        },
+      }),
+    [translateX],
+  );
 
   return (
     <View style={lobbyStyles.swipeGameWrap}>

@@ -1,7 +1,8 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    "types": ["node"]
   },
-  "exclude": ["supabase/functions", "supabase/tests"]
+  "exclude": ["dist", "web-build", "supabase/functions", "supabase/tests"]
 }

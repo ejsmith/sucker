@@ -1,7 +1,8 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import type { getHeadToHeadStats } from '../multiplayer/stats';
 import { formatRecord } from './statsFormat';
+import { Pressable } from './Pressable';
 
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -31,7 +32,7 @@ export function StatsPage({
   const emptyStatsTarget = statsKind === 'computer' ? 'the computer' : currentOpponentName;
 
   return (
-    <View style={styles.statsOverlay}>
+    <View accessibilityViewIsModal role="dialog" style={styles.statsOverlay}>
       <View style={styles.statsHeader}>
         <View style={styles.statsHeaderText}>
           <Text style={styles.statsEyebrow}>Stats</Text>
@@ -39,7 +40,11 @@ export function StatsPage({
             Vs {currentOpponentName}
           </Text>
         </View>
-        <Pressable onPress={onClose} style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}>
+        <Pressable
+          accessibilityLabel="Close stats"
+          onPress={onClose}
+          style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
+        >
           <Text style={styles.statsCloseText}>X</Text>
         </Pressable>
       </View>
@@ -68,10 +73,7 @@ export function StatsPage({
                 value={formatStatNumber(getOpponentAverage(stats, statsKind, opponentStats))}
               />
               <StatBox label="Your High" value={String(stats.highest_score)} />
-              <StatBox
-                label="Their High"
-                value={String(getOpponentHigh(stats, statsKind, opponentStats))}
-              />
+              <StatBox label="Their High" value={String(getOpponentHigh(stats, statsKind, opponentStats))} />
             </View>
             <View style={styles.statsDetailCard}>
               {statsKind === 'headToHead' ? (
