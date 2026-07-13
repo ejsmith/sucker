@@ -34,7 +34,7 @@ export function PlayerAvatar({
           testID={testID ? `${testID}-image` : undefined}
         />
       ) : (
-        <Text allowFontScaling={false} style={[styles.initial, { fontFamily, fontSize: Math.max(14, size * 0.44) }]}>
+        <Text maxFontSizeMultiplier={1.2} style={[styles.initial, { fontFamily, fontSize: Math.max(14, size * 0.44) }]}>
           {name.trim().slice(0, 1).toUpperCase() || '?'}
         </Text>
       )}

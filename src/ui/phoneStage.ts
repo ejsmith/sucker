@@ -1,9 +1,11 @@
 export const phoneStageAspectRatio = 393 / 852;
 export const phoneStageMinWidth = 320;
-export const phoneStageMinHeight = phoneStageMinWidth / phoneStageAspectRatio;
+// A 570px stage keeps the game at (or just above) its 0.75 minimum content
+// scale. Short desktop windows intentionally receive a taller stage that the
+// host can scroll rather than a canvas whose controls are clipped.
+export const phoneStageMinHeight = 570;
 export const phoneStageMaxWidth = 430;
 export const phoneStageMaxHeight = 932;
-export const phoneStageFillWidthBreakpoint = 500;
 
 export function getPhoneStageStyle(
   windowWidth: number,
@@ -13,10 +15,10 @@ export function getPhoneStageStyle(
   const availableWidth = Math.max(1, windowWidth);
   const availableHeight = Math.max(1, windowHeight);
 
-  if (fillNarrowViewport && availableWidth < phoneStageFillWidthBreakpoint) {
+  if (fillNarrowViewport) {
     return {
-      height: availableHeight,
-      width: availableWidth,
+      height: clamp(availableHeight, phoneStageMinHeight, phoneStageMaxHeight),
+      width: clamp(availableWidth, phoneStageMinWidth, phoneStageMaxWidth),
     };
   }
 
@@ -29,8 +31,11 @@ export function getPhoneStageStyle(
   const width = Math.max(1, fittedWidth);
 
   return {
-    aspectRatio: phoneStageAspectRatio,
     height: width / phoneStageAspectRatio,
     width,
   };
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }

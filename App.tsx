@@ -1,10 +1,13 @@
-import { Inter_800ExtraBold, Inter_900Black, useFonts } from '@expo-google-fonts/inter';
+import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
+import { Inter_900Black } from '@expo-google-fonts/inter/900Black';
+import { useFonts } from '@expo-google-fonts/inter/useFonts';
 import { StatusBar } from 'expo-status-bar';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
   Image,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -90,6 +93,7 @@ import {
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
+import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import {
   buildExtraRollActionPayload,
   buildRollActionPayload,
@@ -257,6 +261,8 @@ const suckerLobbyHeaderImage = require('./assets/sucker-lobby-header.png');
 const suckerGameBannerImage = require('./assets/sucker-game-header-clean.png');
 const gameFontBlack = 'Inter_900Black';
 const gameFontExtraBold = 'Inter_800ExtraBold';
+const gameMaxFontSizeMultiplier = 1.2;
+const usesLegacyAndroidShadowFallback = Platform.OS === 'android' && Platform.Version < 28;
 const suckerTokenImage = require('./assets/sucker-token.png');
 const suckerPunchLandedImage = require('./assets/sucker-punch-landed.png');
 const suckerPunchBlockedImage = require('./assets/sucker-punch-blocked.png');
@@ -862,13 +868,26 @@ function RemoteGameScreen({
 
   if (isLoading || !remoteGame || !profileId) {
     return (
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+      <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
         <StatusBar style="light" />
         <View style={[styles.remoteLoadingScreen, remoteStageStyle]}>
-          <Text style={styles.remoteLoadingTitle}>Loading Game</Text>
-          {error && <Text style={styles.remoteMessage}>{error}</Text>}
-          <Pressable onPress={onExit} style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}>
-            <Text style={styles.remoteBackButtonText}>Back</Text>
+          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteLoadingTitle}>
+            Loading Game
+          </Text>
+          {error && (
+            <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
+              {error}
+            </Text>
+          )}
+          <Pressable
+            accessibilityLabel="Back to games"
+            accessibilityRole="button"
+            onPress={onExit}
+            style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}
+          >
+            <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteBackButtonText}>
+              Back
+            </Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -992,6 +1011,9 @@ function LocalGameScreen({
   const isAppActive = useAppActivity();
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
+  const menuButtonRef = useRef<ViewRef | null>(null);
+  const gameOverStatsButtonRef = useRef<ViewRef | null>(null);
+  const statsReturnFocusTarget = useRef<'gameOver' | 'menu'>('menu');
   const boardRef = useRef<ViewRef | null>(null);
   const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
@@ -1817,7 +1839,7 @@ function LocalGameScreen({
     const launches = Object.fromEntries(
       rollingIndexes.map((index) => [
         index,
-        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null),
+        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null, gameLayout.unit(88)),
       ]),
     ) as Partial<Record<number, RollingLaunch>>;
     setRollingLaunches(launches);
@@ -2491,9 +2513,22 @@ function LocalGameScreen({
     onExit?.();
   }
 
-  function handleGameOverStats() {
+  function handleOpenStats(returnFocusTarget: 'gameOver' | 'menu') {
+    statsReturnFocusTarget.current = returnFocusTarget;
+    setIsMenuOpen(false);
     setShowStatsPage(true);
     void refreshVisibleStats();
+  }
+
+  function handleCloseStats() {
+    setShowStatsPage(false);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        focusAccessibilityTarget(
+          statsReturnFocusTarget.current === 'gameOver' ? gameOverStatsButtonRef.current : menuButtonRef.current,
+        );
+      });
+    });
   }
 
   function commitLocalScore(category: ScoreCategory, sourceGame = liveGameRef.current) {
@@ -2681,24 +2716,15 @@ function LocalGameScreen({
     });
   }
 
-  return (
-    <SafeAreaView edges={['top', 'bottom']} style={[styles.safeArea, stableScreenHostStyle]}>
-      <StatusBar style="light" />
-      {showDevViewportControls && (
-        <DevViewportPresetControls
-          activePresetKey={devViewportPresetKey}
-          onSelect={(key) => {
-            setDevViewportPresetKey(key);
-            replaceWebDevViewportPreset(key);
-          }}
-        />
-      )}
+  function renderGameScreen() {
+    return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
+          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
-          {...backSwipeResponder.panHandlers}
+          {...(showStatsPage ? {} : backSwipeResponder.panHandlers)}
         >
           <BackgroundDicePattern floatValue={bgFloat} />
           <View style={[styles.topBar, gameLayout.styles.topBar]} testID="game-top-bar">
@@ -2708,20 +2734,26 @@ function LocalGameScreen({
             {onExit && (
               <Pressable
                 accessibilityLabel="Back to games"
+                accessibilityRole="button"
                 onPress={exitGame}
                 style={({ pressed }) => [styles.backButton, gameLayout.styles.backButton, pressed && styles.pressed]}
+                testID="game-back-button"
               >
                 <GameBackChevronIcon size={gameLayout.unit(34)} />
               </Pressable>
             )}
             <Pressable
               accessibilityLabel="Open menu"
+              accessibilityRole="button"
+              accessibilityState={{ expanded: isMenuOpen }}
               onPress={() => setIsMenuOpen((open) => !open)}
+              ref={menuButtonRef}
               style={({ pressed }) => [
                 styles.menuDotsButton,
                 gameLayout.styles.menuDotsButton,
                 pressed && styles.pressed,
               ]}
+              testID="game-menu-button"
             >
               <View style={[styles.menuDots, gameLayout.styles.menuDots]}>
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
@@ -2734,21 +2766,21 @@ function LocalGameScreen({
             <View pointerEvents="box-none" style={styles.topMenuLayer}>
               <Pressable
                 accessibilityLabel="Close menu"
+                accessibilityRole="button"
                 onPress={() => setIsMenuOpen(false)}
                 style={StyleSheet.absoluteFill}
               />
               <View style={[styles.topMenu, gameLayout.styles.topMenu]}>
                 <Pressable
-                  onPress={() => {
-                    setIsMenuOpen(false);
-                    setShowStatsPage(true);
-                    void refreshVisibleStats();
-                  }}
+                  accessibilityLabel="View stats"
+                  accessibilityRole="button"
+                  onPress={() => handleOpenStats('menu')}
                   style={({ pressed }) => [
                     styles.topMenuItem,
                     gameLayout.styles.topMenuItem,
                     pressed && styles.pressed,
                   ]}
+                  testID="game-stats-menu-item"
                 >
                   <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
                     Stats
@@ -2780,17 +2812,23 @@ function LocalGameScreen({
                   ]}
                   testID={index === 0 ? 'home-player-avatar' : 'opponent-player-avatar'}
                 />
-                <Text allowFontScaling={false} style={[styles.playerScore, gameLayout.styles.playerScore]}>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.playerScore, gameLayout.styles.playerScore]}
+                >
                   {totalScore(player.scorecard)}
                 </Text>
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   numberOfLines={1}
                   style={[styles.playerName, gameLayout.styles.playerName]}
                 >
                   {player.name}
                 </Text>
-                <Text allowFontScaling={false} style={[styles.tokenText, gameLayout.styles.tokenText]}>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.tokenText, gameLayout.styles.tokenText]}
+                >
                   {player.suckerTokens} Tokens
                 </Text>
               </View>
@@ -2837,7 +2875,10 @@ function LocalGameScreen({
                 <View style={styles.bonusPanel} testID="section-bonus-panel">
                   <View style={[styles.bonusContent, gameLayout.styles.bonusContent]}>
                     <View style={[styles.bonusTextBlock, gameLayout.styles.bonusTextBlock]}>
-                      <Text allowFontScaling={false} style={[styles.bonusSmall, gameLayout.styles.bonusSmall]}>
+                      <Text
+                        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                        style={[styles.bonusSmall, gameLayout.styles.bonusSmall]}
+                      >
                         Section{'\n'}Bonus
                       </Text>
                       <BonusValueText
@@ -2892,11 +2933,28 @@ function LocalGameScreen({
                 const showDie = activePlayerViewIndex === 0 && (game.rollNumber > 0 || isRolling);
                 const showSlotDie = showDie && !isFlying;
                 const showHeldDie = showDie && game.held[index];
+                const dieDisabled = !showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending;
 
                 return (
                   <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
+                    {showHeldDie && usesLegacyAndroidShadowFallback && (
+                      <View pointerEvents="none" style={[styles.heldDieGlow, gameLayout.styles.heldDieGlow]} />
+                    )}
                     <Pressable
-                      disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending}
+                      accessibilityElementsHidden={!showDie}
+                      accessibilityHint={
+                        dieDisabled
+                          ? undefined
+                          : showHeldDie
+                            ? 'Double tap to release this die'
+                            : 'Double tap to hold this die'
+                      }
+                      accessibilityLabel={`Die ${index + 1}: ${die}, ${showHeldDie ? 'held' : 'not held'}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: dieDisabled, selected: showHeldDie }}
+                      accessible={showDie}
+                      disabled={dieDisabled}
+                      importantForAccessibility={showDie ? 'yes' : 'no-hide-descendants'}
                       onPress={() => void handleToggleHold(index)}
                       ref={(node) => {
                         dieSlotRefs.current[index] = node;
@@ -2908,6 +2966,7 @@ function LocalGameScreen({
                         showHeldDie && styles.heldDie,
                         pressed && styles.pressed,
                       ]}
+                      testID={`die-slot-${index}`}
                     >
                       {showSlotDie && (
                         <DieFace
@@ -2999,6 +3058,9 @@ function LocalGameScreen({
             <View style={[styles.controlsRow, gameLayout.styles.controlsRow]} testID="game-controls-row">
               <View style={[styles.rollButtonWrap, gameLayout.styles.rollButtonWrap]}>
                 <Pressable
+                  accessibilityLabel="Roll dice"
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canRoll }}
                   disabled={!canRoll}
                   onPress={handleRoll}
                   style={({ pressed }) => [
@@ -3011,14 +3073,24 @@ function LocalGameScreen({
                 >
                   <View style={[styles.buttonGloss, gameLayout.styles.buttonGloss]} />
                   <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
-                  <Text allowFontScaling={false} style={[styles.rollText, gameLayout.styles.rollText]}>
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.rollText, gameLayout.styles.rollText]}
+                  >
                     ROLL
                   </Text>
                   <View style={[styles.rollsLeftBadge, gameLayout.styles.rollsLeftBadge]}>
-                    <Text allowFontScaling={false} style={[styles.rollsLeftNumber, gameLayout.styles.rollsLeftNumber]}>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.rollsLeftNumber, gameLayout.styles.rollsLeftNumber]}
+                      testID="rolls-left-count"
+                    >
                       {standardRollsLeft}
                     </Text>
-                    <Text allowFontScaling={false} style={[styles.rollsLeftLabel, gameLayout.styles.rollsLeftLabel]}>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.rollsLeftLabel, gameLayout.styles.rollsLeftLabel]}
+                    >
                       LEFT
                     </Text>
                   </View>
@@ -3028,6 +3100,8 @@ function LocalGameScreen({
               <View style={[styles.tokenButtonWrap, gameLayout.styles.tokenButtonWrap]}>
                 <Pressable
                   accessibilityLabel="Sucker token menu"
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canOpenTokenMenu }}
                   disabled={!canOpenTokenMenu}
                   onPress={() => setIsTokenMenuOpen(true)}
                   style={({ pressed }) => [
@@ -3044,7 +3118,11 @@ function LocalGameScreen({
                     style={[styles.tokenButtonImage, gameLayout.styles.tokenButtonImage]}
                   />
                   <View style={[styles.tokenCountBadge, gameLayout.styles.tokenCountBadge]}>
-                    <Text allowFontScaling={false} style={[styles.tokenCountText, gameLayout.styles.tokenCountText]}>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.tokenCountText, gameLayout.styles.tokenCountText]}
+                      testID="token-count"
+                    >
                       {myTokenCount}
                     </Text>
                   </View>
@@ -3053,6 +3131,11 @@ function LocalGameScreen({
 
               <View style={[styles.playButtonWrap, gameLayout.styles.playButtonWrap]}>
                 <Pressable
+                  accessibilityLabel={
+                    selectedCategory ? `Play ${categoryLabels[selectedCategory]} score` : 'Play selected score'
+                  }
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canPlaySelected }}
                   disabled={!canPlaySelected}
                   onPress={handlePlayScore}
                   style={({ pressed }) => [
@@ -3065,7 +3148,10 @@ function LocalGameScreen({
                 >
                   <View style={[styles.playGloss, gameLayout.styles.buttonGloss]} />
                   <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
-                  <Text allowFontScaling={false} style={[styles.playText, gameLayout.styles.playText]}>
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.playText, gameLayout.styles.playText]}
+                  >
                     PLAY
                   </Text>
                 </Pressable>
@@ -3074,7 +3160,12 @@ function LocalGameScreen({
           </View>
           {isTokenMenuOpen && (
             <View style={[styles.tokenMenuOverlay, gameLayout.styles.tokenMenuOverlay]} testID="token-menu-overlay">
-              <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
+              <Pressable
+                accessibilityLabel="Close Sucker token menu"
+                accessibilityRole="button"
+                onPress={() => setIsTokenMenuOpen(false)}
+                style={StyleSheet.absoluteFill}
+              />
               <View style={[styles.tokenMenuPanel, gameLayout.styles.tokenMenuPanel]}>
                 <View style={[styles.tokenMenuHeader, gameLayout.styles.tokenMenuHeader]}>
                   <Image source={suckerTokenImage} style={[styles.tokenMenuIcon, gameLayout.styles.tokenMenuIcon]} />
@@ -3090,13 +3181,15 @@ function LocalGameScreen({
                     </Text>
                   </View>
                   <Pressable
+                    accessibilityLabel="Close Sucker token menu"
+                    accessibilityRole="button"
                     hitSlop={gameLayout.unit(8)}
                     onPress={() => setIsTokenMenuOpen(false)}
                     style={[styles.tokenMenuClose, gameLayout.styles.tokenMenuClose]}
                     testID="token-menu-close-button"
                   >
                     <Text
-                      allowFontScaling={false}
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                       style={[styles.tokenMenuCloseText, gameLayout.styles.tokenMenuCloseText]}
                     >
                       X
@@ -3217,12 +3310,13 @@ function LocalGameScreen({
                 >
                   <Text
                     adjustsFontSizeToFit
-                    allowFontScaling={false}
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                     numberOfLines={1}
                     style={[styles.opponentTurnRevealText, gameLayout.styles.opponentTurnRevealText]}
                   >
                     {opponentTurnReveal.playerName} played{' '}
                     <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                       style={[
                         styles.opponentTurnRevealTextHighlight,
                         gameLayout.styles.opponentTurnRevealTextHighlight,
@@ -3232,6 +3326,7 @@ function LocalGameScreen({
                     </Text>{' '}
                     on{' '}
                     <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                       style={[
                         styles.opponentTurnRevealTextHighlight,
                         gameLayout.styles.opponentTurnRevealTextHighlight,
@@ -3333,7 +3428,7 @@ function LocalGameScreen({
                     ]}
                   >
                     <Text
-                      allowFontScaling={false}
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                       style={[styles.scoreFlyingNumberText, gameLayout.styles.scoreFlyingNumberText]}
                     >
                       {scoreFlyNumber.value}
@@ -3351,13 +3446,13 @@ function LocalGameScreen({
             >
               <View style={[styles.suckerPunchNotice, gameLayout.styles.suckerPunchNotice]}>
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
                 >
                   You got
                 </Text>
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
                 >
                   Sucker Punched!
@@ -3372,13 +3467,13 @@ function LocalGameScreen({
             >
               <View style={[styles.suckerPunchNotice, gameLayout.styles.suckerPunchNotice]}>
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
                 >
                   {suckerBlockedNotice.title}
                 </Text>
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
                 >
                   {suckerBlockedNotice.text}
@@ -3390,6 +3485,7 @@ function LocalGameScreen({
             <View
               pointerEvents="none"
               style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
+              testID="sucker-roll-notice"
             >
               <View
                 style={[
@@ -3400,13 +3496,13 @@ function LocalGameScreen({
                 ]}
               >
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
                 >
                   {suckerRollNoticeTitle}
                 </Text>
                 <Text
-                  allowFontScaling={false}
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
                 >
                   Sucker!!
@@ -3432,6 +3528,7 @@ function LocalGameScreen({
               <View style={[styles.nextTurnsPanel, gameLayout.styles.nextTurnsPanel]}>
                 <Pressable
                   accessibilityLabel="Close next turns"
+                  accessibilityRole="button"
                   hitSlop={gameLayout.unit(8)}
                   onPress={onDismissNextTurns}
                   style={({ pressed }) => [
@@ -3442,7 +3539,7 @@ function LocalGameScreen({
                   testID="next-turns-close-button"
                 >
                   <Text
-                    allowFontScaling={false}
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                     style={[styles.nextTurnsCloseText, gameLayout.styles.nextTurnsCloseText]}
                   >
                     X
@@ -3480,6 +3577,8 @@ function LocalGameScreen({
                   </View>
                 )}
                 <Pressable
+                  accessibilityLabel="Return to game lobby"
+                  accessibilityRole="button"
                   onPress={handleNextTurnsLobby}
                   style={({ pressed }) => [
                     styles.nextTurnsLobbyButton,
@@ -3504,6 +3603,7 @@ function LocalGameScreen({
               <View style={[styles.gameOverPanel, gameLayout.styles.gameOverPanel]} testID="game-over-panel">
                 <Pressable
                   accessibilityLabel="Close game and return to games list"
+                  accessibilityRole="button"
                   hitSlop={gameLayout.unit(8)}
                   onPress={handleCloseGameOver}
                   style={({ pressed }) => [
@@ -3514,7 +3614,7 @@ function LocalGameScreen({
                   testID="game-over-close-button"
                 >
                   <Text
-                    allowFontScaling={false}
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                     style={[styles.gameOverCloseText, gameLayout.styles.gameOverCloseText]}
                   >
                     ×
@@ -3538,7 +3638,7 @@ function LocalGameScreen({
                       {homePlayer.name}
                     </Text>
                     <Text
-                      allowFontScaling={false}
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                       style={[styles.gameOverScoreValue, gameLayout.styles.gameOverScoreValue]}
                     >
                       {homeScore}
@@ -3555,7 +3655,7 @@ function LocalGameScreen({
                       {opponentPlayer.name}
                     </Text>
                     <Text
-                      allowFontScaling={false}
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                       style={[styles.gameOverScoreValue, gameLayout.styles.gameOverScoreValue]}
                     >
                       {opponentScore}
@@ -3564,6 +3664,8 @@ function LocalGameScreen({
                 </View>
                 <View style={[styles.gameOverActions, gameLayout.styles.gameOverActions]}>
                   <Pressable
+                    accessibilityLabel="Start a rematch"
+                    accessibilityRole="button"
                     onPress={() => void handleRematch()}
                     style={({ pressed }) => [
                       styles.gameOverPrimaryButton,
@@ -3583,7 +3685,9 @@ function LocalGameScreen({
                   </Pressable>
                   <Pressable
                     accessibilityLabel="View game stats"
-                    onPress={handleGameOverStats}
+                    accessibilityRole="button"
+                    onPress={() => handleOpenStats('gameOver')}
+                    ref={gameOverStatsButtonRef}
                     style={({ pressed }) => [
                       styles.gameOverSecondaryButton,
                       gameLayout.styles.gameOverSecondaryButton,
@@ -3604,18 +3708,83 @@ function LocalGameScreen({
             </View>
           )}
           {showStatsPage && (
-            <StatsPage
-              currentOpponentName={opponentPlayer.name}
-              currentScore={totalScore(homePlayer.scorecard)}
-              onClose={() => setShowStatsPage(false)}
-              opponentScore={totalScore(opponentPlayer.scorecard)}
-              opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}
-              stats={isRemoteGame ? (headToHeadStats?.mine ?? null) : computerStats}
-              statsKind={isRemoteGame ? 'headToHead' : 'computer'}
-            />
+            <Modal
+              accessibilityLabel="Game stats"
+              animationType="none"
+              navigationBarTranslucent
+              onRequestClose={handleCloseStats}
+              presentationStyle="overFullScreen"
+              statusBarTranslucent
+              transparent
+              visible
+            >
+              <View style={[styles.statsModalHost, needsScrollableStage && styles.statsModalScrollableHost]}>
+                <View
+                  style={[
+                    styles.statsModalStage,
+                    gameStageStyle,
+                    {
+                      transform: [
+                        { translateX: (effectiveSafeAreaInsets.left - effectiveSafeAreaInsets.right) / 2 },
+                        { translateY: (effectiveSafeAreaInsets.top - effectiveSafeAreaInsets.bottom) / 2 },
+                      ],
+                    },
+                  ]}
+                  testID="stats-modal-stage"
+                >
+                  <StatsPage
+                    currentOpponentName={opponentPlayer.name}
+                    currentScore={totalScore(homePlayer.scorecard)}
+                    onClose={handleCloseStats}
+                    opponentScore={totalScore(opponentPlayer.scorecard)}
+                    opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}
+                    stats={isRemoteGame ? (headToHeadStats?.mine ?? null) : computerStats}
+                    statsKind={isRemoteGame ? 'headToHead' : 'computer'}
+                  />
+                </View>
+              </View>
+            </Modal>
           )}
         </View>
       </GameLayoutContext.Provider>
+    );
+  }
+
+  const availableStageViewportWidth =
+    effectiveWindowWidth - effectiveSafeAreaInsets.left - effectiveSafeAreaInsets.right;
+  const availableStageViewportHeight =
+    effectiveWindowHeight - effectiveSafeAreaInsets.top - effectiveSafeAreaInsets.bottom;
+  const needsScrollableStage =
+    Platform.OS === 'web' &&
+    !devViewportPreset &&
+    (gameStageStyle.width > availableStageViewportWidth || gameStageStyle.height > availableStageViewportHeight);
+
+  return (
+    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, stableScreenHostStyle]}>
+      <StatusBar style="light" />
+      {showDevViewportControls && (
+        <DevViewportPresetControls
+          activePresetKey={devViewportPresetKey}
+          onSelect={(key) => {
+            setDevViewportPresetKey(key);
+            replaceWebDevViewportPreset(key);
+          }}
+        />
+      )}
+      {needsScrollableStage ? (
+        <View style={styles.gameStageScroll} testID="game-stage-scroll">
+          <View
+            style={[
+              styles.gameStageScrollContent,
+              { minHeight: gameStageStyle.height, minWidth: gameStageStyle.width },
+            ]}
+          >
+            {renderGameScreen()}
+          </View>
+        </View>
+      ) : (
+        renderGameScreen()
+      )}
     </SafeAreaView>
   );
 }
@@ -3640,12 +3809,17 @@ function NextTurnGameButton({
 
   return (
     <Pressable
+      accessibilityLabel={`Play ${opponentName}. Score ${myScore} to ${opponentScore}`}
+      accessibilityRole="button"
       onPress={onPress}
       style={({ pressed }) => [styles.nextTurnGameButton, layout.styles.nextTurnGameButton, pressed && styles.pressed]}
       testID={`next-turn-game-${game.id}`}
     >
       <View style={[styles.nextTurnAvatar, layout.styles.nextTurnAvatar]}>
-        <Text allowFontScaling={false} style={[styles.nextTurnAvatarText, layout.styles.nextTurnAvatarText]}>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnAvatarText, layout.styles.nextTurnAvatarText]}
+        >
           {opponentName.slice(0, 1).toUpperCase()}
         </Text>
       </View>
@@ -3662,13 +3836,22 @@ function NextTurnGameButton({
         </Text>
       </View>
       <View style={[styles.nextTurnScorePill, layout.styles.nextTurnScorePill]}>
-        <Text allowFontScaling={false} style={[styles.nextTurnScoreText, layout.styles.nextTurnScoreText]}>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnScoreText, layout.styles.nextTurnScoreText]}
+        >
           {myScore}
         </Text>
-        <Text allowFontScaling={false} style={[styles.nextTurnScoreDivider, layout.styles.nextTurnScoreDivider]}>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnScoreDivider, layout.styles.nextTurnScoreDivider]}
+        >
           -
         </Text>
-        <Text allowFontScaling={false} style={[styles.nextTurnScoreText, layout.styles.nextTurnScoreText]}>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnScoreText, layout.styles.nextTurnScoreText]}
+        >
           {opponentScore}
         </Text>
       </View>
@@ -3715,7 +3898,7 @@ function BonusValueText({
       {bonusOutlineOffsets.map((offset, index) => (
         <Text
           adjustsFontSizeToFit
-          allowFontScaling={false}
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
           key={`${offset.x}:${offset.y}:${index}`}
           numberOfLines={1}
           style={[
@@ -3730,7 +3913,7 @@ function BonusValueText({
       ))}
       <Animated.Text
         adjustsFontSizeToFit
-        allowFontScaling={false}
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         numberOfLines={1}
         style={[styles.bonusBig, layout.styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}
       >
@@ -3760,6 +3943,9 @@ function TokenMenuOption({
   const layout = useGameLayout();
   return (
     <Pressable
+      accessibilityLabel={`${label}, ${costLabel ?? cost} tokens. ${description}`}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -3772,7 +3958,10 @@ function TokenMenuOption({
     >
       <View style={[styles.tokenOptionCost, layout.styles.tokenOptionCost]}>
         <Image source={suckerTokenImage} style={[styles.tokenOptionCostIcon, layout.styles.tokenOptionCostIcon]} />
-        <Text allowFontScaling={false} style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}
+        >
           {costLabel ?? cost}
         </Text>
       </View>
@@ -3867,24 +4056,35 @@ function SuckerPunchChanceDialog({
       <View style={[styles.suckerPunchChancePanel, layout.styles.suckerPunchChancePanel]}>
         <Text
           adjustsFontSizeToFit
-          allowFontScaling={false}
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
           numberOfLines={1}
           style={[styles.suckerPunchChanceTitle, layout.styles.suckerPunchChanceTitle]}
         >
           {title}
         </Text>
         {phase === 'ready' && (
-          <Text style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}>
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+          >
             Higher roll, higher chance.
           </Text>
         )}
         {isRolled && (
-          <Text style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}>
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+          >
             {chancePercent}% chance to land.
           </Text>
         )}
         {isThrowing && (
-          <Text style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}>Will it land?</Text>
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+          >
+            Will it land?
+          </Text>
         )}
 
         <View
@@ -3920,6 +4120,9 @@ function SuckerPunchChanceDialog({
         </View>
 
         <Pressable
+          accessibilityLabel={buttonLabel}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: phase === 'rolling' || isThrowing }}
           disabled={phase === 'rolling' || isThrowing}
           onPress={isResult ? onDismissResult : isRolled ? onThrowPunch : onRoll}
           style={({ pressed }) => [
@@ -3931,7 +4134,7 @@ function SuckerPunchChanceDialog({
           testID="sucker-punch-chance-roll-button"
         >
           <Text
-            allowFontScaling={false}
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
             style={[styles.suckerPunchRollButtonText, layout.styles.suckerPunchRollButtonText]}
           >
             {buttonLabel}
@@ -3975,7 +4178,7 @@ function BonusMeter({ total }: { total: number }) {
         </Svg>
         <Text
           adjustsFontSizeToFit
-          allowFontScaling={false}
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
           numberOfLines={1}
           style={[styles.bonusMeterText, layout.styles.bonusMeterText]}
         >
@@ -4077,6 +4280,10 @@ function ScoreCell({
       : opponentPreviewScore !== null
         ? String(opponentPreviewScore)
         : '';
+  const categoryLabel = categoryLabels[category];
+  const scoreActionDisabled = !selectable || locked;
+  const homeScoreAccessibilityValue = formatAccessibleScore(homeLockedScore, homePreviewScore);
+  const opponentScoreAccessibilityValue = formatAccessibleScore(opponentLockedScore, opponentPreviewScore);
   const selectedScale = selectedPulse.interpolate({
     inputRange: [0, 1],
     outputRange: [1, highlighted ? 1.06 : 1],
@@ -4085,7 +4292,12 @@ function ScoreCell({
   return (
     <View style={[styles.scorePair, layout.styles.scorePair]}>
       <Pressable
-        disabled={!selectable || locked}
+        accessibilityHint={scoreActionDisabled ? undefined : 'Selects this category for the current turn'}
+        accessibilityLabel={`${categoryLabel} category for ${activePlayer.name}`}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: scoreActionDisabled, selected }}
+        aria-pressed={selected}
+        disabled={scoreActionDisabled}
         nativeID={`category-button-${category}`}
         onPress={() => onSelect(category)}
         testID={`category-button-${category}`}
@@ -4095,17 +4307,20 @@ function ScoreCell({
           pressed && styles.pressed,
         ]}
       >
-        <View
-          style={[
-            styles.categoryTile,
-            layout.styles.categoryTile,
-            category === 'sucker' && styles.suckerCategoryTile,
-            highlighted && styles.selectedCategoryTile,
-          ]}
-        >
-          <View style={[styles.tileGloss, layout.styles.tileGloss]} />
-          <View style={[styles.tileGlossFade, layout.styles.tileGlossFade]} />
-          <CategoryTile category={category} />
+        <View style={[styles.categoryTileFrame, layout.styles.categoryTileFrame]}>
+          <View pointerEvents="none" style={[styles.categoryTileShadow, layout.styles.categoryTileShadow]} />
+          <View
+            style={[
+              styles.categoryTile,
+              layout.styles.categoryTile,
+              category === 'sucker' && styles.suckerCategoryTile,
+              highlighted && styles.selectedCategoryTile,
+            ]}
+          >
+            <View style={[styles.tileGloss, layout.styles.tileGloss]} />
+            <View style={[styles.tileGlossFade, layout.styles.tileGlossFade]} />
+            <CategoryTile category={category} />
+          </View>
         </View>
       </Pressable>
       <Animated.View
@@ -4117,8 +4332,21 @@ function ScoreCell({
           },
         ]}
       >
+        <View pointerEvents="none" style={[styles.scoreBoxShadow, layout.styles.scoreBoxShadow]} />
+        <View
+          accessibilityLabel={`${homePlayer.name}, ${categoryLabel} score: ${homeScoreAccessibilityValue}`}
+          accessibilityRole="text"
+          accessibilityValue={{ text: homeScoreAccessibilityValue }}
+          accessible
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+        />
         <Pressable
-          disabled={!selectable || locked}
+          accessibilityElementsHidden
+          accessible={false}
+          aria-hidden
+          disabled={scoreActionDisabled}
+          importantForAccessibility="no-hide-descendants"
           onPress={() => onSelect(category)}
           ref={(node) => setScoreBoxRef(category, node)}
           style={({ pressed }) => [
@@ -4129,6 +4357,7 @@ function ScoreCell({
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
           ]}
+          tabIndex={-1}
           testID={`home-score-box-${category}`}
         >
           {homeSuckerBonus && <SuckerBonusBadge />}
@@ -4136,7 +4365,7 @@ function ScoreCell({
             <SuckerPunchScoreWipe home progress={homeWipe.progress} score={homeWipe.score} />
           ) : (
             <Text
-              allowFontScaling={false}
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
               numberOfLines={1}
               style={[
                 styles.scoreBoxText,
@@ -4149,32 +4378,59 @@ function ScoreCell({
           )}
         </Pressable>
       </Animated.View>
-      <Pressable
-        disabled={!selectable || locked}
-        onPress={() => onSelect(category)}
-        ref={(node) => setOpponentScoreRef(category, node)}
-        style={[styles.opponentScoreWrap, layout.styles.opponentScoreWrap]}
-        testID={`opponent-score-box-${category}`}
-      >
-        {opponentSuckerBonus && <SuckerBonusBadge opponent />}
-        {opponentWipe ? (
-          <SuckerPunchScoreWipe home={false} progress={opponentWipe.progress} score={opponentWipe.score} />
-        ) : (
-          <Text
-            allowFontScaling={false}
-            numberOfLines={1}
-            style={[
-              styles.opponentScoreText,
-              layout.styles.opponentScoreText,
-              opponentPreviewScore !== null && styles.previewScoreText,
-            ]}
-          >
-            {opponentScoreText}
-          </Text>
-        )}
-      </Pressable>
+      <View style={[styles.opponentScoreWrap, layout.styles.opponentScoreWrap]}>
+        <View
+          accessibilityLabel={`${opponentPlayer.name}, ${categoryLabel} score: ${opponentScoreAccessibilityValue}`}
+          accessibilityRole="text"
+          accessibilityValue={{ text: opponentScoreAccessibilityValue }}
+          accessible
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+        />
+        <Pressable
+          accessibilityElementsHidden
+          accessible={false}
+          aria-hidden
+          disabled={scoreActionDisabled}
+          importantForAccessibility="no-hide-descendants"
+          onPress={() => onSelect(category)}
+          ref={(node) => setOpponentScoreRef(category, node)}
+          style={styles.opponentScoreButton}
+          tabIndex={-1}
+          testID={`opponent-score-box-${category}`}
+        >
+          {opponentSuckerBonus && <SuckerBonusBadge opponent />}
+          {opponentWipe ? (
+            <SuckerPunchScoreWipe home={false} progress={opponentWipe.progress} score={opponentWipe.score} />
+          ) : (
+            <Text
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={[
+                styles.opponentScoreText,
+                layout.styles.opponentScoreText,
+                opponentPreviewScore !== null && styles.previewScoreText,
+              ]}
+            >
+              {opponentScoreText}
+            </Text>
+          )}
+        </Pressable>
+      </View>
     </View>
   );
+}
+
+function formatAccessibleScore(lockedScore: number | null, previewScore: number | null) {
+  if (lockedScore !== null) {
+    return `${lockedScore} points, scored`;
+  }
+
+  if (previewScore !== null) {
+    return `${previewScore} points, preview`;
+  }
+
+  return 'Not scored';
 }
 
 function SuckerPunchScoreWipe({ home, progress, score }: { home: boolean; progress: Animated.Value; score: number }) {
@@ -4222,7 +4478,7 @@ function SuckerPunchScoreWipe({ home, progress, score }: { home: boolean; progre
         </Svg>
       </Animated.View>
       <Animated.Text
-        allowFontScaling={false}
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         numberOfLines={1}
         style={[
           home ? styles.scoreBoxText : styles.opponentScoreText,
@@ -4291,7 +4547,7 @@ function SuckerBonusBadge({ opponent = false }: { opponent?: boolean }) {
       ]}
     >
       <Text
-        allowFontScaling={false}
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         style={[
           styles.suckerBonusBadgeText,
           opponent ? layout.styles.opponentSuckerBonusBadgeText : layout.styles.suckerBonusBadgeText,
@@ -4424,13 +4680,13 @@ function CategoryTile({ category }: { category: ScoreCategory }) {
   switch (category) {
     case 'threeOfAKind':
       return (
-        <Text allowFontScaling={false} style={[styles.kindText, layout.styles.kindText]}>
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
           3x
         </Text>
       );
     case 'fourOfAKind':
       return (
-        <Text allowFontScaling={false} style={[styles.kindText, layout.styles.kindText]}>
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
           4x
         </Text>
       );
@@ -4444,7 +4700,7 @@ function CategoryTile({ category }: { category: ScoreCategory }) {
       return <SuckerIcon />;
     case 'chance':
       return (
-        <Text allowFontScaling={false} style={[styles.chanceText, layout.styles.chanceText]}>
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.chanceText, layout.styles.chanceText]}>
           ?
         </Text>
       );
@@ -4520,7 +4776,7 @@ function StraightIcon({ label, cardCount }: { label: string; cardCount: 3 | 4 })
         ))}
       </View>
       <Text
-        allowFontScaling={false}
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         style={[
           styles.straightLabel,
           { bottom: layout.unit(1), fontSize: layout.unit(9), lineHeight: layout.unit(10) },
@@ -4544,6 +4800,9 @@ function DevViewportPresetControls({
   return (
     <View style={styles.devViewportPresetBar}>
       <Pressable
+        accessibilityLabel="Responsive viewport"
+        accessibilityRole="button"
+        accessibilityState={{ selected: activePresetKey === 'responsive' }}
         onPress={() => onSelect('responsive')}
         style={[
           styles.devViewportPresetButton,
@@ -4551,6 +4810,7 @@ function DevViewportPresetControls({
         ]}
       >
         <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
           style={[styles.devViewportPresetText, activePresetKey === 'responsive' && styles.activeDevViewportPresetText]}
         >
           Resp
@@ -4558,6 +4818,9 @@ function DevViewportPresetControls({
       </Pressable>
       {gameViewportPresets.map((preset) => (
         <Pressable
+          accessibilityLabel={`${preset.label} viewport`}
+          accessibilityRole="button"
+          accessibilityState={{ selected: activePresetKey === preset.key }}
           key={preset.key}
           onPress={() => onSelect(preset.key)}
           style={[
@@ -4566,6 +4829,7 @@ function DevViewportPresetControls({
           ]}
         >
           <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
             style={[styles.devViewportPresetText, activePresetKey === preset.key && styles.activeDevViewportPresetText]}
           >
             {preset.label}
@@ -4626,6 +4890,17 @@ function GameBackChevronIcon({ size }: { size: number }) {
   );
 }
 
+function createBoxShadowStyle(offsetX: number, offsetY: number, blurRadius: number, color: string): ViewStyle {
+  if (usesLegacyAndroidShadowFallback) {
+    const extent = Math.max(Math.abs(offsetX), Math.abs(offsetY), blurRadius);
+    return extent === 0 ? {} : { elevation: Math.max(1, Math.ceil(extent)) };
+  }
+
+  return {
+    boxShadow: [{ blurRadius, color, offsetX, offsetY }],
+  };
+}
+
 const styles = StyleSheet.create({
   fontLoadingScreen: {
     backgroundColor: '#8F0000',
@@ -4637,6 +4912,31 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  gameStageScroll: {
+    alignSelf: 'stretch',
+    flex: 1,
+    overflow: 'scroll',
+  },
+  gameStageScrollContent: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    width: '100%',
+  },
+  statsModalHost: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  statsModalScrollableHost: {
+    justifyContent: 'flex-start',
+    overflow: 'scroll',
+  },
+  statsModalStage: {
+    backgroundColor: '#8F0000',
+    overflow: 'hidden',
+    position: 'relative',
   },
   devViewportPresetBar: {
     backgroundColor: 'rgba(33, 5, 5, 0.84)',
@@ -4909,6 +5209,21 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     width: 64,
   },
+  categoryTileFrame: {
+    height: 54,
+    position: 'relative',
+    width: 54,
+  },
+  categoryTileShadow: {
+    backgroundColor: '#5A1308',
+    borderRadius: 12,
+    height: 54,
+    left: 3,
+    opacity: 0.5,
+    position: 'absolute',
+    top: 4,
+    width: 54,
+  },
   categoryTile: {
     alignItems: 'center',
     backgroundColor: '#F12D22',
@@ -4916,10 +5231,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 3,
     justifyContent: 'center',
-    shadowColor: '#5A1308',
-    shadowOffset: { width: 3, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
     height: 54,
     overflow: 'hidden',
     width: 54,
@@ -4976,12 +5287,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 3,
     justifyContent: 'center',
-    shadowColor: '#5A1308',
-    shadowOffset: { width: 3, height: 5 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
     height: 56,
     overflow: 'visible',
+    width: '100%',
+  },
+  scoreBoxShadow: {
+    backgroundColor: '#5A1308',
+    borderRadius: 12,
+    height: '100%',
+    left: 3,
+    opacity: 0.5,
+    position: 'absolute',
+    top: 5,
     width: '100%',
   },
   scorePressWrap: {
@@ -4994,6 +5311,11 @@ const styles = StyleSheet.create({
     height: 56,
     justifyContent: 'center',
     width: 50,
+  },
+  opponentScoreButton: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lockedScoreBox: {
     backgroundColor: '#FFE08A',
@@ -5171,6 +5493,7 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     flexShrink: 0,
     height: '100%',
+    position: 'relative',
   },
   dieSlot: {
     alignItems: 'center',
@@ -5180,10 +5503,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     height: '100%',
     justifyContent: 'center',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 2,
+    ...createBoxShadowStyle(0, 0, 2, 'rgba(5, 5, 5, 0.4)'),
     width: '100%',
   },
   settlingDieSlot: {
@@ -5192,9 +5512,12 @@ const styles = StyleSheet.create({
   heldDie: {
     backgroundColor: '#FFF0A6',
     borderColor: '#FFD329',
-    shadowColor: '#FFD329',
-    shadowOpacity: 1,
-    shadowRadius: 6,
+    ...(usesLegacyAndroidShadowFallback ? { elevation: 0 } : createBoxShadowStyle(0, 0, 6, '#FFD329')),
+  },
+  heldDieGlow: {
+    backgroundColor: '#FFD329',
+    opacity: 0.58,
+    position: 'absolute',
   },
   dieImage: {
     height: '100%',
@@ -5248,10 +5571,7 @@ const styles = StyleSheet.create({
   opponentTurnRevealDie: {
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.38,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.38)'),
   },
   opponentTurnRevealDieImage: {
     height: '100%',
@@ -5338,10 +5658,7 @@ const styles = StyleSheet.create({
     maxWidth: 286,
     paddingHorizontal: 18,
     paddingVertical: 18,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
   },
   suckerPunchChanceTitle: {
@@ -5404,10 +5721,7 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: 'center',
     marginTop: 4,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.4)'),
     width: '100%',
   },
   disabledSuckerPunchRollButton: {
@@ -5439,10 +5753,7 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     paddingHorizontal: 18,
     paddingVertical: 14,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.45,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 5, 0, 'rgba(5, 5, 5, 0.45)'),
     transform: [{ rotate: '-2deg' }],
   },
   suckerRollNotice: {
@@ -5511,10 +5822,7 @@ const styles = StyleSheet.create({
     gap: 10,
     maxHeight: '78%',
     padding: 14,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
   },
   nextTurnsCloseButton: {
@@ -5696,10 +6004,7 @@ const styles = StyleSheet.create({
     gap: 10,
     height: 240,
     padding: 14,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
   },
   gameOverCloseButton: {
@@ -5827,10 +6132,7 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: 'center',
     overflow: 'hidden',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
   },
   disabledRollButton: {
     opacity: 0.55,
@@ -5861,10 +6163,7 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: 'center',
     overflow: 'visible',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
   },
   tokenButtonImage: {
     height: 44,
@@ -5907,10 +6206,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     gap: 8,
     padding: 10,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.45,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 5, 0, 'rgba(5, 5, 5, 0.45)'),
     width: '100%',
   },
   tokenMenuHeader: {
@@ -6080,10 +6376,7 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: 'center',
     overflow: 'hidden',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
   },
   playButtonWrap: {
     borderRadius: 10,
@@ -6155,10 +6448,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     height: 25,
     position: 'absolute',
-    shadowColor: '#7A401D',
-    shadowOffset: { width: 1, height: 1 },
-    shadowOpacity: 0.25,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(1, 1, 0, 'rgba(122, 64, 29, 0.25)'),
     top: 0,
     width: 17,
   },

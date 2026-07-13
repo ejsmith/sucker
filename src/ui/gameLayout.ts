@@ -31,6 +31,9 @@ export const gameViewportPresets = [
   { key: 'max', label: 'Max', width: 430, height: 932, insets: { ...noInsets, bottom: 34, top: 59 } },
   { key: 'android', label: 'A', width: 360, height: 800, insets: { ...noInsets, bottom: 24, top: 24 } },
   { key: 'androidLarge', label: 'A+', width: 412, height: 915, insets: { ...noInsets, bottom: 24, top: 24 } },
+  // Diagnostic preset: catches regressions where unequal lateral safe-area
+  // insets size the stage correctly but position it on the wrong x-axis.
+  { key: 'asymmetric', label: 'Inset', width: 393, height: 852, insets: { top: 59, right: 4, bottom: 34, left: 12 } },
 ] as const satisfies readonly GameViewportPreset[];
 
 export type GameViewportPresetKey = (typeof gameViewportPresets)[number]['key'];
@@ -129,12 +132,22 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         borderRadius: unit(12),
         borderWidth: stroke(3),
         height: unit(54),
-        shadowOffset: { width: unit(3), height: unit(4) },
         width: unit(54),
       },
       categoryTileButton: {
         height: unit(68),
         width: unit(64),
+      },
+      categoryTileFrame: {
+        height: unit(54),
+        width: unit(54),
+      },
+      categoryTileShadow: {
+        borderRadius: unit(12),
+        height: unit(54),
+        left: unit(3),
+        top: unit(4),
+        width: unit(54),
       },
       chanceText: {
         fontSize: unit(34),
@@ -147,7 +160,13 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       dieSlot: {
         borderRadius: unit(12),
         borderWidth: stroke(3),
-        shadowRadius: unit(2),
+      },
+      heldDieGlow: {
+        borderRadius: unit(15),
+        bottom: unit(-3),
+        left: unit(-3),
+        right: unit(-3),
+        top: unit(-3),
       },
       kindText: {
         fontSize: unit(28),
@@ -172,8 +191,8 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         lineHeight: unit(34),
       },
       opponentScoreWrap: {
-        height: unit(56),
-        width: unit(50),
+        height: touch(56),
+        width: touch(50),
       },
       opponentSuckerBonusBadge: {
         height: unit(19),
@@ -281,8 +300,12 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       scoreBox: {
         borderRadius: unit(12),
         borderWidth: stroke(3),
-        height: unit(56),
-        shadowOffset: { width: unit(3), height: unit(5) },
+        height: touch(56),
+      },
+      scoreBoxShadow: {
+        borderRadius: unit(12),
+        left: unit(3),
+        top: unit(5),
       },
       scoreBoxText: {
         fontSize: unit(32),
@@ -300,8 +323,8 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         paddingHorizontal: unit(4),
       },
       scorePressWrap: {
-        height: unit(56),
-        width: unit(54),
+        height: touch(56),
+        width: touch(54),
       },
       screen: {
         gap: unit(8),
@@ -310,15 +333,15 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       },
       gameOverActions: {
         gap: unit(8),
-        height: unit(54),
+        height: touch(54),
       },
       gameOverCloseButton: {
         borderRadius: unit(18),
         borderWidth: stroke(2),
-        height: unit(36),
+        height: touch(36),
         right: unit(8),
         top: unit(8),
-        width: unit(36),
+        width: touch(36),
       },
       gameOverCloseText: {
         fontSize: unit(24),
@@ -340,6 +363,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       gameOverPrimaryButton: {
         borderRadius: unit(10),
         borderWidth: stroke(3),
+        minHeight: touch(54),
       },
       gameOverPrimaryText: {
         fontSize: unit(20),
@@ -362,6 +386,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       gameOverSecondaryButton: {
         borderRadius: unit(10),
         borderWidth: stroke(3),
+        minHeight: touch(54),
       },
       gameOverSecondaryText: {
         fontSize: unit(20),
@@ -384,7 +409,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         borderRadius: unit(9),
         borderWidth: stroke(2),
         gap: unit(9),
-        minHeight: unit(64),
+        minHeight: touch(64),
         paddingHorizontal: unit(9),
         paddingVertical: unit(8),
       },
@@ -415,10 +440,10 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       nextTurnsCloseButton: {
         borderRadius: unit(18),
         borderWidth: stroke(2),
-        height: unit(36),
+        height: touch(36),
         right: unit(8),
         top: unit(8),
-        width: unit(36),
+        width: touch(36),
       },
       nextTurnsCloseText: {
         fontSize: unit(14),
@@ -447,7 +472,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       nextTurnsLobbyButton: {
         borderRadius: unit(10),
         borderWidth: stroke(3),
-        minHeight: unit(48),
+        minHeight: touch(48),
       },
       nextTurnsLobbyText: {
         fontSize: unit(17),
@@ -527,7 +552,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       suckerPunchRollButton: {
         borderRadius: unit(10),
         borderWidth: stroke(3),
-        height: unit(48),
+        height: touch(48),
         marginTop: unit(4),
       },
       suckerPunchRollButtonText: {
@@ -581,8 +606,8 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       tokenMenuClose: {
         borderRadius: unit(8),
         borderWidth: stroke(2),
-        height: unit(32),
-        width: unit(32),
+        height: touch(32),
+        width: touch(32),
       },
       tokenMenuCloseText: {
         fontSize: unit(14),
@@ -615,7 +640,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         borderRadius: unit(9),
         borderWidth: stroke(2),
         gap: unit(9),
-        minHeight: unit(58),
+        minHeight: touch(58),
         paddingHorizontal: unit(9),
         paddingVertical: unit(7),
       },
@@ -672,6 +697,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       },
       topMenuItem: {
         borderRadius: unit(6),
+        minHeight: touch(44),
         paddingHorizontal: unit(10),
         paddingVertical: unit(9),
       },

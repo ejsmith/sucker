@@ -132,17 +132,31 @@ export function MultiplayerLobby({
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
     paddingTop: Math.max(12, safeAreaInsets.top + 4),
   };
+  const needsScrollableStage =
+    Platform.OS === 'web' && (shellStyle.height > windowHeight || shellStyle.width > windowWidth);
   const stageHostStableStyle: StyleProp<ViewStyle> =
-    Platform.OS === 'web' ? { minHeight: shellStyle.height, minWidth: shellStyle.width } : null;
+    Platform.OS === 'web' && !needsScrollableStage
+      ? { minHeight: shellStyle.height, minWidth: shellStyle.width }
+      : null;
 
   function renderShell(children: ReactNode) {
-    return (
-      <View style={[lobbyStyles.stageHost, stageHostStableStyle]}>
-        <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
-          {children}
-        </View>
+    const shell = (
+      <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
+        {children}
       </View>
     );
+
+    if (needsScrollableStage) {
+      return (
+        <View style={[lobbyStyles.stageHost, lobbyStyles.scrollableStageHost]} testID="lobby-stage-scroll">
+          <View style={[lobbyStyles.stageScrollContent, { minHeight: shellStyle.height, minWidth: shellStyle.width }]}>
+            {shell}
+          </View>
+        </View>
+      );
+    }
+
+    return <View style={[lobbyStyles.stageHost, stageHostStableStyle]}>{shell}</View>;
   }
 
   const refreshGames = useCallback(
@@ -2834,6 +2848,16 @@ const lobbyStyles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
     padding: 12,
+  },
+  scrollableStageHost: {
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+    overflow: 'scroll',
+  },
+  stageScrollContent: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    width: '100%',
   },
   stageHost: {
     alignItems: 'center',

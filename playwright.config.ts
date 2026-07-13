@@ -30,6 +30,17 @@ export default defineConfig({
     timeout: 10_000,
   },
   fullyParallel: false,
+  projects: [
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium' },
+    },
+    {
+      name: 'webkit-mobile',
+      testMatch: /responsive-layout\.spec\.ts/,
+      use: { ...devices['iPhone 13'] },
+    },
+  ],
   reporter: [['list']],
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   testDir: './e2e',
