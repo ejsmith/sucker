@@ -4240,10 +4240,10 @@ function ScoreCell({
         <View pointerEvents="none" style={[styles.scoreBoxShadow, layout.styles.scoreBoxShadow]} />
         <View
           accessibilityLabel={`${homePlayer.name}, ${categoryLabel} score: ${homeScoreAccessibilityValue}`}
-          accessibilityRole="text"
           accessibilityValue={{ text: homeScoreAccessibilityValue }}
           accessible
           pointerEvents="none"
+          role="img"
           style={StyleSheet.absoluteFill}
         />
         <Pressable
@@ -4286,10 +4286,10 @@ function ScoreCell({
       <View style={[styles.opponentScoreWrap, layout.styles.opponentScoreWrap]}>
         <View
           accessibilityLabel={`${opponentPlayer.name}, ${categoryLabel} score: ${opponentScoreAccessibilityValue}`}
-          accessibilityRole="text"
           accessibilityValue={{ text: opponentScoreAccessibilityValue }}
           accessible
           pointerEvents="none"
+          role="img"
           style={StyleSheet.absoluteFill}
         />
         <Pressable

@@ -1138,13 +1138,13 @@ export function MultiplayerLobby({
           transparent
           visible={avatarPickerVisible}
         >
-          <Pressable accessible={false} style={lobbyStyles.modalBackdrop} onPress={() => setAvatarPickerVisible(false)}>
+          <View style={lobbyStyles.modalBackdrop}>
             <Pressable
-              accessibilityViewIsModal
-              onPress={(event) => event.stopPropagation()}
-              role="dialog"
-              style={lobbyStyles.avatarPickerPanel}
-            >
+              accessible={false}
+              onPress={() => setAvatarPickerVisible(false)}
+              style={StyleSheet.absoluteFill}
+            />
+            <View accessibilityViewIsModal role="dialog" style={lobbyStyles.avatarPickerPanel}>
               <Text style={lobbyStyles.avatarPickerTitle}>Profile Photo</Text>
               <Pressable
                 onPress={() => void handleSelectAvatar('library')}
@@ -1175,8 +1175,8 @@ export function MultiplayerLobby({
               >
                 <Text style={lobbyStyles.avatarPickerCancelText}>Cancel</Text>
               </Pressable>
-            </Pressable>
-          </Pressable>
+            </View>
+          </View>
         </Modal>
       </ScrollView>,
     );
@@ -1642,27 +1642,26 @@ function GameListItem({
                 <Text style={lobbyStyles.scoreDivider}>-</Text>
                 <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
               </View>
-              {nudgeState.visible && (
-                <Pressable
-                  disabled={isBusy || !nudgeState.enabled}
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    onNudgeGame(game);
-                  }}
-                  style={({ pressed }) => [
-                    lobbyStyles.nudgeButton,
-                    (!nudgeState.enabled || isBusy) && lobbyStyles.nudgeButtonDisabled,
-                    pressed && lobbyStyles.pressed,
-                  ]}
-                  testID={`nudge-game-${game.id}`}
-                >
-                  <Text style={lobbyStyles.nudgeButtonText}>{nudgeState.label}</Text>
-                </Pressable>
-              )}
+              {nudgeState.visible && <View style={lobbyStyles.nudgeButtonPlaceholder} />}
             </View>
           </View>
           <Text style={lobbyStyles.waitText}>{waitText}</Text>
         </Pressable>
+        {nudgeState.visible && (
+          <Pressable
+            disabled={isBusy || !nudgeState.enabled}
+            onPress={() => onNudgeGame(game)}
+            style={({ pressed }) => [
+              lobbyStyles.nudgeButton,
+              lobbyStyles.nudgeButtonOverlay,
+              (!nudgeState.enabled || isBusy) && lobbyStyles.nudgeButtonDisabled,
+              pressed && lobbyStyles.pressed,
+            ]}
+            testID={`nudge-game-${game.id}`}
+          >
+            <Text style={lobbyStyles.nudgeButtonText}>{nudgeState.label}</Text>
+          </Pressable>
+        )}
       </Animated.View>
     </View>
   );
@@ -2625,6 +2624,15 @@ const lobbyStyles = StyleSheet.create({
   },
   nudgeButtonDisabled: {
     opacity: 0.55,
+  },
+  nudgeButtonOverlay: {
+    position: 'absolute',
+    right: 6,
+    top: 45,
+  },
+  nudgeButtonPlaceholder: {
+    height: gameCardActionHeight,
+    width: gameCardActionWidth,
   },
   nudgeButtonText: {
     color: '#210505',
