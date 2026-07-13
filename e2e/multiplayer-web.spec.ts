@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
@@ -40,6 +41,7 @@ test('two players can create an invite and play turns through the web UI', async
   const bobPage = await openAuthedPage(browser, bob);
 
   await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('lobby.png');
+  await expectNoSeriousAccessibilityViolations(alicePage);
 
   await alicePage.getByTestId('start-with-friend-button').click();
   await alicePage.getByTestId('create-invite-button').click();
@@ -61,6 +63,7 @@ test('two players can create an invite and play turns through the web UI', async
 
   await openGameFromLobby(alicePage, gameId);
   await expect(alicePage.getByTestId('game-screen')).toHaveScreenshot('active-turn.png');
+  await expectNoSeriousAccessibilityViolations(alicePage);
 
   await expect(alicePage.getByTestId('roll-button')).toBeEnabled();
   await alicePage.getByTestId('roll-button').click();
@@ -205,6 +208,32 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(punchedOpponentScore).toContainText('50');
   await page.waitForTimeout(1_700);
   await expect(punchedOpponentScore).not.toContainText('50');
+});
+
+test('offline multiplayer actions wait for connectivity and then succeed once', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const player = await createUser(`offline-${runId}`, 'Offline E2E');
+  const page = await openAuthedPage(browser, player);
+
+  await page.getByTestId('start-with-friend-button').click();
+  await page.context().setOffline(true);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('offline'));
+    (navigator as Navigator & { connection?: EventTarget }).connection?.dispatchEvent(new Event('change'));
+  });
+  await expect(page.getByText(/Offline — showing saved games/)).toBeVisible();
+  await page.getByTestId('create-invite-button').click();
+  await expect(page.getByText('You are offline. Reconnect before making a game move.')).toBeVisible();
+  await expect(page.getByTestId('generated-invite-code')).toHaveCount(0);
+
+  await page.context().setOffline(false);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('online'));
+    (navigator as Navigator & { connection?: EventTarget }).connection?.dispatchEvent(new Event('change'));
+  });
+  await expect(page.getByText(/Offline — showing saved games/)).toBeHidden();
+  await page.getByTestId('create-invite-button').click();
+  await expect(page.getByTestId('generated-invite-code')).toHaveText(/^[A-F0-9]{8}$/);
 });
 
 test('landed Sucker Punch wipes the score after the notification', async ({ browser }) => {
@@ -368,6 +397,22 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     throw new Error(`Authenticated lobby did not render.\n${details}\nOriginal error: ${message}`);
   }
   return page;
+}
+
+async function expectNoSeriousAccessibilityViolations(page: Page) {
+  const results = await new AxeBuilder({ page }).analyze();
+  const violations = results.violations
+    .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
+    .map((violation) => ({
+      description: violation.description,
+      id: violation.id,
+      nodes: violation.nodes.map((node) => ({
+        failureSummary: node.failureSummary,
+        html: node.html,
+        target: node.target.join(' '),
+      })),
+    }));
+  expect(violations).toEqual([]);
 }
 
 function captureFailedResponses(page: Page) {

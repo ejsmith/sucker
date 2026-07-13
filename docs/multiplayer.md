@@ -125,11 +125,11 @@ Implemented:
   - writing turn/action/token audit rows
   - recording game results and head-to-head stats at game completion
 
-Reserved for the next slice:
+Production universal/app links, native build workflows, staged updates, and the real-device QA checklist are now configured. See [release-quality.md](release-quality.md).
 
-- Production universal/app-link hosting for `sucker.games/invite/<INVITE_CODE>`.
-- Native device QA for foreground/background push delivery.
-- App Store and Play Store build setup.
+Game mutations include client request IDs. The Edge Function stores each request outcome in `game_action_requests`, allowing uncertain network requests to be retried without rolling, scoring, charging tokens, or notifying twice. Legacy store binaries without request IDs remain supported while newer binaries roll out.
+
+For hosted deployment, apply `20260712180000_game_action_idempotency.sql` before deploying the matching `game-action` function. Then release the updated client. This order keeps both existing and new store binaries functional throughout deployment.
 
 ## Multiplayer Validation
 

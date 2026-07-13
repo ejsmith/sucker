@@ -64,6 +64,29 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
+      - name: Check production web bundle budget
+        run: npm run check:bundle-size
+
+  native-config:
+    name: Native Config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+      - name: Generate native projects
+        run: npx expo prebuild --no-install --platform all
+      - name: Verify generated projects
+        run: test -f ios/Podfile && test -f android/settings.gradle
+
   edge:
     name: Edge
     runs-on: ubuntu-latest
@@ -238,6 +261,8 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
+          EXPO_PUBLIC_EXCEPTIONLESS_API_KEY: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY }}
+          EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Build web
@@ -246,6 +271,8 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
+          EXPO_PUBLIC_EXCEPTIONLESS_API_KEY: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY }}
+          EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Add Apple associated domain file

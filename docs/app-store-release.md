@@ -54,7 +54,7 @@ Build and App Store Connect.
 - Account deletion: the app profile screen links to `https://sucker.games/account-deletion.html`. This currently starts a manual email-confirmed deletion request; replace it with a fully automated deletion flow before App Review if Apple flags the manual process.
 - Privacy labels: declare collected data based on actual behavior. At minimum,
   review email address, user ID/profile name, gameplay content/records, device
-  push token/device name, diagnostics if added later, and whether each item is
+  push token/device name, Exceptionless diagnostics, and whether each item is
   linked to the user.
 - Screenshots: capture iPhone screenshots for login/lobby, active game,
   scorecard, invite/share, and game over.
@@ -80,6 +80,8 @@ Build and App Store Connect.
     `https://sucker.games/invite/<CODE>`.
 
 ## Build And Submit
+
+Before creating a store build, complete [the release quality checklist](release-quality.md), including the real-device accessibility, offline recovery, performance, and Exceptionless checks.
 
 Run local validation first:
 

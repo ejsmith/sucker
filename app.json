@@ -42,6 +42,7 @@
       "expo-router",
       "expo-image",
       "expo-status-bar",
+      "@exceptionless/react-native/expo-plugin",
       [
         "expo-notifications",
         {
@@ -87,6 +88,14 @@
       "startUrl": "/"
     },
     "backgroundColor": "#8F0000",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9e385d7c-1520-4497-b069-f20870551a34",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
     "experiments": {
       "reactCompiler": true
     },

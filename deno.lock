@@ -11,9 +11,12 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@axe-core/playwright@^4.12.1",
+        "npm:@exceptionless/react-native@^3.2.1",
         "npm:@expo/metro-runtime@~57.0.3",
         "npm:@playwright/test@^1.61.0",
         "npm:@react-native-async-storage/async-storage@2.2.0",
+        "npm:@react-native-community/netinfo@12.0.1",
         "npm:@supabase/supabase-js@^2.110.1",
         "npm:@types/node@^26.1.1",
         "npm:@types/react@~19.2.10",
@@ -22,7 +25,9 @@
         "npm:eslint-config-prettier@^10.1.8",
         "npm:eslint-plugin-prettier@^5.5.6",
         "npm:eslint@^9.39.4",
+        "npm:expo-application@57.0",
         "npm:expo-constants@~57.0.3",
+        "npm:expo-crypto@57.0",
         "npm:expo-dev-client@~57.0.5",
         "npm:expo-device@57.0",
         "npm:expo-doctor@^1.20.0",
@@ -35,6 +40,8 @@
         "npm:expo-secure-store@57.0",
         "npm:expo-splash-screen@~57.0.2",
         "npm:expo-status-bar@57.0",
+        "npm:expo-system-ui@57.0",
+        "npm:expo-updates@~57.0.6",
         "npm:expo@^57.0.4",
         "npm:prettier@^3.8.4",
         "npm:react-dom@19.2.3",

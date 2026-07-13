@@ -5,16 +5,22 @@ import { GameListProvider } from '../src/navigation/GameListProvider';
 import { useNotificationClicks } from '../src/multiplayer/notificationNavigation';
 import { AppErrorBoundary } from '../src/ui/AppErrorBoundary';
 import { WebPortraitGuard } from '../src/ui/WebPortraitGuard';
+import { MonitoringRoute } from '../src/monitoring/MonitoringRoute';
+import { NetworkProvider, NetworkStatusBanner } from '../src/network/NetworkProvider';
 
 export default function RootLayout() {
   return (
     <AppErrorBoundary>
       <SafeAreaProvider>
         <WebPortraitGuard>
-          <GameListProvider>
-            <NotificationRouter />
-            <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
-          </GameListProvider>
+          <NetworkProvider>
+            <NetworkStatusBanner />
+            <GameListProvider>
+              <MonitoringRoute />
+              <NotificationRouter />
+              <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
+            </GameListProvider>
+          </NetworkProvider>
         </WebPortraitGuard>
       </SafeAreaProvider>
     </AppErrorBoundary>

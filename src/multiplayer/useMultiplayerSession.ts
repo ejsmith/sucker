@@ -15,6 +15,7 @@ import { getMyProfile } from './profiles';
 import { getE2ESession } from './env';
 import { isMultiplayerConfigured, supabase } from './supabase';
 import type { ProfileInput } from './types';
+import { reportError, setMonitoringUser } from '../monitoring/exceptionless';
 
 type Profile = Awaited<ReturnType<typeof getMyProfile>>;
 
@@ -44,10 +45,12 @@ export function useMultiplayerSession() {
       return nextProfile;
     }
     setProfile(nextProfile);
+    setMonitoringUser(nextProfile?.id ?? null);
     if (nextProfile && pushRegisteredProfileId.current !== nextProfile.id) {
       pushRegisteredProfileId.current = nextProfile.id;
       void registerPushToken(nextProfile.id).catch((pushError) => {
         console.warn('Unable to register push token', pushError);
+        void reportError(pushError, { Operation: 'RegisterPushToken' });
         pushRegisteredProfileId.current = null;
       });
     }
@@ -131,6 +134,7 @@ export function useMultiplayerSession() {
       }
       setSession(nextSession);
       setProfile(null);
+      setMonitoringUser(nextSession?.user.id ?? null);
       if (nextSession) {
         void refreshProfile();
       }

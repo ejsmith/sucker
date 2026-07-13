@@ -10,6 +10,7 @@ The gameplay source of truth is [docs/game-design-spec-v2.md](docs/game-design-s
 - React Native and React Native Web
 - TypeScript
 - Supabase for multiplayer state, database migrations, and Edge Functions
+- Exceptionless for native and JavaScript error monitoring
 - Node test runner for game-rule tests
 - Playwright for web E2E coverage
 
@@ -32,6 +33,7 @@ Set these values in `.env` for a Supabase-backed session:
 ```sh
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+EXPO_PUBLIC_EXCEPTIONLESS_API_KEY=your-exceptionless-project-key
 ```
 
 Without Supabase configuration, the app can still run the local demo game.
@@ -92,6 +94,15 @@ Formatting and linting:
 npm run lint
 npm run format:check
 ```
+
+Production web budget:
+
+```sh
+npm run build:web
+npm run check:bundle-size
+```
+
+See [docs/release-quality.md](docs/release-quality.md) for native builds, device smoke tests, accessibility, performance profiling, Exceptionless verification, offline recovery, and staged updates.
 
 ## Useful Scripts
 

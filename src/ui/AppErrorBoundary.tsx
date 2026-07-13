@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Pressable } from './Pressable';
+import { reportError } from '../monitoring/exceptionless';
 
 type State = {
   error: Error | null;
@@ -16,6 +17,7 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, State> 
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('Unexpected application render error', error, info.componentStack);
+    void reportError(error, { ComponentStack: info.componentStack ?? '' });
   }
 
   render() {

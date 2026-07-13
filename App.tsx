@@ -288,8 +288,8 @@ const backSwipeVelocity = 0.45;
 const nextTurnDialogDelayMs = 1000;
 const nextTurnListRefreshMs = 5000;
 const upperBonusTarget = 63;
-const bonusValueColor = '#FFD329';
-const bonusFlashColor = '#FFF8D5';
+const bonusValueColor = '#5A1308';
+const bonusFlashColor = '#8F0000';
 const awardedBonusColor = bonusValueColor;
 const bonusOutlineColor = '#5A1308';
 const awardedBonusOutlineColor = bonusOutlineColor;
@@ -3717,6 +3717,7 @@ function ScoreCell({
   return (
     <View style={styles.scorePair}>
       <Pressable
+        accessibilityLabel={`Choose ${categoryLabels[category]}`}
         disabled={!selectable || locked}
         nativeID={`category-button-${category}`}
         onPress={() => onSelect(category)}
@@ -3750,6 +3751,7 @@ function ScoreCell({
         ]}
       >
         <Pressable
+          accessibilityLabel={`${homePlayer.name}, ${categoryLabels[category]} score, ${scoreText || 'empty'}`}
           disabled={!selectable || locked}
           onPress={() => onSelect(category)}
           ref={(node) => setScoreBoxRef(category, node)}
@@ -3781,6 +3783,7 @@ function ScoreCell({
         </Pressable>
       </Animated.View>
       <Pressable
+        accessibilityLabel={`${opponentPlayer.name}, ${categoryLabels[category]} score, ${opponentScoreText || 'empty'}`}
         disabled={!selectable || locked}
         onPress={() => onSelect(category)}
         ref={(node) => setOpponentScoreRef(category, node)}
@@ -5454,7 +5457,7 @@ const styles = StyleSheet.create({
   },
   tokenCountBadge: {
     alignItems: 'center',
-    backgroundColor: '#F12D22',
+    backgroundColor: '#8F0000',
     borderColor: '#FFF3C2',
     borderRadius: 11,
     borderWidth: 2,
