@@ -36,6 +36,9 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - Prefer hot reload. Do not restart the dev server unless it died, dependencies/config changed, or Metro is stale.
 - Local web command: `npm run web`. It uses Expo standard port `8081` in the primary checkout and `scripts/start-web.cjs` chooses a deterministic open port for linked worktrees, so multiple worktrees can run at the same time.
 - When starting the web app for browser QA, run `npm run web`, then read `.build/dev-server.json` and open its `url` in the integrated browser. Do not assume `8081` in a linked worktree.
+- The primary iteration workflow runs the app on this remote Linux machine over SSH and views it from the user's PC through Tailscale. After starting `npm run web`, leave that process running, read the assigned `port` from `.build/dev-server.json`, and get this machine's tailnet IPv4 address with `tailscale ip -4`.
+- Give the user both `http://localhost:<port>` and `http://<tailscale-ip>:<port>`. Verify the tailnet URL with `curl --head` before reporting it ready. Expo must listen on more than loopback; `ss -ltnp` should show `*:<port>` (the existing start script normally does this).
+- Direct Tailscale port access is sufficient and does not require Tailscale Serve. If the daemon socket is inaccessible in the sandbox, rerun only the required Tailscale inspection command with escalation. Do not enable or replace a Tailscale Serve configuration unless the user explicitly requests an HTTPS/MagicDNS Serve URL.
 - Use an iPhone-sized browser viewport for UI checks: `393 x 852`.
 - For code validation run:
   - `npm run typecheck`
