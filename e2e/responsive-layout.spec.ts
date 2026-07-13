@@ -40,6 +40,38 @@ const asymmetricInsetViewport = {
   insets: { top: 59, right: 4, bottom: 34, left: 12 },
 } as const satisfies AcceptedViewport;
 
+test.describe('font loading fallback', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'Font request interception is covered in Chromium.');
+
+  test('font load failures keep the app usable with platform fallback fonts', async ({ browser }) => {
+    const context = await browser.newContext({
+      serviceWorkers: 'block',
+      viewport: { height: 852, width: 393 },
+    });
+    const page = await context.newPage();
+    const failedFamilies = new Set<string>();
+
+    await page.route(/Inter_(800ExtraBold|900Black).*\.ttf(?:\?.*)?$/, async (route) => {
+      const family = route
+        .request()
+        .url()
+        .match(/Inter_(800ExtraBold|900Black)/)?.[1];
+      if (family) {
+        failedFamilies.add(family);
+      }
+      await route.abort('failed');
+    });
+
+    try {
+      await page.goto(e2eBaseUrl);
+      await expect.poll(() => [...failedFamilies].sort()).toEqual(['800ExtraBold', '900Black']);
+      await expect(page.getByTestId('play-computer-button')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+});
+
 test.describe('Chromium pixel baselines', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'Pixel baselines are intentionally Chromium-only.');
 

@@ -374,6 +374,13 @@ function replaceWebDevViewportPreset(key: DevViewportPresetSelection) {
 export default function App() {
   const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
 
+  useEffect(() => {
+    if (fontError) {
+      console.warn('Unable to load Inter fonts; continuing with platform font fallback.', fontError);
+    }
+  }, [fontError]);
+
+  // The RN 0.81 renderers and browser CSS fall back for unknown families, so font errors should not block gameplay.
   if (!fontsLoaded && !fontError) {
     return <View style={styles.fontLoadingScreen} />;
   }
