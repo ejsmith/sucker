@@ -230,8 +230,18 @@ test.describe('mobile WebKit geometry', () => {
       await page.setViewportSize({ height: viewport.height, width: viewport.width });
       await openLocalGame(page, `/?viewport=${viewport.key}`);
 
-      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
       expect(await page.evaluate(() => devicePixelRatio)).toBeGreaterThan(1);
+
+      // locator.tap() requires a touch-enabled browser context, so exercising a
+      // real control verifies the device descriptor without relying on WebKit's
+      // platform-dependent navigator.maxTouchPoints value.
+      const tokenButton = page.getByTestId('token-menu-button');
+      await waitForPressableEnabled(tokenButton);
+      await tokenButton.tap();
+      const tokenMenu = page.getByTestId('token-menu-overlay');
+      await expect(tokenMenu).toBeVisible();
+      await page.getByTestId('token-menu-close-button').tap();
+      await expect(tokenMenu).toHaveCount(0);
 
       const screen = page.getByTestId('game-screen');
       const screenBox = await visibleBox(screen);
