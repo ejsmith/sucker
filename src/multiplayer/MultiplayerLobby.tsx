@@ -613,6 +613,7 @@ export function MultiplayerLobby({
   }
 
   const activeProfileId = profileId ?? session.user.id;
+  const isGameListReady = gamesProfileId === activeProfileId;
   const activeGames = sortActiveGames(
     visibleGames.filter((game) => game.status !== 'complete'),
     activeProfileId,
@@ -1196,7 +1197,12 @@ export function MultiplayerLobby({
               )}
             </Pressable>
           </View>
-          {activeGames.length === 0 ? (
+          {!isGameListReady ? (
+            <View style={lobbyStyles.emptyState} testID="games-loading-state">
+              <ActivityIndicator color="#FFD329" size="small" />
+              <Text style={lobbyStyles.emptyBody}>Loading games...</Text>
+            </View>
+          ) : activeGames.length === 0 ? (
             <View style={lobbyStyles.emptyState}>
               <Text style={lobbyStyles.emptyTitle}>No games yet</Text>
               <Text style={lobbyStyles.emptyBody}>Start one with a friend or play the computer.</Text>

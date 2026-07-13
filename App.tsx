@@ -59,6 +59,7 @@ import {
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
 import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
+import { clearCachedGameList, loadCachedGameList, saveCachedGameList } from './src/multiplayer/gameListCache';
 import { getInitialNotificationGameId, useWebNotificationClicks } from './src/multiplayer/notificationNavigation';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
 import { getProfilesByIds } from './src/multiplayer/profiles';
@@ -389,11 +390,14 @@ function AppRoutes() {
     games: RemoteGameRow[];
     profileId: string | null;
   }>({ games: [], profileId: null });
+  const hasChangedSharedGameList = useRef(false);
+  const [isGameListCacheHydrated, setIsGameListCacheHydrated] = useState(false);
   const openRemoteGame = useCallback((gameId: string) => {
     setShowLocalDemo(false);
     setRemoteGameRequest(createRemoteGameRequest(gameId));
   }, []);
   const setSharedGames = useCallback((profileId: string | null, games: RemoteGameRow[]) => {
+    hasChangedSharedGameList.current = true;
     setSharedGameList({ games: profileId ? games : [], profileId });
   }, []);
   const refreshSharedGames = useCallback(
@@ -405,11 +409,46 @@ function AppRoutes() {
     [setSharedGames],
   );
   const rememberRemoteGame = useCallback((profileId: string, game: RemoteGameRow) => {
+    hasChangedSharedGameList.current = true;
     setSharedGameList((cache) => ({
       games: mergeRemoteGameIntoLobbyCache(cache.profileId === profileId ? cache.games : [], game),
       profileId,
     }));
   }, []);
+  useEffect(() => {
+    let active = true;
+
+    void loadCachedGameList()
+      .then((cached) => {
+        if (active && cached && !hasChangedSharedGameList.current) {
+          setSharedGameList(cached);
+        }
+      })
+      .catch((cacheError: unknown) => {
+        console.warn('Unable to restore cached games', cacheError);
+      })
+      .finally(() => {
+        if (active) {
+          setIsGameListCacheHydrated(true);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!isGameListCacheHydrated) {
+      return;
+    }
+
+    const cacheUpdate = sharedGameList.profileId
+      ? saveCachedGameList({ games: sharedGameList.games, profileId: sharedGameList.profileId })
+      : clearCachedGameList();
+    void cacheUpdate.catch((cacheError: unknown) => {
+      console.warn('Unable to update cached games', cacheError);
+    });
+  }, [isGameListCacheHydrated, sharedGameList]);
   useWebNotificationClicks(openRemoteGame);
 
   if (isMultiplayerConfigured && remoteGameRequest) {
