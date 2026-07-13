@@ -1,5 +1,9 @@
+import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
+import { Inter_900Black } from '@expo-google-fonts/inter/900Black';
+import { useFonts } from '@expo-google-fonts/inter/useFonts';
 import { Stack, useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GameListProvider } from '../src/navigation/GameListProvider';
 import { useNotificationClicks } from '../src/multiplayer/notificationNavigation';
@@ -9,6 +13,18 @@ import { MonitoringRoute } from '../src/monitoring/MonitoringRoute';
 import { NetworkProvider, NetworkStatusBanner } from '../src/network/NetworkProvider';
 
 export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
+
+  useEffect(() => {
+    if (fontError) {
+      console.warn('Unable to load Inter fonts; continuing with platform font fallback.', fontError);
+    }
+  }, [fontError]);
+
+  if (!fontsLoaded && !fontError) {
+    return <View style={styles.fontLoadingScreen} />;
+  }
+
   return (
     <AppErrorBoundary>
       <SafeAreaProvider>
@@ -26,6 +42,13 @@ export default function RootLayout() {
     </AppErrorBoundary>
   );
 }
+
+const styles = StyleSheet.create({
+  fontLoadingScreen: {
+    backgroundColor: '#8F0000',
+    flex: 1,
+  },
+});
 
 function NotificationRouter() {
   const router = useRouter();

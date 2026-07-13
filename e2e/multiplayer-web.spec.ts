@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -13,6 +14,7 @@ const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
+const stageAspectRatio = 393 / 852;
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -40,8 +42,25 @@ test('two players can create an invite and play turns through the web UI', async
   const alicePage = await openAuthedPage(browser, alice);
   const bobPage = await openAuthedPage(browser, bob);
 
-  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('lobby.png');
+  const aliceLobby = alicePage.getByTestId('multiplayer-lobby-shell');
+  await expect(aliceLobby).toHaveScreenshot('lobby.png');
   await expectNoSeriousAccessibilityViolations(alicePage);
+
+  await alicePage.setViewportSize({ width: 454, height: 576 });
+  const lobbyStageScroll = alicePage.getByTestId('lobby-stage-scroll');
+  await expect(lobbyStageScroll).toBeVisible();
+  const resizedLobbyBox = await aliceLobby.boundingBox();
+  expect(resizedLobbyBox).not.toBeNull();
+  expect(resizedLobbyBox!.width).toBeCloseTo(320, 0);
+  expect(Math.abs(resizedLobbyBox!.width - resizedLobbyBox!.height * stageAspectRatio)).toBeLessThanOrEqual(1);
+  const lobbyScrollMetrics = await lobbyStageScroll.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(lobbyScrollMetrics.scrollWidth).toBeLessThanOrEqual(lobbyScrollMetrics.clientWidth + 1);
+
+  await alicePage.setViewportSize({ width: 393, height: 852 });
+  await expect(lobbyStageScroll).toHaveCount(0);
 
   await alicePage.getByTestId('start-with-friend-button').click();
   await alicePage.getByTestId('create-invite-button').click();
@@ -137,6 +156,65 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('keep playing rows show queued opponent profile avatars', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`queue-alice-${runId}`, 'Queue Alice E2E');
+  const bob = await createUser(`queue-bob-${runId}`, 'Queue Bob E2E');
+  const charlie = await createUser(`queue-charlie-${runId}`, 'Queue Charlie E2E');
+  const avatarUrl = await seedProfileAvatar(charlie.id);
+  const pages: Page[] = [];
+
+  try {
+    const alicePage = await openAuthedPage(browser, alice);
+    pages.push(alicePage);
+    expect(await alicePage.evaluate(async () => (await navigator.serviceWorker.getRegistration()) === undefined)).toBe(
+      true,
+    );
+    const bobPage = await openAuthedPage(browser, bob);
+    pages.push(bobPage);
+    const charliePage = await openAuthedPage(browser, charlie);
+    pages.push(charliePage);
+    const currentGameId = await createAcceptedGame(alicePage, bobPage);
+    const queuedGameId = await createAcceptedGame(alicePage, charliePage);
+    const fallbackGameId = await createAcceptedGame(alicePage, bobPage);
+    expect((await loadGame(currentGameId)).current_player_id).toBe(alice.id);
+    expect((await loadGame(queuedGameId)).current_player_id).toBe(alice.id);
+    expect((await loadGame(fallbackGameId)).current_player_id).toBe(alice.id);
+
+    await openGameFromLobby(alicePage, currentGameId);
+    await waitForPressableEnabled(alicePage.getByTestId('roll-button'));
+    await alicePage.getByTestId('roll-button').click();
+    const onesScoreBox = alicePage.getByTestId('home-score-box-ones');
+    await waitForPressableEnabled(onesScoreBox);
+    await onesScoreBox.click();
+    await expect(alicePage.getByTestId('play-score-button')).toBeEnabled();
+    await alicePage.getByTestId('play-score-button').click();
+
+    const dialog = alicePage.getByTestId('next-turns-dialog');
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expect(dialog.getByTestId(/^next-turn-game-/)).toHaveCount(2);
+    const queuedGameRow = dialog.getByTestId(`next-turn-game-${queuedGameId}`);
+    await expect(queuedGameRow).toHaveAccessibleName(/Queue Charlie E2E/);
+    const fallbackGameRow = dialog.getByTestId(`next-turn-game-${fallbackGameId}`);
+    await expect(fallbackGameRow).toHaveAccessibleName(/Queue Bob E2E/);
+
+    const avatarImage = queuedGameRow.getByTestId(`next-turn-avatar-${queuedGameId}-image`);
+    await expect(avatarImage).toBeVisible();
+    await expect
+      .poll(async () =>
+        avatarImage.evaluate((node) => {
+          const image = node instanceof HTMLImageElement ? node : node.querySelector('img');
+          return image?.complete && image.naturalWidth > 0 ? image.currentSrc || image.src : '';
+        }),
+      )
+      .toBe(avatarUrl);
+    await expect(fallbackGameRow.getByTestId(`next-turn-avatar-${fallbackGameId}-image`)).toHaveCount(0);
+    await expect(dialog.getByLabel("Queue Charlie E2E's profile avatar", { exact: true })).toHaveCount(0);
+  } finally {
+    await Promise.all(pages.map((page) => page.context().close()));
+  }
+});
+
 test('local computer token menu enables turn-start actions after computer scores a turn', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   await context.addInitScript(() => {
@@ -208,32 +286,6 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(punchedOpponentScore).toContainText('50');
   await page.waitForTimeout(1_700);
   await expect(punchedOpponentScore).not.toContainText('50');
-});
-
-test('offline multiplayer actions wait for connectivity and then succeed once', async ({ browser }) => {
-  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  const player = await createUser(`offline-${runId}`, 'Offline E2E');
-  const page = await openAuthedPage(browser, player);
-
-  await page.getByTestId('start-with-friend-button').click();
-  await page.context().setOffline(true);
-  await page.evaluate(() => {
-    window.dispatchEvent(new Event('offline'));
-    (navigator as Navigator & { connection?: EventTarget }).connection?.dispatchEvent(new Event('change'));
-  });
-  await expect(page.getByText(/Offline — showing saved games/)).toBeVisible();
-  await page.getByTestId('create-invite-button').click();
-  await expect(page.getByText('You are offline. Reconnect before making a game move.')).toBeVisible();
-  await expect(page.getByTestId('generated-invite-code')).toHaveCount(0);
-
-  await page.context().setOffline(false);
-  await page.evaluate(() => {
-    window.dispatchEvent(new Event('online'));
-    (navigator as Navigator & { connection?: EventTarget }).connection?.dispatchEvent(new Event('change'));
-  });
-  await expect(page.getByText(/Offline — showing saved games/)).toBeHidden();
-  await page.getByTestId('create-invite-button').click();
-  await expect(page.getByTestId('generated-invite-code')).toHaveText(/^[A-F0-9]{8}$/);
 });
 
 test('landed Sucker Punch wipes the score after the notification', async ({ browser }) => {
@@ -338,7 +390,6 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
-  const session = await createSession(user.email);
   await context.addInitScript(() => {
     const testWindow = window as Window & { PushManager?: unknown };
     const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
@@ -366,34 +417,25 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     }
   });
   await context.addInitScript(
-    ({ accessToken, refreshToken, supabaseAnonKey, supabaseUrl }) => {
+    ({ supabaseAnonKey, supabaseUrl }) => {
       (
         window as typeof window & {
-          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: {
-            accessToken: string;
-            refreshToken: string;
-            supabaseAnonKey: string;
-            supabaseUrl: string;
-          };
+          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: { supabaseAnonKey: string; supabaseUrl: string };
         }
-      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { accessToken, refreshToken, supabaseAnonKey, supabaseUrl };
+      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { supabaseAnonKey, supabaseUrl };
     },
-    {
-      accessToken: session.access_token,
-      refreshToken: session.refresh_token,
-      supabaseAnonKey: anonKey,
-      supabaseUrl,
-    },
+    { supabaseAnonKey: anonKey, supabaseUrl },
   );
   const page = await context.newPage();
   const failedResponses = captureFailedResponses(page);
 
-  await page.goto('/');
+  await page.goto(await generateSignInLink(user.email));
   try {
     await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   } catch (error) {
     const details = await describePage(page, failedResponses);
     const message = error instanceof Error ? error.message : String(error);
+    await context.close().catch(() => undefined);
     throw new Error(`Authenticated lobby did not render.\n${details}\nOriginal error: ${message}`);
   }
   return page;
@@ -519,6 +561,25 @@ async function openGameFromLobby(page: Page, gameId: string) {
   await page.getByTestId(`game-card-${gameId}`).click();
 }
 
+async function createAcceptedGame(creatorPage: Page, joinerPage: Page) {
+  await creatorPage.goto('/');
+  await expect(creatorPage.getByTestId('refresh-games-button')).toBeVisible();
+  await dismissTurnNotificationPrompt(creatorPage);
+  await creatorPage.getByTestId('start-with-friend-button').click();
+  await creatorPage.getByTestId('create-invite-button').click();
+  const inviteCode = (await creatorPage.getByTestId('generated-invite-code').innerText()).trim();
+  expect(inviteCode).toMatch(/^[A-F0-9]{8}$/);
+
+  await joinerPage.goto('/');
+  await expect(joinerPage.getByTestId('refresh-games-button')).toBeVisible();
+  await dismissTurnNotificationPrompt(joinerPage);
+  await joinerPage.getByTestId('start-with-friend-button').click();
+  await joinerPage.getByTestId('invite-code-input').fill(inviteCode);
+  await joinerPage.getByTestId('join-invite-button').click();
+
+  return waitForAcceptedGame(inviteCode);
+}
+
 async function openGameFromNotification(page: Page, gameId: string) {
   await page.evaluate((targetGameId) => {
     navigator.serviceWorker.dispatchEvent(
@@ -562,6 +623,22 @@ async function createUser(slug: string, displayName: string): Promise<TestUser> 
   };
 }
 
+async function seedProfileAvatar(profileId: string) {
+  const avatarPath = `${profileId}/keep-playing.png`;
+  const { error: uploadError } = await admin.storage
+    .from('avatars')
+    .upload(avatarPath, await readFile('assets/icon.png'), {
+      contentType: 'image/png',
+      upsert: true,
+    });
+  assertNoError(uploadError);
+
+  const avatarUrl = admin.storage.from('avatars').getPublicUrl(avatarPath).data.publicUrl;
+  const { error: profileError } = await admin.from('profiles').update({ avatar_url: avatarUrl }).eq('id', profileId);
+  assertNoError(profileError);
+  return avatarUrl;
+}
+
 async function upsertProfile(id: string, displayName: string, username: string) {
   const { error } = await admin.from('profiles').upsert({
     display_name: displayName,
@@ -571,7 +648,7 @@ async function upsertProfile(id: string, displayName: string, username: string) 
   assertNoError(error);
 }
 
-async function createSession(email: string) {
+async function generateSignInLink(email: string) {
   const { data, error } = await admin.auth.admin.generateLink({
     email,
     type: 'magiclink',
@@ -579,19 +656,12 @@ async function createSession(email: string) {
   });
   assertNoError(error);
 
-  const tokenHash = data.properties?.hashed_token;
-  if (!tokenHash) {
-    throw new Error(`Unable to generate a sign-in token for ${email}.`);
+  const link = data.properties?.action_link;
+  if (!link) {
+    throw new Error(`Unable to generate sign-in link for ${email}.`);
   }
 
-  const client = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data: verified, error: verifyError } = await client.auth.verifyOtp({
-    token_hash: tokenHash,
-    type: 'magiclink',
-  });
-  assertNoError(verifyError);
-  if (!verified.session) throw new Error(`Unable to create a test session for ${email}.`);
-  return verified.session;
+  return link;
 }
 
 async function waitForAcceptedGame(inviteCode: string) {

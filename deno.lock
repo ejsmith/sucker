@@ -13,6 +13,7 @@
       "dependencies": [
         "npm:@axe-core/playwright@^4.12.1",
         "npm:@exceptionless/react-native@^3.2.1",
+        "npm:@expo-google-fonts/inter@^0.4.2",
         "npm:@expo/metro-runtime@~57.0.3",
         "npm:@playwright/test@^1.61.0",
         "npm:@react-native-async-storage/async-storage@2.2.0",
@@ -31,6 +32,7 @@
         "npm:expo-dev-client@~57.0.5",
         "npm:expo-device@57.0",
         "npm:expo-doctor@^1.20.0",
+        "npm:expo-font@57.0",
         "npm:expo-image-manipulator@~57.0.2",
         "npm:expo-image-picker@~57.0.2",
         "npm:expo-image@57.0",

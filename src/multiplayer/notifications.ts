@@ -132,7 +132,11 @@ async function syncWebAppBadgeCount(count: number) {
 
   try {
     const registration =
-      typeof navigator !== 'undefined' && 'serviceWorker' in navigator ? await navigator.serviceWorker.ready : null;
+      typeof navigator !== 'undefined' &&
+      'serviceWorker' in navigator &&
+      typeof navigator.serviceWorker.getRegistration === 'function'
+        ? await navigator.serviceWorker.getRegistration()
+        : null;
     const badgeRegistration = registration as ServiceWorkerRegistration & BadgeTarget;
     if (badgeRegistration?.setAppBadge || badgeRegistration?.clearAppBadge) {
       targets.push(badgeRegistration);

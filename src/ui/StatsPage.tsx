@@ -1,6 +1,8 @@
+import { useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import type { getHeadToHeadStats } from '../multiplayer/stats';
+import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { formatRecord } from './statsFormat';
 import { Pressable } from './Pressable';
 
@@ -10,6 +12,7 @@ type ComputerStatsRow = NonNullable<ComputerStatsSnapshot>;
 type HeadToHeadStatsRow = NonNullable<HeadToHeadStatsSnapshot['mine']>;
 type StatsKind = 'computer' | 'headToHead';
 type StatsSnapshot = ComputerStatsRow | HeadToHeadStatsRow | null;
+const statsMaxFontSizeMultiplier = 1.2;
 
 export function StatsPage({
   currentOpponentName,
@@ -30,22 +33,41 @@ export function StatsPage({
 }) {
   const hasStats = Boolean(stats && stats.games_played > 0);
   const emptyStatsTarget = statsKind === 'computer' ? 'the computer' : currentOpponentName;
+  const closeButtonRef = useRef<AccessibilityTargetRef | null>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => focusAccessibilityTarget(closeButtonRef.current));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   return (
-    <View accessibilityViewIsModal role="dialog" style={styles.statsOverlay}>
+    <View
+      accessibilityViewIsModal
+      onAccessibilityEscape={onClose}
+      role="dialog"
+      style={styles.statsOverlay}
+      testID="stats-page-overlay"
+    >
       <View style={styles.statsHeader}>
         <View style={styles.statsHeaderText}>
-          <Text style={styles.statsEyebrow}>Stats</Text>
-          <Text numberOfLines={1} style={styles.statsTitle}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEyebrow}>
+            Stats
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={1} style={styles.statsTitle}>
             Vs {currentOpponentName}
           </Text>
         </View>
         <Pressable
           accessibilityLabel="Close stats"
+          accessibilityRole="button"
           onPress={onClose}
+          ref={closeButtonRef}
           style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
+          testID="stats-page-close-button"
         >
-          <Text style={styles.statsCloseText}>X</Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsCloseText}>
+            X
+          </Text>
         </Pressable>
       </View>
 
@@ -53,9 +75,12 @@ export function StatsPage({
         contentContainerStyle={styles.statsScrollContent}
         showsVerticalScrollIndicator={false}
         style={styles.statsScroll}
+        testID="stats-page-scroll"
       >
         <View style={styles.currentGameStatsCard}>
-          <Text style={styles.statsSectionTitle}>Current Game</Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+            Current Game
+          </Text>
           <View style={styles.statsScoreRow}>
             <StatBox label="You" value={String(currentScore)} />
             <StatBox label="Them" value={String(opponentScore)} />
@@ -137,7 +162,9 @@ export function StatsPage({
                 </>
               ) : (
                 <>
-                  <Text style={styles.statsSectionTitle}>Sucker Skills</Text>
+                  <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+                    Sucker Skills
+                  </Text>
                   <StatsValueLine label="Blowout wins" value={String(stats.blowout_wins ?? 0)} />
                   <StatsValueLine label="Comeback wins" value={String(stats.comeback_wins ?? 0)} />
                   <StatsValueLine label="Buzzer beaters" value={String(stats.buzzer_beater_wins ?? 0)} />
@@ -202,8 +229,10 @@ export function StatsPage({
           </>
         ) : (
           <View style={styles.statsEmptyCard}>
-            <Text style={styles.statsEmptyTitle}>No saved stats yet</Text>
-            <Text style={styles.statsEmptyBody}>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
+              No saved stats yet
+            </Text>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
               Finish games against {emptyStatsTarget} while signed in to build your history.
             </Text>
           </View>
@@ -280,8 +309,12 @@ function formatCategoryRate(
 function StatBox({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.statBox}>
-      <Text style={styles.statBoxValue}>{value}</Text>
-      <Text style={styles.statBoxLabel}>{label}</Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statBoxValue}>
+        {value}
+      </Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statBoxLabel}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -289,12 +322,18 @@ function StatBox({ label, value }: { label: string; value: string }) {
 function StatsComparisonHeader({ title }: { title: string }) {
   return (
     <View style={styles.statsComparisonHeader}>
-      <Text style={styles.statsSectionTitle}>{title}</Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+        {title}
+      </Text>
       <View style={styles.statsLine}>
-        <Text style={styles.statsLineLabel} />
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineLabel} />
         <View style={styles.statsComparisonValues}>
-          <Text style={styles.statsComparisonLabel}>You</Text>
-          <Text style={styles.statsComparisonLabel}>Them</Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsComparisonLabel}>
+            You
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsComparisonLabel}>
+            Them
+          </Text>
         </View>
       </View>
     </View>
@@ -304,12 +343,18 @@ function StatsComparisonHeader({ title }: { title: string }) {
 function StatsComparisonLine({ label, opponentValue, value }: { label: string; opponentValue: string; value: string }) {
   return (
     <View style={styles.statsLine}>
-      <Text style={styles.statsLineLabel}>{label}</Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineLabel}>
+        {label}
+      </Text>
       <View style={styles.statsComparisonValues}>
-        <Text numberOfLines={1} style={styles.statsLineValue}>
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={1} style={styles.statsLineValue}>
           {value}
         </Text>
-        <Text numberOfLines={1} style={styles.statsLineOpponentValue}>
+        <Text
+          maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+          numberOfLines={1}
+          style={styles.statsLineOpponentValue}
+        >
           {opponentValue}
         </Text>
       </View>
@@ -320,8 +365,12 @@ function StatsComparisonLine({ label, opponentValue, value }: { label: string; o
 function StatsValueLine({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.statsLine}>
-      <Text style={styles.statsLineLabel}>{label}</Text>
-      <Text style={styles.statsLineValue}>{value}</Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineLabel}>
+        {label}
+      </Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineValue}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -386,9 +435,9 @@ const styles = StyleSheet.create({
     borderColor: '#FFD329',
     borderRadius: 8,
     borderWidth: 2,
-    height: 36,
+    height: 44,
     justifyContent: 'center',
-    width: 36,
+    width: 44,
   },
   statsCloseText: {
     color: '#FFF3C2',

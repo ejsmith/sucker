@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "include": ["src/game/**/*.ts"]
+  "include": ["src/game/**/*.ts", "src/ui/gameLayout.ts", "src/ui/phoneStage.ts"]
 }
