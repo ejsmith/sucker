@@ -1102,6 +1102,15 @@ function LocalGameScreen({
     }),
   ).current;
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
+  const avatarProfileIdsKey = [
+    ...new Set([
+      ...game.players.map((player) => player.id),
+      ...(nextTurnGames ?? []).flatMap((nextTurnGame) => nextTurnGame.state.players.map((player) => player.id)),
+    ]),
+  ]
+    .filter(Boolean)
+    .sort()
+    .join(',');
   const liveGameRef = useRef(game);
   const myPlayerIndex = isRemoteGame
     ? Math.max(
@@ -1637,21 +1646,30 @@ function LocalGameScreen({
       setPlayerAvatars({});
       return;
     }
+    if (!isAppActive || !avatarProfileIdsKey) {
+      return;
+    }
 
     let isMounted = true;
-    void getProfilesByIds(game.players.map((player) => player.id))
+    const profileIds = avatarProfileIdsKey.split(',');
+    void getProfilesByIds(profileIds)
       .then((profiles) => {
         if (isMounted) {
-          setPlayerAvatars(Object.fromEntries(profiles.map((profile) => [profile.id, profile.avatar_url])));
+          const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+          setPlayerAvatars(
+            Object.fromEntries(
+              profileIds.map((profileId) => [profileId, profilesById.get(profileId)?.avatar_url ?? null]),
+            ),
+          );
         }
       })
       .catch(() => {
-        if (isMounted) setPlayerAvatars({});
+        // Keep already loaded avatars visible through a transient profile error.
       });
     return () => {
       isMounted = false;
     };
-  }, [game.id, isAppActive, isRemoteGame, remoteLastTurnId]);
+  }, [avatarProfileIdsKey, isAppActive, isRemoteGame, remoteLastTurnId]);
 
   useEffect(() => {
     if (!isRemoteGame) {
@@ -3588,6 +3606,7 @@ function LocalGameScreen({
                   >
                     {nextTurnGames.map((nextTurnGame) => (
                       <NextTurnGameButton
+                        avatarUrls={playerAvatars}
                         game={nextTurnGame}
                         key={nextTurnGame.id}
                         onPress={() => handleOpenNextTurnGame(nextTurnGame.id)}
@@ -3821,10 +3840,12 @@ function LocalGameScreen({
 type PlayerView = ReturnType<typeof createGame>['players'][number];
 
 function NextTurnGameButton({
+  avatarUrls,
   game,
   onPress,
   profileId,
 }: {
+  avatarUrls: Readonly<Record<string, string | null>>;
   game: RemoteGameRow;
   onPress: () => void;
   profileId: string;
@@ -3844,14 +3865,15 @@ function NextTurnGameButton({
       style={({ pressed }) => [styles.nextTurnGameButton, layout.styles.nextTurnGameButton, pressed && styles.pressed]}
       testID={`next-turn-game-${game.id}`}
     >
-      <View style={[styles.nextTurnAvatar, layout.styles.nextTurnAvatar]}>
-        <Text
-          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-          style={[styles.nextTurnAvatarText, layout.styles.nextTurnAvatarText]}
-        >
-          {opponentName.slice(0, 1).toUpperCase()}
-        </Text>
-      </View>
+      <PlayerAvatar
+        avatarUrl={opponent ? avatarUrls[opponent.id] : null}
+        decorative
+        initialStyle={[styles.nextTurnAvatarText, layout.styles.nextTurnAvatarText]}
+        name={opponentName}
+        size={layout.unit(38)}
+        style={[styles.nextTurnAvatar, layout.styles.nextTurnAvatar]}
+        testID={`next-turn-avatar-${game.id}`}
+      />
       <View style={styles.nextTurnGameText}>
         <Text
           maxFontSizeMultiplier={1.2}
