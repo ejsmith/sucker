@@ -1,4 +1,4 @@
-import { getPhoneStageStyle } from './phoneStage';
+import { getPhoneStageStyle, type PhoneStageOptions } from './phoneStage';
 
 export const gameDesignWidth = 393;
 export const gameDesignHeight = 852;
@@ -38,11 +38,16 @@ export const gameViewportPresets = [
 
 export type GameViewportPresetKey = (typeof gameViewportPresets)[number]['key'];
 
-export function getSafeGameStageStyle(windowWidth: number, windowHeight: number, insets: GameLayoutInsets) {
+export function getSafeGameStageStyle(
+  windowWidth: number,
+  windowHeight: number,
+  insets: GameLayoutInsets,
+  options?: PhoneStageOptions,
+) {
   const safeWidth = Math.max(1, windowWidth - insets.left - insets.right);
   const safeHeight = Math.max(1, windowHeight - insets.top - insets.bottom);
 
-  return getPhoneStageStyle(safeWidth, safeHeight);
+  return getPhoneStageStyle(safeWidth, safeHeight, options);
 }
 
 export function createGameLayout(stageWidth: number, stageHeight: number) {

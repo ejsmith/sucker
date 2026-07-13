@@ -127,7 +127,9 @@ export function MultiplayerLobby({
   const profileId = profile?.id ?? session?.user.id ?? null;
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
-  const shellStyle = getPhoneStageStyle(windowWidth, windowHeight);
+  const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
+    fillNarrowViewport: Platform.OS !== 'web',
+  });
   const shellSafeAreaStyle: StyleProp<ViewStyle> = {
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
     paddingTop: Math.max(12, safeAreaInsets.top + 4),

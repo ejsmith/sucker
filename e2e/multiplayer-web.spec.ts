@@ -12,6 +12,7 @@ const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
+const stageAspectRatio = 393 / 852;
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -39,7 +40,24 @@ test('two players can create an invite and play turns through the web UI', async
   const alicePage = await openAuthedPage(browser, alice);
   const bobPage = await openAuthedPage(browser, bob);
 
-  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('lobby.png');
+  const aliceLobby = alicePage.getByTestId('multiplayer-lobby-shell');
+  await expect(aliceLobby).toHaveScreenshot('lobby.png');
+
+  await alicePage.setViewportSize({ width: 454, height: 576 });
+  const lobbyStageScroll = alicePage.getByTestId('lobby-stage-scroll');
+  await expect(lobbyStageScroll).toBeVisible();
+  const resizedLobbyBox = await aliceLobby.boundingBox();
+  expect(resizedLobbyBox).not.toBeNull();
+  expect(resizedLobbyBox!.width).toBeCloseTo(320, 0);
+  expect(Math.abs(resizedLobbyBox!.width - resizedLobbyBox!.height * stageAspectRatio)).toBeLessThanOrEqual(1);
+  const lobbyScrollMetrics = await lobbyStageScroll.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(lobbyScrollMetrics.scrollWidth).toBeLessThanOrEqual(lobbyScrollMetrics.clientWidth + 1);
+
+  await alicePage.setViewportSize({ width: 393, height: 852 });
+  await expect(lobbyStageScroll).toHaveCount(0);
 
   await alicePage.getByTestId('start-with-friend-button').click();
   await alicePage.getByTestId('create-invite-button').click();
@@ -280,10 +298,7 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
   assertNoError(avatarProfileError);
   const avatarUrl = avatarProfile?.avatar_url ?? null;
 
-  const { error: copyError } = await admin
-    .from('profiles')
-    .update({ avatar_url: avatarUrl })
-    .eq('id', impersonator.id);
+  const { error: copyError } = await admin.from('profiles').update({ avatar_url: avatarUrl }).eq('id', impersonator.id);
   assertNoError(copyError);
   const impersonatorPage = await openAuthedPage(browser, impersonator);
   await impersonatorPage.getByTestId('profile-button').click();

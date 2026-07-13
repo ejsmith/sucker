@@ -552,7 +552,15 @@ function RemoteGameScreen({
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
-  const remoteStageStyle = getSafeGameStageStyle(windowWidth, windowHeight, safeAreaInsets);
+  const remoteStageStyle = getSafeGameStageStyle(windowWidth, windowHeight, safeAreaInsets, {
+    fillNarrowViewport: Platform.OS !== 'web',
+  });
+  const remoteStageViewportWidth = Math.max(1, windowWidth - safeAreaInsets.left - safeAreaInsets.right);
+  const remoteStageViewportHeight = Math.max(1, windowHeight - safeAreaInsets.top - safeAreaInsets.bottom);
+  const remoteNeedsScrollableStage =
+    Platform.OS === 'web' &&
+    (remoteStageStyle.width > remoteStageViewportWidth || remoteStageStyle.height > remoteStageViewportHeight);
+  const remoteStableHostStyle = Platform.OS === 'web' ? { minHeight: windowHeight, minWidth: windowWidth } : null;
   const isAppActive = useAppActivity();
   const [activeGameId, setActiveGameId] = useState(gameId);
   const [error, setError] = useState<string | null>(null);
@@ -867,29 +875,46 @@ function RemoteGameScreen({
   }
 
   if (isLoading || !remoteGame || !profileId) {
-    return (
-      <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
-        <StatusBar style="light" />
-        <View style={[styles.remoteLoadingScreen, remoteStageStyle]}>
-          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteLoadingTitle}>
-            Loading Game
+    const loadingStage = (
+      <View style={[styles.remoteLoadingScreen, remoteStageStyle]} testID="remote-loading-screen">
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteLoadingTitle}>
+          Loading Game
+        </Text>
+        {error && (
+          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
+            {error}
           </Text>
-          {error && (
-            <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
-              {error}
-            </Text>
-          )}
-          <Pressable
-            accessibilityLabel="Back to games"
-            accessibilityRole="button"
-            onPress={onExit}
-            style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}
-          >
-            <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteBackButtonText}>
-              Back
-            </Text>
-          </Pressable>
-        </View>
+        )}
+        <Pressable
+          accessibilityLabel="Back to games"
+          accessibilityRole="button"
+          onPress={onExit}
+          style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}
+        >
+          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteBackButtonText}>
+            Back
+          </Text>
+        </Pressable>
+      </View>
+    );
+
+    return (
+      <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, remoteStableHostStyle]}>
+        <StatusBar style="light" />
+        {remoteNeedsScrollableStage ? (
+          <View style={styles.gameStageScroll} testID="remote-loading-stage-scroll">
+            <View
+              style={[
+                styles.gameStageScrollContent,
+                { minHeight: remoteStageStyle.height, minWidth: remoteStageStyle.width },
+              ]}
+            >
+              {loadingStage}
+            </View>
+          </View>
+        ) : (
+          loadingStage
+        )}
       </SafeAreaView>
     );
   }
@@ -1161,7 +1186,11 @@ function LocalGameScreen({
   const effectiveWindowWidth = devViewportPreset?.width ?? windowWidth;
   const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
   const effectiveSafeAreaInsets = devViewportPreset?.insets ?? safeAreaInsets;
-  const gameStageStyle = getSafeGameStageStyle(effectiveWindowWidth, effectiveWindowHeight, effectiveSafeAreaInsets);
+  const gameStageStyle = getSafeGameStageStyle(effectiveWindowWidth, effectiveWindowHeight, effectiveSafeAreaInsets, {
+    // Device presets model native safe-area layouts inside a browser. Normal
+    // web windows keep one aspect ratio and use the stage scroller when short.
+    fillNarrowViewport: Platform.OS !== 'web' || Boolean(devViewportPreset),
+  });
   const gameLayout = useMemo(
     () => createGameLayout(gameStageStyle.width, gameStageStyle.height),
     [gameStageStyle.height, gameStageStyle.width],
@@ -5000,7 +5029,6 @@ const styles = StyleSheet.create({
   remoteLoadingScreen: {
     alignItems: 'center',
     backgroundColor: '#8F0000',
-    flex: 1,
     gap: 12,
     justifyContent: 'center',
     padding: 16,

@@ -17,6 +17,8 @@ const {
   phoneStageMinWidth,
 } = require('../.build/src/ui/phoneStage');
 
+const acceptedPhoneStageAspectRatio = 393 / 852;
+
 // These values deliberately live in the test rather than being derived from
 // gameViewportPresets. They are the accepted safe-stage contract for the
 // devices represented by the visual regression suite.
@@ -150,15 +152,30 @@ test('stage caps apply continuously through the former 499/500 breakpoint', () =
   assert.equal(justAboveHeightCap.height - atHeightCap.height, 0);
 });
 
-test('short or zoomed web viewports receive a minimum usable scrollable stage', () => {
+test('short or zoomed web viewports receive a minimum proportional scrollable stage', () => {
   const viewport = { width: 720, height: 450 };
-  const stage = getPhoneStageStyle(viewport.width, viewport.height);
+  const stage = getPhoneStageStyle(viewport.width, viewport.height, { fillNarrowViewport: false });
   const layout = createGameLayout(stage.width, stage.height);
 
-  assert.deepEqual(stage, { width: phoneStageMaxWidth, height: phoneStageMinHeight });
+  assert.deepEqual(stage, { width: phoneStageMinWidth, height: phoneStageMinWidth / acceptedPhoneStageAspectRatio });
   assert.ok(stage.height > viewport.height);
+  assertProportionalStage(stage);
   assert.ok(layout.scale >= 0.75);
   assertTouchTargets(layout);
+});
+
+test('browser zoom shaped web viewports preserve one stage scale', () => {
+  const stage = getSafeGameStageStyle(
+    454,
+    576,
+    { top: 0, right: 0, bottom: 0, left: 0 },
+    {
+      fillNarrowViewport: false,
+    },
+  );
+
+  assert.deepEqual(stage, { width: phoneStageMinWidth, height: phoneStageMinWidth / acceptedPhoneStageAspectRatio });
+  assertProportionalStage(stage);
 });
 
 test('undersized viewports preserve a minimum canvas in both axes', () => {
@@ -167,20 +184,29 @@ test('undersized viewports preserve a minimum canvas in both axes', () => {
   assert.deepEqual(stage, { width: phoneStageMinWidth, height: phoneStageMinHeight });
 });
 
-test('wide web viewports use the capped phone-sized stage instead of stretching the game', () => {
-  const stage = getPhoneStageStyle(1440, 1200);
+test('wide web viewports use the largest proportional phone-sized stage', () => {
+  const stage = getPhoneStageStyle(1440, 1200, { fillNarrowViewport: false });
 
-  assert.deepEqual(stage, { width: phoneStageMaxWidth, height: phoneStageMaxHeight });
+  assert.deepEqual(stage, {
+    width: phoneStageMaxHeight * acceptedPhoneStageAspectRatio,
+    height: phoneStageMaxHeight,
+  });
+  assert.ok(stage.width <= phoneStageMaxWidth);
+  assertProportionalStage(stage);
 });
 
 test('proportional stage mode stays inside its available viewport', () => {
-  const viewport = { width: 320, height: 570 };
+  const viewport = { width: 720, height: 900 };
   const stage = getPhoneStageStyle(viewport.width, viewport.height, { fillNarrowViewport: false });
 
   assert.ok(stage.width <= viewport.width);
   assert.ok(stage.height <= viewport.height);
-  assert.ok(Math.abs(stage.width / stage.height - 393 / 852) < 1e-12);
+  assertProportionalStage(stage);
 });
+
+function assertProportionalStage(stage) {
+  assert.ok(Math.abs(stage.width / stage.height - acceptedPhoneStageAspectRatio) < 1e-12);
+}
 
 function assertTouchTargets(layout) {
   const dimensions = [

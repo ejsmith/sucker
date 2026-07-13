@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const minimumTouchTarget = 44;
+const stageAspectRatio = 393 / 852;
 const stageMaximum = { height: 932, width: 430 };
 
 type AcceptedViewport = {
@@ -77,6 +78,7 @@ test.describe('Chromium pixel baselines', () => {
 
       expect(screenBox.width).toBeLessThanOrEqual(stageMaximum.width);
       expect(screenBox.height).toBeLessThanOrEqual(stageMaximum.height);
+      expectProportionalWebStage(screenBox);
       expect(screenBox.x).toBeCloseTo((viewport.width - screenBox.width) / 2, 0);
       expect(screenBox.y).toBeCloseTo((viewport.height - screenBox.height) / 2, 0);
 
@@ -84,6 +86,44 @@ test.describe('Chromium pixel baselines', () => {
       await expectLayoutStackToFit(page, screenBox);
       await expectNoOverflow(page, screen);
       await expect(screen).toHaveScreenshot('game-wide-web.png');
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('browser zoom shaped windows preserve the phone composition', async ({ browser }) => {
+    const viewport = { height: 576, width: 454 };
+    const context = await browser.newContext({
+      deviceScaleFactor: 1.5,
+      viewport: { height: 900, width: 900 },
+    });
+    const page = await context.newPage();
+
+    try {
+      await openLocalGame(page, '/');
+      expect(await page.evaluate(() => devicePixelRatio)).toBe(1.5);
+      await page.setViewportSize(viewport);
+
+      const screen = page.getByTestId('game-screen');
+      await expect.poll(async () => (await screen.boundingBox())?.width ?? 0).toBeCloseTo(320, 0);
+      const screenBox = await visibleBox(screen);
+      expectProportionalWebStage(screenBox);
+      expect(screenBox.x).toBeCloseTo((viewport.width - screenBox.width) / 2, 0);
+
+      const stageScroll = page.getByTestId('game-stage-scroll');
+      await expect(stageScroll).toBeVisible();
+      const scrollMetrics = await stageScroll.evaluate((node) => ({
+        clientHeight: node.clientHeight,
+        clientWidth: node.clientWidth,
+        scrollHeight: node.scrollHeight,
+        scrollWidth: node.scrollWidth,
+      }));
+      expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+      expect(scrollMetrics.scrollWidth).toBeLessThanOrEqual(scrollMetrics.clientWidth + 1);
+      await expectUniformGameScale(page, screenBox);
+      await expectLayoutStackToFit(page, screenBox);
+      await expectNoHorizontalPageOverflow(page);
+      await expect(page).toHaveScreenshot('game-browser-zoom.png');
     } finally {
       await context.close();
     }
@@ -209,6 +249,7 @@ test('a short desktop viewport keeps the full game reachable in a vertical stage
   expect(await stageScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
 
   const screenBox = await visibleBox(page.getByTestId('game-screen'));
+  expectProportionalWebStage(screenBox);
   for (const testId of ['roll-button', 'token-menu-button', 'play-score-button']) {
     const control = page.getByTestId(testId);
     await expect(control).toBeInViewport({ ratio: 1 });
@@ -283,6 +324,28 @@ function expectSafeStageGeometry(
   expect(screenBox.y).toBeCloseTo(viewport.insets.top, 0);
   expect(screenBox.width).toBeCloseTo(expectedWidth, 0);
   expect(screenBox.height).toBeCloseTo(expectedHeight, 0);
+}
+
+function expectProportionalWebStage(screenBox: { height: number; width: number }) {
+  expectPixelMatch(screenBox.width, screenBox.height * stageAspectRatio);
+}
+
+async function expectUniformGameScale(page: Page, screenBox: NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>) {
+  const category = await visibleBox(page.getByTestId('category-button-ones'));
+  const topBar = await visibleBox(page.getByTestId('game-top-bar'));
+  const controls = await visibleBox(page.getByTestId('game-controls-row'));
+  const scale = category.width / 64;
+
+  expectPixelMatch(category.height, 68 * scale);
+  expectPixelMatch(screenBox.width, 393 * scale);
+  expectPixelMatch(topBar.width, 381 * scale);
+  expectPixelMatch(topBar.height, 56 * scale);
+  expectPixelMatch(controls.width, 381 * scale);
+  expectPixelMatch(controls.height, 60 * scale);
+}
+
+function expectPixelMatch(actual: number, expected: number) {
+  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(1);
 }
 
 async function expectLayoutStackToFit(page: Page, screenBox: NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>) {
