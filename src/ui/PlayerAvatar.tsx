@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 
 export function PlayerAvatar({
   avatarUrl,
+  fontFamily,
   name,
   size,
   style,
   testID,
 }: {
   avatarUrl?: string | null;
+  fontFamily?: TextStyle['fontFamily'];
   name: string;
   size: number;
   style?: StyleProp<ViewStyle>;
@@ -32,7 +34,7 @@ export function PlayerAvatar({
           testID={testID ? `${testID}-image` : undefined}
         />
       ) : (
-        <Text allowFontScaling={false} style={[styles.initial, { fontSize: Math.max(14, size * 0.44) }]}>
+        <Text allowFontScaling={false} style={[styles.initial, { fontFamily, fontSize: Math.max(14, size * 0.44) }]}>
           {name.trim().slice(0, 1).toUpperCase() || '?'}
         </Text>
       )}

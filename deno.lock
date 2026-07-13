@@ -11,6 +11,7 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@expo-google-fonts/inter@~0.4.2",
         "npm:@expo/metro-runtime@~6.1.2",
         "npm:@playwright/test@^1.61.0",
         "npm:@react-native-async-storage/async-storage@2.2.0",
@@ -23,6 +24,7 @@
         "npm:expo-constants@~18.0.13",
         "npm:expo-dev-client@~6.0.21",
         "npm:expo-device@~8.0.10",
+        "npm:expo-font@~14.0.12",
         "npm:expo-image-manipulator@~14.0.8",
         "npm:expo-image-picker@~17.0.11",
         "npm:expo-notifications@~0.32.17",

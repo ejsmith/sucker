@@ -24,7 +24,8 @@ const webPushVapidPublicKey = process.env.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY?
 export default defineConfig({
   expect: {
     toHaveScreenshot: {
-      maxDiffPixelRatio: 0.05,
+      maxDiffPixelRatio: 0.002,
+      stylePath: './e2e/screenshot.css',
     },
     timeout: 10_000,
   },

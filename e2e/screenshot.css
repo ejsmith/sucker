@@ -1,0 +1,4 @@
+/* Expo's development-only Fast Refresh toast is not part of the application UI. */
+.__expo_fast_refresh {
+  display: none !important;
+}
