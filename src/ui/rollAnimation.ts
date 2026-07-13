@@ -50,26 +50,33 @@ export function createRollingLaunch(
   side: RollingLaunch['side'],
   rollZoneRect: MeasuredRect | null,
   slotRect: MeasuredRect | null,
+  renderedDieSize = rollingDieBaseSize,
 ): RollingLaunch {
+  const dieSize = Number.isFinite(renderedDieSize) && renderedDieSize > 0 ? renderedDieSize : rollingDieBaseSize;
+  const geometryScale = dieSize / rollingDieBaseSize;
   const direction = side === 'left' ? 1 : -1;
   const spreadRank = index - 2;
-  const fallbackSlotWidth = 64;
-  const fallbackGap = 8;
-  const fallbackToX = 8 + index * (fallbackSlotWidth + fallbackGap) + fallbackSlotWidth / 2 - rollingDieBaseSize / 2;
-  const fallbackToY = 35 - rollingDieBaseSize / 2;
-  const toX =
-    rollZoneRect && slotRect ? slotRect.x - rollZoneRect.x + slotRect.width / 2 - rollingDieBaseSize / 2 : fallbackToX;
-  const toY =
-    rollZoneRect && slotRect ? slotRect.y - rollZoneRect.y + slotRect.height / 2 - rollingDieBaseSize / 2 : fallbackToY;
-  const rollZoneWidth = rollZoneRect?.width ?? 393;
+  const fallbackSlotWidth = 64 * geometryScale;
+  const fallbackGap = 8 * geometryScale;
+  const fallbackToX =
+    8 * geometryScale + index * (fallbackSlotWidth + fallbackGap) + fallbackSlotWidth / 2 - dieSize / 2;
+  const fallbackToY = 35 * geometryScale - dieSize / 2;
+  const toX = rollZoneRect && slotRect ? slotRect.x - rollZoneRect.x + slotRect.width / 2 - dieSize / 2 : fallbackToX;
+  const toY = rollZoneRect && slotRect ? slotRect.y - rollZoneRect.y + slotRect.height / 2 - dieSize / 2 : fallbackToY;
+  const rollZoneWidth = rollZoneRect?.width ?? 393 * geometryScale;
   const fromX =
-    side === 'left' ? -rollingDieBaseSize - 18 - Math.random() * 34 : rollZoneWidth + 18 + Math.random() * 34;
-  const fromY = toY + 18 + Math.random() * 22;
+    side === 'left'
+      ? -dieSize - (18 + Math.random() * 34) * geometryScale
+      : rollZoneWidth + (18 + Math.random() * 34) * geometryScale;
+  const fromY = toY + (18 + Math.random() * 22) * geometryScale;
   const travelDistance = Math.abs(toX - fromX);
-  const midApproachDistance = Math.min(120, Math.max(46, travelDistance * (0.24 + Math.random() * 0.1)));
-  const laneOffset = spreadRank * (4 + Math.random() * 5);
+  const midApproachDistance = Math.min(
+    120 * geometryScale,
+    Math.max(46 * geometryScale, travelDistance * (0.24 + Math.random() * 0.1)),
+  );
+  const laneOffset = spreadRank * (4 + Math.random() * 5) * geometryScale;
   const midX = toX - direction * midApproachDistance + laneOffset;
-  const midY = Math.max(-rollingDieBaseSize * 0.28, toY - (42 + Math.random() * 38));
+  const midY = Math.max(-dieSize * 0.28, toY - (42 + Math.random() * 38) * geometryScale);
 
   return {
     delay: Math.round(Math.random() * 90 + index * (8 + Math.random() * 12)),

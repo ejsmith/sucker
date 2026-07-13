@@ -1,10 +1,13 @@
+import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
+import { Inter_900Black } from '@expo-google-fonts/inter/900Black';
+import { useFonts } from '@expo-google-fonts/inter/useFonts';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
   Image,
-  ImageSourcePropType,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -12,6 +15,8 @@ import {
   StyleSheet,
   Text,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -66,7 +71,13 @@ import { getProfilesByIds } from './src/multiplayer/profiles';
 import { supabase } from './src/multiplayer/supabase';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
-import { getPhoneStageStyle } from './src/ui/phoneStage';
+import {
+  createGameLayout,
+  gameViewportPresets,
+  getSafeGameStageStyle,
+  type GameLayout,
+  type GameViewportPresetKey,
+} from './src/ui/gameLayout';
 import { useAppActivity } from './src/ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
 import { WebPortraitGuard } from './src/ui/WebPortraitGuard';
@@ -82,6 +93,7 @@ import {
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
+import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import {
   buildExtraRollActionPayload,
   buildRollActionPayload,
@@ -89,7 +101,7 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from './shared/stats';
-import Svg, { Circle, Path } from 'react-native-svg';
+import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 type ScoreFlyDie = {
   face: DieValue;
@@ -121,6 +133,17 @@ type OpponentTurnReveal = {
   progress: Animated.Value;
   top: number;
 };
+
+const GameLayoutContext = createContext<GameLayout | null>(null);
+
+function useGameLayout() {
+  const layout = useContext(GameLayoutContext);
+  if (!layout) {
+    throw new Error('Game layout components must be rendered inside GameLayoutContext.');
+  }
+
+  return layout;
+}
 function concealActiveOpponentDice(game: GameState, myProfileId?: string | null): GameState {
   const currentPlayerId = game.players[game.currentPlayerIndex]?.id;
   if (!myProfileId || game.phase === 'complete' || currentPlayerId === myProfileId || game.rollNumber === 0) {
@@ -222,13 +245,6 @@ type NextTurnPrompt = {
 };
 let remoteGameRequestId = 0;
 const playerNames = ['You', 'Computer'];
-const devViewportPresets = [
-  { key: 'se', label: 'SE', width: 375, height: 667 },
-  { key: 'mini', label: 'Mini', width: 375, height: 812 },
-  { key: 'iphone16', label: '16', width: 393, height: 852 },
-  { key: 'iphone17', label: '17', width: 402, height: 874 },
-  { key: 'max', label: 'Max', width: 430, height: 932 },
-] as const;
 const upperCategories: ScoreCategory[] = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'];
 const lowerCategories: ScoreCategory[] = [
   'threeOfAKind',
@@ -240,26 +256,13 @@ const lowerCategories: ScoreCategory[] = [
   'chance',
 ];
 
-const whiteDiceImages: Record<DieValue, ImageSourcePropType> = {
-  1: require('./assets/dice/dieWhite_border1.png'),
-  2: require('./assets/dice/dieWhite_border2.png'),
-  3: require('./assets/dice/dieWhite_border3.png'),
-  4: require('./assets/dice/dieWhite_border4.png'),
-  5: require('./assets/dice/dieWhite_border5.png'),
-  6: require('./assets/dice/dieWhite_border6.png'),
-};
-
-const categoryPipImages: Record<DieValue, ImageSourcePropType> = {
-  1: require('./assets/dice/dieRed_pips1.png'),
-  2: require('./assets/dice/dieRed_pips2.png'),
-  3: require('./assets/dice/dieRed_pips3.png'),
-  4: require('./assets/dice/dieRed_pips4.png'),
-  5: require('./assets/dice/dieRed_pips5.png'),
-  6: require('./assets/dice/dieRed_pips6.png'),
-};
 const suckerScorecardWordmarkImage = require('./assets/sucker-scorecard-wordmark.png');
 const suckerLobbyHeaderImage = require('./assets/sucker-lobby-header.png');
 const suckerGameBannerImage = require('./assets/sucker-game-header-clean.png');
+const gameFontBlack = 'Inter_900Black';
+const gameFontExtraBold = 'Inter_800ExtraBold';
+const gameMaxFontSizeMultiplier = 1.2;
+const usesLegacyAndroidShadowFallback = Platform.OS === 'android' && Platform.Version < 28;
 const suckerTokenImage = require('./assets/sucker-token.png');
 const suckerPunchLandedImage = require('./assets/sucker-punch-landed.png');
 const suckerPunchBlockedImage = require('./assets/sucker-punch-blocked.png');
@@ -310,8 +313,7 @@ const bonusOutlineOffsets = [
   { x: 2, y: 2 },
 ];
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
-type DevViewportPresetKey = (typeof devViewportPresets)[number]['key'];
-type DevViewportPresetSelection = DevViewportPresetKey | 'responsive';
+type DevViewportPresetSelection = GameViewportPresetKey | 'responsive';
 
 function getWebLocation() {
   if (Platform.OS !== 'web') {
@@ -330,15 +332,15 @@ function getWebHistory() {
 }
 
 function getDevViewportPreset(key: DevViewportPresetSelection) {
-  return devViewportPresets.find((preset) => preset.key === key) ?? null;
+  return gameViewportPresets.find((preset) => preset.key === key) ?? null;
 }
 
 function getInitialDevViewportPresetKey(): DevViewportPresetSelection {
   const location = getWebLocation();
   const viewportKey = new URLSearchParams(location?.search ?? '').get('viewport');
 
-  return devViewportPresets.some((preset) => preset.key === viewportKey)
-    ? (viewportKey as DevViewportPresetKey)
+  return gameViewportPresets.some((preset) => preset.key === viewportKey)
+    ? (viewportKey as GameViewportPresetKey)
     : 'responsive';
 }
 
@@ -370,6 +372,19 @@ function replaceWebDevViewportPreset(key: DevViewportPresetSelection) {
 }
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
+
+  useEffect(() => {
+    if (fontError) {
+      console.warn('Unable to load Inter fonts; continuing with platform font fallback.', fontError);
+    }
+  }, [fontError]);
+
+  // The RN 0.81 renderers and browser CSS fall back for unknown families, so font errors should not block gameplay.
+  if (!fontsLoaded && !fontError) {
+    return <View style={styles.fontLoadingScreen} />;
+  }
+
   return (
     <SafeAreaProvider>
       <WebPortraitGuard>
@@ -544,7 +559,15 @@ function RemoteGameScreen({
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
-  const remoteStageStyle = getSafePhoneStageStyle(windowWidth, windowHeight, safeAreaInsets.top, safeAreaInsets.bottom);
+  const remoteStageStyle = getSafeGameStageStyle(windowWidth, windowHeight, safeAreaInsets, {
+    fillNarrowViewport: Platform.OS !== 'web',
+  });
+  const remoteStageViewportWidth = Math.max(1, windowWidth - safeAreaInsets.left - safeAreaInsets.right);
+  const remoteStageViewportHeight = Math.max(1, windowHeight - safeAreaInsets.top - safeAreaInsets.bottom);
+  const remoteNeedsScrollableStage =
+    Platform.OS === 'web' &&
+    (remoteStageStyle.width > remoteStageViewportWidth || remoteStageStyle.height > remoteStageViewportHeight);
+  const remoteStableHostStyle = Platform.OS === 'web' ? { minHeight: windowHeight, minWidth: windowWidth } : null;
   const isAppActive = useAppActivity();
   const [activeGameId, setActiveGameId] = useState(gameId);
   const [error, setError] = useState<string | null>(null);
@@ -859,16 +882,46 @@ function RemoteGameScreen({
   }
 
   if (isLoading || !remoteGame || !profileId) {
+    const loadingStage = (
+      <View style={[styles.remoteLoadingScreen, remoteStageStyle]} testID="remote-loading-screen">
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteLoadingTitle}>
+          Loading Game
+        </Text>
+        {error && (
+          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
+            {error}
+          </Text>
+        )}
+        <Pressable
+          accessibilityLabel="Back to games"
+          accessibilityRole="button"
+          onPress={onExit}
+          style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}
+        >
+          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteBackButtonText}>
+            Back
+          </Text>
+        </Pressable>
+      </View>
+    );
+
     return (
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+      <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, remoteStableHostStyle]}>
         <StatusBar style="light" />
-        <View style={[styles.remoteLoadingScreen, remoteStageStyle]}>
-          <Text style={styles.remoteLoadingTitle}>Loading Game</Text>
-          {error && <Text style={styles.remoteMessage}>{error}</Text>}
-          <Pressable onPress={onExit} style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}>
-            <Text style={styles.remoteBackButtonText}>Back</Text>
-          </Pressable>
-        </View>
+        {remoteNeedsScrollableStage ? (
+          <View style={styles.gameStageScroll} testID="remote-loading-stage-scroll">
+            <View
+              style={[
+                styles.gameStageScrollContent,
+                { minHeight: remoteStageStyle.height, minWidth: remoteStageStyle.width },
+              ]}
+            >
+              {loadingStage}
+            </View>
+          </View>
+        ) : (
+          loadingStage
+        )}
       </SafeAreaView>
     );
   }
@@ -956,8 +1009,9 @@ function LocalGameScreen({
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
   const [suckerPunchWipe, setSuckerPunchWipe] = useState<SuckerPunchWipe | null>(null);
   const [suckerBlockedNotice, setSuckerBlockedNotice] = useState<SuckerBlockedNotice | null>(null);
-  const [remoteBlockedPunchRevealGate, setRemoteBlockedPunchRevealGate] =
-    useState<RemoteBlockedPunchRevealGate | null>(null);
+  const [remoteBlockedPunchRevealGate, setRemoteBlockedPunchRevealGate] = useState<RemoteBlockedPunchRevealGate | null>(
+    null,
+  );
   const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
   const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(null);
   const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(1);
@@ -975,7 +1029,6 @@ function LocalGameScreen({
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
   const [playerAvatars, setPlayerAvatars] = useState<Record<string, string | null>>({});
-  const [failedDiceImages, setFailedDiceImages] = useState<number[]>([]);
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
@@ -990,6 +1043,9 @@ function LocalGameScreen({
   const isAppActive = useAppActivity();
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
+  const menuButtonRef = useRef<ViewRef | null>(null);
+  const gameOverStatsButtonRef = useRef<ViewRef | null>(null);
+  const statsReturnFocusTarget = useRef<'gameOver' | 'menu'>('menu');
   const boardRef = useRef<ViewRef | null>(null);
   const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
@@ -1053,6 +1109,15 @@ function LocalGameScreen({
     }),
   ).current;
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
+  const avatarProfileIdsKey = [
+    ...new Set([
+      ...game.players.map((player) => player.id),
+      ...(nextTurnGames ?? []).flatMap((nextTurnGame) => nextTurnGame.state.players.map((player) => player.id)),
+    ]),
+  ]
+    .filter(Boolean)
+    .sort()
+    .join(',');
   const liveGameRef = useRef(game);
   const myPlayerIndex = isRemoteGame
     ? Math.max(
@@ -1069,9 +1134,9 @@ function LocalGameScreen({
   const isRemoteActionPlayable = !isRemoteGame || remoteStatus === 'active' || isRemoteResponseTurn;
   const isRemoteTurnRevealPending = Boolean(
     isRemoteGame &&
-      remoteLastTurnId &&
-      visibleRemoteTurnId.current !== remoteLastTurnId &&
-      remoteLastTurnLoadFailedId !== remoteLastTurnId,
+    remoteLastTurnId &&
+    visibleRemoteTurnId.current !== remoteLastTurnId &&
+    remoteLastTurnLoadFailedId !== remoteLastTurnId,
   );
   const isComputerTurn = !isRemoteGame && game.currentPlayerIndex === computerPlayerIndex && game.phase !== 'complete';
   const openCategories = availableCategories(currentPlayer.scorecard);
@@ -1111,19 +1176,10 @@ function LocalGameScreen({
     !isRemoteInteractionPending &&
     !suckerPunchDialog;
   const myTokenCount = homePlayer.suckerTokens;
-  const canUseLocalExtraRoll =
-    !isRemoteGame &&
-    canOpenTokenMenu &&
-    myTokenCount >= suckerTokenCosts.extraRoll;
+  const canUseLocalExtraRoll = !isRemoteGame && canOpenTokenMenu && myTokenCount >= suckerTokenCosts.extraRoll;
   const canUseRemoteExtraRoll =
-    isRemoteGame &&
-    canOpenTokenMenu &&
-    isRemoteActionPlayable &&
-    myTokenCount >= suckerTokenCosts.extraRoll;
-  const canUseLocalMulligan =
-    !isRemoteGame &&
-    canOpenTokenMenu &&
-    myTokenCount >= suckerTokenCosts.mulligan;
+    isRemoteGame && canOpenTokenMenu && isRemoteActionPlayable && myTokenCount >= suckerTokenCosts.extraRoll;
+  const canUseLocalMulligan = !isRemoteGame && canOpenTokenMenu && myTokenCount >= suckerTokenCosts.mulligan;
   const canStartSuckerDeal = canOpenTokenMenu && openCategories.length > 0 && isRemoteActionPlayable;
   const isLocalPendingTurnPunchable = Boolean(pendingTurn);
   const isRemoteLastTurnPunchable = Boolean(remoteLastTurn);
@@ -1145,24 +1201,32 @@ function LocalGameScreen({
   const devViewportPreset = getDevViewportPreset(devViewportPresetKey);
   const effectiveWindowWidth = devViewportPreset?.width ?? windowWidth;
   const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
-  const gameStageStyle = getSafePhoneStageStyle(
-    effectiveWindowWidth,
-    effectiveWindowHeight,
-    safeAreaInsets.top,
-    safeAreaInsets.bottom,
+  const effectiveSafeAreaInsets = devViewportPreset?.insets ?? safeAreaInsets;
+  const gameStageStyle = getSafeGameStageStyle(effectiveWindowWidth, effectiveWindowHeight, effectiveSafeAreaInsets, {
+    // Device presets model native safe-area layouts inside a browser. Normal
+    // web windows keep one aspect ratio and use the stage scroller when short.
+    fillNarrowViewport: Platform.OS !== 'web' || Boolean(devViewportPreset),
+  });
+  const gameLayout = useMemo(
+    () => createGameLayout(gameStageStyle.width, gameStageStyle.height),
+    [gameStageStyle.height, gameStageStyle.width],
   );
+  const devViewportStageOffset =
+    Platform.OS === 'web' && devViewportPreset
+      ? {
+          transform: [
+            { translateX: (effectiveSafeAreaInsets.left - effectiveSafeAreaInsets.right) / 2 },
+            { translateY: (effectiveSafeAreaInsets.top - effectiveSafeAreaInsets.bottom) / 2 },
+          ],
+        }
+      : null;
   const stableScreenHostStyle =
     Platform.OS === 'web' ? { minHeight: effectiveWindowHeight, minWidth: effectiveWindowWidth } : null;
   const showDevViewportControls = isWebDevViewportControlsEnabled();
-  const compactPhoneLayout = effectiveWindowHeight < 760 || effectiveWindowWidth < 390;
-  const roomyPhoneLayout = !compactPhoneLayout && effectiveWindowHeight >= 870 && effectiveWindowWidth >= 400;
-  const standardPhoneLayout = !compactPhoneLayout && !roomyPhoneLayout;
-  const diceTrayGap = 2;
-  const diceTrayHorizontalPadding = compactPhoneLayout ? 12 : 16;
+  const diceTrayGap = gameLayout.unit(2);
+  const diceTrayHorizontalPadding = gameLayout.unit(16);
   const diceTrayAvailableWidth = Math.max(1, gameStageStyle.width - diceTrayHorizontalPadding);
-  const diceSlotSize = Math.floor(
-    Math.min(compactPhoneLayout ? 66 : 76, (diceTrayAvailableWidth - diceTrayGap * 4) / 5),
-  );
+  const diceSlotSize = Math.max(1, Math.min(gameLayout.unit(76), (diceTrayAvailableWidth - diceTrayGap * 4) / 5));
   const standardRollsLeft = rollsRemaining(game);
   const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
   const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
@@ -1190,18 +1254,16 @@ function LocalGameScreen({
   );
   const shouldCheckRemoteBlockedPunchBeforeReveal = Boolean(
     isRemoteGame &&
-      myProfileId &&
-      remoteStatus === 'response_window' &&
-      remoteGame &&
-      remoteLastTurn &&
-      remoteOpponentTurnNeedsReveal &&
-      remoteLastTurn.player_id !== myProfileId &&
-      remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId,
+    myProfileId &&
+    remoteStatus === 'response_window' &&
+    remoteGame &&
+    remoteLastTurn &&
+    remoteOpponentTurnNeedsReveal &&
+    remoteLastTurn.player_id !== myProfileId &&
+    remoteGame.players[remoteGame.currentPlayerIndex]?.id === myProfileId,
   );
   const isRemoteBlockedPunchRevealGateForTurn = Boolean(
-    remoteBlockedPunchRevealGate &&
-      remoteLastTurn &&
-      remoteBlockedPunchRevealGate.turnId === remoteLastTurn.id,
+    remoteBlockedPunchRevealGate && remoteLastTurn && remoteBlockedPunchRevealGate.turnId === remoteLastTurn.id,
   );
   const remoteBlockedPunchRevealGateStatus =
     isRemoteBlockedPunchRevealGateForTurn && remoteBlockedPunchRevealGate
@@ -1538,12 +1600,7 @@ function LocalGameScreen({
     return () => {
       isMounted = false;
     };
-  }, [
-    myProfileId,
-    remoteGame,
-    remoteLastTurn,
-    shouldCheckRemoteBlockedPunchBeforeReveal,
-  ]);
+  }, [myProfileId, remoteGame, remoteLastTurn, shouldCheckRemoteBlockedPunchBeforeReveal]);
 
   useEffect(() => {
     if (isRemoteGame) {
@@ -1596,21 +1653,30 @@ function LocalGameScreen({
       setPlayerAvatars({});
       return;
     }
+    if (!isAppActive || !avatarProfileIdsKey) {
+      return;
+    }
 
     let isMounted = true;
-    void getProfilesByIds(game.players.map((player) => player.id))
+    const profileIds = avatarProfileIdsKey.split(',');
+    void getProfilesByIds(profileIds)
       .then((profiles) => {
         if (isMounted) {
-          setPlayerAvatars(Object.fromEntries(profiles.map((profile) => [profile.id, profile.avatar_url])));
+          const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+          setPlayerAvatars(
+            Object.fromEntries(
+              profileIds.map((profileId) => [profileId, profilesById.get(profileId)?.avatar_url ?? null]),
+            ),
+          );
         }
       })
       .catch(() => {
-        if (isMounted) setPlayerAvatars({});
+        // Keep already loaded avatars visible through a transient profile error.
       });
     return () => {
       isMounted = false;
     };
-  }, [game.id, isAppActive, isRemoteGame, remoteLastTurnId]);
+  }, [avatarProfileIdsKey, isAppActive, isRemoteGame, remoteLastTurnId]);
 
   useEffect(() => {
     if (!isRemoteGame) {
@@ -1827,7 +1893,7 @@ function LocalGameScreen({
     const launches = Object.fromEntries(
       rollingIndexes.map((index) => [
         index,
-        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null),
+        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null, gameLayout.unit(88)),
       ]),
     ) as Partial<Record<number, RollingLaunch>>;
     setRollingLaunches(launches);
@@ -1936,8 +2002,8 @@ function LocalGameScreen({
   function didBlockSuckerPunchAgainstMe(result: ComputerTurnResult) {
     return Boolean(
       result.suckerPunchAttempt &&
-        !result.suckerPunchAttempt.outcome.landed &&
-        result.suckerPunchAttempt.targetPlayerIndex === myPlayerIndex,
+      !result.suckerPunchAttempt.outcome.landed &&
+      result.suckerPunchAttempt.targetPlayerIndex === myPlayerIndex,
     );
   }
 
@@ -2431,10 +2497,10 @@ function LocalGameScreen({
         const targetTurn = remoteLastTurn;
         const targetPlayer = targetTurn ? game.players.find((player) => player.id === targetTurn.player_id) : null;
         const targetScore = targetTurn
-          ? displayScoreWithoutSuckerBonus(
+          ? (displayScoreWithoutSuckerBonus(
               targetPlayer?.scorecard[targetTurn.category] ?? null,
               Boolean(targetPlayer?.suckerBonusCategories?.includes(targetTurn.category)),
-            ) ?? targetTurn.score
+            ) ?? targetTurn.score)
           : null;
         completeAfterResult = () => {
           setLiveRemoteGame(result.game as ReturnType<typeof createGame>);
@@ -2501,9 +2567,22 @@ function LocalGameScreen({
     onExit?.();
   }
 
-  function handleGameOverStats() {
+  function handleOpenStats(returnFocusTarget: 'gameOver' | 'menu') {
+    statsReturnFocusTarget.current = returnFocusTarget;
+    setIsMenuOpen(false);
     setShowStatsPage(true);
     void refreshVisibleStats();
+  }
+
+  function handleCloseStats() {
+    setShowStatsPage(false);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        focusAccessibilityTarget(
+          statsReturnFocusTarget.current === 'gameOver' ? gameOverStatsButtonRef.current : menuButtonRef.current,
+        );
+      });
+    });
   }
 
   function commitLocalScore(category: ScoreCategory, sourceGame = liveGameRef.current) {
@@ -2691,8 +2770,1052 @@ function LocalGameScreen({
     });
   }
 
+  function renderGameScreen() {
+    return (
+      <GameLayoutContext.Provider value={gameLayout}>
+        <View
+          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
+          ref={screenRef}
+          style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
+          testID="game-screen"
+          {...(showStatsPage ? {} : backSwipeResponder.panHandlers)}
+        >
+          <BackgroundDicePattern floatValue={bgFloat} />
+          <View style={[styles.topBar, gameLayout.styles.topBar]} testID="game-top-bar">
+            <View pointerEvents="none" style={styles.topBarBannerClip}>
+              <Image resizeMode="cover" source={suckerGameBannerImage} style={styles.topBarBannerImage} />
+            </View>
+            {onExit && (
+              <Pressable
+                accessibilityLabel="Back to games"
+                accessibilityRole="button"
+                onPress={exitGame}
+                style={({ pressed }) => [styles.backButton, gameLayout.styles.backButton, pressed && styles.pressed]}
+                testID="game-back-button"
+              >
+                <GameBackChevronIcon size={gameLayout.unit(34)} />
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityLabel="Open menu"
+              accessibilityRole="button"
+              accessibilityState={{ expanded: isMenuOpen }}
+              onPress={() => setIsMenuOpen((open) => !open)}
+              ref={menuButtonRef}
+              style={({ pressed }) => [
+                styles.menuDotsButton,
+                gameLayout.styles.menuDotsButton,
+                pressed && styles.pressed,
+              ]}
+              testID="game-menu-button"
+            >
+              <View style={[styles.menuDots, gameLayout.styles.menuDots]}>
+                <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
+                <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
+                <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
+              </View>
+            </Pressable>
+          </View>
+          {isMenuOpen && (
+            <View pointerEvents="box-none" style={styles.topMenuLayer}>
+              <Pressable
+                accessibilityLabel="Close menu"
+                accessibilityRole="button"
+                onPress={() => setIsMenuOpen(false)}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={[styles.topMenu, gameLayout.styles.topMenu]}>
+                <Pressable
+                  accessibilityLabel="View stats"
+                  accessibilityRole="button"
+                  onPress={() => handleOpenStats('menu')}
+                  style={({ pressed }) => [
+                    styles.topMenuItem,
+                    gameLayout.styles.topMenuItem,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="game-stats-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    Stats
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          <View style={styles.playerStrip} testID="player-strip">
+            {displayPlayers.map((player, index) => (
+              <View
+                key={player.id}
+                style={[
+                  styles.playerPill,
+                  gameLayout.styles.playerPill,
+                  player.id === currentPlayer.id && styles.activePlayer,
+                ]}
+              >
+                <PlayerAvatar
+                  avatarUrl={isRemoteGame ? playerAvatars[player.id] : index === 0 ? localPlayerAvatarUrl : null}
+                  fontFamily={gameFontBlack}
+                  name={player.name}
+                  size={gameLayout.unit(54)}
+                  style={[
+                    styles.avatar,
+                    gameLayout.styles.avatar,
+                    player.id === currentPlayer.id && styles.activeAvatar,
+                  ]}
+                  testID={index === 0 ? 'home-player-avatar' : 'opponent-player-avatar'}
+                />
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.playerScore, gameLayout.styles.playerScore]}
+                >
+                  {totalScore(player.scorecard)}
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  numberOfLines={1}
+                  style={[styles.playerName, gameLayout.styles.playerName]}
+                >
+                  {player.name}
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.tokenText, gameLayout.styles.tokenText]}
+                >
+                  {player.suckerTokens} Tokens
+                </Text>
+              </View>
+            ))}
+          </View>
+          <View ref={boardRef} style={[styles.board, gameLayout.styles.board]} testID="scorecard-board">
+            {upperCategories.map((leftCategory, index) => (
+              <ScorePair
+                key={leftCategory}
+                leftCategory={leftCategory}
+                rightCategory={lowerCategories[index]}
+                activePlayer={currentPlayer}
+                activePlayerIndex={activePlayerViewIndex}
+                homePlayer={homePlayer}
+                opponentPlayer={opponentPlayer}
+                dice={game.dice}
+                canChoose={
+                  game.rollNumber > 0 &&
+                  !isRolling &&
+                  !isScoring &&
+                  !isComputerTurn &&
+                  isMyRemoteTurn &&
+                  isRemoteActionPlayable &&
+                  !isRemoteInteractionPending
+                }
+                selectedCategory={selectedCategory}
+                isChoosingSuckerDeal={isChoosingSuckerDeal}
+                highlightCategory={highlightCategory}
+                openCategories={openCategories}
+                onSelect={handleSelectCategory}
+                setOpponentScoreRef={(scoreCategoryName, node) => {
+                  opponentScoreRefs.current[scoreCategoryName] = node;
+                }}
+                setScoreBoxRef={(scoreCategoryName, node) => {
+                  scoreBoxRefs.current[scoreCategoryName] = node;
+                }}
+                selectedPulse={selectedPulse}
+                suckerPunchWipe={suckerPunchWipe}
+              />
+            ))}
+
+            <View style={[styles.boardRow, gameLayout.styles.boardRow]}>
+              <View style={[styles.scorePair, gameLayout.styles.scorePair]}>
+                <View style={styles.bonusPanel} testID="section-bonus-panel">
+                  <View style={[styles.bonusContent, gameLayout.styles.bonusContent]}>
+                    <View style={[styles.bonusTextBlock, gameLayout.styles.bonusTextBlock]}>
+                      <Text
+                        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                        style={[styles.bonusSmall, gameLayout.styles.bonusSmall]}
+                      >
+                        Section{'\n'}Bonus
+                      </Text>
+                      <BonusValueText
+                        awarded={homeSectionBonusAwarded}
+                        faceColor={sectionBonusColor}
+                        rotate={sectionBonusRotate}
+                        scale={sectionBonusScale}
+                      />
+                    </View>
+                    <BonusMeter total={homeUpperTotal} />
+                    <BonusMeter total={opponentUpperTotal} />
+                  </View>
+                </View>
+              </View>
+              <ScoreCell
+                category="chance"
+                activePlayer={currentPlayer}
+                activePlayerIndex={activePlayerViewIndex}
+                homePlayer={homePlayer}
+                opponentPlayer={opponentPlayer}
+                dice={game.dice}
+                canChoose={
+                  game.rollNumber > 0 &&
+                  !isRolling &&
+                  !isScoring &&
+                  !isComputerTurn &&
+                  isMyRemoteTurn &&
+                  isRemoteActionPlayable &&
+                  !isRemoteInteractionPending
+                }
+                selectedCategory={selectedCategory}
+                isChoosingSuckerDeal={isChoosingSuckerDeal}
+                highlightCategory={highlightCategory}
+                openCategories={openCategories}
+                onSelect={handleSelectCategory}
+                setOpponentScoreRef={(scoreCategoryName, node) => {
+                  opponentScoreRefs.current[scoreCategoryName] = node;
+                }}
+                setScoreBoxRef={(scoreCategoryName, node) => {
+                  scoreBoxRefs.current[scoreCategoryName] = node;
+                }}
+                selectedPulse={selectedPulse}
+                suckerPunchWipe={suckerPunchWipe}
+              />
+            </View>
+          </View>
+
+          <View ref={rollZoneRef} style={[styles.rollZone, gameLayout.styles.rollZone]}>
+            <View style={[styles.diceTray, { gap: diceTrayGap, height: diceSlotSize }]} testID="dice-tray">
+              {game.dice.map((die, index) => {
+                const isFlying = isRolling && rollingDieIndexes.includes(index);
+                const showDie = activePlayerViewIndex === 0 && (game.rollNumber > 0 || isRolling);
+                const showSlotDie = showDie && !isFlying;
+                const showHeldDie = showDie && game.held[index];
+                const dieDisabled = !showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending;
+
+                return (
+                  <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
+                    {showHeldDie && usesLegacyAndroidShadowFallback && (
+                      <View pointerEvents="none" style={[styles.heldDieGlow, gameLayout.styles.heldDieGlow]} />
+                    )}
+                    <Pressable
+                      accessibilityElementsHidden={!showDie}
+                      accessibilityHint={
+                        dieDisabled
+                          ? undefined
+                          : showHeldDie
+                            ? 'Double tap to release this die'
+                            : 'Double tap to hold this die'
+                      }
+                      accessibilityLabel={`Die ${index + 1}: ${die}, ${showHeldDie ? 'held' : 'not held'}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: dieDisabled, selected: showHeldDie }}
+                      accessible={showDie}
+                      disabled={dieDisabled}
+                      importantForAccessibility={showDie ? 'yes' : 'no-hide-descendants'}
+                      onPress={() => void handleToggleHold(index)}
+                      ref={(node) => {
+                        dieSlotRefs.current[index] = node;
+                      }}
+                      style={({ pressed }) => [
+                        styles.dieSlot,
+                        gameLayout.styles.dieSlot,
+                        isFlying && styles.settlingDieSlot,
+                        showHeldDie && styles.heldDie,
+                        pressed && styles.pressed,
+                      ]}
+                      testID={`die-slot-${index}`}
+                    >
+                      {showSlotDie && (
+                        <DieFace
+                          face={die}
+                          style={[
+                            styles.dieImage,
+                            showHeldDie && styles.heldDieImage,
+                            isScoring && styles.scoringSourceDieImage,
+                          ]}
+                        />
+                      )}
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+
+            {isRolling && (
+              <View pointerEvents="none" style={styles.rollingDiceOverlay}>
+                {rollingDieIndexes.map((index) => {
+                  const face = rollingFaces[index];
+                  const launch = rollingLaunches[index] ?? defaultRollingLaunch;
+                  const flyY = diceAnimations[index].interpolate({
+                    inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
+                    outputRange: [
+                      launch.fromY,
+                      launch.midY - 10,
+                      launch.midY,
+                      launch.toY - 12,
+                      launch.toY - 3,
+                      launch.toY,
+                    ],
+                  });
+                  const flyX = diceAnimations[index].interpolate({
+                    inputRange: [0, 0.22, 0.5, 0.74, 0.9, 1],
+                    outputRange: [
+                      launch.fromX,
+                      launch.fromX * 0.62 + launch.midX * 0.38,
+                      launch.midX,
+                      launch.toX + (launch.side === 'left' ? -12 : 12),
+                      launch.toX + (launch.side === 'left' ? -4 : 4),
+                      launch.toX,
+                    ],
+                  });
+                  const flyScale = diceAnimations[index].interpolate({
+                    inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
+                    outputRange: [0.86 + index * 0.02, 1.18, launch.peakScale, 1.02, 0.78, 0.72],
+                  });
+                  const flyRotate = diceAnimations[index].interpolate({
+                    inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
+                    outputRange: [
+                      `${launch.side === 'left' ? -28 : 28}deg`,
+                      `${launch.spin}deg`,
+                      `${-launch.spin * 0.72}deg`,
+                      `${launch.spin * 0.46}deg`,
+                      `${-launch.spin * 0.14}deg`,
+                      '0deg',
+                    ],
+                  });
+                  const flyOpacity = diceAnimations[index].interpolate({
+                    inputRange: [0, 0.76, 1],
+                    outputRange: [1, 1, 1],
+                  });
+
+                  return (
+                    <Animated.View
+                      key={`flying-die-${index}`}
+                      style={[
+                        styles.rollingDieTrack,
+                        gameLayout.styles.rollingDieTrack,
+                        {
+                          opacity: flyOpacity,
+                          transform: [
+                            { translateX: flyX },
+                            { translateY: flyY },
+                            { rotate: flyRotate },
+                            { scale: flyScale },
+                          ],
+                        },
+                      ]}
+                    >
+                      <DieFace face={face} style={[styles.rollingDieImage, gameLayout.styles.rollingDieImage]} />
+                    </Animated.View>
+                  );
+                })}
+              </View>
+            )}
+
+            <View style={[styles.controlsRow, gameLayout.styles.controlsRow]} testID="game-controls-row">
+              <View style={[styles.rollButtonWrap, gameLayout.styles.rollButtonWrap]}>
+                <Pressable
+                  accessibilityLabel="Roll dice"
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canRoll }}
+                  disabled={!canRoll}
+                  onPress={handleRoll}
+                  style={({ pressed }) => [
+                    styles.rollButton,
+                    gameLayout.styles.rollButton,
+                    !canRoll && styles.disabledRollButton,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="roll-button"
+                >
+                  <View style={[styles.buttonGloss, gameLayout.styles.buttonGloss]} />
+                  <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.rollText, gameLayout.styles.rollText]}
+                  >
+                    ROLL
+                  </Text>
+                  <View style={[styles.rollsLeftBadge, gameLayout.styles.rollsLeftBadge]}>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.rollsLeftNumber, gameLayout.styles.rollsLeftNumber]}
+                      testID="rolls-left-count"
+                    >
+                      {standardRollsLeft}
+                    </Text>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.rollsLeftLabel, gameLayout.styles.rollsLeftLabel]}
+                    >
+                      LEFT
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
+
+              <View style={[styles.tokenButtonWrap, gameLayout.styles.tokenButtonWrap]}>
+                <Pressable
+                  accessibilityLabel="Sucker token menu"
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canOpenTokenMenu }}
+                  disabled={!canOpenTokenMenu}
+                  onPress={() => setIsTokenMenuOpen(true)}
+                  style={({ pressed }) => [
+                    styles.tokenButton,
+                    gameLayout.styles.tokenButton,
+                    !canOpenTokenMenu && styles.disabledButton,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="token-menu-button"
+                >
+                  <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
+                  <Image
+                    source={suckerTokenImage}
+                    style={[styles.tokenButtonImage, gameLayout.styles.tokenButtonImage]}
+                  />
+                  <View style={[styles.tokenCountBadge, gameLayout.styles.tokenCountBadge]}>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.tokenCountText, gameLayout.styles.tokenCountText]}
+                      testID="token-count"
+                    >
+                      {myTokenCount}
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
+
+              <View style={[styles.playButtonWrap, gameLayout.styles.playButtonWrap]}>
+                <Pressable
+                  accessibilityLabel={
+                    selectedCategory ? `Play ${categoryLabels[selectedCategory]} score` : 'Play selected score'
+                  }
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canPlaySelected }}
+                  disabled={!canPlaySelected}
+                  onPress={handlePlayScore}
+                  style={({ pressed }) => [
+                    styles.playButton,
+                    gameLayout.styles.playButton,
+                    !canPlaySelected && styles.disabledButton,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="play-score-button"
+                >
+                  <View style={[styles.playGloss, gameLayout.styles.buttonGloss]} />
+                  <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.playText, gameLayout.styles.playText]}
+                  >
+                    PLAY
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+          {isTokenMenuOpen && (
+            <View style={[styles.tokenMenuOverlay, gameLayout.styles.tokenMenuOverlay]} testID="token-menu-overlay">
+              <Pressable
+                accessibilityLabel="Close Sucker token menu"
+                accessibilityRole="button"
+                onPress={() => setIsTokenMenuOpen(false)}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={[styles.tokenMenuPanel, gameLayout.styles.tokenMenuPanel]}>
+                <View style={[styles.tokenMenuHeader, gameLayout.styles.tokenMenuHeader]}>
+                  <Image source={suckerTokenImage} style={[styles.tokenMenuIcon, gameLayout.styles.tokenMenuIcon]} />
+                  <View style={styles.tokenMenuHeaderText}>
+                    <Text maxFontSizeMultiplier={1.2} style={[styles.tokenMenuTitle, gameLayout.styles.tokenMenuTitle]}>
+                      Sucker Tokens
+                    </Text>
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.tokenMenuSubtitle, gameLayout.styles.tokenMenuSubtitle]}
+                    >
+                      {myTokenCount} available
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="Close Sucker token menu"
+                    accessibilityRole="button"
+                    hitSlop={gameLayout.unit(8)}
+                    onPress={() => setIsTokenMenuOpen(false)}
+                    style={[styles.tokenMenuClose, gameLayout.styles.tokenMenuClose]}
+                    testID="token-menu-close-button"
+                  >
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.tokenMenuCloseText, gameLayout.styles.tokenMenuCloseText]}
+                    >
+                      X
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <TokenMenuOption
+                  cost={suckerTokenCosts.extraRoll}
+                  description="Add one roll to the Roll button."
+                  disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
+                  label="Extra Roll"
+                  onPress={() => void handleUseExtraRoll()}
+                  testID="token-option-extra-roll"
+                />
+                <TokenMenuOption
+                  cost={suckerTokenCosts.mulligan}
+                  description="Discard this turn and start it over."
+                  disabled={!canUseLocalMulligan}
+                  label="Mulligan"
+                  onPress={handleUseMulligan}
+                  testID="token-option-mulligan"
+                />
+                <TokenMenuOption
+                  cost={0}
+                  costLabel="+1"
+                  description="Pick a score box to sacrifice for 0 and gain 1 token."
+                  disabled={!canStartSuckerDeal}
+                  label="Sucker Deal"
+                  onPress={handleStartSuckerDeal}
+                  testID="token-option-sucker-deal"
+                />
+                <TokenMenuOption
+                  cost={suckerTokenCosts.suckerPunch}
+                  description={
+                    isRemoteGame
+                      ? 'Roll for a chance to make your opponent replay their turn.'
+                      : 'Roll for a chance to make the computer replay its turn.'
+                  }
+                  disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
+                  label="Sucker Punch"
+                  onPress={() => void handleUseSuckerPunch()}
+                  testID="token-option-sucker-punch"
+                />
+              </View>
+            </View>
+          )}
+          {suckerPunchDialog && (
+            <SuckerPunchChanceDialog
+              face={suckerPunchChanceFace}
+              onDismissResult={handleDismissSuckerPunchResult}
+              onRoll={() => void handleRollSuckerPunchChance()}
+              onThrowPunch={() => void handleThrowSuckerPunch()}
+              outcome={suckerPunchDialog.outcome}
+              phase={suckerPunchDialog.phase}
+              rollProgress={suckerPunchDieAnimation}
+            />
+          )}
+          {opponentTurnReveal && (
+            <View pointerEvents="none" style={[styles.opponentTurnRevealOverlay, { top: opponentTurnReveal.top }]}>
+              <View style={[styles.opponentTurnRevealPanel, gameLayout.styles.opponentTurnRevealPanel]}>
+                <View style={[styles.opponentTurnRevealDiceRow, { gap: opponentTurnReveal.gap }]}>
+                  {opponentTurnReveal.dice.map((face, index) => {
+                    const opacity = opponentTurnReveal.progress.interpolate({
+                      inputRange: [0, Math.min(0.76, 0.16 + index * 0.08), 1],
+                      outputRange: [0, 0, 1],
+                    });
+                    const translateY = opponentTurnReveal.progress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [gameLayout.unit(-26 - index * 2), 0],
+                    });
+                    const scale = opponentTurnReveal.progress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.74, 1],
+                    });
+                    const rotate = opponentTurnReveal.progress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [index % 2 === 0 ? '-16deg' : '16deg', '0deg'],
+                    });
+
+                    return (
+                      <Animated.View
+                        key={`${opponentTurnReveal.id}-reveal-${index}`}
+                        style={[
+                          styles.opponentTurnRevealDie,
+                          {
+                            height: opponentTurnReveal.dieSize,
+                            opacity,
+                            transform: [{ translateY }, { rotate }, { scale }],
+                            width: opponentTurnReveal.dieSize,
+                          },
+                        ]}
+                      >
+                        <DieFace face={face} style={styles.opponentTurnRevealDieImage} />
+                      </Animated.View>
+                    );
+                  })}
+                </View>
+                <Animated.View
+                  style={[
+                    styles.opponentTurnRevealMessage,
+                    gameLayout.styles.opponentTurnRevealMessage,
+                    {
+                      opacity: opponentTurnReveal.progress.interpolate({
+                        inputRange: [0, 0.58, 1],
+                        outputRange: [0, 0, 1],
+                      }),
+                      transform: [
+                        {
+                          translateY: opponentTurnReveal.progress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [gameLayout.unit(8), 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <Text
+                    adjustsFontSizeToFit
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    numberOfLines={1}
+                    style={[styles.opponentTurnRevealText, gameLayout.styles.opponentTurnRevealText]}
+                  >
+                    {opponentTurnReveal.playerName} played{' '}
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[
+                        styles.opponentTurnRevealTextHighlight,
+                        gameLayout.styles.opponentTurnRevealTextHighlight,
+                      ]}
+                    >
+                      {opponentTurnReveal.score}
+                    </Text>{' '}
+                    on{' '}
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[
+                        styles.opponentTurnRevealTextHighlight,
+                        gameLayout.styles.opponentTurnRevealTextHighlight,
+                      ]}
+                    >
+                      {opponentTurnReveal.categoryLabel}
+                    </Text>
+                  </Text>
+                </Animated.View>
+              </View>
+            </View>
+          )}
+          {scoreFlyDice.length > 0 && (
+            <View pointerEvents="none" style={styles.scoreDiceOverlay}>
+              {scoreFlyDice.map((die, index) => {
+                const translateX = die.progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, die.toX - die.fromX],
+                });
+                const translateY = die.progress.interpolate({
+                  inputRange: [0, 0.24, 0.72, 1],
+                  outputRange: [
+                    0,
+                    gameLayout.unit(-30 - index * 2),
+                    die.toY - die.fromY - gameLayout.unit(16),
+                    die.toY - die.fromY,
+                  ],
+                });
+                const scale = die.progress.interpolate({
+                  inputRange: [0, 0.2, 0.78, 1],
+                  outputRange: [1, 1.16, 0.78, 0.34],
+                });
+                const opacity = die.progress.interpolate({
+                  inputRange: [0, 0.72, 1],
+                  outputRange: [1, 1, 0],
+                });
+                const rotate = die.progress.interpolate({
+                  inputRange: [0, 0.35, 0.72, 1],
+                  outputRange: [
+                    '0deg',
+                    index % 2 === 0 ? '18deg' : '-18deg',
+                    index % 2 === 0 ? '-10deg' : '10deg',
+                    '0deg',
+                  ],
+                });
+
+                return (
+                  <Animated.View
+                    key={die.id}
+                    style={[
+                      styles.scoreFlyingDie,
+                      {
+                        height: die.size,
+                        left: die.fromX,
+                        opacity,
+                        top: die.fromY,
+                        transform: [{ translateX }, { translateY }, { rotate }, { scale }],
+                        width: die.size,
+                      },
+                    ]}
+                  >
+                    <DieFace face={die.face} style={styles.scoreFlyingDieImage} />
+                  </Animated.View>
+                );
+              })}
+            </View>
+          )}
+          {scoreFlyNumber && (
+            <View pointerEvents="none" style={styles.scoreNumberOverlay}>
+              {(() => {
+                const translateX = scoreFlyNumber.progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, scoreFlyNumber.toX - scoreFlyNumber.fromX],
+                });
+                const translateY = scoreFlyNumber.progress.interpolate({
+                  inputRange: [0, 0.24, 1],
+                  outputRange: [0, gameLayout.unit(-18), scoreFlyNumber.toY - scoreFlyNumber.fromY],
+                });
+                const scale = scoreFlyNumber.progress.interpolate({
+                  inputRange: [0, 0.25, 1],
+                  outputRange: [1.8, 2.05, 0.82],
+                });
+                const opacity = scoreFlyNumber.progress.interpolate({
+                  inputRange: [0, 0.82, 1],
+                  outputRange: [1, 1, 0.1],
+                });
+
+                return (
+                  <Animated.View
+                    style={[
+                      styles.scoreFlyingNumber,
+                      gameLayout.styles.scoreFlyingNumber,
+                      {
+                        left: scoreFlyNumber.fromX,
+                        opacity,
+                        top: scoreFlyNumber.fromY,
+                        transform: [{ translateX }, { translateY }, { scale }],
+                      },
+                    ]}
+                  >
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.scoreFlyingNumberText, gameLayout.styles.scoreFlyingNumberText]}
+                    >
+                      {scoreFlyNumber.value}
+                    </Text>
+                  </Animated.View>
+                );
+              })()}
+            </View>
+          )}
+          {showSuckerPunchNotice && (
+            <View
+              pointerEvents="none"
+              style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
+              testID="sucker-punch-notice"
+            >
+              <View style={[styles.suckerPunchNotice, gameLayout.styles.suckerPunchNotice]}>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
+                >
+                  You got
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
+                >
+                  Sucker Punched!
+                </Text>
+              </View>
+            </View>
+          )}
+          {suckerBlockedNotice && (
+            <View
+              pointerEvents="none"
+              style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
+            >
+              <View style={[styles.suckerPunchNotice, gameLayout.styles.suckerPunchNotice]}>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
+                >
+                  {suckerBlockedNotice.title}
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
+                >
+                  {suckerBlockedNotice.text}
+                </Text>
+              </View>
+            </View>
+          )}
+          {suckerRollNoticeTitle && (
+            <View
+              pointerEvents="none"
+              style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
+              testID="sucker-roll-notice"
+            >
+              <View
+                style={[
+                  styles.suckerPunchNotice,
+                  gameLayout.styles.suckerPunchNotice,
+                  styles.suckerRollNotice,
+                  gameLayout.styles.suckerRollNotice,
+                ]}
+              >
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
+                >
+                  {suckerRollNoticeTitle}
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                  style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
+                >
+                  Sucker!!
+                </Text>
+              </View>
+            </View>
+          )}
+          {remoteError && (
+            <View
+              pointerEvents="none"
+              style={[styles.remoteErrorNoticeOverlay, gameLayout.styles.remoteErrorNoticeOverlay]}
+            >
+              <Text
+                maxFontSizeMultiplier={1.2}
+                style={[styles.remoteErrorNoticeText, gameLayout.styles.remoteErrorNoticeText]}
+              >
+                {remoteError}
+              </Text>
+            </View>
+          )}
+          {nextTurnsVisible && (
+            <View style={[styles.nextTurnsOverlay, gameLayout.styles.nextTurnsOverlay]} testID="next-turns-dialog">
+              <View style={[styles.nextTurnsPanel, gameLayout.styles.nextTurnsPanel]}>
+                <Pressable
+                  accessibilityLabel="Close next turns"
+                  accessibilityRole="button"
+                  hitSlop={gameLayout.unit(8)}
+                  onPress={onDismissNextTurns}
+                  style={({ pressed }) => [
+                    styles.nextTurnsCloseButton,
+                    gameLayout.styles.nextTurnsCloseButton,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="next-turns-close-button"
+                >
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.nextTurnsCloseText, gameLayout.styles.nextTurnsCloseText]}
+                  >
+                    X
+                  </Text>
+                </Pressable>
+                <Text maxFontSizeMultiplier={1.2} style={[styles.nextTurnsEyebrow, gameLayout.styles.nextTurnsEyebrow]}>
+                  Turn Finished
+                </Text>
+                <Text maxFontSizeMultiplier={1.2} style={[styles.nextTurnsTitle, gameLayout.styles.nextTurnsTitle]}>
+                  Keep playing?
+                </Text>
+                {nextTurnGames && nextTurnGames.length > 0 ? (
+                  <ScrollView
+                    contentContainerStyle={[styles.nextTurnsListContent, gameLayout.styles.nextTurnsListContent]}
+                    showsVerticalScrollIndicator={false}
+                    style={[styles.nextTurnsList, gameLayout.styles.nextTurnsList]}
+                  >
+                    {nextTurnGames.map((nextTurnGame) => (
+                      <NextTurnGameButton
+                        avatarUrls={playerAvatars}
+                        game={nextTurnGame}
+                        key={nextTurnGame.id}
+                        onPress={() => handleOpenNextTurnGame(nextTurnGame.id)}
+                        profileId={myProfileId ?? homePlayer.id}
+                      />
+                    ))}
+                  </ScrollView>
+                ) : (
+                  <View style={[styles.nextTurnsEmpty, gameLayout.styles.nextTurnsEmpty]}>
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.nextTurnsEmptyText, gameLayout.styles.nextTurnsEmptyText]}
+                    >
+                      No other turns right now.
+                    </Text>
+                  </View>
+                )}
+                <Pressable
+                  accessibilityLabel="Return to game lobby"
+                  accessibilityRole="button"
+                  onPress={handleNextTurnsLobby}
+                  style={({ pressed }) => [
+                    styles.nextTurnsLobbyButton,
+                    gameLayout.styles.nextTurnsLobbyButton,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="next-turns-lobby-button"
+                >
+                  <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
+                  <Text
+                    maxFontSizeMultiplier={1.2}
+                    style={[styles.nextTurnsLobbyText, gameLayout.styles.nextTurnsLobbyText]}
+                  >
+                    Game Lobby
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+          {gameOverVisible && (
+            <View style={[styles.gameOverOverlay, gameLayout.styles.gameOverOverlay]} testID="game-over-overlay">
+              <View style={[styles.gameOverPanel, gameLayout.styles.gameOverPanel]} testID="game-over-panel">
+                <Pressable
+                  accessibilityLabel="Close game and return to games list"
+                  accessibilityRole="button"
+                  hitSlop={gameLayout.unit(8)}
+                  onPress={handleCloseGameOver}
+                  style={({ pressed }) => [
+                    styles.gameOverCloseButton,
+                    gameLayout.styles.gameOverCloseButton,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="game-over-close-button"
+                >
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.gameOverCloseText, gameLayout.styles.gameOverCloseText]}
+                  >
+                    ×
+                  </Text>
+                </Pressable>
+                <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
+                  Game Over
+                </Text>
+                <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverTitle, gameLayout.styles.gameOverTitle]}>
+                  {gameOverTitle}
+                </Text>
+                <View style={[styles.gameOverScores, gameLayout.styles.gameOverScores]}>
+                  <View
+                    style={[styles.gameOverScoreBox, gameLayout.styles.gameOverScoreBox]}
+                    testID="game-over-home-score"
+                  >
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.gameOverScoreName, gameLayout.styles.gameOverScoreName]}
+                    >
+                      {homePlayer.name}
+                    </Text>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.gameOverScoreValue, gameLayout.styles.gameOverScoreValue]}
+                    >
+                      {homeScore}
+                    </Text>
+                  </View>
+                  <View
+                    style={[styles.gameOverScoreBox, gameLayout.styles.gameOverScoreBox]}
+                    testID="game-over-opponent-score"
+                  >
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.gameOverScoreName, gameLayout.styles.gameOverScoreName]}
+                    >
+                      {opponentPlayer.name}
+                    </Text>
+                    <Text
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      style={[styles.gameOverScoreValue, gameLayout.styles.gameOverScoreValue]}
+                    >
+                      {opponentScore}
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.gameOverActions, gameLayout.styles.gameOverActions]}>
+                  <Pressable
+                    accessibilityLabel="Start a rematch"
+                    accessibilityRole="button"
+                    onPress={() => void handleRematch()}
+                    style={({ pressed }) => [
+                      styles.gameOverPrimaryButton,
+                      gameLayout.styles.gameOverPrimaryButton,
+                      pressed && styles.pressed,
+                    ]}
+                    testID="game-over-rematch-button"
+                  >
+                    <View style={[styles.buttonGloss, gameLayout.styles.buttonGloss]} />
+                    <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.gameOverPrimaryText, gameLayout.styles.gameOverPrimaryText]}
+                    >
+                      Rematch
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel="View game stats"
+                    accessibilityRole="button"
+                    onPress={() => handleOpenStats('gameOver')}
+                    ref={gameOverStatsButtonRef}
+                    style={({ pressed }) => [
+                      styles.gameOverSecondaryButton,
+                      gameLayout.styles.gameOverSecondaryButton,
+                      pressed && styles.pressed,
+                    ]}
+                    testID="game-over-stats-button"
+                  >
+                    <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.gameOverSecondaryText, gameLayout.styles.gameOverSecondaryText]}
+                    >
+                      Stats
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          )}
+          {showStatsPage && (
+            <Modal
+              accessibilityLabel="Game stats"
+              animationType="none"
+              navigationBarTranslucent
+              onRequestClose={handleCloseStats}
+              presentationStyle="overFullScreen"
+              statusBarTranslucent
+              transparent
+              visible
+            >
+              <View style={[styles.statsModalHost, needsScrollableStage && styles.statsModalScrollableHost]}>
+                <View
+                  style={[
+                    styles.statsModalStage,
+                    gameStageStyle,
+                    {
+                      transform: [
+                        { translateX: (effectiveSafeAreaInsets.left - effectiveSafeAreaInsets.right) / 2 },
+                        { translateY: (effectiveSafeAreaInsets.top - effectiveSafeAreaInsets.bottom) / 2 },
+                      ],
+                    },
+                  ]}
+                  testID="stats-modal-stage"
+                >
+                  <StatsPage
+                    currentOpponentName={opponentPlayer.name}
+                    currentScore={totalScore(homePlayer.scorecard)}
+                    onClose={handleCloseStats}
+                    opponentScore={totalScore(opponentPlayer.scorecard)}
+                    opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}
+                    stats={isRemoteGame ? (headToHeadStats?.mine ?? null) : computerStats}
+                    statsKind={isRemoteGame ? 'headToHead' : 'computer'}
+                  />
+                </View>
+              </View>
+            </Modal>
+          )}
+        </View>
+      </GameLayoutContext.Provider>
+    );
+  }
+
+  const availableStageViewportWidth =
+    effectiveWindowWidth - effectiveSafeAreaInsets.left - effectiveSafeAreaInsets.right;
+  const availableStageViewportHeight =
+    effectiveWindowHeight - effectiveSafeAreaInsets.top - effectiveSafeAreaInsets.bottom;
+  const needsScrollableStage =
+    Platform.OS === 'web' &&
+    !devViewportPreset &&
+    (gameStageStyle.width > availableStageViewportWidth || gameStageStyle.height > availableStageViewportHeight);
+
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={[styles.safeArea, stableScreenHostStyle]}>
+    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, stableScreenHostStyle]}>
       <StatusBar style="light" />
       {showDevViewportControls && (
         <DevViewportPresetControls
@@ -2703,770 +3826,20 @@ function LocalGameScreen({
           }}
         />
       )}
-      <View
-        ref={screenRef}
-        style={[styles.screen, compactPhoneLayout && styles.compactScreen, gameStageStyle]}
-        testID="game-screen"
-        {...backSwipeResponder.panHandlers}
-      >
-        <BackgroundDicePattern floatValue={bgFloat} />
-        <View style={[styles.topBar, compactPhoneLayout && styles.compactTopBar]}>
-          <View pointerEvents="none" style={styles.topBarBannerClip}>
-            <Image source={suckerGameBannerImage} style={styles.topBarBannerImage} />
-          </View>
-          {onExit && (
-            <Pressable
-              accessibilityLabel="Back to games"
-              onPress={exitGame}
-              style={({ pressed }) => [
-                styles.backButton,
-                compactPhoneLayout && styles.compactBackButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <GameBackChevronIcon size={compactPhoneLayout ? 28 : 34} />
-            </Pressable>
-          )}
-          <Pressable
-            accessibilityLabel="Open menu"
-            onPress={() => setIsMenuOpen((open) => !open)}
-            style={({ pressed }) => [
-              styles.menuDotsButton,
-              compactPhoneLayout && styles.compactMenuDotsButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <View style={styles.menuDots}>
-              <View style={styles.menuDot} />
-              <View style={styles.menuDot} />
-              <View style={styles.menuDot} />
-            </View>
-          </Pressable>
-        </View>
-        {isMenuOpen && (
-          <View pointerEvents="box-none" style={styles.topMenuLayer}>
-            <Pressable
-              accessibilityLabel="Close menu"
-              onPress={() => setIsMenuOpen(false)}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.topMenu}>
-              <Pressable
-                onPress={() => {
-                  setIsMenuOpen(false);
-                  setShowStatsPage(true);
-                  void refreshVisibleStats();
-                }}
-                style={({ pressed }) => [styles.topMenuItem, pressed && styles.pressed]}
-              >
-                <Text style={styles.topMenuText}>Stats</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
-
-        <View style={styles.playerStrip} testID="player-strip">
-          {displayPlayers.map((player, index) => (
-            <View
-              key={player.id}
-              style={[
-                styles.playerPill,
-                compactPhoneLayout && styles.compactPlayerPill,
-                player.id === currentPlayer.id && styles.activePlayer,
-              ]}
-            >
-              <PlayerAvatar
-                avatarUrl={isRemoteGame ? playerAvatars[player.id] : index === 0 ? localPlayerAvatarUrl : null}
-                name={player.name}
-                size={compactPhoneLayout ? 46 : 54}
-                style={[
-                  styles.avatar,
-                  compactPhoneLayout && styles.compactAvatar,
-                  player.id === currentPlayer.id && styles.activeAvatar,
-                ]}
-                testID={index === 0 ? 'home-player-avatar' : 'opponent-player-avatar'}
-              />
-              <Text style={[styles.playerScore, compactPhoneLayout && styles.compactPlayerScore]}>
-                {totalScore(player.scorecard)}
-              </Text>
-              <Text numberOfLines={1} style={[styles.playerName, compactPhoneLayout && styles.compactPlayerName]}>
-                {player.name}
-              </Text>
-              <Text style={[styles.tokenText, compactPhoneLayout && styles.compactTokenText]}>
-                {player.suckerTokens} Tokens
-              </Text>
-            </View>
-          ))}
-        </View>
-        <View
-          ref={boardRef}
-          style={[
-            styles.board,
-            standardPhoneLayout && styles.standardPhoneBoard,
-            roomyPhoneLayout && styles.roomyBoard,
-            compactPhoneLayout && styles.compactBoard,
-          ]}
-        >
-          {upperCategories.map((leftCategory, index) => (
-            <ScorePair
-              key={leftCategory}
-              leftCategory={leftCategory}
-              rightCategory={lowerCategories[index]}
-              activePlayer={currentPlayer}
-              activePlayerIndex={activePlayerViewIndex}
-              homePlayer={homePlayer}
-              opponentPlayer={opponentPlayer}
-              dice={game.dice}
-              canChoose={
-                game.rollNumber > 0 &&
-                !isRolling &&
-                !isScoring &&
-                !isComputerTurn &&
-                isMyRemoteTurn &&
-                isRemoteActionPlayable &&
-                !isRemoteInteractionPending
-              }
-              selectedCategory={selectedCategory}
-              isChoosingSuckerDeal={isChoosingSuckerDeal}
-              highlightCategory={highlightCategory}
-              openCategories={openCategories}
-              onSelect={handleSelectCategory}
-              setOpponentScoreRef={(scoreCategoryName, node) => {
-                opponentScoreRefs.current[scoreCategoryName] = node;
-              }}
-              setScoreBoxRef={(scoreCategoryName, node) => {
-                scoreBoxRefs.current[scoreCategoryName] = node;
-              }}
-              selectedPulse={selectedPulse}
-              suckerPunchWipe={suckerPunchWipe}
-              compactLayout={compactPhoneLayout}
-            />
-          ))}
-
-          <View style={styles.boardRow}>
-            <View style={styles.bonusPanel} testID="section-bonus-panel">
-              <View style={styles.bonusContent}>
-                <View style={styles.bonusTextBlock}>
-                  <Text style={styles.bonusSmall}>Section{'\n'}Bonus</Text>
-                  <BonusValueText
-                    awarded={homeSectionBonusAwarded}
-                    faceColor={sectionBonusColor}
-                    rotate={sectionBonusRotate}
-                    scale={sectionBonusScale}
-                  />
-                </View>
-                <BonusMeter total={homeUpperTotal} />
-                <BonusMeter total={opponentUpperTotal} />
-              </View>
-            </View>
-            <ScoreCell
-              category="chance"
-              activePlayer={currentPlayer}
-              activePlayerIndex={activePlayerViewIndex}
-              homePlayer={homePlayer}
-              opponentPlayer={opponentPlayer}
-              dice={game.dice}
-              canChoose={
-                game.rollNumber > 0 &&
-                !isRolling &&
-                !isScoring &&
-                !isComputerTurn &&
-                isMyRemoteTurn &&
-                isRemoteActionPlayable &&
-                !isRemoteInteractionPending
-              }
-              selectedCategory={selectedCategory}
-              isChoosingSuckerDeal={isChoosingSuckerDeal}
-              highlightCategory={highlightCategory}
-              openCategories={openCategories}
-              onSelect={handleSelectCategory}
-              setOpponentScoreRef={(scoreCategoryName, node) => {
-                opponentScoreRefs.current[scoreCategoryName] = node;
-              }}
-              setScoreBoxRef={(scoreCategoryName, node) => {
-                scoreBoxRefs.current[scoreCategoryName] = node;
-              }}
-              selectedPulse={selectedPulse}
-              suckerPunchWipe={suckerPunchWipe}
-              compactLayout={compactPhoneLayout}
-            />
-          </View>
-        </View>
-
-        <View ref={rollZoneRef} style={[styles.rollZone, compactPhoneLayout && styles.compactRollZone]}>
+      {needsScrollableStage ? (
+        <View style={styles.gameStageScroll} testID="game-stage-scroll">
           <View
             style={[
-              styles.diceTray,
-              compactPhoneLayout && styles.compactDiceTray,
-              { gap: diceTrayGap, height: diceSlotSize },
+              styles.gameStageScrollContent,
+              { minHeight: gameStageStyle.height, minWidth: gameStageStyle.width },
             ]}
-            testID="dice-tray"
           >
-            {game.dice.map((die, index) => {
-              const isFlying = isRolling && rollingDieIndexes.includes(index);
-              const showDie = activePlayerViewIndex === 0 && (game.rollNumber > 0 || isRolling);
-              const showSlotDie = showDie && !isFlying;
-              const showHeldDie = showDie && game.held[index];
-
-              return (
-                <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
-                  <Pressable
-                    disabled={!showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending}
-                    onPress={() => void handleToggleHold(index)}
-                    ref={(node) => {
-                      dieSlotRefs.current[index] = node;
-                    }}
-                    style={({ pressed }) => [
-                      styles.dieSlot,
-                      compactPhoneLayout && styles.compactDieSlot,
-                      isFlying && styles.settlingDieSlot,
-                      showHeldDie && styles.heldDie,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    {showSlotDie && (
-                      <>
-                        {failedDiceImages.includes(die) && <Text style={styles.dieFallback}>{die}</Text>}
-                        <Image
-                          source={whiteDiceImages[die]}
-                          style={[
-                            styles.dieImage,
-                            showHeldDie && styles.heldDieImage,
-                            isScoring && styles.scoringSourceDieImage,
-                          ]}
-                          onError={() => {
-                            setFailedDiceImages((faces) => (faces.includes(die) ? faces : [...faces, die]));
-                          }}
-                        />
-                      </>
-                    )}
-                  </Pressable>
-                </View>
-              );
-            })}
-          </View>
-
-          {isRolling && (
-            <View pointerEvents="none" style={styles.rollingDiceOverlay}>
-              {rollingDieIndexes.map((index) => {
-                const face = rollingFaces[index];
-                const launch = rollingLaunches[index] ?? defaultRollingLaunch;
-                const flyY = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
-                  outputRange: [
-                    launch.fromY,
-                    launch.midY - 10,
-                    launch.midY,
-                    launch.toY - 12,
-                    launch.toY - 3,
-                    launch.toY,
-                  ],
-                });
-                const flyX = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.22, 0.5, 0.74, 0.9, 1],
-                  outputRange: [
-                    launch.fromX,
-                    launch.fromX * 0.62 + launch.midX * 0.38,
-                    launch.midX,
-                    launch.toX + (launch.side === 'left' ? -12 : 12),
-                    launch.toX + (launch.side === 'left' ? -4 : 4),
-                    launch.toX,
-                  ],
-                });
-                const flyScale = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
-                  outputRange: [0.86 + index * 0.02, 1.18, launch.peakScale, 1.02, 0.78, 0.72],
-                });
-                const flyRotate = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
-                  outputRange: [
-                    `${launch.side === 'left' ? -28 : 28}deg`,
-                    `${launch.spin}deg`,
-                    `${-launch.spin * 0.72}deg`,
-                    `${launch.spin * 0.46}deg`,
-                    `${-launch.spin * 0.14}deg`,
-                    '0deg',
-                  ],
-                });
-                const flyOpacity = diceAnimations[index].interpolate({
-                  inputRange: [0, 0.76, 1],
-                  outputRange: [1, 1, 1],
-                });
-
-                return (
-                  <Animated.View
-                    key={`flying-die-${index}`}
-                    style={[
-                      styles.rollingDieTrack,
-                      {
-                        opacity: flyOpacity,
-                        transform: [
-                          { translateX: flyX },
-                          { translateY: flyY },
-                          { rotate: flyRotate },
-                          { scale: flyScale },
-                        ],
-                      },
-                    ]}
-                  >
-                    {failedDiceImages.includes(face) && <Text style={styles.flyingDieFallback}>{face}</Text>}
-                    <Image
-                      source={whiteDiceImages[face]}
-                      style={styles.rollingDieImage}
-                      onError={() => {
-                        setFailedDiceImages((faces) => (faces.includes(face) ? faces : [...faces, face]));
-                      }}
-                    />
-                  </Animated.View>
-                );
-              })}
-            </View>
-          )}
-
-          <View style={[styles.controlsRow, compactPhoneLayout && styles.compactControlsRow]}>
-            <View style={[styles.rollButtonWrap, compactPhoneLayout && styles.compactRollButtonWrap]}>
-              <Pressable
-                disabled={!canRoll}
-                onPress={handleRoll}
-                style={({ pressed }) => [
-                  styles.rollButton,
-                  compactPhoneLayout && styles.compactRollButton,
-                  !canRoll && styles.disabledRollButton,
-                  pressed && styles.pressed,
-                ]}
-                testID="roll-button"
-              >
-                <View style={styles.buttonGloss} />
-                <View style={styles.buttonInnerShade} />
-                <Text style={[styles.rollText, compactPhoneLayout && styles.compactRollText]}>ROLL</Text>
-                <View style={[styles.rollsLeftBadge, compactPhoneLayout && styles.compactRollsLeftBadge]}>
-                  <Text style={[styles.rollsLeftNumber, compactPhoneLayout && styles.compactRollsLeftNumber]}>
-                    {standardRollsLeft}
-                  </Text>
-                  <Text style={[styles.rollsLeftLabel, compactPhoneLayout && styles.compactRollsLeftLabel]}>LEFT</Text>
-                </View>
-              </Pressable>
-            </View>
-
-            <View style={[styles.tokenButtonWrap, compactPhoneLayout && styles.compactTokenButtonWrap]}>
-              <Pressable
-                accessibilityLabel="Sucker token menu"
-                disabled={!canOpenTokenMenu}
-                onPress={() => setIsTokenMenuOpen(true)}
-                style={({ pressed }) => [
-                  styles.tokenButton,
-                  compactPhoneLayout && styles.compactTokenButton,
-                  !canOpenTokenMenu && styles.disabledButton,
-                  pressed && styles.pressed,
-                ]}
-                testID="token-menu-button"
-              >
-                <View style={styles.buttonInnerShade} />
-                <Image
-                  source={suckerTokenImage}
-                  style={[styles.tokenButtonImage, compactPhoneLayout && styles.compactTokenButtonImage]}
-                />
-                <View style={styles.tokenCountBadge}>
-                  <Text style={styles.tokenCountText}>{myTokenCount}</Text>
-                </View>
-              </Pressable>
-            </View>
-
-            <View style={[styles.playButtonWrap, compactPhoneLayout && styles.compactPlayButtonWrap]}>
-              <Pressable
-                disabled={!canPlaySelected}
-                onPress={handlePlayScore}
-                style={({ pressed }) => [
-                  styles.playButton,
-                  compactPhoneLayout && styles.compactPlayButton,
-                  !canPlaySelected && styles.disabledButton,
-                  pressed && styles.pressed,
-                ]}
-                testID="play-score-button"
-              >
-                <View style={styles.playGloss} />
-                <View style={styles.buttonInnerShade} />
-                <Text style={[styles.playText, compactPhoneLayout && styles.compactPlayText]}>PLAY</Text>
-              </Pressable>
-            </View>
+            {renderGameScreen()}
           </View>
         </View>
-        {isTokenMenuOpen && (
-          <View style={styles.tokenMenuOverlay} testID="token-menu-overlay">
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsTokenMenuOpen(false)} />
-            <View style={styles.tokenMenuPanel}>
-              <View style={styles.tokenMenuHeader}>
-                <Image source={suckerTokenImage} style={styles.tokenMenuIcon} />
-                <View style={styles.tokenMenuHeaderText}>
-                  <Text style={styles.tokenMenuTitle}>Sucker Tokens</Text>
-                  <Text style={styles.tokenMenuSubtitle}>{myTokenCount} available</Text>
-                </View>
-                <Pressable
-                  onPress={() => setIsTokenMenuOpen(false)}
-                  style={styles.tokenMenuClose}
-                  testID="token-menu-close-button"
-                >
-                  <Text style={styles.tokenMenuCloseText}>X</Text>
-                </Pressable>
-              </View>
-
-              <TokenMenuOption
-                cost={suckerTokenCosts.extraRoll}
-                description="Add one roll to the Roll button."
-                disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
-                label="Extra Roll"
-                onPress={() => void handleUseExtraRoll()}
-                testID="token-option-extra-roll"
-              />
-              <TokenMenuOption
-                cost={suckerTokenCosts.mulligan}
-                description="Discard this turn and start it over."
-                disabled={!canUseLocalMulligan}
-                label="Mulligan"
-                onPress={handleUseMulligan}
-                testID="token-option-mulligan"
-              />
-              <TokenMenuOption
-                cost={0}
-                costLabel="+1"
-                description="Pick a score box to sacrifice for 0 and gain 1 token."
-                disabled={!canStartSuckerDeal}
-                label="Sucker Deal"
-                onPress={handleStartSuckerDeal}
-                testID="token-option-sucker-deal"
-              />
-              <TokenMenuOption
-                cost={suckerTokenCosts.suckerPunch}
-                description={
-                  isRemoteGame
-                    ? 'Roll for a chance to make your opponent replay their turn.'
-                    : 'Roll for a chance to make the computer replay its turn.'
-                }
-                disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
-                label="Sucker Punch"
-                onPress={() => void handleUseSuckerPunch()}
-                testID="token-option-sucker-punch"
-              />
-            </View>
-          </View>
-        )}
-        {suckerPunchDialog && (
-          <SuckerPunchChanceDialog
-            face={suckerPunchChanceFace}
-            onDismissResult={handleDismissSuckerPunchResult}
-            onRoll={() => void handleRollSuckerPunchChance()}
-            onThrowPunch={() => void handleThrowSuckerPunch()}
-            outcome={suckerPunchDialog.outcome}
-            phase={suckerPunchDialog.phase}
-            rollProgress={suckerPunchDieAnimation}
-          />
-        )}
-        {opponentTurnReveal && (
-          <View pointerEvents="none" style={[styles.opponentTurnRevealOverlay, { top: opponentTurnReveal.top }]}>
-            <View style={styles.opponentTurnRevealPanel}>
-              <View style={[styles.opponentTurnRevealDiceRow, { gap: opponentTurnReveal.gap }]}>
-                {opponentTurnReveal.dice.map((face, index) => {
-                  const opacity = opponentTurnReveal.progress.interpolate({
-                    inputRange: [0, Math.min(0.76, 0.16 + index * 0.08), 1],
-                    outputRange: [0, 0, 1],
-                  });
-                  const translateY = opponentTurnReveal.progress.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [-26 - index * 2, 0],
-                  });
-                  const scale = opponentTurnReveal.progress.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.74, 1],
-                  });
-                  const rotate = opponentTurnReveal.progress.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [index % 2 === 0 ? '-16deg' : '16deg', '0deg'],
-                  });
-
-                  return (
-                    <Animated.View
-                      key={`${opponentTurnReveal.id}-reveal-${index}`}
-                      style={[
-                        styles.opponentTurnRevealDie,
-                        {
-                          height: opponentTurnReveal.dieSize,
-                          opacity,
-                          transform: [{ translateY }, { rotate }, { scale }],
-                          width: opponentTurnReveal.dieSize,
-                        },
-                      ]}
-                    >
-                      {failedDiceImages.includes(face) && <Text style={styles.flyingDieFallback}>{face}</Text>}
-                      <Image
-                        source={whiteDiceImages[face]}
-                        style={styles.opponentTurnRevealDieImage}
-                        onError={() => {
-                          setFailedDiceImages((faces) => (faces.includes(face) ? faces : [...faces, face]));
-                        }}
-                      />
-                    </Animated.View>
-                  );
-                })}
-              </View>
-              <Animated.View
-                style={[
-                  styles.opponentTurnRevealMessage,
-                  {
-                    opacity: opponentTurnReveal.progress.interpolate({
-                      inputRange: [0, 0.58, 1],
-                      outputRange: [0, 0, 1],
-                    }),
-                    transform: [
-                      {
-                        translateY: opponentTurnReveal.progress.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [8, 0],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <Text
-                  adjustsFontSizeToFit
-                  allowFontScaling={false}
-                  numberOfLines={1}
-                  style={styles.opponentTurnRevealText}
-                >
-                  {opponentTurnReveal.playerName} played{' '}
-                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.score}</Text> on{' '}
-                  <Text style={styles.opponentTurnRevealTextHighlight}>{opponentTurnReveal.categoryLabel}</Text>
-                </Text>
-              </Animated.View>
-            </View>
-          </View>
-        )}
-        {scoreFlyDice.length > 0 && (
-          <View pointerEvents="none" style={styles.scoreDiceOverlay}>
-            {scoreFlyDice.map((die, index) => {
-              const translateX = die.progress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0, die.toX - die.fromX],
-              });
-              const translateY = die.progress.interpolate({
-                inputRange: [0, 0.24, 0.72, 1],
-                outputRange: [0, -30 - index * 2, die.toY - die.fromY - 16, die.toY - die.fromY],
-              });
-              const scale = die.progress.interpolate({
-                inputRange: [0, 0.2, 0.78, 1],
-                outputRange: [1, 1.16, 0.78, 0.34],
-              });
-              const opacity = die.progress.interpolate({
-                inputRange: [0, 0.72, 1],
-                outputRange: [1, 1, 0],
-              });
-              const rotate = die.progress.interpolate({
-                inputRange: [0, 0.35, 0.72, 1],
-                outputRange: [
-                  '0deg',
-                  index % 2 === 0 ? '18deg' : '-18deg',
-                  index % 2 === 0 ? '-10deg' : '10deg',
-                  '0deg',
-                ],
-              });
-
-              return (
-                <Animated.View
-                  key={die.id}
-                  style={[
-                    styles.scoreFlyingDie,
-                    {
-                      height: die.size,
-                      left: die.fromX,
-                      opacity,
-                      top: die.fromY,
-                      transform: [{ translateX }, { translateY }, { rotate }, { scale }],
-                      width: die.size,
-                    },
-                  ]}
-                >
-                  {failedDiceImages.includes(die.face) && <Text style={styles.flyingDieFallback}>{die.face}</Text>}
-                  <Image
-                    source={whiteDiceImages[die.face]}
-                    style={styles.scoreFlyingDieImage}
-                    onError={() => {
-                      setFailedDiceImages((faces) => (faces.includes(die.face) ? faces : [...faces, die.face]));
-                    }}
-                  />
-                </Animated.View>
-              );
-            })}
-          </View>
-        )}
-        {scoreFlyNumber && (
-          <View pointerEvents="none" style={styles.scoreNumberOverlay}>
-            {(() => {
-              const translateX = scoreFlyNumber.progress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0, scoreFlyNumber.toX - scoreFlyNumber.fromX],
-              });
-              const translateY = scoreFlyNumber.progress.interpolate({
-                inputRange: [0, 0.24, 1],
-                outputRange: [0, -18, scoreFlyNumber.toY - scoreFlyNumber.fromY],
-              });
-              const scale = scoreFlyNumber.progress.interpolate({
-                inputRange: [0, 0.25, 1],
-                outputRange: [1.8, 2.05, 0.82],
-              });
-              const opacity = scoreFlyNumber.progress.interpolate({
-                inputRange: [0, 0.82, 1],
-                outputRange: [1, 1, 0.1],
-              });
-
-              return (
-                <Animated.View
-                  style={[
-                    styles.scoreFlyingNumber,
-                    {
-                      left: scoreFlyNumber.fromX,
-                      opacity,
-                      top: scoreFlyNumber.fromY,
-                      transform: [{ translateX }, { translateY }, { scale }],
-                    },
-                  ]}
-                >
-                  <Text style={styles.scoreFlyingNumberText}>{scoreFlyNumber.value}</Text>
-                </Animated.View>
-              );
-            })()}
-          </View>
-        )}
-        {showSuckerPunchNotice && (
-          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay} testID="sucker-punch-notice">
-            <View style={styles.suckerPunchNotice}>
-              <Text style={styles.suckerPunchNoticeTitle}>You got</Text>
-              <Text style={styles.suckerPunchNoticeText}>Sucker Punched!</Text>
-            </View>
-          </View>
-        )}
-        {suckerBlockedNotice && (
-          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
-            <View style={styles.suckerPunchNotice}>
-              <Text style={styles.suckerPunchNoticeTitle}>{suckerBlockedNotice.title}</Text>
-              <Text style={styles.suckerPunchNoticeText}>{suckerBlockedNotice.text}</Text>
-            </View>
-          </View>
-        )}
-        {suckerRollNoticeTitle && (
-          <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
-            <View style={[styles.suckerPunchNotice, styles.suckerRollNotice]}>
-              <Text style={styles.suckerPunchNoticeTitle}>{suckerRollNoticeTitle}</Text>
-              <Text style={styles.suckerPunchNoticeText}>Sucker!!</Text>
-            </View>
-          </View>
-        )}
-        {remoteError && (
-          <View pointerEvents="none" style={styles.remoteErrorNoticeOverlay}>
-            <Text style={styles.remoteErrorNoticeText}>{remoteError}</Text>
-          </View>
-        )}
-        {nextTurnsVisible && (
-          <View style={styles.nextTurnsOverlay} testID="next-turns-dialog">
-            <View style={styles.nextTurnsPanel}>
-              <Pressable
-                accessibilityLabel="Close next turns"
-                onPress={onDismissNextTurns}
-                style={({ pressed }) => [styles.nextTurnsCloseButton, pressed && styles.pressed]}
-                testID="next-turns-close-button"
-              >
-                <Text style={styles.nextTurnsCloseText}>X</Text>
-              </Pressable>
-              <Text style={styles.nextTurnsEyebrow}>Turn Finished</Text>
-              <Text style={styles.nextTurnsTitle}>Keep playing?</Text>
-              {nextTurnGames && nextTurnGames.length > 0 ? (
-                <ScrollView
-                  contentContainerStyle={styles.nextTurnsListContent}
-                  showsVerticalScrollIndicator={false}
-                  style={styles.nextTurnsList}
-                >
-                  {nextTurnGames.map((nextTurnGame) => (
-                    <NextTurnGameButton
-                      game={nextTurnGame}
-                      key={nextTurnGame.id}
-                      onPress={() => handleOpenNextTurnGame(nextTurnGame.id)}
-                      profileId={myProfileId ?? homePlayer.id}
-                    />
-                  ))}
-                </ScrollView>
-              ) : (
-                <View style={styles.nextTurnsEmpty}>
-                  <Text style={styles.nextTurnsEmptyText}>No other turns right now.</Text>
-                </View>
-              )}
-              <Pressable
-                onPress={handleNextTurnsLobby}
-                style={({ pressed }) => [styles.nextTurnsLobbyButton, pressed && styles.pressed]}
-                testID="next-turns-lobby-button"
-              >
-                <View style={styles.buttonInnerShade} />
-                <Text style={styles.nextTurnsLobbyText}>Game Lobby</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
-        {gameOverVisible && (
-          <View style={styles.gameOverOverlay} testID="game-over-overlay">
-            <View style={styles.gameOverPanel} testID="game-over-panel">
-              <Pressable
-                accessibilityLabel="Close game and return to games list"
-                onPress={handleCloseGameOver}
-                style={({ pressed }) => [styles.gameOverCloseButton, pressed && styles.pressed]}
-                testID="game-over-close-button"
-              >
-                <Text style={styles.gameOverCloseText}>×</Text>
-              </Pressable>
-              <Text style={styles.gameOverEyebrow}>Game Over</Text>
-              <Text style={styles.gameOverTitle}>{gameOverTitle}</Text>
-              <View style={styles.gameOverScores}>
-                <View style={styles.gameOverScoreBox} testID="game-over-home-score">
-                  <Text style={styles.gameOverScoreName}>{homePlayer.name}</Text>
-                  <Text style={styles.gameOverScoreValue}>{homeScore}</Text>
-                </View>
-                <View style={styles.gameOverScoreBox} testID="game-over-opponent-score">
-                  <Text style={styles.gameOverScoreName}>{opponentPlayer.name}</Text>
-                  <Text style={styles.gameOverScoreValue}>{opponentScore}</Text>
-                </View>
-              </View>
-              <View style={styles.gameOverActions}>
-                <Pressable
-                  onPress={() => void handleRematch()}
-                  style={({ pressed }) => [styles.gameOverPrimaryButton, pressed && styles.pressed]}
-                  testID="game-over-rematch-button"
-                >
-                  <View style={styles.buttonGloss} />
-                  <View style={styles.buttonInnerShade} />
-                  <Text style={styles.gameOverPrimaryText}>Rematch</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityLabel="View game stats"
-                  onPress={handleGameOverStats}
-                  style={({ pressed }) => [styles.gameOverSecondaryButton, pressed && styles.pressed]}
-                  testID="game-over-stats-button"
-                >
-                  <View style={styles.buttonInnerShade} />
-                  <Text style={styles.gameOverSecondaryText}>Stats</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        )}
-        {showStatsPage && (
-          <StatsPage
-            currentOpponentName={opponentPlayer.name}
-            currentScore={totalScore(homePlayer.scorecard)}
-            onClose={() => setShowStatsPage(false)}
-            opponentScore={totalScore(opponentPlayer.scorecard)}
-            opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}
-            stats={isRemoteGame ? (headToHeadStats?.mine ?? null) : computerStats}
-            statsKind={isRemoteGame ? 'headToHead' : 'computer'}
-          />
-        )}
-      </View>
+      ) : (
+        renderGameScreen()
+      )}
     </SafeAreaView>
   );
 }
@@ -3474,14 +3847,17 @@ function LocalGameScreen({
 type PlayerView = ReturnType<typeof createGame>['players'][number];
 
 function NextTurnGameButton({
+  avatarUrls,
   game,
   onPress,
   profileId,
 }: {
+  avatarUrls: Readonly<Record<string, string | null>>;
   game: RemoteGameRow;
   onPress: () => void;
   profileId: string;
 }) {
+  const layout = useGameLayout();
   const opponent = game.state.players.find((player) => player.id !== profileId);
   const me = game.state.players.find((player) => player.id === profileId);
   const opponentName = opponent?.name ?? 'Opponent';
@@ -3490,23 +3866,52 @@ function NextTurnGameButton({
 
   return (
     <Pressable
+      accessibilityLabel={`Play ${opponentName}. Score ${myScore} to ${opponentScore}`}
+      accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.nextTurnGameButton, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.nextTurnGameButton, layout.styles.nextTurnGameButton, pressed && styles.pressed]}
       testID={`next-turn-game-${game.id}`}
     >
-      <View style={styles.nextTurnAvatar}>
-        <Text style={styles.nextTurnAvatarText}>{opponentName.slice(0, 1).toUpperCase()}</Text>
-      </View>
+      <PlayerAvatar
+        avatarUrl={opponent ? avatarUrls[opponent.id] : null}
+        decorative
+        initialStyle={[styles.nextTurnAvatarText, layout.styles.nextTurnAvatarText]}
+        name={opponentName}
+        size={layout.unit(38)}
+        style={[styles.nextTurnAvatar, layout.styles.nextTurnAvatar]}
+        testID={`next-turn-avatar-${game.id}`}
+      />
       <View style={styles.nextTurnGameText}>
-        <Text numberOfLines={1} style={styles.nextTurnOpponent}>
+        <Text
+          maxFontSizeMultiplier={1.2}
+          numberOfLines={1}
+          style={[styles.nextTurnOpponent, layout.styles.nextTurnOpponent]}
+        >
           {opponentName}
         </Text>
-        <Text style={styles.nextTurnStatus}>Your turn</Text>
+        <Text maxFontSizeMultiplier={1.2} style={[styles.nextTurnStatus, layout.styles.nextTurnStatus]}>
+          Your turn
+        </Text>
       </View>
-      <View style={styles.nextTurnScorePill}>
-        <Text style={styles.nextTurnScoreText}>{myScore}</Text>
-        <Text style={styles.nextTurnScoreDivider}>-</Text>
-        <Text style={styles.nextTurnScoreText}>{opponentScore}</Text>
+      <View style={[styles.nextTurnScorePill, layout.styles.nextTurnScorePill]}>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnScoreText, layout.styles.nextTurnScoreText]}
+        >
+          {myScore}
+        </Text>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnScoreDivider, layout.styles.nextTurnScoreDivider]}
+        >
+          -
+        </Text>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.nextTurnScoreText, layout.styles.nextTurnScoreText]}
+        >
+          {opponentScore}
+        </Text>
       </View>
     </Pressable>
   );
@@ -3530,19 +3935,6 @@ function didAwardUpperBonusForPlayer(beforeGame: GameState, afterGame: GameState
   );
 }
 
-function getSafePhoneStageStyle(windowWidth: number, windowHeight: number, topInset: number, bottomInset: number) {
-  const safeHeight = Math.max(1, windowHeight - topInset - bottomInset);
-
-  if (windowWidth < 500) {
-    return {
-      height: safeHeight,
-      width: windowWidth,
-    };
-  }
-
-  return getPhoneStageStyle(windowWidth, safeHeight);
-}
-
 function BonusValueText({
   awarded,
   faceColor,
@@ -3554,26 +3946,34 @@ function BonusValueText({
   rotate: Animated.AnimatedInterpolation<string | number>;
   scale: Animated.AnimatedInterpolation<number>;
 }) {
+  const layout = useGameLayout();
   const outlineColor = awarded ? awardedBonusOutlineColor : bonusOutlineColor;
 
   return (
-    <Animated.View style={[styles.bonusValueWrap, { transform: [{ scale }, { rotate }] }]}>
+    <Animated.View
+      style={[styles.bonusValueWrap, layout.styles.bonusValueWrap, { transform: [{ scale }, { rotate }] }]}
+    >
       {bonusOutlineOffsets.map((offset, index) => (
         <Text
           adjustsFontSizeToFit
-          allowFontScaling={false}
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
           key={`${offset.x}:${offset.y}:${index}`}
           numberOfLines={1}
-          style={[styles.bonusBig, styles.bonusBigOutline, { color: outlineColor, left: offset.x, top: offset.y }]}
+          style={[
+            styles.bonusBig,
+            layout.styles.bonusBig,
+            styles.bonusBigOutline,
+            { color: outlineColor, left: layout.unit(offset.x), top: layout.unit(offset.y) },
+          ]}
         >
           +35
         </Text>
       ))}
       <Animated.Text
         adjustsFontSizeToFit
-        allowFontScaling={false}
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         numberOfLines={1}
-        style={[styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}
+        style={[styles.bonusBig, layout.styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}
       >
         +35
       </Animated.Text>
@@ -3598,20 +3998,48 @@ function TokenMenuOption({
   onPress?: () => void;
   testID?: string;
 }) {
+  const layout = useGameLayout();
   return (
     <Pressable
+      accessibilityLabel={`${label}, ${costLabel ?? cost} tokens. ${description}`}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.tokenOption, disabled && styles.disabledTokenOption, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.tokenOption,
+        layout.styles.tokenOption,
+        disabled && styles.disabledTokenOption,
+        pressed && styles.pressed,
+      ]}
       testID={testID}
     >
-      <View style={styles.tokenOptionCost}>
-        <Image source={suckerTokenImage} style={styles.tokenOptionCostIcon} />
-        <Text style={styles.tokenOptionCostText}>{costLabel ?? cost}</Text>
+      <View style={[styles.tokenOptionCost, layout.styles.tokenOptionCost]}>
+        <Image source={suckerTokenImage} style={[styles.tokenOptionCostIcon, layout.styles.tokenOptionCostIcon]} />
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}
+        >
+          {costLabel ?? cost}
+        </Text>
       </View>
       <View style={styles.tokenOptionBody}>
-        <Text style={[styles.tokenOptionTitle, disabled && styles.disabledTokenOptionText]}>{label}</Text>
-        <Text style={[styles.tokenOptionDescription, disabled && styles.disabledTokenOptionText]}>{description}</Text>
+        <Text
+          maxFontSizeMultiplier={1.2}
+          style={[styles.tokenOptionTitle, layout.styles.tokenOptionTitle, disabled && styles.disabledTokenOptionText]}
+        >
+          {label}
+        </Text>
+        <Text
+          maxFontSizeMultiplier={1.2}
+          style={[
+            styles.tokenOptionDescription,
+            layout.styles.tokenOptionDescription,
+            disabled && styles.disabledTokenOptionText,
+          ]}
+        >
+          {description}
+        </Text>
       </View>
     </Pressable>
   );
@@ -3634,6 +4062,7 @@ function SuckerPunchChanceDialog({
   phase: SuckerPunchDialogState['phase'];
   rollProgress: Animated.Value;
 }) {
+  const layout = useGameLayout();
   const isResult = phase === 'result';
   const didLand = Boolean(outcome?.landed);
   const didBlock = isResult && !didLand;
@@ -3649,9 +4078,17 @@ function SuckerPunchChanceDialog({
       ? `Rolled ${face}`
       : isThrowing
         ? 'Throwing Punch'
-      : 'Sucker Punch';
+        : 'Sucker Punch';
   const buttonLabel =
-    phase === 'rolling' ? 'ROLLING' : isRolled ? 'THROW PUNCH' : isThrowing ? 'THROWING' : isResult ? 'CONTINUE' : 'ROLL';
+    phase === 'rolling'
+      ? 'ROLLING'
+      : isRolled
+        ? 'THROW PUNCH'
+        : isThrowing
+          ? 'THROWING'
+          : isResult
+            ? 'CONTINUE'
+            : 'ROLL';
   const flyY = rollProgress.interpolate({
     inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
     outputRange: [22, 12, -24, -12, -3, 0],
@@ -3670,16 +4107,51 @@ function SuckerPunchChanceDialog({
   });
 
   return (
-    <View style={styles.suckerPunchChanceOverlay} testID="sucker-punch-chance-dialog">
-      <View style={styles.suckerPunchChancePanel}>
-        <Text adjustsFontSizeToFit allowFontScaling={false} numberOfLines={1} style={styles.suckerPunchChanceTitle}>
+    <View
+      style={[styles.suckerPunchChanceOverlay, layout.styles.suckerPunchChanceOverlay]}
+      testID="sucker-punch-chance-dialog"
+    >
+      <View style={[styles.suckerPunchChancePanel, layout.styles.suckerPunchChancePanel]}>
+        <Text
+          adjustsFontSizeToFit
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          numberOfLines={1}
+          style={[styles.suckerPunchChanceTitle, layout.styles.suckerPunchChanceTitle]}
+        >
           {title}
         </Text>
-        {phase === 'ready' && <Text style={styles.suckerPunchChanceHint}>Higher roll, higher chance.</Text>}
-        {isRolled && <Text style={styles.suckerPunchChanceHint}>{chancePercent}% chance to land.</Text>}
-        {isThrowing && <Text style={styles.suckerPunchChanceHint}>Will it land?</Text>}
+        {phase === 'ready' && (
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+          >
+            Higher roll, higher chance.
+          </Text>
+        )}
+        {isRolled && (
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+          >
+            {chancePercent}% chance to land.
+          </Text>
+        )}
+        {isThrowing && (
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+          >
+            Will it land?
+          </Text>
+        )}
 
-        <View style={isResult ? styles.suckerPunchResultImageShell : styles.suckerPunchChanceDieShell}>
+        <View
+          style={
+            isResult
+              ? [styles.suckerPunchResultImageShell, layout.styles.suckerPunchResultImageShell]
+              : [styles.suckerPunchChanceDieShell, layout.styles.suckerPunchChanceDieShell]
+          }
+        >
           {isResult ? (
             <Image
               source={didBlock ? suckerPunchBlockedImage : suckerPunchLandedImage}
@@ -3690,28 +4162,41 @@ function SuckerPunchChanceDialog({
             <Animated.View
               style={[
                 styles.suckerPunchChanceDieTrack,
+                layout.styles.suckerPunchChanceDieTrack,
                 isRollingChance && {
                   transform: [{ translateX: flyX }, { translateY: flyY }, { rotate: flyRotate }, { scale: flyScale }],
                 },
               ]}
               testID="sucker-punch-chance-die-track"
             >
-              <Image source={whiteDiceImages[face]} style={styles.suckerPunchChanceDieImage} />
+              <DieFace
+                face={face}
+                style={[styles.suckerPunchChanceDieImage, layout.styles.suckerPunchChanceDieImage]}
+              />
             </Animated.View>
           )}
         </View>
 
         <Pressable
+          accessibilityLabel={buttonLabel}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: phase === 'rolling' || isThrowing }}
           disabled={phase === 'rolling' || isThrowing}
           onPress={isResult ? onDismissResult : isRolled ? onThrowPunch : onRoll}
           style={({ pressed }) => [
             styles.suckerPunchRollButton,
+            layout.styles.suckerPunchRollButton,
             (phase === 'rolling' || isThrowing) && styles.disabledSuckerPunchRollButton,
             pressed && styles.pressed,
           ]}
           testID="sucker-punch-chance-roll-button"
         >
-          <Text style={styles.suckerPunchRollButtonText}>{buttonLabel}</Text>
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.suckerPunchRollButtonText, layout.styles.suckerPunchRollButtonText]}
+          >
+            {buttonLabel}
+          </Text>
         </Pressable>
       </View>
     </View>
@@ -3719,18 +4204,19 @@ function SuckerPunchChanceDialog({
 }
 
 function BonusMeter({ total }: { total: number }) {
+  const layout = useGameLayout();
   const clampedTotal = Math.max(0, Math.min(upperBonusTarget, total));
   const progress = clampedTotal / upperBonusTarget;
-  const size = 44;
-  const strokeWidth = 5;
+  const size = layout.unit(44);
+  const strokeWidth = layout.strokeWidth(5);
   const center = size / 2;
   const radius = center - strokeWidth / 2;
   const circumference = 2 * Math.PI * radius;
   const progressColor = '#F12D22';
 
   return (
-    <View style={styles.bonusMeter}>
-      <View style={styles.bonusMeterFace}>
+    <View style={[styles.bonusMeter, layout.styles.bonusMeter]}>
+      <View style={[styles.bonusMeterFace, layout.styles.bonusMeterFace]}>
         <Svg height={size} style={styles.bonusMeterSvg} width={size}>
           <Circle cx={center} cy={center} fill="#E7A845" r={radius} stroke="#5A1308" strokeWidth={strokeWidth} />
           {progress > 0 && (
@@ -3748,7 +4234,12 @@ function BonusMeter({ total }: { total: number }) {
             />
           )}
         </Svg>
-        <Text adjustsFontSizeToFit allowFontScaling={false} numberOfLines={1} style={styles.bonusMeterText}>
+        <Text
+          adjustsFontSizeToFit
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          numberOfLines={1}
+          style={[styles.bonusMeterText, layout.styles.bonusMeterText]}
+        >
           {clampedTotal}/63
         </Text>
       </View>
@@ -3774,17 +4265,17 @@ type ScorePairProps = {
   setScoreBoxRef: (category: ScoreCategory, node: ViewRef | null) => void;
   selectedPulse: Animated.Value;
   suckerPunchWipe: SuckerPunchWipe | null;
-  compactLayout: boolean;
 };
 
 function ScorePair(props: ScorePairProps) {
+  const layout = useGameLayout();
   return (
-    <View style={styles.boardRow}>
+    <View style={[styles.boardRow, layout.styles.boardRow]}>
       <ScoreCell category={props.leftCategory} {...props} />
       {props.rightCategory ? (
         <ScoreCell category={props.rightCategory} {...props} />
       ) : (
-        <View style={styles.scorePair} />
+        <View style={[styles.scorePair, layout.styles.scorePair]} />
       )}
     </View>
   );
@@ -3811,8 +4302,8 @@ function ScoreCell({
   setScoreBoxRef,
   selectedPulse,
   suckerPunchWipe,
-  compactLayout,
 }: ScoreCellProps) {
+  const layout = useGameLayout();
   const homeLockedScore = homePlayer.scorecard[category];
   const opponentLockedScore = opponentPlayer.scorecard[category];
   const activeLockedScore = activePlayer.scorecard[category];
@@ -3847,70 +4338,96 @@ function ScoreCell({
       : opponentPreviewScore !== null
         ? String(opponentPreviewScore)
         : '';
+  const categoryLabel = categoryLabels[category];
+  const scoreActionDisabled = !selectable || locked;
+  const homeScoreAccessibilityValue = formatAccessibleScore(homeLockedScore, homePreviewScore);
+  const opponentScoreAccessibilityValue = formatAccessibleScore(opponentLockedScore, opponentPreviewScore);
   const selectedScale = selectedPulse.interpolate({
     inputRange: [0, 1],
     outputRange: [1, highlighted ? 1.06 : 1],
   });
 
   return (
-    <View style={styles.scorePair}>
+    <View style={[styles.scorePair, layout.styles.scorePair]}>
       <Pressable
-        disabled={!selectable || locked}
+        accessibilityHint={scoreActionDisabled ? undefined : 'Selects this category for the current turn'}
+        accessibilityLabel={`${categoryLabel} category for ${activePlayer.name}`}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: scoreActionDisabled, selected }}
+        aria-pressed={selected}
+        disabled={scoreActionDisabled}
         nativeID={`category-button-${category}`}
         onPress={() => onSelect(category)}
         testID={`category-button-${category}`}
         style={({ pressed }) => [
           styles.categoryTileButton,
-          compactLayout && styles.compactCategoryTileButton,
+          layout.styles.categoryTileButton,
           pressed && styles.pressed,
         ]}
       >
-        <View
-          style={[
-            styles.categoryTile,
-            compactLayout && styles.compactCategoryTile,
-            category === 'sucker' && styles.suckerCategoryTile,
-            highlighted && styles.selectedCategoryTile,
-          ]}
-        >
-          <View style={styles.tileGloss} />
-          <View style={styles.tileGlossFade} />
-          <CategoryTile category={category} />
+        <View style={[styles.categoryTileFrame, layout.styles.categoryTileFrame]}>
+          <View pointerEvents="none" style={[styles.categoryTileShadow, layout.styles.categoryTileShadow]} />
+          <View
+            style={[
+              styles.categoryTile,
+              layout.styles.categoryTile,
+              category === 'sucker' && styles.suckerCategoryTile,
+              highlighted && styles.selectedCategoryTile,
+            ]}
+          >
+            <View style={[styles.tileGloss, layout.styles.tileGloss]} />
+            <View style={[styles.tileGlossFade, layout.styles.tileGlossFade]} />
+            <CategoryTile category={category} />
+          </View>
         </View>
       </Pressable>
       <Animated.View
         style={[
           styles.scorePressWrap,
-          compactLayout && styles.compactScorePressWrap,
+          layout.styles.scorePressWrap,
           {
             transform: [{ scale: selectedScale }],
           },
         ]}
       >
+        <View pointerEvents="none" style={[styles.scoreBoxShadow, layout.styles.scoreBoxShadow]} />
+        <View
+          accessibilityLabel={`${homePlayer.name}, ${categoryLabel} score: ${homeScoreAccessibilityValue}`}
+          accessibilityRole="text"
+          accessibilityValue={{ text: homeScoreAccessibilityValue }}
+          accessible
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+        />
         <Pressable
-          disabled={!selectable || locked}
+          accessibilityElementsHidden
+          accessible={false}
+          aria-hidden
+          disabled={scoreActionDisabled}
+          importantForAccessibility="no-hide-descendants"
           onPress={() => onSelect(category)}
           ref={(node) => setScoreBoxRef(category, node)}
           style={({ pressed }) => [
             styles.scoreBox,
-            compactLayout && styles.compactScoreBox,
+            layout.styles.scoreBox,
             homeLockedScore !== null && styles.lockedScoreBox,
             highlighted && activePlayerIndex === 0 && styles.selectedScoreBox,
             homePreviewScore === 0 && styles.zeroPreviewScoreBox,
             pressed && styles.pressed,
           ]}
+          tabIndex={-1}
           testID={`home-score-box-${category}`}
         >
           {homeSuckerBonus && <SuckerBonusBadge />}
           {homeWipe ? (
-            <SuckerPunchScoreWipe compact={compactLayout} home progress={homeWipe.progress} score={homeWipe.score} />
+            <SuckerPunchScoreWipe home progress={homeWipe.progress} score={homeWipe.score} />
           ) : (
             <Text
-              allowFontScaling={false}
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
               numberOfLines={1}
               style={[
                 styles.scoreBoxText,
-                compactLayout && styles.compactScoreBoxText,
+                layout.styles.scoreBoxText,
                 homePreviewScore !== null && styles.previewScoreText,
               ]}
             >
@@ -3919,50 +4436,63 @@ function ScoreCell({
           )}
         </Pressable>
       </Animated.View>
-      <Pressable
-        disabled={!selectable || locked}
-        onPress={() => onSelect(category)}
-        ref={(node) => setOpponentScoreRef(category, node)}
-        style={[styles.opponentScoreWrap, compactLayout && styles.compactOpponentScoreWrap]}
-        testID={`opponent-score-box-${category}`}
-      >
-        {opponentSuckerBonus && <SuckerBonusBadge compact />}
-        {opponentWipe ? (
-          <SuckerPunchScoreWipe
-            compact={compactLayout}
-            home={false}
-            progress={opponentWipe.progress}
-            score={opponentWipe.score}
-          />
-        ) : (
-          <Text
-            allowFontScaling={false}
-            numberOfLines={1}
-            style={[
-              styles.opponentScoreText,
-              compactLayout && styles.compactOpponentScoreText,
-              opponentPreviewScore !== null && styles.previewScoreText,
-            ]}
-          >
-            {opponentScoreText}
-          </Text>
-        )}
-      </Pressable>
+      <View style={[styles.opponentScoreWrap, layout.styles.opponentScoreWrap]}>
+        <View
+          accessibilityLabel={`${opponentPlayer.name}, ${categoryLabel} score: ${opponentScoreAccessibilityValue}`}
+          accessibilityRole="text"
+          accessibilityValue={{ text: opponentScoreAccessibilityValue }}
+          accessible
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+        />
+        <Pressable
+          accessibilityElementsHidden
+          accessible={false}
+          aria-hidden
+          disabled={scoreActionDisabled}
+          importantForAccessibility="no-hide-descendants"
+          onPress={() => onSelect(category)}
+          ref={(node) => setOpponentScoreRef(category, node)}
+          style={styles.opponentScoreButton}
+          tabIndex={-1}
+          testID={`opponent-score-box-${category}`}
+        >
+          {opponentSuckerBonus && <SuckerBonusBadge opponent />}
+          {opponentWipe ? (
+            <SuckerPunchScoreWipe home={false} progress={opponentWipe.progress} score={opponentWipe.score} />
+          ) : (
+            <Text
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={[
+                styles.opponentScoreText,
+                layout.styles.opponentScoreText,
+                opponentPreviewScore !== null && styles.previewScoreText,
+              ]}
+            >
+              {opponentScoreText}
+            </Text>
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }
 
-function SuckerPunchScoreWipe({
-  compact,
-  home,
-  progress,
-  score,
-}: {
-  compact: boolean;
-  home: boolean;
-  progress: Animated.Value;
-  score: number;
-}) {
+function formatAccessibleScore(lockedScore: number | null, previewScore: number | null) {
+  if (lockedScore !== null) {
+    return `${lockedScore} points, scored`;
+  }
+
+  if (previewScore !== null) {
+    return `${previewScore} points, preview`;
+  }
+
+  return 'Not scored';
+}
+
+function SuckerPunchScoreWipe({ home, progress, score }: { home: boolean; progress: Animated.Value; score: number }) {
+  const layout = useGameLayout();
   const scoreOpacity = progress.interpolate({
     inputRange: [0, 0.2, 0.26, 1],
     outputRange: [1, 1, 0, 0],
@@ -3981,6 +4511,7 @@ function SuckerPunchScoreWipe({
       <Animated.View
         style={[
           styles.suckerPunchWipeImpact,
+          layout.styles.suckerPunchWipeImpact,
           {
             opacity: impactOpacity,
             transform: [{ scale: impactScale }],
@@ -3988,7 +4519,12 @@ function SuckerPunchScoreWipe({
         ]}
         testID="sucker-punch-impact"
       >
-        <Svg height={36} style={styles.suckerPunchWipeImpactGraphic} viewBox="0 0 36 36" width={36}>
+        <Svg
+          height={layout.unit(36)}
+          style={styles.suckerPunchWipeImpactGraphic}
+          viewBox="0 0 36 36"
+          width={layout.unit(36)}
+        >
           <Path
             d="M18 1 22 11 33 6 27 16 35 18 27 22 33 31 22 27 18 35 14 27 3 31 9 22 1 18 9 14 3 5 14 11Z"
             fill="#FFD329"
@@ -4000,11 +4536,11 @@ function SuckerPunchScoreWipe({
         </Svg>
       </Animated.View>
       <Animated.Text
-        allowFontScaling={false}
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         numberOfLines={1}
         style={[
           home ? styles.scoreBoxText : styles.opponentScoreText,
-          compact && (home ? styles.compactScoreBoxText : styles.compactOpponentScoreText),
+          home ? layout.styles.scoreBoxText : layout.styles.opponentScoreText,
           styles.suckerPunchWipeScoreText,
           {
             opacity: scoreOpacity,
@@ -4059,29 +4595,44 @@ function isSuckerDice(dice: ReturnType<typeof createGame>['dice']) {
   return dice.every((die) => die === dice[0]);
 }
 
-function SuckerBonusBadge({ compact = false }: { compact?: boolean }) {
+function SuckerBonusBadge({ opponent = false }: { opponent?: boolean }) {
+  const layout = useGameLayout();
   return (
-    <View style={[styles.suckerBonusBadge, compact && styles.compactSuckerBonusBadge]}>
-      <Text style={[styles.suckerBonusBadgeText, compact && styles.compactSuckerBonusBadgeText]}>+50</Text>
+    <View
+      style={[
+        styles.suckerBonusBadge,
+        opponent ? layout.styles.opponentSuckerBonusBadge : layout.styles.suckerBonusBadge,
+      ]}
+    >
+      <Text
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+        style={[
+          styles.suckerBonusBadgeText,
+          opponent ? layout.styles.opponentSuckerBonusBadgeText : layout.styles.suckerBonusBadgeText,
+        ]}
+      >
+        +50
+      </Text>
     </View>
   );
 }
 
 function BackgroundDicePattern({ floatValue }: { floatValue: Animated.Value }) {
+  const layout = useGameLayout();
   const drift = floatValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 9],
+    outputRange: [0, layout.unit(9)],
   });
 
   return (
     <View pointerEvents="none" style={styles.backgroundPattern}>
       {[1, 2, 3, 4, 5, 6].map((face, index) => (
-        <Animated.Image
+        <Animated.View
           key={`${face}-${index}`}
-          source={whiteDiceImages[face as DieValue]}
           style={[
             styles.backgroundDie,
-            backgroundDiePositions[index],
+            layout.styles.backgroundDie,
+            scalePosition(backgroundDiePositions[index], layout),
             {
               transform: [
                 { translateY: index % 2 === 0 ? drift : Animated.multiply(drift, -1) },
@@ -4089,25 +4640,114 @@ function BackgroundDicePattern({ floatValue }: { floatValue: Animated.Value }) {
               ],
             },
           ]}
-        />
+        >
+          <DieFace face={face as DieValue} style={styles.dieImage} variant="background" />
+        </Animated.View>
       ))}
     </View>
   );
 }
 
+function scalePosition(position: Readonly<Record<string, number | string>>, layout: GameLayout) {
+  return Object.fromEntries(
+    Object.entries(position).map(([edge, value]) => [edge, typeof value === 'number' ? layout.unit(value) : value]),
+  );
+}
+
+const diePipPositions: Record<DieValue, Array<[number, number]>> = {
+  1: [[34, 34]],
+  2: [
+    [20, 20],
+    [48, 48],
+  ],
+  3: [
+    [20, 20],
+    [34, 34],
+    [48, 48],
+  ],
+  4: [
+    [20, 20],
+    [48, 20],
+    [20, 48],
+    [48, 48],
+  ],
+  5: [
+    [20, 20],
+    [48, 20],
+    [34, 34],
+    [20, 48],
+    [48, 48],
+  ],
+  6: [
+    [20, 18],
+    [48, 18],
+    [20, 34],
+    [48, 34],
+    [20, 50],
+    [48, 50],
+  ],
+};
+
+function DieFace({
+  face,
+  style,
+  variant = 'white',
+}: {
+  face: DieValue;
+  style?: StyleProp<ViewStyle>;
+  variant?: 'background' | 'pips' | 'white';
+}) {
+  const pipColor = variant === 'background' ? '#B91510' : variant === 'pips' ? '#FFFFFF' : '#414141';
+
+  return (
+    <View style={style}>
+      <Svg height="100%" viewBox="0 0 68 68" width="100%">
+        {variant !== 'pips' && (
+          <>
+            <Rect fill={variant === 'background' ? '#5A1308' : '#210505'} height={61} rx={11} width={61} x={4} y={5} />
+            <Rect
+              fill={variant === 'background' ? '#7A1208' : '#EEEEEE'}
+              height={61}
+              rx={11}
+              stroke={variant === 'background' ? '#5A1308' : '#838383'}
+              strokeWidth={1.5}
+              width={61}
+              x={2}
+              y={2}
+            />
+            {variant === 'white' && <Rect fill="#FFFFFF" height={56} rx={9} width={56} x={4.5} y={4.5} />}
+          </>
+        )}
+        {diePipPositions[face].map(([cx, cy]) => (
+          <Circle cx={cx} cy={cy} fill={pipColor} key={`${cx}:${cy}`} r={variant === 'pips' ? 7 : 6} />
+        ))}
+      </Svg>
+    </View>
+  );
+}
+
 function CategoryTile({ category }: { category: ScoreCategory }) {
+  const layout = useGameLayout();
   const upperIndex = upperCategories.indexOf(category);
 
   if (upperIndex >= 0) {
     const face = (upperIndex + 1) as DieValue;
-    return <Image source={categoryPipImages[face]} style={styles.categoryDiePips} />;
+    return <DieFace face={face} style={styles.categoryDiePips} variant="pips" />;
   }
 
   switch (category) {
     case 'threeOfAKind':
-      return <Text style={styles.kindText}>3x</Text>;
+      return (
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
+          3x
+        </Text>
+      );
     case 'fourOfAKind':
-      return <Text style={styles.kindText}>4x</Text>;
+      return (
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
+          4x
+        </Text>
+      );
     case 'fullHouse':
       return <FullHouseIcon />;
     case 'smallStraight':
@@ -4117,32 +4757,57 @@ function CategoryTile({ category }: { category: ScoreCategory }) {
     case 'sucker':
       return <SuckerIcon />;
     case 'chance':
-      return <Text style={styles.chanceText}>?</Text>;
+      return (
+        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.chanceText, layout.styles.chanceText]}>
+          ?
+        </Text>
+      );
     default:
       return null;
   }
 }
 
 function FullHouseIcon() {
+  const layout = useGameLayout();
   return (
-    <View style={styles.fullHouseIcon}>
-      <View style={styles.houseRoof} />
-      <View style={styles.houseBody}>
-        <View style={styles.houseDoor} />
+    <View style={[styles.fullHouseIcon, { height: layout.unit(42), width: layout.unit(44) }]}>
+      <View
+        style={[
+          styles.houseRoof,
+          {
+            borderBottomWidth: layout.unit(18),
+            borderLeftWidth: layout.unit(21),
+            borderRightWidth: layout.unit(21),
+          },
+        ]}
+      />
+      <View style={[styles.houseBody, { height: layout.unit(20), width: layout.unit(34) }]}>
+        <View
+          style={[
+            styles.houseDoor,
+            {
+              borderTopLeftRadius: layout.unit(4),
+              borderTopRightRadius: layout.unit(4),
+              height: layout.unit(13),
+              width: layout.unit(8),
+            },
+          ]}
+        />
       </View>
     </View>
   );
 }
 
 function StraightIcon({ label, cardCount }: { label: string; cardCount: 3 | 4 }) {
+  const layout = useGameLayout();
   const cards = [...Array(cardCount)];
-  const fanCardWidth = 17;
-  const fanCardSpread = 7;
+  const fanCardWidth = layout.unit(17);
+  const fanCardSpread = layout.unit(7);
   const fanWidth = fanCardWidth + (cardCount - 1) * fanCardSpread;
 
   return (
-    <View style={styles.straightIcon}>
-      <View style={[styles.cardFan, { width: fanWidth }]}>
+    <View style={[styles.straightIcon, { height: layout.unit(48), width: layout.unit(52) }]}>
+      <View style={[styles.cardFan, { height: layout.unit(30), width: fanWidth }]}>
         {cards.map((_, index) => (
           <View
             key={index}
@@ -4150,16 +4815,35 @@ function StraightIcon({ label, cardCount }: { label: string; cardCount: 3 | 4 })
               styles.fanCard,
               {
                 left: index * fanCardSpread,
-                top: Math.abs(index - (cardCount - 1) / 2) * 3,
+                top: Math.abs(index - (cardCount - 1) / 2) * layout.unit(3),
                 transform: [{ rotate: `${(index - (cardCount - 1) / 2) * 13}deg` }],
+                borderRadius: layout.unit(3),
+                borderWidth: layout.strokeWidth(2),
+                height: layout.unit(25),
+                width: fanCardWidth,
               },
             ]}
           >
-            <View style={styles.fanCardCorner} />
+            <View
+              style={[
+                styles.fanCardCorner,
+                { borderRadius: layout.unit(2), height: layout.unit(5), width: layout.unit(5) },
+              ]}
+            />
           </View>
         ))}
       </View>
-      <Text style={[styles.straightLabel, label === 'LARGE' && styles.largeStraightLabel]}>{label}</Text>
+      <Text
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+        style={[
+          styles.straightLabel,
+          { bottom: layout.unit(1), fontSize: layout.unit(9), lineHeight: layout.unit(10) },
+          label === 'LARGE' && styles.largeStraightLabel,
+          label === 'LARGE' && { fontSize: layout.unit(8) },
+        ]}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -4174,6 +4858,9 @@ function DevViewportPresetControls({
   return (
     <View style={styles.devViewportPresetBar}>
       <Pressable
+        accessibilityLabel="Responsive viewport"
+        accessibilityRole="button"
+        accessibilityState={{ selected: activePresetKey === 'responsive' }}
         onPress={() => onSelect('responsive')}
         style={[
           styles.devViewportPresetButton,
@@ -4181,13 +4868,17 @@ function DevViewportPresetControls({
         ]}
       >
         <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
           style={[styles.devViewportPresetText, activePresetKey === 'responsive' && styles.activeDevViewportPresetText]}
         >
           Resp
         </Text>
       </Pressable>
-      {devViewportPresets.map((preset) => (
+      {gameViewportPresets.map((preset) => (
         <Pressable
+          accessibilityLabel={`${preset.label} viewport`}
+          accessibilityRole="button"
+          accessibilityState={{ selected: activePresetKey === preset.key }}
           key={preset.key}
           onPress={() => onSelect(preset.key)}
           style={[
@@ -4196,6 +4887,7 @@ function DevViewportPresetControls({
           ]}
         >
           <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
             style={[styles.devViewportPresetText, activePresetKey === preset.key && styles.activeDevViewportPresetText]}
           >
             {preset.label}
@@ -4211,10 +4903,19 @@ function SuckerIcon() {
 }
 
 function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
+  const layout = useGameLayout();
   const isHeader = variant === 'header';
 
   return (
-    <View style={[styles.suckerWordmark, isHeader ? styles.headerSuckerWordmark : styles.tileSuckerWordmark]}>
+    <View
+      style={[
+        styles.suckerWordmark,
+        isHeader ? styles.headerSuckerWordmark : styles.tileSuckerWordmark,
+        isHeader
+          ? { height: layout.unit(44), width: layout.unit(168) }
+          : { height: layout.unit(44), width: layout.unit(68) },
+      ]}
+    >
       <Image
         source={isHeader ? suckerLobbyHeaderImage : suckerScorecardWordmarkImage}
         style={styles.suckerWordmarkImage}
@@ -4247,13 +4948,53 @@ function GameBackChevronIcon({ size }: { size: number }) {
   );
 }
 
+function createBoxShadowStyle(offsetX: number, offsetY: number, blurRadius: number, color: string): ViewStyle {
+  if (usesLegacyAndroidShadowFallback) {
+    const extent = Math.max(Math.abs(offsetX), Math.abs(offsetY), blurRadius);
+    return extent === 0 ? {} : { elevation: Math.max(1, Math.ceil(extent)) };
+  }
+
+  return {
+    boxShadow: [{ blurRadius, color, offsetX, offsetY }],
+  };
+}
+
 const styles = StyleSheet.create({
+  fontLoadingScreen: {
+    backgroundColor: '#8F0000',
+    flex: 1,
+  },
   safeArea: {
     alignItems: 'center',
-    backgroundColor: '#8F0000',
+    backgroundColor: '#A60000',
     flex: 1,
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  gameStageScroll: {
+    alignSelf: 'stretch',
+    flex: 1,
+    overflow: 'scroll',
+  },
+  gameStageScrollContent: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    width: '100%',
+  },
+  statsModalHost: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  statsModalScrollableHost: {
+    justifyContent: 'flex-start',
+    overflow: 'scroll',
+  },
+  statsModalStage: {
+    backgroundColor: '#8F0000',
+    overflow: 'hidden',
+    position: 'relative',
   },
   devViewportPresetBar: {
     backgroundColor: 'rgba(33, 5, 5, 0.84)',
@@ -4261,10 +5002,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 4,
     left: 8,
     padding: 4,
     position: 'absolute',
+    right: 8,
     top: 8,
     zIndex: 120,
   },
@@ -4282,6 +5025,7 @@ const styles = StyleSheet.create({
   devViewportPresetText: {
     color: '#210505',
     fontSize: 11,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 13,
   },
@@ -4289,16 +5033,11 @@ const styles = StyleSheet.create({
     color: '#8F0000',
   },
   screen: {
-    backgroundColor: '#8F0000',
-    gap: 7,
+    backgroundColor: '#A60000',
+    gap: 8,
     overflow: 'hidden',
-    padding: 8,
-    paddingBottom: 12,
-  },
-  compactScreen: {
-    gap: 5,
     padding: 6,
-    paddingBottom: 8,
+    paddingBottom: 2,
   },
   remoteBackButton: {
     alignItems: 'center',
@@ -4313,12 +5052,12 @@ const styles = StyleSheet.create({
   remoteBackButtonText: {
     color: '#210505',
     fontSize: 16,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   remoteLoadingScreen: {
     alignItems: 'center',
     backgroundColor: '#8F0000',
-    flex: 1,
     gap: 12,
     justifyContent: 'center',
     padding: 16,
@@ -4326,44 +5065,39 @@ const styles = StyleSheet.create({
   remoteLoadingTitle: {
     color: '#FFD329',
     fontSize: 26,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   remoteMessage: {
     color: '#FFF3C2',
     fontSize: 14,
+    fontFamily: gameFontExtraBold,
     fontWeight: '800',
     textAlign: 'center',
   },
   backgroundPattern: {
     ...StyleSheet.absoluteFillObject,
-    opacity: 0.18,
+    opacity: 0.12,
   },
   backgroundDie: {
     height: 64,
     opacity: 0.45,
     position: 'absolute',
-    resizeMode: 'contain',
-    tintColor: '#FFB000',
     width: 64,
   },
   topBar: {
     alignItems: 'center',
     backgroundColor: '#8F0000',
-    borderColor: '#FFB000',
+    borderColor: '#FFD329',
     borderRadius: 10,
     borderWidth: 2,
     justifyContent: 'center',
-    minHeight: 58,
+    minHeight: 56,
     overflow: 'visible',
     paddingHorizontal: 10,
     paddingVertical: 4,
     position: 'relative',
     zIndex: 60,
-  },
-  compactTopBar: {
-    minHeight: 46,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
   },
   topBarBannerClip: {
     ...StyleSheet.absoluteFillObject,
@@ -4373,7 +5107,6 @@ const styles = StyleSheet.create({
   },
   topBarBannerImage: {
     height: '100%',
-    resizeMode: 'stretch',
     width: '100%',
   },
   backButton: {
@@ -4385,11 +5118,6 @@ const styles = StyleSheet.create({
     top: -1,
     width: 48,
     zIndex: 25,
-  },
-  compactBackButton: {
-    height: 40,
-    left: 5,
-    width: 40,
   },
   menuDots: {
     alignItems: 'center',
@@ -4413,10 +5141,6 @@ const styles = StyleSheet.create({
     top: 11,
     width: 32,
     zIndex: 25,
-  },
-  compactMenuDotsButton: {
-    right: 8,
-    top: 7,
   },
   topMenuLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -4443,6 +5167,7 @@ const styles = StyleSheet.create({
   topMenuText: {
     color: '#210505',
     fontSize: 13,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   playerStrip: {
@@ -4454,69 +5179,50 @@ const styles = StyleSheet.create({
   playerPill: {
     alignItems: 'center',
     flex: 1,
-    minHeight: 66,
+    minHeight: 64,
     justifyContent: 'center',
     overflow: 'hidden',
     paddingLeft: 70,
     paddingRight: 8,
-  },
-  compactPlayerPill: {
-    minHeight: 52,
-    paddingLeft: 58,
-    paddingRight: 6,
   },
   activePlayer: {
     backgroundColor: '#B91510',
   },
   playerScore: {
     color: '#FFFFFF',
-    fontSize: 22,
+    fontSize: 24,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
-    lineHeight: 24,
+    lineHeight: 25,
     textShadowColor: '#050505',
     textShadowOffset: { width: 1, height: 2 },
     textShadowRadius: 0,
   },
-  compactPlayerScore: {
-    fontSize: 19,
-    lineHeight: 21,
-  },
   playerName: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 12,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     maxWidth: '100%',
-  },
-  compactPlayerName: {
-    fontSize: 10,
   },
   tokenText: {
     color: '#FFD329',
     fontSize: 10,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
-  },
-  compactTokenText: {
-    fontSize: 9,
   },
   avatar: {
     alignItems: 'center',
     backgroundColor: '#160303',
     borderColor: '#FFD329',
-    borderRadius: 27,
+    borderRadius: 25,
     borderWidth: 3,
-    height: 52,
+    height: 50,
     justifyContent: 'center',
     left: 10,
     position: 'absolute',
-    top: 6,
-    width: 54,
-  },
-  compactAvatar: {
-    borderRadius: 23,
-    height: 44,
-    left: 8,
-    top: 4,
-    width: 46,
+    top: 7,
+    width: 50,
   },
   activeAvatar: {
     backgroundColor: '#FFD76A',
@@ -4524,27 +5230,16 @@ const styles = StyleSheet.create({
   avatarText: {
     color: '#FFFFFF',
     fontSize: 24,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
-  },
-  compactAvatarText: {
-    fontSize: 21,
   },
   board: {
     backgroundColor: '#F3B84A',
     borderColor: '#210505',
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 3,
     flex: 0.94,
     overflow: 'hidden',
-  },
-  standardPhoneBoard: {
-    flex: 1,
-  },
-  roomyBoard: {
-    flex: 1.04,
-  },
-  compactBoard: {
-    flex: 1,
   },
   boardRow: {
     borderBottomColor: '#FFE083',
@@ -4571,9 +5266,20 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     width: 64,
   },
-  compactCategoryTileButton: {
-    height: 56,
-    width: 56,
+  categoryTileFrame: {
+    height: 54,
+    position: 'relative',
+    width: 54,
+  },
+  categoryTileShadow: {
+    backgroundColor: '#5A1308',
+    borderRadius: 12,
+    height: 54,
+    left: 3,
+    opacity: 0.5,
+    position: 'absolute',
+    top: 4,
+    width: 54,
   },
   categoryTile: {
     alignItems: 'center',
@@ -4582,19 +5288,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 3,
     justifyContent: 'center',
-    shadowColor: '#5A1308',
-    shadowOffset: { width: 3, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
     height: 54,
     overflow: 'hidden',
     width: 54,
-  },
-  compactCategoryTile: {
-    borderRadius: 10,
-    borderWidth: 2,
-    height: 50,
-    width: 50,
   },
   selectedCategoryTile: {
     borderColor: '#FFD329',
@@ -4625,19 +5321,20 @@ const styles = StyleSheet.create({
   },
   categoryDiePips: {
     height: '112%',
-    resizeMode: 'contain',
     width: '112%',
     zIndex: 1,
   },
   kindText: {
     color: '#FFFFFF',
     fontSize: 28,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textAlign: 'center',
   },
   chanceText: {
     color: '#FFFFFF',
     fontSize: 34,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   scoreBox: {
@@ -4647,26 +5344,23 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 3,
     justifyContent: 'center',
-    shadowColor: '#5A1308',
-    shadowOffset: { width: 3, height: 5 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
     height: 56,
     overflow: 'visible',
     width: '100%',
   },
-  compactScoreBox: {
-    borderRadius: 10,
-    borderWidth: 2,
-    height: 50,
+  scoreBoxShadow: {
+    backgroundColor: '#5A1308',
+    borderRadius: 12,
+    height: '100%',
+    left: 3,
+    opacity: 0.5,
+    position: 'absolute',
+    top: 5,
+    width: '100%',
   },
   scorePressWrap: {
     height: 56,
     width: 54,
-  },
-  compactScorePressWrap: {
-    height: 50,
-    width: 50,
   },
   opponentScoreWrap: {
     alignItems: 'center',
@@ -4675,9 +5369,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 50,
   },
-  compactOpponentScoreWrap: {
-    height: 50,
-    width: 48,
+  opponentScoreButton: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lockedScoreBox: {
     backgroundColor: '#FFE08A',
@@ -4692,19 +5387,17 @@ const styles = StyleSheet.create({
   scoreBoxText: {
     color: '#7A220D',
     fontSize: 32,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     includeFontPadding: false,
     lineHeight: 34,
     textAlign: 'center',
     width: '100%',
   },
-  compactScoreBoxText: {
-    fontSize: 28,
-    lineHeight: 30,
-  },
   opponentScoreText: {
     color: '#A24B13',
     fontSize: 32,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     includeFontPadding: false,
     lineHeight: 34,
@@ -4738,10 +5431,6 @@ const styles = StyleSheet.create({
   suckerPunchWipeImpactGraphic: {
     backgroundColor: 'transparent',
   },
-  compactOpponentScoreText: {
-    fontSize: 26,
-    lineHeight: 28,
-  },
   previewScoreText: {
     color: '#7A1208',
   },
@@ -4760,23 +5449,15 @@ const styles = StyleSheet.create({
     width: 43,
     zIndex: 5,
   },
-  compactSuckerBonusBadge: {
-    right: 2,
-    top: -4,
-    transform: [{ rotate: '0deg' }],
-    width: 39,
-  },
   suckerBonusBadgeText: {
     color: '#FFFFFF',
     fontSize: 15,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 17,
     textShadowColor: '#7A1208',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 0,
-  },
-  compactSuckerBonusBadgeText: {
-    fontSize: 14,
   },
   bonusPanel: {
     flex: 1,
@@ -4796,6 +5477,7 @@ const styles = StyleSheet.create({
   bonusSmall: {
     color: '#5A1308',
     fontSize: 10,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 10,
     textTransform: 'uppercase',
@@ -4808,6 +5490,7 @@ const styles = StyleSheet.create({
   },
   bonusBig: {
     fontSize: 25,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     includeFontPadding: false,
     lineHeight: 27,
@@ -4845,6 +5528,7 @@ const styles = StyleSheet.create({
   bonusMeterText: {
     color: '#5A1308',
     fontSize: 10,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 12,
     textAlign: 'center',
@@ -4857,23 +5541,16 @@ const styles = StyleSheet.create({
     height: 70,
     justifyContent: 'center',
   },
-  compactDiceTray: {
-    gap: 4,
-    height: 56,
-  },
   rollZone: {
     gap: 7,
     marginTop: 4,
     position: 'relative',
   },
-  compactRollZone: {
-    gap: 5,
-    marginTop: 2,
-  },
   dieMotion: {
     aspectRatio: 1,
     flexShrink: 0,
     height: '100%',
+    position: 'relative',
   },
   dieSlot: {
     alignItems: 'center',
@@ -4883,15 +5560,8 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     height: '100%',
     justifyContent: 'center',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 2,
+    ...createBoxShadowStyle(0, 0, 2, 'rgba(5, 5, 5, 0.4)'),
     width: '100%',
-  },
-  compactDieSlot: {
-    borderRadius: 10,
-    borderWidth: 2,
   },
   settlingDieSlot: {
     opacity: 0.55,
@@ -4899,13 +5569,15 @@ const styles = StyleSheet.create({
   heldDie: {
     backgroundColor: '#FFF0A6',
     borderColor: '#FFD329',
-    shadowColor: '#FFD329',
-    shadowOpacity: 1,
-    shadowRadius: 6,
+    ...(usesLegacyAndroidShadowFallback ? { elevation: 0 } : createBoxShadowStyle(0, 0, 6, '#FFD329')),
+  },
+  heldDieGlow: {
+    backgroundColor: '#FFD329',
+    opacity: 0.58,
+    position: 'absolute',
   },
   dieImage: {
     height: '100%',
-    resizeMode: 'contain',
     width: '100%',
   },
   scoringSourceDieImage: {
@@ -4913,12 +5585,6 @@ const styles = StyleSheet.create({
   },
   heldDieImage: {
     transform: [{ scale: 1.03 }],
-  },
-  dieFallback: {
-    color: '#FFFFFF',
-    fontSize: 30,
-    fontWeight: '900',
-    position: 'absolute',
   },
   rollingDiceOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -4935,7 +5601,6 @@ const styles = StyleSheet.create({
   },
   rollingDieImage: {
     height: 88,
-    resizeMode: 'contain',
     width: 88,
   },
   opponentTurnRevealOverlay: {
@@ -4963,14 +5628,10 @@ const styles = StyleSheet.create({
   opponentTurnRevealDie: {
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.38,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.38)'),
   },
   opponentTurnRevealDieImage: {
     height: '100%',
-    resizeMode: 'contain',
     width: '100%',
   },
   opponentTurnRevealMessage: {
@@ -4983,6 +5644,7 @@ const styles = StyleSheet.create({
   opponentTurnRevealText: {
     color: '#FFF3C2',
     fontSize: 15,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 20,
     textAlign: 'center',
@@ -5010,7 +5672,6 @@ const styles = StyleSheet.create({
   },
   scoreFlyingDieImage: {
     height: '100%',
-    resizeMode: 'contain',
     width: '100%',
   },
   scoreNumberOverlay: {
@@ -5027,6 +5688,7 @@ const styles = StyleSheet.create({
   scoreFlyingNumberText: {
     color: '#7A220D',
     fontSize: 42,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     includeFontPadding: false,
     lineHeight: 48,
@@ -5053,15 +5715,13 @@ const styles = StyleSheet.create({
     maxWidth: 286,
     paddingHorizontal: 18,
     paddingVertical: 18,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
   },
   suckerPunchChanceTitle: {
     color: '#FFD329',
     fontSize: 28,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 32,
     textAlign: 'center',
@@ -5072,6 +5732,7 @@ const styles = StyleSheet.create({
   suckerPunchChanceHint: {
     color: '#FFF3C2',
     fontSize: 15,
+    fontFamily: gameFontExtraBold,
     fontWeight: '800',
     lineHeight: 18,
     marginTop: -8,
@@ -5091,7 +5752,6 @@ const styles = StyleSheet.create({
   },
   suckerPunchChanceDieImage: {
     height: 112,
-    resizeMode: 'contain',
     width: 112,
   },
   suckerPunchResultImageShell: {
@@ -5118,10 +5778,7 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: 'center',
     marginTop: 4,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.4)'),
     width: '100%',
   },
   disabledSuckerPunchRollButton: {
@@ -5130,6 +5787,7 @@ const styles = StyleSheet.create({
   suckerPunchRollButtonText: {
     color: '#FFF3C2',
     fontSize: 20,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 23,
     textAlign: 'center',
@@ -5152,10 +5810,7 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     paddingHorizontal: 18,
     paddingVertical: 14,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.45,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 5, 0, 'rgba(5, 5, 5, 0.45)'),
     transform: [{ rotate: '-2deg' }],
   },
   suckerRollNotice: {
@@ -5166,6 +5821,7 @@ const styles = StyleSheet.create({
   suckerPunchNoticeTitle: {
     color: '#FFF3C2',
     fontSize: 17,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 20,
     textShadowColor: '#050505',
@@ -5176,6 +5832,7 @@ const styles = StyleSheet.create({
   suckerPunchNoticeText: {
     color: '#FFD329',
     fontSize: 25,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 29,
     textAlign: 'center',
@@ -5198,6 +5855,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     color: '#FFF3C2',
     fontSize: 12,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     overflow: 'hidden',
     paddingHorizontal: 10,
@@ -5221,10 +5879,7 @@ const styles = StyleSheet.create({
     gap: 10,
     maxHeight: '78%',
     padding: 14,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
   },
   nextTurnsCloseButton: {
@@ -5244,6 +5899,7 @@ const styles = StyleSheet.create({
   nextTurnsCloseText: {
     color: '#FFF3C2',
     fontSize: 14,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 16,
     textAlign: 'center',
@@ -5251,6 +5907,7 @@ const styles = StyleSheet.create({
   nextTurnsEyebrow: {
     color: '#FFF3C2',
     fontSize: 12,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     paddingRight: 42,
     textTransform: 'uppercase',
@@ -5258,6 +5915,7 @@ const styles = StyleSheet.create({
   nextTurnsTitle: {
     color: '#FFD329',
     fontSize: 28,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 32,
     paddingRight: 42,
@@ -5298,6 +5956,7 @@ const styles = StyleSheet.create({
   nextTurnAvatarText: {
     color: '#FFD329',
     fontSize: 16,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 18,
   },
@@ -5308,12 +5967,14 @@ const styles = StyleSheet.create({
   nextTurnOpponent: {
     color: '#210505',
     fontSize: 16,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 19,
   },
   nextTurnStatus: {
     color: '#8F3B10',
     fontSize: 11,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     marginTop: 2,
     textTransform: 'uppercase',
@@ -5334,12 +5995,14 @@ const styles = StyleSheet.create({
   nextTurnScoreText: {
     color: '#FFD329',
     fontSize: 14,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 16,
   },
   nextTurnScoreDivider: {
     color: '#FFF3C2',
     fontSize: 13,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 16,
   },
@@ -5356,6 +6019,7 @@ const styles = StyleSheet.create({
   nextTurnsEmptyText: {
     color: '#FFF3C2',
     fontSize: 14,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textAlign: 'center',
   },
@@ -5372,6 +6036,7 @@ const styles = StyleSheet.create({
   nextTurnsLobbyText: {
     color: '#FFD329',
     fontSize: 17,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     letterSpacing: 0,
     lineHeight: 20,
@@ -5396,10 +6061,7 @@ const styles = StyleSheet.create({
     gap: 10,
     height: 240,
     padding: 14,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
   },
   gameOverCloseButton: {
@@ -5419,6 +6081,7 @@ const styles = StyleSheet.create({
   gameOverCloseText: {
     color: '#FFD329',
     fontSize: 24,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 28,
     textAlign: 'center',
@@ -5429,12 +6092,14 @@ const styles = StyleSheet.create({
   gameOverEyebrow: {
     color: '#FFF3C2',
     fontSize: 13,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textTransform: 'uppercase',
   },
   gameOverTitle: {
     color: '#FFD329',
     fontSize: 30,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 34,
     textAlign: 'center',
@@ -5459,12 +6124,14 @@ const styles = StyleSheet.create({
   gameOverScoreName: {
     color: '#8F3B10',
     fontSize: 12,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     maxWidth: '100%',
   },
   gameOverScoreValue: {
     color: '#210505',
     fontSize: 30,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 34,
   },
@@ -5487,6 +6154,7 @@ const styles = StyleSheet.create({
   gameOverPrimaryText: {
     color: '#210505',
     fontSize: 20,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textShadowColor: '#FFF3C2',
     textShadowOffset: { width: 1, height: 1 },
@@ -5505,17 +6173,11 @@ const styles = StyleSheet.create({
   gameOverSecondaryText: {
     color: '#FFD329',
     fontSize: 20,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textShadowColor: '#050505',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 0,
-  },
-  flyingDieFallback: {
-    color: '#FFFFFF',
-    fontSize: 36,
-    fontWeight: '900',
-    position: 'absolute',
-    zIndex: 1,
   },
   rollButton: {
     alignItems: 'center',
@@ -5527,13 +6189,7 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: 'center',
     overflow: 'hidden',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
-  },
-  compactRollButton: {
-    height: 52,
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
   },
   disabledRollButton: {
     opacity: 0.55,
@@ -5542,30 +6198,18 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     flexDirection: 'row',
     gap: 8,
-    height: 64,
-    paddingBottom: 4,
-  },
-  compactControlsRow: {
-    gap: 6,
-    height: 54,
-    paddingBottom: 2,
+    height: 60,
+    paddingBottom: 0,
   },
   rollButtonWrap: {
     borderRadius: 10,
     flex: 2,
     height: 60,
   },
-  compactRollButtonWrap: {
-    height: 52,
-  },
   tokenButtonWrap: {
     borderRadius: 10,
     height: 60,
     width: 60,
-  },
-  compactTokenButtonWrap: {
-    height: 52,
-    width: 52,
   },
   tokenButton: {
     alignItems: 'center',
@@ -5576,22 +6220,12 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: 'center',
     overflow: 'visible',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
-  },
-  compactTokenButton: {
-    height: 52,
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
   },
   tokenButtonImage: {
     height: 44,
     resizeMode: 'contain',
     width: 44,
-  },
-  compactTokenButtonImage: {
-    height: 38,
-    width: 38,
   },
   tokenCountBadge: {
     alignItems: 'center',
@@ -5610,6 +6244,7 @@ const styles = StyleSheet.create({
   tokenCountText: {
     color: '#FFF3C2',
     fontSize: 12,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 14,
   },
@@ -5628,10 +6263,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     gap: 8,
     padding: 10,
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.45,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(0, 5, 0, 'rgba(5, 5, 5, 0.45)'),
     width: '100%',
   },
   tokenMenuHeader: {
@@ -5651,12 +6283,14 @@ const styles = StyleSheet.create({
   tokenMenuTitle: {
     color: '#FFD329',
     fontSize: 20,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 23,
   },
   tokenMenuSubtitle: {
     color: '#FFF3C2',
     fontSize: 12,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   tokenMenuClose: {
@@ -5672,6 +6306,7 @@ const styles = StyleSheet.create({
   tokenMenuCloseText: {
     color: '#FFF3C2',
     fontSize: 14,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   tokenOption: {
@@ -5708,6 +6343,7 @@ const styles = StyleSheet.create({
   tokenOptionCostText: {
     color: '#FFF3C2',
     fontSize: 14,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     position: 'absolute',
     textShadowColor: '#050505',
@@ -5720,11 +6356,13 @@ const styles = StyleSheet.create({
   tokenOptionTitle: {
     color: '#210505',
     fontSize: 16,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
   },
   tokenOptionDescription: {
     color: '#7A220D',
     fontSize: 11,
+    fontFamily: gameFontExtraBold,
     fontWeight: '800',
     lineHeight: 14,
   },
@@ -5751,14 +6389,12 @@ const styles = StyleSheet.create({
   },
   rollText: {
     color: '#210505',
-    fontSize: 30,
+    fontSize: 32,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textShadowColor: '#FFF3C2',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
-  },
-  compactRollText: {
-    fontSize: 26,
   },
   rollsLeftBadge: {
     alignItems: 'center',
@@ -5774,31 +6410,19 @@ const styles = StyleSheet.create({
     minWidth: 58,
     paddingHorizontal: 7,
   },
-  compactRollsLeftBadge: {
-    height: 26,
-    marginLeft: 8,
-    minWidth: 50,
-    paddingHorizontal: 5,
-  },
   rollsLeftNumber: {
     color: '#7A220D',
     fontSize: 18,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 20,
-  },
-  compactRollsLeftNumber: {
-    fontSize: 16,
-    lineHeight: 18,
   },
   rollsLeftLabel: {
     color: '#7A220D',
     fontSize: 9,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 11,
-  },
-  compactRollsLeftLabel: {
-    fontSize: 8,
-    lineHeight: 10,
   },
   playButton: {
     alignItems: 'center',
@@ -5809,21 +6433,12 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: 'center',
     overflow: 'hidden',
-    shadowColor: '#050505',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
-  },
-  compactPlayButton: {
-    height: 52,
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
   },
   playButtonWrap: {
     borderRadius: 10,
     flex: 1,
     height: 60,
-  },
-  compactPlayButtonWrap: {
-    height: 52,
   },
   playGloss: {
     backgroundColor: '#FFFFFF',
@@ -5837,13 +6452,11 @@ const styles = StyleSheet.create({
   playText: {
     color: '#FFD329',
     fontSize: 28,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     textShadowColor: '#050505',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
-  },
-  compactPlayText: {
-    fontSize: 24,
   },
   fullHouseIcon: {
     alignItems: 'center',
@@ -5892,10 +6505,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     height: 25,
     position: 'absolute',
-    shadowColor: '#7A401D',
-    shadowOffset: { width: 1, height: 1 },
-    shadowOpacity: 0.25,
-    shadowRadius: 0,
+    ...createBoxShadowStyle(1, 1, 0, 'rgba(122, 64, 29, 0.25)'),
     top: 0,
     width: 17,
   },
@@ -5912,6 +6522,7 @@ const styles = StyleSheet.create({
   straightLabel: {
     color: '#FFFFFF',
     fontSize: 10,
+    fontFamily: gameFontBlack,
     fontWeight: '900',
     letterSpacing: 0,
     marginTop: 2,
