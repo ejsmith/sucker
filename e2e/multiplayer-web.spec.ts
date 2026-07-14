@@ -155,6 +155,12 @@ test('two players can create an invite and play turns through the web UI', async
   expect(state.players.find((player) => player.id === alice.id)?.scorecard.ones).toEqual(expect.any(Number));
   expect(state.players.find((player) => player.id === bob.id)?.scorecard.twos).toEqual(expect.any(Number));
 
+  await openGameFromNotification(bobPage, gameId);
+  await bobPage.getByTestId('game-back-button').click();
+  await expect(bobPage).toHaveURL(new URL('/', e2eBaseUrl).href);
+  await expect(bobPage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+  await openGameFromLobby(bobPage, gameId);
+
   await completeGameForScreenshot(gameId, bob.id);
   await expect(bobPage.getByTestId('game-over-overlay')).toBeVisible();
   await expect(bobPage.getByTestId('game-over-panel')).toHaveScreenshot('game-over.png', {

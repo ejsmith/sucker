@@ -72,6 +72,7 @@ export function useNotificationClicks(onNotificationClick: (gameId: string, sour
       const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
         const gameId = getGameIdFromNativeNotification(response);
         if (gameId) onNotificationClick(gameId, 'foreground');
+        void Notifications.clearLastNotificationResponseAsync();
       });
       return () => {
         active = false;

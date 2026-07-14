@@ -1,8 +1,8 @@
 import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { Inter_900Black } from '@expo-google-fonts/inter/900Black';
 import { useFonts } from '@expo-google-fonts/inter/useFonts';
-import { Stack, useRouter } from 'expo-router';
-import { useCallback, useEffect } from 'react';
+import { Stack, usePathname, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GameListProvider } from '../src/navigation/GameListProvider';
@@ -52,9 +52,17 @@ const styles = StyleSheet.create({
 
 function NotificationRouter() {
   const router = useRouter();
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
   const openGame = useCallback(
     (gameId: string, source: 'foreground' | 'initial') => {
       const path = `/game/${encodeURIComponent(gameId)}` as const;
+      if (pathnameRef.current === path) {
+        return;
+      }
       if (source === 'initial') {
         router.replace(path);
       } else {
