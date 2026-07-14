@@ -189,6 +189,36 @@ export type Database = {
         };
         Update: never;
       };
+      game_action_requests: {
+        Row: {
+          action_type: string;
+          actor_id: string;
+          created_at: string;
+          game_id: string | null;
+          http_status: number | null;
+          request_id: string;
+          response: Json | null;
+          status: 'processing' | 'completed';
+          updated_at: string;
+        };
+        Insert: {
+          action_type: string;
+          actor_id: string;
+          created_at?: string;
+          game_id?: string | null;
+          http_status?: number | null;
+          request_id: string;
+          response?: Json | null;
+          status?: 'processing' | 'completed';
+          updated_at?: string;
+        };
+        Update: {
+          http_status?: number | null;
+          response?: Json | null;
+          status?: 'processing' | 'completed';
+          updated_at?: string;
+        };
+      };
       game_invites: {
         Row: {
           created_at: string;

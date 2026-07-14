@@ -1,0 +1,45 @@
+name: Publish Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Publish to preview first; use production only after device verification
+        required: true
+        default: preview
+        type: choice
+        options: [preview, production]
+      message:
+        description: Update message
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Publish ${{ inputs.channel }} update
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Setup Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 21.0.0
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+      - name: Publish update
+        run: eas update --channel "$UPDATE_CHANNEL" --environment "$UPDATE_CHANNEL" --message "$UPDATE_MESSAGE" --non-interactive
+        env:
+          UPDATE_CHANNEL: ${{ inputs.channel }}
+          UPDATE_MESSAGE: ${{ inputs.message }}

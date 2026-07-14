@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import type { getHeadToHeadStats } from '../multiplayer/stats';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { formatRecord } from './statsFormat';
+import { Pressable } from './Pressable';
 
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -43,6 +44,7 @@ export function StatsPage({
     <View
       accessibilityViewIsModal
       onAccessibilityEscape={onClose}
+      role="dialog"
       style={styles.statsOverlay}
       testID="stats-page-overlay"
     >

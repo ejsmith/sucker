@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
@@ -43,6 +44,7 @@ test('two players can create an invite and play turns through the web UI', async
 
   const aliceLobby = alicePage.getByTestId('multiplayer-lobby-shell');
   await expect(aliceLobby).toHaveScreenshot('lobby.png');
+  await expectNoSeriousAccessibilityViolations(alicePage);
 
   await alicePage.setViewportSize({ width: 454, height: 576 });
   const lobbyStageScroll = alicePage.getByTestId('lobby-stage-scroll');
@@ -72,6 +74,13 @@ test('two players can create an invite and play turns through the web UI', async
   const gameId = await waitForAcceptedGame(inviteCode);
   await alicePage.goto('/');
   await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
+
+  await alicePage.goto(`/?game=${encodeURIComponent(gameId)}`);
+  await expect(alicePage.getByTestId('game-screen')).toBeVisible();
+  await alicePage.goBack();
+  await expect(alicePage).toHaveURL(new URL('/', e2eBaseUrl).href);
+  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+
   await expect(alicePage.getByTestId('turn-notification-prompt')).toBeVisible();
   await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('turn-notification-prompt.png', {
     maxDiffPixelRatio: 0.07,
@@ -80,6 +89,7 @@ test('two players can create an invite and play turns through the web UI', async
 
   await openGameFromLobby(alicePage, gameId);
   await expect(alicePage.getByTestId('game-screen')).toHaveScreenshot('active-turn.png');
+  await expectNoSeriousAccessibilityViolations(alicePage);
 
   await expect(alicePage.getByTestId('roll-button')).toBeEnabled();
   await alicePage.getByTestId('roll-button').click();
@@ -145,6 +155,12 @@ test('two players can create an invite and play turns through the web UI', async
   expect(state.players.find((player) => player.id === alice.id)?.scorecard.ones).toEqual(expect.any(Number));
   expect(state.players.find((player) => player.id === bob.id)?.scorecard.twos).toEqual(expect.any(Number));
 
+  await openGameFromNotification(bobPage, gameId);
+  await bobPage.getByTestId('game-back-button').click();
+  await expect(bobPage).toHaveURL(new URL('/', e2eBaseUrl).href);
+  await expect(bobPage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+  await openGameFromLobby(bobPage, gameId);
+
   await completeGameForScreenshot(gameId, bob.id);
   await expect(bobPage.getByTestId('game-over-overlay')).toBeVisible();
   await expect(bobPage.getByTestId('game-over-panel')).toHaveScreenshot('game-over.png', {
@@ -207,6 +223,10 @@ test('keep playing rows show queued opponent profile avatars', async ({ browser 
       .toBe(avatarUrl);
     await expect(fallbackGameRow.getByTestId(`next-turn-avatar-${fallbackGameId}-image`)).toHaveCount(0);
     await expect(dialog.getByLabel("Queue Charlie E2E's profile avatar", { exact: true })).toHaveCount(0);
+
+    await queuedGameRow.click();
+    await expect(alicePage).toHaveURL(`${e2eBaseUrl}/game/${queuedGameId}`);
+    await expect(alicePage.getByTestId('next-turns-dialog')).toHaveCount(0);
   } finally {
     await Promise.all(pages.map((page) => page.context().close()));
   }
@@ -342,7 +362,10 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
 
   await expect(page.getByText('Profile photo updated.')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('profile-avatar-image')).toBeVisible();
-  await expect(page.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('profile-avatar.png');
+  await expect(page.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('profile-avatar.png', {
+    mask: [page.getByTestId('username-input')],
+    maskColor: '#FFF3C2',
+  });
   await expect
     .poll(async () => {
       const { data, error } = await admin.from('profiles').select('avatar_url').eq('id', player.id).single();
@@ -387,6 +410,7 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
 
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  const session = await createSession(user.email);
   await context.addInitScript(() => {
     const testWindow = window as Window & { PushManager?: unknown };
     const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
@@ -414,19 +438,29 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     }
   });
   await context.addInitScript(
-    ({ supabaseAnonKey, supabaseUrl }) => {
+    ({ accessToken, refreshToken, supabaseAnonKey, supabaseUrl }) => {
       (
         window as typeof window & {
-          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: { supabaseAnonKey: string; supabaseUrl: string };
+          __SUCKER_E2E_MULTIPLAYER_CONFIG__?: {
+            accessToken: string;
+            refreshToken: string;
+            supabaseAnonKey: string;
+            supabaseUrl: string;
+          };
         }
-      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { supabaseAnonKey, supabaseUrl };
+      ).__SUCKER_E2E_MULTIPLAYER_CONFIG__ = { accessToken, refreshToken, supabaseAnonKey, supabaseUrl };
     },
-    { supabaseAnonKey: anonKey, supabaseUrl },
+    {
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
+      supabaseAnonKey: anonKey,
+      supabaseUrl,
+    },
   );
   const page = await context.newPage();
   const failedResponses = captureFailedResponses(page);
 
-  await page.goto(await generateSignInLink(user.email));
+  await page.goto('/');
   try {
     await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
   } catch (error) {
@@ -436,6 +470,22 @@ async function openAuthedPage(browser: Browser, user: TestUser) {
     throw new Error(`Authenticated lobby did not render.\n${details}\nOriginal error: ${message}`);
   }
   return page;
+}
+
+async function expectNoSeriousAccessibilityViolations(page: Page) {
+  const results = await new AxeBuilder({ page }).analyze();
+  const violations = results.violations
+    .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
+    .map((violation) => ({
+      description: violation.description,
+      id: violation.id,
+      nodes: violation.nodes.map((node) => ({
+        failureSummary: node.failureSummary,
+        html: node.html,
+        target: node.target.join(' '),
+      })),
+    }));
+  expect(violations).toEqual([]);
 }
 
 function captureFailedResponses(page: Page) {
@@ -578,7 +628,11 @@ async function openGameFromNotification(page: Page, gameId: string) {
 
 async function dismissTurnNotificationPrompt(page: Page) {
   const prompt = page.getByTestId('turn-notification-prompt');
-  if (await prompt.isVisible({ timeout: 500 }).catch(() => false)) {
+  const appeared = await prompt
+    .waitFor({ state: 'visible', timeout: 1_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
     await page.getByTestId('turn-notification-not-now').click();
   }
 }
@@ -629,7 +683,7 @@ async function upsertProfile(id: string, displayName: string, username: string) 
   assertNoError(error);
 }
 
-async function generateSignInLink(email: string) {
+async function createSession(email: string) {
   const { data, error } = await admin.auth.admin.generateLink({
     email,
     type: 'magiclink',
@@ -637,16 +691,25 @@ async function generateSignInLink(email: string) {
   });
   assertNoError(error);
 
-  const link = data.properties?.action_link;
-  if (!link) {
-    throw new Error(`Unable to generate sign-in link for ${email}.`);
+  const tokenHash = data.properties?.hashed_token;
+  if (!tokenHash) {
+    throw new Error(`Unable to generate a sign-in token for ${email}.`);
   }
 
-  return link;
+  const client = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: verified, error: verifyError } = await client.auth.verifyOtp({
+    token_hash: tokenHash,
+    type: 'magiclink',
+  });
+  assertNoError(verifyError);
+  if (!verified.session) {
+    throw new Error(`Unable to create a test session for ${email}.`);
+  }
+  return verified.session;
 }
 
 async function waitForAcceptedGame(inviteCode: string) {
-  return expect
+  const gameId = await expect
     .poll(async () => {
       const { data, error } = await admin
         .from('game_invites')
@@ -665,6 +728,14 @@ async function waitForAcceptedGame(inviteCode: string) {
       }
       return data.game_id;
     });
+
+  await expect
+    .poll(async () => {
+      const game = await loadGame(gameId);
+      return game.status === 'active' ? game.current_player_id : null;
+    })
+    .not.toBeNull();
+  return gameId;
 }
 
 async function loadGame(gameId: string) {

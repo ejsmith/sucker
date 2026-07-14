@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
+import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
 import {
   createEmptyScorecard,
   type Dice,
@@ -55,13 +56,14 @@ type WebPushSubscriptionRow = Pick<
   Database['public']['Tables']['web_push_subscriptions']['Row'],
   'auth_key' | 'endpoint' | 'p256dh_key' | 'profile_id'
 >;
+type ActionRequestRow = Database['public']['Tables']['game_action_requests']['Row'];
 type EdgeRuntimeGlobal = typeof globalThis & {
   EdgeRuntime?: {
     waitUntil: (promise: Promise<unknown>) => void;
   };
 };
 
-type Action =
+type ActionInput =
   | { type: 'create_game'; opponentProfileId: string }
   | { type: 'create_invite' }
   | { type: 'accept_invite'; inviteCode: string }
@@ -86,6 +88,8 @@ type Action =
   | { type: 'mulligan'; gameId: string }
   | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
+type Action = ActionInput & { requestId: string };
+type ActionMutationState = { mayHaveWritten: boolean };
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -105,6 +109,10 @@ Deno.serve(async (request) => {
 
     if (request.method !== 'POST') {
       return json({ error: 'Method not allowed' }, 405);
+    }
+    const contentLength = Number(request.headers.get('content-length') ?? 0);
+    if (contentLength > 32_768) {
+      return json({ error: 'Request body is too large.' }, 413);
     }
 
     const action = await timer.measure('parse', async () => toAction(await request.json()));
@@ -126,37 +134,79 @@ Deno.serve(async (request) => {
       return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
     }
 
-    const result = await timer.measure('action', () => applyAction(admin, user.id, action));
-    timer.logIfSlow(actionType);
-    queueActionNotifications(admin, user.id, action, result);
-    return json(result, 200, timer.toHeaders());
+    const claim = await timer.measure('claim', () => claimActionRequest(admin, user.id, action));
+    if (claim.kind === 'completed') {
+      return json(claim.response, claim.httpStatus, timer.toHeaders());
+    }
+    if (claim.kind === 'processing') {
+      return json(
+        {
+          error: claim.isStale
+            ? 'The action outcome could not be confirmed. Refresh the game before trying again.'
+            : 'The action is still processing.',
+          retryable: !claim.isStale,
+        },
+        409,
+        timer.toHeaders(),
+      );
+    }
+
+    const mutationState: ActionMutationState = { mayHaveWritten: false };
+    try {
+      const result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
+      await completeActionRequest(admin, user.id, action, result, 200);
+      timer.logIfSlow(actionType);
+      queueActionNotifications(admin, user.id, action, result);
+      return json(result, 200, timer.toHeaders());
+    } catch (actionError) {
+      const message = toErrorMessage(actionError);
+      const status = toErrorStatus(actionError);
+      const disposition = getActionRequestFailureDisposition({
+        httpStatus: status,
+        mutationMayHaveWritten: mutationState.mayHaveWritten,
+        persistenceFailed: actionError instanceof ActionRequestPersistenceError,
+      });
+      if (disposition === 'release') {
+        await releaseActionRequest(admin, user.id, action);
+      } else if (disposition === 'complete') {
+        await completeActionRequest(admin, user.id, action, { error: message }, status);
+      }
+      throw actionError;
+    }
   } catch (error) {
     console.error('game-action failed', error);
     const message = toErrorMessage(error);
+    const status = toErrorStatus(error);
     timer.logIfSlow(actionType);
-    return json({ error: message }, 400, timer.toHeaders());
+    return json({ error: message }, status, timer.toHeaders());
   }
 });
 
-async function applyAction(admin: DbClient, actorId: string, action: Action): Promise<ActionResult> {
+async function applyAction(
+  admin: DbClient,
+  actorId: string,
+  action: Action,
+  mutationState: ActionMutationState,
+): Promise<ActionResult> {
   switch (action.type) {
     case 'create_game':
-      return createRemoteGame(admin, actorId, action.opponentProfileId);
+      return createRemoteGame(admin, actorId, action.opponentProfileId, mutationState);
     case 'create_invite':
-      return createInvite(admin, actorId);
+      return createInvite(admin, actorId, mutationState);
     case 'accept_invite':
-      return acceptInvite(admin, actorId, action.inviteCode);
+      return acceptInvite(admin, actorId, action.inviteCode, mutationState);
     case 'remove_game':
-      return removeGameFromList(admin, actorId, action.gameId);
+      return removeGameFromList(admin, actorId, action.gameId, mutationState);
     case 'rematch_game':
-      return createRematchGame(admin, actorId, action.gameId);
+      return createRematchGame(admin, actorId, action.gameId, mutationState);
     case 'nudge_turn':
-      return nudgeTurn(admin, actorId, action.gameId);
+      return nudgeTurn(admin, actorId, action.gameId, mutationState);
     case 'roll':
       return mutateGame(
         admin,
         actorId,
         action.gameId,
+        mutationState,
         action.type,
         (state) => rollGame(state, actorId, action.held),
         (_state, nextState) => buildRollActionPayload(nextState.dice),
@@ -166,25 +216,127 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
         admin,
         actorId,
         action.gameId,
+        mutationState,
         action.type,
         (state) => purchaseExtraRoll(state, actorId, action.held),
         (state) => buildExtraRollActionPayload(state, actorId),
       );
     case 'score_category':
-      return scoreRemoteTurn(admin, actorId, action.gameId, action.category, false, action.held);
+      return scoreRemoteTurn(admin, actorId, action.gameId, action.category, mutationState, false, action.held);
     case 'scratch_category':
-      return scratchRemoteScoreBox(admin, actorId, action.gameId, action.category, action.held);
+      return scratchRemoteScoreBox(admin, actorId, action.gameId, action.category, mutationState, action.held);
     case 'pass_response':
-      return passResponse(admin, actorId, action.gameId);
+      return passResponse(admin, actorId, action.gameId, mutationState);
     case 'mulligan':
-      return mulliganTurn(admin, actorId, action.gameId);
+      return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, action.chanceDie);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
       return assertNever(action);
   }
+}
+
+async function claimActionRequest(
+  admin: DbClient,
+  actorId: string,
+  action: Action,
+): Promise<
+  | { kind: 'claimed' }
+  | { kind: 'completed'; httpStatus: number; response: unknown }
+  | { kind: 'processing'; isStale: boolean }
+> {
+  const { error } = await admin.from('game_action_requests').insert({
+    action_type: action.type,
+    actor_id: actorId,
+    game_id: actionGameId(action),
+    request_id: action.requestId,
+  });
+  if (!error) {
+    const rateLimitCutoff = new Date(Date.now() - 60_000).toISOString();
+    const { count, error: countError } = await admin
+      .from('game_action_requests')
+      .select('request_id', { count: 'exact', head: true })
+      .eq('actor_id', actorId)
+      .gte('created_at', rateLimitCutoff);
+    if (countError) {
+      throw countError;
+    }
+    if ((count ?? 0) > 120) {
+      const response = { error: 'Too many game actions. Wait a moment and try again.' };
+      await completeActionRequest(admin, actorId, action, response, 429);
+      return { httpStatus: 429, kind: 'completed', response };
+    }
+    return { kind: 'claimed' };
+  }
+  if (error.code !== '23505') {
+    throw error;
+  }
+
+  const { data: existing, error: existingError } = await admin
+    .from('game_action_requests')
+    .select('*')
+    .eq('actor_id', actorId)
+    .eq('request_id', action.requestId)
+    .single();
+  if (existingError) {
+    throw existingError;
+  }
+  const request = existing as ActionRequestRow;
+  if (request.action_type !== action.type || request.game_id !== actionGameId(action)) {
+    throw new Error('Request id was already used for a different action.');
+  }
+  if (request.status === 'completed' && request.response) {
+    return {
+      httpStatus: request.http_status ?? 200,
+      kind: 'completed',
+      response: request.response,
+    };
+  }
+
+  return {
+    isStale: Date.now() - new Date(request.created_at).getTime() > 120_000,
+    kind: 'processing',
+  };
+}
+
+async function completeActionRequest(
+  admin: DbClient,
+  actorId: string,
+  action: Action,
+  response: unknown,
+  httpStatus: number,
+) {
+  const { error } = await admin
+    .from('game_action_requests')
+    .update({
+      http_status: httpStatus,
+      response: response as Database['public']['Tables']['game_action_requests']['Update']['response'],
+      status: 'completed',
+    })
+    .eq('actor_id', actorId)
+    .eq('request_id', action.requestId)
+    .eq('status', 'processing');
+  if (error) {
+    throw new ActionRequestPersistenceError(error);
+  }
+}
+
+async function releaseActionRequest(admin: DbClient, actorId: string, action: Action) {
+  const { error } = await admin
+    .from('game_action_requests')
+    .delete()
+    .eq('actor_id', actorId)
+    .eq('request_id', action.requestId)
+    .eq('status', 'processing');
+  if (error) {
+    throw new ActionRequestPersistenceError(error);
+  }
+}
+
+function actionGameId(action: Action) {
+  return 'gameId' in action ? action.gameId : null;
 }
 
 function queueActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
@@ -610,18 +762,23 @@ function chunkArray<T>(items: T[], chunkSize: number) {
 function toAction(value: unknown): Action {
   const action = toActionRecord(value);
   const type = readString(action, 'type');
+  // Legacy store binaries predate request ids. Keep them functional while all
+  // new clients receive replay protection.
+  const requestId = action.requestId === undefined ? crypto.randomUUID() : readUuid(action, 'requestId');
 
   switch (type) {
     case 'create_game':
       return {
         opponentProfileId: readString(action, 'opponentProfileId'),
+        requestId,
         type,
       };
     case 'create_invite':
-      return { type };
+      return { requestId, type };
     case 'accept_invite':
       return {
         inviteCode: readString(action, 'inviteCode'),
+        requestId,
         type,
       };
     case 'remove_game':
@@ -629,6 +786,7 @@ function toAction(value: unknown): Action {
     case 'nudge_turn':
       return {
         gameId: readString(action, 'gameId'),
+        requestId,
         type,
       };
     case 'extra_roll':
@@ -636,6 +794,7 @@ function toAction(value: unknown): Action {
       return {
         gameId: readString(action, 'gameId'),
         held: readHeld(action),
+        requestId,
         type,
       };
     case 'score_category':
@@ -644,18 +803,21 @@ function toAction(value: unknown): Action {
         category: toScoreCategory(readString(action, 'category')),
         gameId: readString(action, 'gameId'),
         held: readHeld(action),
+        requestId,
         type,
       };
     case 'pass_response':
     case 'mulligan':
       return {
         gameId: readString(action, 'gameId'),
+        requestId,
         type,
       };
     case 'sucker_punch':
     case 'sucker_blocker':
       return {
         gameId: readString(action, 'gameId'),
+        requestId,
         turnId: readString(action, 'turnId'),
         type,
       };
@@ -681,11 +843,24 @@ function readString(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function readUuid(record: Record<string, unknown>, key: string): string {
+  const value = readString(record, key);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error(`Invalid multiplayer action field: ${key}.`);
+  }
+  return value;
+}
+
 function readHeld(record: Record<string, unknown>): GameState['held'] | undefined {
   return record.held === undefined ? undefined : toHeldDice(record.held);
 }
 
-async function createRemoteGame(admin: DbClient, actorId: string, opponentId: string) {
+async function createRemoteGame(
+  admin: DbClient,
+  actorId: string,
+  opponentId: string,
+  mutationState: ActionMutationState,
+) {
   if (actorId === opponentId) {
     throw new Error('Choose a different opponent.');
   }
@@ -714,6 +889,7 @@ async function createRemoteGame(admin: DbClient, actorId: string, opponentId: st
     { id: opponentProfile.id, name: opponentProfile.display_name },
   ]);
 
+  mutationState.mayHaveWritten = true;
   const { data: game, error: gameError } = await admin
     .from('games')
     .insert({
@@ -755,7 +931,12 @@ async function createRemoteGame(admin: DbClient, actorId: string, opponentId: st
   return { game, notificationProfileIds: [opponentId] };
 }
 
-async function createRematchGame(admin: DbClient, actorId: string, originalGameId: string) {
+async function createRematchGame(
+  admin: DbClient,
+  actorId: string,
+  originalGameId: string,
+  mutationState: ActionMutationState,
+) {
   const originalGame = await loadGameForActor(admin, originalGameId, actorId);
   if (originalGame.status !== 'complete') {
     throw new Error('Rematches are only available after the game is complete.');
@@ -809,6 +990,7 @@ async function createRematchGame(admin: DbClient, actorId: string, originalGameI
   const gameId = crypto.randomUUID();
   const state = createGameState(gameId, orderedProfiles);
 
+  mutationState.mayHaveWritten = true;
   const { data: game, error: gameError } = await admin
     .from('games')
     .insert({
@@ -854,7 +1036,7 @@ async function createRematchGame(admin: DbClient, actorId: string, originalGameI
   return { game, notificationProfileIds: orderedProfiles.map((profile) => profile.id) };
 }
 
-async function createInvite(admin: DbClient, actorId: string) {
+async function createInvite(admin: DbClient, actorId: string, mutationState: ActionMutationState) {
   const { data: profile, error } = await admin.from('profiles').select('id, display_name').eq('id', actorId).single();
 
   if (error) {
@@ -868,6 +1050,7 @@ async function createInvite(admin: DbClient, actorId: string) {
       name: profile.display_name,
     },
   ]);
+  mutationState.mayHaveWritten = true;
   const { data: game, error: gameError } = await admin
     .from('games')
     .insert({
@@ -914,7 +1097,7 @@ async function createInvite(admin: DbClient, actorId: string) {
   return { game, inviteCode: invite.invite_code };
 }
 
-async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string) {
+async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string, mutationState: ActionMutationState) {
   const normalizedInviteCode = inviteCode.trim().toUpperCase();
   const { data: invite, error: inviteError } = await admin
     .from('game_invites')
@@ -953,6 +1136,7 @@ async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string
     { id: invitee.id, name: invitee.display_name },
   ]);
 
+  mutationState.mayHaveWritten = true;
   const { error: playerError } = await admin.from('game_players').insert({
     game_id: invite.game_id,
     player_id: actorId,
@@ -993,7 +1177,12 @@ async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string
   return { game, notificationProfileIds: [invite.inviter_id] };
 }
 
-async function removeGameFromList(admin: DbClient, actorId: string, gameId: string) {
+async function removeGameFromList(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  mutationState: ActionMutationState,
+) {
   const game = await loadGameForActor(admin, gameId, actorId);
 
   if (game.status === 'inviting') {
@@ -1001,6 +1190,7 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
       throw new Error('Only the invite creator can remove this invite.');
     }
 
+    mutationState.mayHaveWritten = true;
     const { error } = await admin.from('games').delete().eq('id', gameId);
     if (error) {
       throw error;
@@ -1009,6 +1199,7 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
     return { removedGameId: gameId };
   }
 
+  mutationState.mayHaveWritten = true;
   const { error } = await admin
     .from('game_players')
     .update({ hidden_at: new Date().toISOString() })
@@ -1022,7 +1213,7 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
   return { removedGameId: gameId };
 }
 
-async function nudgeTurn(admin: DbClient, actorId: string, gameId: string) {
+async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status === 'inviting' || game.status === 'complete' || !game.current_player_id) {
     throw new Error('This game is not waiting on another player.');
@@ -1055,6 +1246,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string) {
     throw new Error('You can nudge this player again 8 hours after your last nudge.');
   }
 
+  mutationState.mayHaveWritten = true;
   await insertAction(admin, gameId, actorId, 'nudge_turn', {
     targetPlayerId: game.current_player_id,
   });
@@ -1065,6 +1257,7 @@ async function mutateGame(
   admin: DbClient,
   actorId: string,
   gameId: string,
+  mutationState: ActionMutationState,
   actionType: ActionType,
   mutate: (state: GameState) => GameState,
   createPayload: (state: GameState, nextState: GameState) => Record<string, unknown> = () => ({}),
@@ -1072,6 +1265,7 @@ async function mutateGame(
   const game = await loadGameForActor(admin, gameId, actorId);
   const nextState = mutate(game.state);
   const nextPlayer = nextState.players[nextState.currentPlayerIndex];
+  mutationState.mayHaveWritten = true;
   const { data, error } = await admin
     .from('games')
     .update({
@@ -1099,6 +1293,7 @@ async function scoreRemoteTurn(
   actorId: string,
   gameId: string,
   category: ScoreCategory,
+  mutationState: ActionMutationState,
   scratch = false,
   submittedHeld?: GameState['held'],
 ) {
@@ -1150,14 +1345,13 @@ async function scoreRemoteTurn(
     players,
     rollNumber: 0,
   };
-  const rankedPlayers = complete
-    ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard))
-    : [];
+  const rankedPlayers = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard)) : [];
   const winner =
     rankedPlayers.length > 1 && totalScore(rankedPlayers[0].scorecard) > totalScore(rankedPlayers[1].scorecard)
       ? rankedPlayers[0]
       : null;
 
+  mutationState.mayHaveWritten = true;
   const { data: insertedTurn, error: turnError } = await admin
     .from('turns')
     .insert({
@@ -1224,12 +1418,13 @@ function scratchRemoteScoreBox(
   actorId: string,
   gameId: string,
   category: ScoreCategory,
+  mutationState: ActionMutationState,
   held?: GameState['held'],
 ) {
-  return scoreRemoteTurn(admin, actorId, gameId, category, true, held);
+  return scoreRemoteTurn(admin, actorId, gameId, category, mutationState, true, held);
 }
 
-async function passResponse(admin: DbClient, actorId: string, gameId: string) {
+async function passResponse(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window') {
     throw new Error('There is no turn response to pass.');
@@ -1238,6 +1433,7 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string) {
     throw new Error('Only the responding player can pass.');
   }
 
+  mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
@@ -1257,7 +1453,7 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string) {
   return { game: updatedGame };
 }
 
-async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
+async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || !game.last_turn_id) {
     throw new Error('Mulligan is only available immediately after a submitted turn.');
@@ -1275,6 +1471,7 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
   }
 
   const nextState = removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan);
+  mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
@@ -1311,6 +1508,7 @@ async function suckerPunchTurn(
   actorId: string,
   gameId: string,
   turnId: string,
+  mutationState: ActionMutationState,
   requestedChanceDie?: DieValue,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
@@ -1344,6 +1542,7 @@ async function suckerPunchTurn(
   }
   const nextPlayerId = outcome.landed ? turn.player_id : actorId;
 
+  mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
@@ -1950,6 +2149,9 @@ function readPositiveIntegerEnv(name: string): number | null {
 }
 
 function toErrorMessage(error: unknown): string {
+  if (error instanceof ActionRequestPersistenceError) {
+    return 'Unable to confirm the game action. Refresh the game before trying again.';
+  }
   if (error instanceof Error) {
     return error.message;
   }
@@ -1969,6 +2171,23 @@ function toErrorMessage(error: unknown): string {
   }
 
   return 'Unexpected multiplayer error';
+}
+
+function toErrorStatus(error: unknown) {
+  if (error instanceof ActionRequestPersistenceError) {
+    return 503;
+  }
+  if (isRetryableDatabaseError(error)) {
+    return 503;
+  }
+  return 400;
+}
+
+class ActionRequestPersistenceError extends Error {
+  constructor(readonly originalError: unknown) {
+    super('Unable to persist the game action outcome.');
+    this.name = 'ActionRequestPersistenceError';
+  }
 }
 
 class ActionTimer {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Image } from 'expo-image';
+import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 
 export function PlayerAvatar({
   avatarUrl,
@@ -27,6 +28,7 @@ export function PlayerAvatar({
     <View
       accessibilityElementsHidden={decorative}
       accessibilityLabel={decorative ? undefined : `${name}'s profile avatar`}
+      accessibilityRole={decorative ? undefined : 'image'}
       accessible={!decorative}
       aria-hidden={decorative || undefined}
       importantForAccessibility={decorative ? 'no-hide-descendants' : 'auto'}
@@ -35,9 +37,10 @@ export function PlayerAvatar({
     >
       {showImage ? (
         <Image
+          cachePolicy="memory-disk"
+          contentFit="cover"
           onError={() => setFailedUrl(avatarUrl ?? null)}
-          resizeMode="cover"
-          source={{ uri: avatarUrl ?? undefined }}
+          source={avatarUrl}
           style={StyleSheet.absoluteFill}
           testID={testID ? `${testID}-image` : undefined}
         />

@@ -47,25 +47,32 @@ function collectDecisionStates(count, firstSeed, limit) {
 
     while (game.phase !== 'complete' && collected.length < limit) {
       const activePlayerIndex = game.currentPlayerIndex;
-      const result = playAutomatedTurn(game, activePlayerIndex, pendingTurn, random, defaultComputerStrategy, (trace) => {
-        if (trace.stage !== 'decision' || collected.length >= limit) {
-          return;
-        }
+      const result = playAutomatedTurn(
+        game,
+        activePlayerIndex,
+        pendingTurn,
+        random,
+        defaultComputerStrategy,
+        (trace) => {
+          if (trace.stage !== 'decision' || collected.length >= limit) {
+            return;
+          }
 
-        const currentAction = currentActionFromTrace(trace);
-        if (!currentAction) {
-          return;
-        }
+          const currentAction = currentActionFromTrace(trace);
+          if (!currentAction) {
+            return;
+          }
 
-        collected.push({
-          currentAction,
-          game: cloneGame(trace.game),
-          gameIndex: gameIndex + 1,
-          seed: gameSeed,
-          trace: cloneTrace(trace),
-          turnIndex: turnIndex + 1,
-        });
-      });
+          collected.push({
+            currentAction,
+            game: cloneGame(trace.game),
+            gameIndex: gameIndex + 1,
+            seed: gameSeed,
+            trace: cloneTrace(trace),
+            turnIndex: turnIndex + 1,
+          });
+        },
+      );
 
       game = result.game;
       pendingTurn = result.pendingTurn;
@@ -133,7 +140,8 @@ function collectHeadToHeadGameDecisionStates(gameSeed, gameIndex, candidatePlaye
 
   const opponentIndex = game.players.findIndex((_player, index) => index !== candidatePlayerIndex);
   return {
-    margin: totalScore(game.players[candidatePlayerIndex].scorecard) - totalScore(game.players[opponentIndex].scorecard),
+    margin:
+      totalScore(game.players[candidatePlayerIndex].scorecard) - totalScore(game.players[opponentIndex].scorecard),
     states,
   };
 }
@@ -191,13 +199,7 @@ function continueGame(game, pendingTurn, random, playerIndex) {
 
   while (nextGame.phase !== 'complete' && guard < 100) {
     const activePlayerIndex = nextGame.currentPlayerIndex;
-    const result = playAutomatedTurn(
-      nextGame,
-      activePlayerIndex,
-      nextPendingTurn,
-      random,
-      defaultComputerStrategy,
-    );
+    const result = playAutomatedTurn(nextGame, activePlayerIndex, nextPendingTurn, random, defaultComputerStrategy);
     nextGame = result.game;
     nextPendingTurn = result.pendingTurn;
     guard += 1;
@@ -274,22 +276,13 @@ function currentActionFromTrace(trace) {
 
 function canBuyExtraRoll(game) {
   const player = game.players[game.currentPlayerIndex];
-  return (
-    game.phase !== 'complete' &&
-    game.rollNumber >= maxAvailableRolls(game) &&
-    player &&
-    player.suckerTokens > 0
-  );
+  return game.phase !== 'complete' && game.rollNumber >= maxAvailableRolls(game) && player && player.suckerTokens > 0;
 }
 
 function canUseMulligan(game, trace) {
   const player = game.players[game.currentPlayerIndex];
   return (
-    game.phase !== 'complete' &&
-    game.rollNumber > 0 &&
-    trace.mulligansUsed === 0 &&
-    player &&
-    player.suckerTokens >= 3
+    game.phase !== 'complete' && game.rollNumber > 0 && trace.mulligansUsed === 0 && player && player.suckerTokens >= 3
   );
 }
 
@@ -364,7 +357,7 @@ function aggregateKey(row) {
     `open:${openBucket(trace.availableCategoryCount)}`,
     `roll:${trace.rollNumber}/${trace.maxRolls}`,
     `tokens:${tokenBucket(trace.suckerTokens)}`,
-      ].join(' ');
+  ].join(' ');
 }
 
 function broadAggregateKey(row) {

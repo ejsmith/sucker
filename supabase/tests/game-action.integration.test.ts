@@ -61,6 +61,9 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   assertEquals(unauthorized.status, 401);
   assertEquals(unauthorized.body.error, 'Unauthorized');
 
+  const legacyInvite = await invokeGameAction(alice, { type: 'create_invite' }, 200, false);
+  assertString(legacyInvite.inviteCode);
+
   const invite = await invokeGameAction(alice, { type: 'create_invite' });
   assertString(invite.inviteCode);
 
@@ -96,13 +99,118 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
 });
 
+Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {
+  const [alice, bob] = await createUsers('idempotent-actions', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const requestId = crypto.randomUUID();
+  const action = { gameId: game.id, held: falseHeld, requestId, type: 'roll' };
+
+  const first = (await invokeGameAction(alice, action)).game as GameRow;
+  const replay = (await invokeGameAction(alice, action)).game as GameRow;
+  assertEquals(replay.state, first.state);
+
+  const rollActions = (await loadActions(game.id)).filter((item) => item.action_type === 'roll');
+  assertEquals(rollActions.length, 1);
+
+  const mismatchedReplay = await invokeGameAction(alice, { gameId: game.id, requestId, type: 'pass_response' }, 400);
+  assertEquals(mismatchedReplay.error, 'Request id was already used for a different action.');
+
+  const privateRequest = await alice.client
+    .from('game_action_requests')
+    .select('request_id')
+    .eq('request_id', requestId)
+    .maybeSingle();
+  if (!privateRequest.error) {
+    throw new Error('Expected the internal action request ledger to be inaccessible to authenticated clients.');
+  }
+
+  const malformed = await invokeGameAction(alice, { gameId: game.id, requestId: 'not-a-uuid', type: 'roll' }, 400);
+  assertEquals(malformed.error, 'Invalid multiplayer action field: requestId.');
+
+  const invalidInviteRequestId = crypto.randomUUID();
+  const invalidInviteAction = {
+    inviteCode: 'MISSING',
+    requestId: invalidInviteRequestId,
+    type: 'accept_invite',
+  };
+  const invalidInvite = await invokeGameAction(bob, invalidInviteAction, 400);
+  const replayedInvalidInvite = await invokeGameAction(bob, invalidInviteAction, 400);
+  assertEquals(replayedInvalidInvite.error, invalidInvite.error);
+
+  const terminalRequest = await selectSingle<{ http_status: number; status: string }>(
+    admin.from('game_action_requests').select('http_status, status').eq('request_id', invalidInviteRequestId).single(),
+  );
+  assertEquals(terminalRequest, { http_status: 400, status: 'completed' });
+});
+
+Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {
+  const [alice, bob] = await createUsers('action-abuse', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  const directGameWrite = await alice.client.from('games').update({ status: 'complete' }).eq('id', game.id);
+  assertNoError(directGameWrite.error);
+  const unchangedGame = await selectSingle<{ status: string }>(
+    admin.from('games').select('status').eq('id', game.id).single(),
+  );
+  assertEquals(unchangedGame.status, 'active');
+
+  const spoofedPushToken = await alice.client.from('push_tokens').insert({
+    expo_push_token: `ExponentPushToken[${crypto.randomUUID()}]`,
+    platform: 'ios',
+    profile_id: bob.id,
+  });
+  if (!spoofedPushToken.error) {
+    throw new Error('Expected users to be unable to register push tokens for another profile.');
+  }
+
+  const ownWebPush = await alice.client.from('web_push_subscriptions').insert({
+    auth_key: 'test-auth',
+    endpoint: `https://push.example.test/${crypto.randomUUID()}`,
+    p256dh_key: 'test-p256dh',
+    profile_id: alice.id,
+  });
+  assertNoError(ownWebPush.error);
+
+  const oversized = await fetch(functionUrl, {
+    body: JSON.stringify({ padding: 'x'.repeat(33_000), requestId: crypto.randomUUID(), type: 'create_invite' }),
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${alice.session.access_token}`,
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  });
+  assertEquals(oversized.status, 413);
+
+  const floodRows = Array.from({ length: 120 }, () => ({
+    action_type: 'abuse-test',
+    actor_id: alice.id,
+    http_status: 200,
+    request_id: crypto.randomUUID(),
+    response: {},
+    status: 'completed' as const,
+  }));
+  assertNoError((await admin.from('game_action_requests').insert(floodRows)).error);
+  const rateLimited = await invokeGameAction(alice, { type: 'create_invite' }, 429);
+  assertEquals(rateLimited.error, 'Too many game actions. Wait a moment and try again.');
+});
+
 Deno.test('game-action removes open invites and hides started games from the actor', async () => {
   const [alice, bob] = await createUsers('remove-games', ['Alice', 'Bob']);
 
   const invite = await invokeGameAction(alice, { type: 'create_invite' });
   const inviteGameId = (invite.game as GameRow).id;
-  const removedInvite = await invokeGameAction(alice, { gameId: inviteGameId, type: 'remove_game' });
+  const removeInviteRequestId = crypto.randomUUID();
+  const removeInviteAction = { gameId: inviteGameId, requestId: removeInviteRequestId, type: 'remove_game' };
+  const removedInvite = await invokeGameAction(alice, removeInviteAction);
   assertEquals(removedInvite.removedGameId, inviteGameId);
+  const replayedRemoval = await invokeGameAction(alice, removeInviteAction);
+  assertEquals(replayedRemoval.removedGameId, inviteGameId);
+
+  const retainedRemovalRequest = await selectSingle<{ game_id: string; status: string }>(
+    admin.from('game_action_requests').select('game_id, status').eq('request_id', removeInviteRequestId).single(),
+  );
+  assertEquals(retainedRemovalRequest, { game_id: inviteGameId, status: 'completed' });
 
   const deletedGame = await selectMaybe<{ id: string }>(
     admin.from('games').select('id').eq('id', inviteGameId).maybeSingle(),
@@ -545,6 +653,7 @@ async function upsertProfile(id: string, displayName: string) {
 }
 
 async function invokeWithoutAuth(body: Record<string, unknown>) {
+  const requestBody = { requestId: crypto.randomUUID(), ...body };
   const {
     body: payload,
     serverTiming,
@@ -552,7 +661,7 @@ async function invokeWithoutAuth(body: Record<string, unknown>) {
   } = await fetchJsonWithRetry(
     functionUrl,
     {
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
       headers: {
         apikey: anonKey,
         'Content-Type': 'application/json',
@@ -564,7 +673,13 @@ async function invokeWithoutAuth(body: Record<string, unknown>) {
   return { body: payload, status };
 }
 
-async function invokeGameAction(user: TestUser, body: Record<string, unknown>, expectedStatus = 200) {
+async function invokeGameAction(
+  user: TestUser,
+  body: Record<string, unknown>,
+  expectedStatus = 200,
+  includeRequestId = true,
+) {
+  const requestBody = includeRequestId ? { requestId: crypto.randomUUID(), ...body } : body;
   const {
     body: payload,
     serverTiming,
@@ -572,7 +687,7 @@ async function invokeGameAction(user: TestUser, body: Record<string, unknown>, e
   } = await fetchJsonWithRetry(
     functionUrl,
     {
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
       headers: {
         apikey: anonKey,
         Authorization: `Bearer ${user.session.access_token}`,

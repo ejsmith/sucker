@@ -1,6 +1,3 @@
-import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
-import { Inter_900Black } from '@expo-google-fonts/inter/900Black';
-import { useFonts } from '@expo-google-fonts/inter/useFonts';
 import { StatusBar } from 'expo-status-bar';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -10,7 +7,6 @@ import {
   Modal,
   PanResponder,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,7 +14,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   availableCategories,
   categoryLabels,
@@ -47,7 +43,6 @@ import {
   type LocalPendingTurn,
 } from './src/game/computer';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
-import { isMultiplayerConfigured } from './src/multiplayer';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import {
   buyRemoteExtraRoll,
@@ -55,7 +50,6 @@ import {
   getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
-  listMyGames,
   rollRemoteGame,
   scoreRemoteCategory,
   scratchRemoteCategory,
@@ -63,9 +57,6 @@ import {
   subscribeToGameListChanges,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
-import { MultiplayerLobby } from './src/multiplayer/MultiplayerLobby';
-import { clearCachedGameList, loadCachedGameList, saveCachedGameList } from './src/multiplayer/gameListCache';
-import { getInitialNotificationGameId, useWebNotificationClicks } from './src/multiplayer/notificationNavigation';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
 import { getProfilesByIds } from './src/multiplayer/profiles';
 import { supabase } from './src/multiplayer/supabase';
@@ -80,7 +71,6 @@ import {
 } from './src/ui/gameLayout';
 import { useAppActivity } from './src/ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
-import { WebPortraitGuard } from './src/ui/WebPortraitGuard';
 import {
   createRollingLaunch,
   createRollingScaleOutputRange,
@@ -95,6 +85,8 @@ import {
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
+import { Pressable } from './src/ui/Pressable';
+import { useReducedMotion } from './src/ui/useReducedMotion';
 import {
   buildExtraRollActionPayload,
   buildRollActionPayload,
@@ -136,6 +128,13 @@ type OpponentTurnReveal = {
 };
 
 const GameLayoutContext = createContext<GameLayout | null>(null);
+const absoluteFillStyle = {
+  bottom: 0,
+  left: 0,
+  position: 'absolute' as const,
+  right: 0,
+  top: 0,
+};
 
 function useGameLayout() {
   const layout = useContext(GameLayoutContext);
@@ -297,8 +296,8 @@ const backSwipeVelocity = 0.45;
 const nextTurnDialogDelayMs = 1000;
 const nextTurnListRefreshMs = 5000;
 const upperBonusTarget = 63;
-const bonusValueColor = '#FFD329';
-const bonusFlashColor = '#FFF8D5';
+const bonusValueColor = '#5A1308';
+const bonusFlashColor = '#8F0000';
 const awardedBonusColor = bonusValueColor;
 const bonusOutlineColor = '#5A1308';
 const awardedBonusOutlineColor = bonusOutlineColor;
@@ -372,148 +371,6 @@ function replaceWebDevViewportPreset(key: DevViewportPresetSelection) {
   history.replaceState(null, '', `${location.pathname}${search ? `?${search}` : ''}${location.hash}`);
 }
 
-export default function App() {
-  const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
-
-  useEffect(() => {
-    if (fontError) {
-      console.warn('Unable to load Inter fonts; continuing with platform font fallback.', fontError);
-    }
-  }, [fontError]);
-
-  // The RN 0.81 renderers and browser CSS fall back for unknown families, so font errors should not block gameplay.
-  if (!fontsLoaded && !fontError) {
-    return <View style={styles.fontLoadingScreen} />;
-  }
-
-  return (
-    <SafeAreaProvider>
-      <WebPortraitGuard>
-        <AppRoutes />
-      </WebPortraitGuard>
-    </SafeAreaProvider>
-  );
-}
-
-function AppRoutes() {
-  const [showLocalDemo, setShowLocalDemo] = useState(() => !isMultiplayerConfigured);
-  const [localPlayerProfile, setLocalPlayerProfile] = useState<LocalPlayerProfile | null>(null);
-  const [remoteGameRequest, setRemoteGameRequest] = useState<RemoteGameRequest | null>(() => {
-    const gameId = getInitialNotificationGameId();
-    return gameId ? createRemoteGameRequest(gameId) : null;
-  });
-  const [sharedGameList, setSharedGameList] = useState<{
-    games: RemoteGameRow[];
-    profileId: string | null;
-  }>({ games: [], profileId: null });
-  const hasChangedSharedGameList = useRef(false);
-  const [isGameListCacheHydrated, setIsGameListCacheHydrated] = useState(false);
-  const openRemoteGame = useCallback((gameId: string) => {
-    setShowLocalDemo(false);
-    setRemoteGameRequest(createRemoteGameRequest(gameId));
-  }, []);
-  const setSharedGames = useCallback((profileId: string | null, games: RemoteGameRow[]) => {
-    hasChangedSharedGameList.current = true;
-    setSharedGameList({ games: profileId ? games : [], profileId });
-  }, []);
-  const refreshSharedGames = useCallback(
-    async (profileId: string) => {
-      const games = await listMyGames();
-      setSharedGames(profileId, games);
-      return games;
-    },
-    [setSharedGames],
-  );
-  const rememberRemoteGame = useCallback((profileId: string, game: RemoteGameRow) => {
-    hasChangedSharedGameList.current = true;
-    setSharedGameList((cache) => ({
-      games: mergeRemoteGameIntoLobbyCache(cache.profileId === profileId ? cache.games : [], game),
-      profileId,
-    }));
-  }, []);
-  useEffect(() => {
-    let active = true;
-
-    void loadCachedGameList()
-      .then((cached) => {
-        if (active && cached && !hasChangedSharedGameList.current) {
-          setSharedGameList(cached);
-        }
-      })
-      .catch((cacheError: unknown) => {
-        console.warn('Unable to restore cached games', cacheError);
-      })
-      .finally(() => {
-        if (active) {
-          setIsGameListCacheHydrated(true);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!isGameListCacheHydrated) {
-      return;
-    }
-
-    const cacheUpdate = sharedGameList.profileId
-      ? saveCachedGameList({ games: sharedGameList.games, profileId: sharedGameList.profileId })
-      : clearCachedGameList();
-    void cacheUpdate.catch((cacheError: unknown) => {
-      console.warn('Unable to update cached games', cacheError);
-    });
-  }, [isGameListCacheHydrated, sharedGameList]);
-  useWebNotificationClicks(openRemoteGame);
-
-  if (isMultiplayerConfigured && remoteGameRequest) {
-    return (
-      <RemoteGameScreen
-        gameId={remoteGameRequest.gameId}
-        games={sharedGameList.games}
-        gamesProfileId={sharedGameList.profileId}
-        key={`${remoteGameRequest.gameId}:${remoteGameRequest.requestId}`}
-        onGameChange={rememberRemoteGame}
-        onRefreshGames={refreshSharedGames}
-        onExit={() => setRemoteGameRequest(null)}
-      />
-    );
-  }
-
-  if (isMultiplayerConfigured && !showLocalDemo) {
-    return (
-      <MultiplayerLobby
-        games={sharedGameList.games}
-        gamesProfileId={sharedGameList.profileId}
-        onGamesChange={setSharedGames}
-        onOpenGame={openRemoteGame}
-        onPlayLocalDemo={(playerProfile) => {
-          setLocalPlayerProfile(playerProfile);
-          setShowLocalDemo(true);
-        }}
-        onRefreshGames={refreshSharedGames}
-      />
-    );
-  }
-
-  return (
-    <LocalGameScreen
-      localPlayerAvatarUrl={localPlayerProfile?.avatarUrl}
-      localPlayerName={localPlayerProfile?.displayName}
-      onExit={() => setShowLocalDemo(!isMultiplayerConfigured)}
-    />
-  );
-}
-
-function mergeRemoteGameIntoLobbyCache(games: RemoteGameRow[], game: RemoteGameRow) {
-  const nextGames = games.some((currentGame) => currentGame.id === game.id)
-    ? games.map((currentGame) => (currentGame.id === game.id ? game : currentGame))
-    : [game, ...games];
-
-  return nextGames.sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
-}
-
 function shouldShowNextTurnsAfterAction(game: RemoteGameRow, profileId: string) {
   return game.status !== 'complete' && game.current_player_id !== profileId;
 }
@@ -538,17 +395,13 @@ function getNextTurnGames(games: RemoteGameRow[], profileId: string, currentGame
     .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
 }
 
-function createRemoteGameRequest(gameId: string): RemoteGameRequest {
-  remoteGameRequestId += 1;
-  return { gameId, requestId: remoteGameRequestId };
-}
-
-function RemoteGameScreen({
+export function RemoteGameScreen({
   gameId,
   games,
   gamesProfileId,
   onExit,
   onGameChange,
+  onOpenGame,
   onRefreshGames,
 }: {
   gameId: string;
@@ -556,6 +409,7 @@ function RemoteGameScreen({
   gamesProfileId: string | null;
   onExit: () => void;
   onGameChange: (profileId: string, game: RemoteGameRow) => void;
+  onOpenGame: (gameId: string) => void;
   onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
@@ -570,7 +424,6 @@ function RemoteGameScreen({
     (remoteStageStyle.width > remoteStageViewportWidth || remoteStageStyle.height > remoteStageViewportHeight);
   const remoteStableHostStyle = Platform.OS === 'web' ? { minHeight: windowHeight, minWidth: windowWidth } : null;
   const isAppActive = useAppActivity();
-  const [activeGameId, setActiveGameId] = useState(gameId);
   const [error, setError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
@@ -582,7 +435,7 @@ function RemoteGameScreen({
   const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
   const wasAppActive = useRef(isAppActive);
   const profileIdRef = useRef<string | null>(null);
-  const activeGameIdRef = useRef(activeGameId);
+  const activeGameIdRef = useRef(gameId);
   const nextTurnGames =
     nextTurnPrompt?.isGameListReady && profileId && gamesProfileId === profileId
       ? getNextTurnGames(games, profileId, nextTurnPrompt.gameId)
@@ -610,8 +463,8 @@ function RemoteGameScreen({
   );
 
   useEffect(() => {
-    activeGameIdRef.current = activeGameId;
-  }, [activeGameId]);
+    activeGameIdRef.current = gameId;
+  }, [gameId]);
 
   useEffect(() => {
     if (
@@ -635,7 +488,7 @@ function RemoteGameScreen({
       try {
         const [{ data: userData, error: userError }, nextGame] = await Promise.all([
           supabase.auth.getUser(),
-          getGame(activeGameId),
+          getGame(gameId),
         ]);
         if (userError) {
           throw userError;
@@ -664,7 +517,7 @@ function RemoteGameScreen({
 
     void loadRemoteGame();
     const unsubscribe = subscribeToGame(
-      activeGameId,
+      gameId,
       (nextGame) => {
         if (isMounted) {
           setRemoteGame(nextGame);
@@ -684,7 +537,7 @@ function RemoteGameScreen({
       isMounted = false;
       unsubscribe();
     };
-  }, [activeGameId, onGameChange]);
+  }, [gameId, onGameChange]);
 
   useEffect(() => {
     let isMounted = true;
@@ -721,7 +574,7 @@ function RemoteGameScreen({
     }
 
     const interval = setInterval(() => {
-      void getGame(activeGameId)
+      void getGame(gameId)
         .then((nextGame) => {
           setRemoteGame(nextGame);
           if (profileIdRef.current) {
@@ -734,7 +587,7 @@ function RemoteGameScreen({
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [activeGameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
+  }, [gameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
 
   useEffect(() => {
     const wasActive = wasAppActive.current;
@@ -745,7 +598,7 @@ function RemoteGameScreen({
     }
 
     let isCurrent = true;
-    void getGame(activeGameId)
+    void getGame(gameId)
       .then((nextGame) => {
         if (!isCurrent) {
           return;
@@ -767,7 +620,7 @@ function RemoteGameScreen({
     return () => {
       isCurrent = false;
     };
-  }, [activeGameId, isAppActive, onGameChange, profileId, remoteGame, syncRemoteBadgeCount]);
+  }, [gameId, isAppActive, onGameChange, profileId, remoteGame, syncRemoteBadgeCount]);
 
   useEffect(() => {
     if (!profileId || !isAppActive || !isNextTurnPromptReady) {
@@ -874,7 +727,7 @@ function RemoteGameScreen({
     setRemoteGame(null);
     setRemoteLastTurn(null);
     setRemoteLastTurnLoadFailedId(null);
-    setActiveGameId(nextGameId);
+    onOpenGame(nextGameId);
   }
 
   function exitToLobby() {
@@ -933,7 +786,7 @@ function RemoteGameScreen({
       return runRemoteAction(
         async () => {
           const result = await createRematch(remoteGame.id);
-          setActiveGameId(result.game.id);
+          onOpenGame(result.game.id);
           return result;
         },
         { showNextTurns: false },
@@ -967,7 +820,7 @@ function RemoteGameScreen({
   );
 }
 
-function LocalGameScreen({
+export function LocalGameScreen({
   isRemoteBusy = false,
   localPlayerAvatarUrl,
   localPlayerName,
@@ -1042,6 +895,8 @@ function LocalGameScreen({
   const [scoreFlyNumber, setScoreFlyNumber] = useState<ScoreFlyNumber | null>(null);
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
   const isAppActive = useAppActivity();
+  const prefersReducedMotion = useReducedMotion();
+  const shouldReduceMotion = disableE2EAnimations || prefersReducedMotion;
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
   const menuButtonRef = useRef<ViewRef | null>(null);
@@ -1337,7 +1192,7 @@ function LocalGameScreen({
   }, [homeSectionBonusAwarded, sectionBonusPulse]);
 
   useEffect(() => {
-    if (disableE2EAnimations || !isAppActive) {
+    if (shouldReduceMotion || !isAppActive) {
       return;
     }
 
@@ -1394,7 +1249,7 @@ function LocalGameScreen({
 
     loops.forEach((loop) => loop.start());
     return () => loops.forEach((loop) => loop.stop());
-  }, [bgFloat, isAppActive, selectedCategory, selectedPulse]);
+  }, [bgFloat, isAppActive, selectedCategory, selectedPulse, shouldReduceMotion]);
 
   useEffect(() => {
     return () => {
@@ -1896,14 +1751,7 @@ function LocalGameScreen({
     const launches = Object.fromEntries(
       rollingIndexes.map((index) => [
         index,
-        createRollingLaunch(
-          index,
-          launchSide,
-          rollZoneRect,
-          slotRects[index] ?? null,
-          rollingDieSize,
-          landingDieSize,
-        ),
+        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null, rollingDieSize, landingDieSize),
       ]),
     ) as Partial<Record<number, RollingLaunch>>;
     setRollingLaunches(launches);
@@ -2627,7 +2475,7 @@ function LocalGameScreen({
     }
 
     sectionBonusPulse.stopAnimation();
-    if (disableE2EAnimations) {
+    if (shouldReduceMotion) {
       sectionBonusPulse.setValue(1);
       return;
     }
@@ -3033,13 +2881,7 @@ function LocalGameScreen({
                       testID={`die-slot-${index}`}
                     >
                       {showSlotDie && (
-                        <DieFace
-                          face={die}
-                          style={[
-                            styles.dieImage,
-                            isScoring && styles.scoringSourceDieImage,
-                          ]}
-                        />
+                        <DieFace face={die} style={[styles.dieImage, isScoring && styles.scoringSourceDieImage]} />
                       )}
                     </Pressable>
                   </View>
@@ -4403,10 +4245,10 @@ function ScoreCell({
         <View pointerEvents="none" style={[styles.scoreBoxShadow, layout.styles.scoreBoxShadow]} />
         <View
           accessibilityLabel={`${homePlayer.name}, ${categoryLabel} score: ${homeScoreAccessibilityValue}`}
-          accessibilityRole="text"
           accessibilityValue={{ text: homeScoreAccessibilityValue }}
           accessible
           pointerEvents="none"
+          role="img"
           style={StyleSheet.absoluteFill}
         />
         <Pressable
@@ -4449,10 +4291,10 @@ function ScoreCell({
       <View style={[styles.opponentScoreWrap, layout.styles.opponentScoreWrap]}>
         <View
           accessibilityLabel={`${opponentPlayer.name}, ${categoryLabel} score: ${opponentScoreAccessibilityValue}`}
-          accessibilityRole="text"
           accessibilityValue={{ text: opponentScoreAccessibilityValue }}
           accessible
           pointerEvents="none"
+          role="img"
           style={StyleSheet.absoluteFill}
         />
         <Pressable
@@ -4715,30 +4557,12 @@ function DieFace({
         {variant === 'background' && (
           <>
             <Rect fill="#5A1308" height={61} rx={11} width={61} x={4} y={5} />
-            <Rect
-              fill="#7A1208"
-              height={61}
-              rx={11}
-              stroke="#5A1308"
-              strokeWidth={1.5}
-              width={61}
-              x={2}
-              y={2}
-            />
+            <Rect fill="#7A1208" height={61} rx={11} stroke="#5A1308" strokeWidth={1.5} width={61} x={2} y={2} />
           </>
         )}
         {variant === 'white' && (
           <>
-            <Rect
-              fill="#EEEEEE"
-              height={66}
-              rx={11}
-              stroke="#838383"
-              strokeWidth={1.5}
-              width={66}
-              x={1}
-              y={1}
-            />
+            <Rect fill="#EEEEEE" height={66} rx={11} stroke="#838383" strokeWidth={1.5} width={66} x={1} y={1} />
             <Rect fill="#FFFFFF" height={60} rx={9} width={60} x={4} y={4} />
           </>
         )}
@@ -5100,7 +4924,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   backgroundPattern: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     opacity: 0.12,
   },
   backgroundDie: {
@@ -5124,7 +4948,7 @@ const styles = StyleSheet.create({
     zIndex: 60,
   },
   topBarBannerClip: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     borderRadius: 8,
     overflow: 'hidden',
     zIndex: 1,
@@ -5165,7 +4989,7 @@ const styles = StyleSheet.create({
     zIndex: 25,
   },
   topMenuLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     zIndex: 80,
   },
   topMenu: {
@@ -5402,7 +5226,7 @@ const styles = StyleSheet.create({
     width: 50,
   },
   opponentScoreButton: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5437,7 +5261,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   suckerPunchScoreWipe: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -5613,7 +5437,7 @@ const styles = StyleSheet.create({
     opacity: 0,
   },
   rollingDiceOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     zIndex: 8,
   },
   rollingDieTrack: {
@@ -5686,7 +5510,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   scoreDiceOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     zIndex: 24,
   },
   scoreFlyingDie: {
@@ -5701,7 +5525,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scoreNumberOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     zIndex: 25,
   },
   scoreFlyingNumber: {
@@ -5724,7 +5548,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   suckerPunchChanceOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.66)',
     justifyContent: 'center',
@@ -5822,7 +5646,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   suckerPunchNoticeOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
@@ -5889,7 +5713,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   nextTurnsOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.62)',
     justifyContent: 'center',
@@ -6071,7 +5895,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   gameOverOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.68)',
     justifyContent: 'center',
@@ -6255,7 +6079,7 @@ const styles = StyleSheet.create({
   },
   tokenCountBadge: {
     alignItems: 'center',
-    backgroundColor: '#F12D22',
+    backgroundColor: '#8F0000',
     borderColor: '#FFF3C2',
     borderRadius: 11,
     borderWidth: 2,
@@ -6275,7 +6099,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   tokenMenuOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.56)',
     justifyContent: 'flex-end',

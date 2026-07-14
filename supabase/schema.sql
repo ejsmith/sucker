@@ -111,6 +111,24 @@ create table public.turn_actions (
   created_at timestamptz not null default now()
 );
 
+create table public.game_action_requests (
+  actor_id uuid not null references public.profiles(id) on delete cascade,
+  request_id uuid not null,
+  action_type text not null,
+  -- Keep the original game id after destructive actions delete the game so a
+  -- retried request can still return its stored result.
+  game_id uuid,
+  status text not null default 'processing' check (status in ('processing', 'completed')),
+  http_status integer check (http_status between 200 and 599),
+  response jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (actor_id, request_id)
+);
+
+create index game_action_requests_actor_created_idx
+on public.game_action_requests (actor_id, created_at desc);
+
 create table public.token_events (
   id uuid primary key default gen_random_uuid(),
   game_id uuid not null references public.games(id) on delete cascade,
@@ -314,6 +332,10 @@ for each row execute function public.touch_updated_at();
 
 create trigger game_invites_touch_updated_at
 before update on public.game_invites
+for each row execute function public.touch_updated_at();
+
+create trigger game_action_requests_touch_updated_at
+before update on public.game_action_requests
 for each row execute function public.touch_updated_at();
 
 create trigger push_tokens_touch_updated_at
@@ -546,6 +568,7 @@ alter table public.game_players enable row level security;
 alter table public.game_invites enable row level security;
 alter table public.turns enable row level security;
 alter table public.turn_actions enable row level security;
+alter table public.game_action_requests enable row level security;
 alter table public.token_events enable row level security;
 alter table public.push_tokens enable row level security;
 alter table public.web_push_subscriptions enable row level security;
@@ -723,5 +746,6 @@ grant all on all routines in schema public to service_role;
 grant all on all sequences in schema public to service_role;
 
 grant all on all tables in schema public to authenticated;
+revoke all on table public.game_action_requests from anon, authenticated;
 grant all on all routines in schema public to authenticated;
 grant all on all sequences in schema public to authenticated;

@@ -1,3 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { randomUUID } from 'expo-crypto';
 import { supabase } from './supabase';
 import type { Database } from './database.types';
 import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
@@ -11,27 +14,48 @@ import {
   toHeldDice,
 } from '../game';
 import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
+import { reportError } from '../monitoring/exceptionless';
+import {
+  createOrReuseActionRequest,
+  selectActionRequestsForRecovery,
+  toMultiplayerAction,
+  type ActionRequest,
+  type RecoveredMultiplayerAction,
+} from './actionRecovery';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
+const pendingActionsKey = 'sucker:pending-multiplayer-actions:v2';
+const pendingActionMaxAgeMs = 5 * 60_000;
+const retryDelaysMs = [350, 900];
+let pendingStorageOperation: Promise<unknown> = Promise.resolve();
+const recoveryPromises = new Map<string, Promise<RecoveredMultiplayerAction[]>>();
 
 export async function listMyGames() {
-  const { data, error } = await supabase.from('games').select('*').order('updated_at', { ascending: false });
+  const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
+    await Promise.all([
+      supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
+      supabase
+        .from('games')
+        .select('*')
+        .eq('status', 'complete')
+        .order('completed_at', { ascending: false, nullsFirst: false })
+        .order('updated_at', { ascending: false })
+        .limit(25),
+    ]);
 
-  if (error) {
-    throw error;
+  if (activeError) {
+    throw activeError;
+  }
+  if (completedError) {
+    throw completedError;
   }
 
+  const data = [...(activeGames ?? []), ...(completedGames ?? [])];
+
   const gameIds = data.map((game) => game.id);
-  const completedGameIds = data
-    .filter((game) => game.status === 'complete')
-    .sort(
-      (left, right) =>
-        Date.parse(right.completed_at ?? right.updated_at) - Date.parse(left.completed_at ?? left.updated_at),
-    )
-    .slice(0, 25)
-    .map((game) => game.id);
+  const completedGameIds = (completedGames ?? []).map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
     loadLastNudges(gameIds),
     loadSuckerTokensSpent(completedGameIds),
@@ -96,33 +120,209 @@ export async function getLatestRemoteBlockedSuckerPunch(
 }
 
 export async function applyMultiplayerAction(action: MultiplayerAction): Promise<MultiplayerActionResult> {
-  const { data, error } = await supabase.functions.invoke<MultiplayerActionResult>('game-action', {
-    body: action,
-  });
-
-  if (error) {
-    throw new Error(await toFunctionErrorMessage(error));
-  }
-  if (!data) {
-    throw new Error('Game action returned no data.');
-  }
-
-  return data;
+  return invokeReliableAction<MultiplayerActionResult>(action);
 }
 
 export async function removeRemoteGame(gameId: string) {
-  const { data, error } = await supabase.functions.invoke<{ removedGameId: string }>('game-action', {
-    body: { gameId, type: 'remove_game' },
+  return invokeReliableAction<{ removedGameId: string }>({ gameId, type: 'remove_game' });
+}
+
+export function recoverPendingMultiplayerActions(actorId: string) {
+  const activeRecovery = recoveryPromises.get(actorId);
+  if (activeRecovery) {
+    return activeRecovery;
+  }
+
+  const recovery = recoverPendingActions(actorId).finally(() => {
+    recoveryPromises.delete(actorId);
   });
+  recoveryPromises.set(actorId, recovery);
+  return recovery;
+}
 
-  if (error) {
-    throw new Error(await toFunctionErrorMessage(error));
-  }
-  if (!data) {
-    throw new Error('Game action returned no data.');
+async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise<TResult> {
+  const networkState = await NetInfo.fetch();
+  if (networkState.isConnected === false || networkState.isInternetReachable === false) {
+    throw new Error('You are offline. Reconnect before making a game move.');
   }
 
-  return data;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.user.id) {
+    throw new Error('Sign in before making a game move.');
+  }
+
+  const request = await getOrCreatePendingAction(session.user.id, action);
+
+  try {
+    const result = await invokeActionRequest<TResult>(request);
+    await removePendingAction(request.requestId);
+    return result;
+  } catch (error) {
+    if (isRetryableActionError(error)) {
+      void reportError(error, {
+        ActionType: request.type,
+        Operation: 'MultiplayerAction',
+        RequestId: request.requestId,
+      });
+    } else {
+      await removePendingAction(request.requestId);
+    }
+    throw error;
+  }
+}
+
+async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TResult> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    if (attempt > 0) {
+      await delay(retryDelaysMs[attempt - 1]);
+    }
+
+    const { actionKey: _actionKey, actorId: _actorId, createdAt: _createdAt, ...body } = request;
+    const { data, error } = await supabase.functions.invoke<TResult>('game-action', { body });
+    if (!error && data) {
+      return data;
+    }
+
+    const response = toFunctionErrorResponse(error);
+    const message = error ? await toFunctionErrorMessage(error) : 'Game action returned no data.';
+    lastError = new MultiplayerActionError(message, response?.status);
+    if (!isRetryableActionError(lastError)) {
+      throw lastError;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unable to update game.');
+}
+
+async function recoverPendingActions(actorId: string) {
+  const pending = await getPendingActionsForRecovery(actorId);
+  const recovered: RecoveredMultiplayerAction[] = [];
+  for (const request of pending) {
+    try {
+      const result = await invokeActionRequest<MultiplayerActionResult | { removedGameId: string }>(request);
+      await removePendingAction(request.requestId);
+      recovered.push({
+        action: toMultiplayerAction(request),
+        actorId,
+        requestId: request.requestId,
+        result,
+      });
+    } catch (error) {
+      if (!isRetryableActionError(error)) {
+        await removePendingAction(request.requestId);
+      }
+      await reportError(error, {
+        ActionType: request.type,
+        Operation: 'RecoverPendingMultiplayerAction',
+        RequestId: request.requestId,
+      });
+    }
+  }
+  return recovered;
+}
+
+function getOrCreatePendingAction(actorId: string, action: MultiplayerAction) {
+  return updatePendingActions((actions) => {
+    const { pending, request } = createOrReuseActionRequest(
+      actions,
+      actorId,
+      action,
+      Date.now(),
+      randomUUID,
+      pendingActionMaxAgeMs,
+    );
+    return { actions: pending, result: request };
+  });
+}
+
+function getPendingActionsForRecovery(actorId: string) {
+  return updatePendingActions((actions) => {
+    const { pending, recoverable } = selectActionRequestsForRecovery(
+      actions,
+      actorId,
+      Date.now(),
+      pendingActionMaxAgeMs,
+    );
+    return { actions: pending, result: recoverable };
+  });
+}
+
+function removePendingAction(requestId: string) {
+  return updatePendingActions((actions) => ({
+    actions: actions.filter((item) => item.requestId !== requestId),
+    result: undefined,
+  }));
+}
+
+function updatePendingActions<TResult>(
+  update: (actions: ActionRequest[]) => { actions: ActionRequest[]; result: TResult },
+) {
+  const operation = pendingStorageOperation.then(async (): Promise<TResult> => {
+    const actions = await loadPendingActions();
+    const updated = update(actions);
+    await AsyncStorage.setItem(pendingActionsKey, JSON.stringify(updated.actions));
+    return updated.result;
+  });
+  pendingStorageOperation = operation.catch(() => undefined);
+  return operation;
+}
+
+async function loadPendingActions(): Promise<ActionRequest[]> {
+  try {
+    const value = await AsyncStorage.getItem(pendingActionsKey);
+    if (!value) {
+      return [];
+    }
+    const actions = JSON.parse(value) as unknown;
+    return Array.isArray(actions) ? (actions.filter(isActionRequest) as ActionRequest[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isActionRequest(value: unknown): value is ActionRequest {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    typeof (value as Partial<ActionRequest>).requestId === 'string' &&
+    typeof (value as Partial<ActionRequest>).actionKey === 'string' &&
+    typeof (value as Partial<ActionRequest>).actorId === 'string' &&
+    typeof (value as Partial<ActionRequest>).createdAt === 'string' &&
+    typeof (value as Partial<ActionRequest>).type === 'string',
+  );
+}
+
+class MultiplayerActionError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'MultiplayerActionError';
+  }
+}
+
+function isRetryableActionError(error: unknown) {
+  if (!(error instanceof MultiplayerActionError)) {
+    return true;
+  }
+  if (!error.status) {
+    return true;
+  }
+  if (error.status === 401) {
+    return true;
+  }
+  if (error.status === 409) {
+    return error.message === 'The action is still processing.';
+  }
+  return error.status === 408 || error.status === 425 || error.status >= 500;
+}
+
+function delay(durationMs: number) {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
 async function toFunctionErrorMessage(error: unknown) {

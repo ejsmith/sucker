@@ -1,3 +1,4 @@
+import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
@@ -18,7 +19,18 @@ export function getInitialNotificationGameId() {
     return null;
   }
 
-  return getGameIdFromUrl(getWebLocation()?.href ?? null);
+  const url = getWebLocation()?.href;
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    const queryGameId = parsedUrl.searchParams.get('game') ?? parsedUrl.searchParams.get('gameId');
+    return queryGameId?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 export function getGameIdFromUrl(url: string | null) {
@@ -44,12 +56,32 @@ export function getGameIdFromUrl(url: string | null) {
   return null;
 }
 
-export function useWebNotificationClicks(onNotificationClick: (gameId: string) => void) {
+export type NotificationClickSource = 'foreground' | 'initial';
+
+export function useNotificationClicks(onNotificationClick: (gameId: string, source: NotificationClickSource) => void) {
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      return undefined;
+      let active = true;
+      void Notifications.getLastNotificationResponseAsync().then((response) => {
+        const gameId = getGameIdFromNativeNotification(response);
+        if (active && gameId) {
+          onNotificationClick(gameId, 'initial');
+          void Notifications.clearLastNotificationResponseAsync();
+        }
+      });
+      const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        const gameId = getGameIdFromNativeNotification(response);
+        if (gameId) onNotificationClick(gameId, 'foreground');
+        void Notifications.clearLastNotificationResponseAsync();
+      });
+      return () => {
+        active = false;
+        subscription.remove();
+      };
     }
 
+    const initialGameId = getInitialNotificationGameId();
+    if (initialGameId) onNotificationClick(initialGameId, 'initial');
     const serviceWorker = getWebServiceWorker();
     if (!serviceWorker) {
       return undefined;
@@ -58,13 +90,22 @@ export function useWebNotificationClicks(onNotificationClick: (gameId: string) =
     const handleMessage = (event: { data?: unknown }) => {
       const gameId = getGameIdFromNotificationMessage(event.data);
       if (gameId) {
-        onNotificationClick(gameId);
+        onNotificationClick(gameId, 'foreground');
       }
     };
 
     serviceWorker.addEventListener('message', handleMessage);
     return () => serviceWorker.removeEventListener('message', handleMessage);
   }, [onNotificationClick]);
+}
+
+export const useWebNotificationClicks = useNotificationClicks;
+
+function getGameIdFromNativeNotification(response: Notifications.NotificationResponse | null) {
+  const data = response?.notification.request.content.data;
+  if (!data) return null;
+  if (typeof data.gameId === 'string' && data.gameId.trim()) return data.gameId.trim();
+  return typeof data.url === 'string' ? getGameIdFromUrl(data.url) : null;
 }
 
 function getGameIdFromNotificationMessage(data: unknown) {

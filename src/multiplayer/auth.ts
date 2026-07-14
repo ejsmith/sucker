@@ -47,7 +47,7 @@ export function getAuthRedirectUrl() {
     return window.location.origin;
   }
 
-  return 'sucker://auth/callback';
+  return __DEV__ ? 'sucker://auth/callback' : 'https://sucker.games/auth/callback';
 }
 
 export function hasAuthCallbackParams(url: string | null) {
@@ -56,7 +56,7 @@ export function hasAuthCallbackParams(url: string | null) {
   }
 
   const params = getAuthCallbackParams(url);
-  return Boolean(params.get('code') || params.get('access_token') || params.get('error') || params.get('error_code'));
+  return Boolean(params.get('code') || params.get('error') || params.get('error_code'));
 }
 
 export async function createSessionFromAuthUrl(url: string) {
@@ -78,22 +78,7 @@ export async function createSessionFromAuthUrl(url: string) {
     return data.session;
   }
 
-  const accessToken = params.get('access_token');
-  const refreshToken = params.get('refresh_token');
-  if (!accessToken || !refreshToken) {
-    return null;
-  }
-
-  const { data, error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-  if (error) {
-    throw error;
-  }
-
-  clearAuthParamsFromBrowserUrl();
-  return data.session;
+  return null;
 }
 
 function getAuthCallbackParams(url: string) {

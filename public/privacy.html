@@ -34,7 +34,7 @@
   <body>
     <main>
       <h1>Sucker! Privacy Policy</h1>
-      <p class="updated">Last updated: July 10, 2026</p>
+      <p class="updated">Last updated: July 12, 2026</p>
 
       <p>
         Sucker! is a head-to-head dice game. This policy explains what data the app uses to provide accounts,
@@ -46,7 +46,10 @@
         When you use multiplayer features, Sucker! uses your email address for sign-in through Supabase Auth. The app
         also stores your profile name, optional username, optional profile photo, game records, invite codes, turn
         history, score history, head-to-head stats, and push notification tokens for devices where notifications are
-        enabled. Camera or photo-library access is requested only when you choose to take or select a profile photo.
+        enabled. The app also collects error diagnostics through Exceptionless, including app and update versions,
+        device platform, a pseudonymous profile ID, sanitized screen name, error details, and stack traces.
+        Exceptionless private-information collection is disabled. Camera or photo-library access is requested only when
+        you choose to take or select a profile photo.
       </p>
 
       <h2>How We Use Information</h2>
@@ -59,7 +62,8 @@
       <h2>Sharing</h2>
       <p>
         Sucker! uses Supabase for authentication, database storage, realtime updates, and Edge Functions. Sucker! uses
-        Expo push notification services to deliver notifications. We do not sell personal information.
+        Expo push notification services to deliver notifications and Exceptionless for error diagnostics. We do not sell
+        personal information.
       </p>
       <p>
         Your display name, username, and profile photo are shown to other signed-in players who find or play with you.

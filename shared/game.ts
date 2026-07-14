@@ -194,11 +194,7 @@ export function rollsRemaining(game: Pick<GameState, 'extraRollsAvailable' | 'ro
 
 export function purchaseExtraRoll(game: GameState): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
-  if (
-    game.phase === 'complete' ||
-    !currentPlayer ||
-    currentPlayer.suckerTokens < suckerTokenCosts.extraRoll
-  ) {
+  if (game.phase === 'complete' || !currentPlayer || currentPlayer.suckerTokens < suckerTokenCosts.extraRoll) {
     return game;
   }
 
@@ -211,11 +207,7 @@ export function purchaseExtraRoll(game: GameState): GameState {
 
 export function mulliganCurrentTurn(game: GameState): GameState {
   const currentPlayer = game.players[game.currentPlayerIndex];
-  if (
-    game.phase === 'complete' ||
-    !currentPlayer ||
-    currentPlayer.suckerTokens < suckerTokenCosts.mulligan
-  ) {
+  if (game.phase === 'complete' || !currentPlayer || currentPlayer.suckerTokens < suckerTokenCosts.mulligan) {
     return game;
   }
 
@@ -285,10 +277,7 @@ export function rollSuckerPunchOutcome(random: () => number = Math.random): Suck
   return resolveSuckerPunchOutcome(rollDie(random), random);
 }
 
-export function resolveSuckerPunchOutcome(
-  chanceDie: DieValue,
-  random: () => number = Math.random,
-): SuckerPunchOutcome {
+export function resolveSuckerPunchOutcome(chanceDie: DieValue, random: () => number = Math.random): SuckerPunchOutcome {
   const chancePercent = suckerPunchChanceByDie[chanceDie];
   const rollPercent = Math.floor(random() * 100) + 1;
 
