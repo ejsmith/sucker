@@ -72,6 +72,25 @@ test('two players can create an invite and play turns through the web UI', async
   await bobPage.getByTestId('join-invite-button').click();
 
   const gameId = await waitForAcceptedGame(inviteCode);
+  const acceptedGame = await loadGame(gameId);
+  expect(acceptedGame.current_player_id).toBe(alice.id);
+
+  await bobPage.goto('/');
+  await dismissTurnNotificationPrompt(bobPage);
+  const gameListItem = bobPage.getByTestId(`game-list-item-${gameId}`);
+  const scorePill = bobPage.getByTestId(`score-game-${gameId}`);
+  const nudgeButton = bobPage.getByTestId(`nudge-game-${gameId}`);
+  await expect(gameListItem).toBeVisible();
+  await expect(nudgeButton).toBeVisible();
+  const [scorePillBox, nudgeButtonBox] = await Promise.all([scorePill.boundingBox(), nudgeButton.boundingBox()]);
+  expect(scorePillBox).not.toBeNull();
+  expect(nudgeButtonBox).not.toBeNull();
+  expect(nudgeButtonBox!.x).toBeCloseTo(scorePillBox!.x, 0);
+  expect(nudgeButtonBox!.width).toBeCloseTo(scorePillBox!.width, 0);
+  expect(nudgeButtonBox!.height).toBeCloseTo(scorePillBox!.height, 0);
+  await expect(gameListItem).toHaveScreenshot('game-list-item-with-nudge.png');
+  await expect(bobPage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('games-list.png');
+
   await alicePage.goto('/');
   await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
 
@@ -168,6 +187,30 @@ test('two players can create an invite and play turns through the web UI', async
     mask: [bobPage.getByTestId('game-over-home-score'), bobPage.getByTestId('game-over-opponent-score')],
     maxDiffPixelRatio: 0.12,
   });
+});
+
+test('awarding the section bonus stays legible and keeps the game usable', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`bonus-alice-${runId}`, 'Bonus Alice E2E');
+  const bob = await createUser(`bonus-bob-${runId}`, 'Bonus Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  const gameId = await createAcceptedGame(alicePage, bobPage);
+
+  await seedUpperBonusSetup(gameId, alice.id);
+  await openGameFromLobby(alicePage, gameId);
+  await expect(alicePage.getByTestId('roll-button')).toBeEnabled();
+  await alicePage.getByTestId('roll-button').click();
+  await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+  await alicePage.getByTestId('home-score-box-ones').click();
+  await expect(alicePage.getByTestId('play-score-button')).toBeEnabled();
+  await alicePage.getByTestId('play-score-button').click();
+
+  const bonusPanel = alicePage.getByTestId('section-bonus-panel');
+  await expect(bonusPanel).toContainText('63/63', { timeout: 15_000 });
+  await expect(alicePage.getByTestId('score-dice-overlay')).toHaveCount(0);
+  await expect(alicePage.getByText('Something went wrong')).toHaveCount(0);
+  await expect(bonusPanel).toHaveScreenshot('section-bonus-awarded.png');
 });
 
 test('keep playing rows show queued opponent profile avatars', async ({ browser }) => {
@@ -767,6 +810,52 @@ async function loadActionTypes(gameId: string) {
     .order('created_at');
   assertNoError(error);
   return (data ?? []).map((action) => action.action_type);
+}
+
+async function seedUpperBonusSetup(gameId: string, playerId: string) {
+  const game = await loadGame(gameId);
+  const state = game.state as {
+    currentPlayerIndex: number;
+    players: Array<{
+      id: string;
+      scorecard: Record<(typeof scoreCategories)[number], number | null>;
+    }>;
+  };
+  const playerIndex = state.players.findIndex((player) => player.id === playerId);
+  if (playerIndex < 0) {
+    throw new Error(`Player ${playerId} was not found in game ${gameId}.`);
+  }
+
+  const seededState = {
+    ...state,
+    currentPlayerIndex: playerIndex,
+    dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
+    held: [false, false, false, false, false],
+    phase: 'rolling',
+    players: state.players.map((player) =>
+      player.id === playerId
+        ? {
+            ...player,
+            scorecard: {
+              ...player.scorecard,
+              fives: 15,
+              fours: 20,
+              ones: null,
+              sixes: 0,
+              threes: 15,
+              twos: 8,
+            },
+          }
+        : player,
+    ),
+    rollNumber: 0,
+  };
+  const { error } = await admin
+    .from('games')
+    .update({ current_player_id: playerId, state: seededState, status: 'active' })
+    .eq('id', gameId);
+  assertNoError(error);
 }
 
 async function completeGameForScreenshot(gameId: string, winnerPlayerId: string) {

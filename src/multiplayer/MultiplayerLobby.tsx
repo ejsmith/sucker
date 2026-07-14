@@ -66,6 +66,9 @@ const minimumVisibleRefreshMs = 450;
 const pullRefreshMinimumMove = 14;
 const pullRefreshTriggerDistance = 44;
 const pullRefreshMaxDistance = 72;
+const gameCardBorderWidth = 3;
+const gameCardPadding = 6;
+const gameCardActionGap = 3;
 const gameCardActionWidth = 108;
 const gameCardActionHeight = 36;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
@@ -1639,6 +1642,7 @@ function GameListItem({
       </Pressable>
       <Animated.View
         style={[lobbyStyles.swipeGameContent, { transform: [{ translateX }] }]}
+        testID={`game-list-item-${game.id}`}
         {...panResponder.panHandlers}
       >
         <Pressable
@@ -2305,9 +2309,9 @@ const lobbyStyles = StyleSheet.create({
     backgroundColor: '#FFF3C2',
     borderColor: '#8F3B10',
     borderRadius: 8,
-    borderWidth: 3,
+    borderWidth: gameCardBorderWidth,
     gap: 2,
-    padding: 6,
+    padding: gameCardPadding,
   },
   gameCardMyTurn: {
     backgroundColor: '#FFF8D5',
@@ -2319,7 +2323,7 @@ const lobbyStyles = StyleSheet.create({
   },
   gameCardActions: {
     alignItems: 'flex-end',
-    gap: 3,
+    gap: gameCardActionGap,
     width: gameCardActionWidth,
   },
   codeInput: {
@@ -2656,8 +2660,8 @@ const lobbyStyles = StyleSheet.create({
   },
   nudgeButtonOverlay: {
     position: 'absolute',
-    right: 6,
-    top: 45,
+    right: gameCardBorderWidth + gameCardPadding,
+    top: gameCardBorderWidth + gameCardPadding + gameCardActionHeight + gameCardActionGap,
   },
   nudgeButtonPlaceholder: {
     height: gameCardActionHeight,
