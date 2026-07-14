@@ -608,7 +608,11 @@ async function openGameFromNotification(page: Page, gameId: string) {
 
 async function dismissTurnNotificationPrompt(page: Page) {
   const prompt = page.getByTestId('turn-notification-prompt');
-  if (await prompt.isVisible({ timeout: 500 }).catch(() => false)) {
+  const appeared = await prompt
+    .waitFor({ state: 'visible', timeout: 1_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
     await page.getByTestId('turn-notification-not-now').click();
   }
 }
