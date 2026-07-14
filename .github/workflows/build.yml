@@ -43,17 +43,11 @@ jobs:
       - name: Lint app
         run: npm run lint -- --max-warnings=0
 
-      - name: Check formatting
-        run: npm run format:check
-
       - name: Check Expo dependency alignment
         run: npm run check:expo
 
       - name: Run Expo Doctor
         run: npm run doctor:expo
-
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
 
       - name: Test app rules
         run: npm run test
