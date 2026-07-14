@@ -48,6 +48,39 @@ test('roll retries reuse the pending request after held dice change', () => {
   assert.equal(retried.pending.length, 1);
 });
 
+test('score retries reuse the pending request after held dice change', () => {
+  const first = createOrReuseActionRequest(
+    [],
+    'alice',
+    {
+      category: 'chance',
+      gameId: 'game-1',
+      held: [true, false, false, false, false],
+      type: 'score_category',
+    },
+    now,
+    () => 'request-1',
+    maxAgeMs,
+  );
+  const retried = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    {
+      category: 'chance',
+      gameId: 'game-1',
+      held: [false, true, false, false, false],
+      type: 'score_category',
+    },
+    now + 1_000,
+    () => 'request-2',
+    maxAgeMs,
+  );
+
+  assert.equal(retried.request.requestId, 'request-1');
+  assert.deepEqual(retried.request.held, [true, false, false, false, false]);
+  assert.equal(retried.pending.length, 1);
+});
+
 test('pending requests and recovery are scoped to the signed-in account', () => {
   const alice = createOrReuseActionRequest([], 'alice', { type: 'create_invite' }, now, () => 'alice-1', maxAgeMs);
   const bob = createOrReuseActionRequest(
@@ -96,7 +129,7 @@ test('expired requests are discarded before retry or recovery', () => {
   );
 });
 
-test('action keys normalize invite codes and keep one roll mutation in flight per game', () => {
+test('action keys normalize invite codes and keep one gameplay mutation in flight per target', () => {
   assert.equal(
     getActionKey({ inviteCode: ' ab12cd34 ', type: 'accept_invite' }),
     getActionKey({ inviteCode: 'AB12CD34', type: 'accept_invite' }),
@@ -112,6 +145,24 @@ test('action keys normalize invite codes and keep one roll mutation in flight pe
   assert.notEqual(
     getActionKey({ gameId: 'game-1', type: 'roll' }),
     getActionKey({ gameId: 'game-1', type: 'extra_roll' }),
+  );
+  assert.equal(
+    getActionKey({
+      category: 'chance',
+      gameId: 'game-1',
+      held: [true, false, false, false, false],
+      type: 'score_category',
+    }),
+    getActionKey({
+      category: 'chance',
+      gameId: 'game-1',
+      held: [false, true, false, false, false],
+      type: 'score_category',
+    }),
+  );
+  assert.notEqual(
+    getActionKey({ category: 'chance', gameId: 'game-1', type: 'score_category' }),
+    getActionKey({ category: 'ones', gameId: 'game-1', type: 'score_category' }),
   );
 });
 

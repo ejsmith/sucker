@@ -22,6 +22,7 @@ import {
   type ActionRequest,
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
+import { createGameListRealtimeTopic } from './realtimeTopics';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -458,7 +459,7 @@ export function subscribeToGameListChanges(
   onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
 ) {
   const channel = supabase
-    .channel('games:list')
+    .channel(createGameListRealtimeTopic())
     .on(
       'postgres_changes',
       {

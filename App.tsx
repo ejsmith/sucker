@@ -85,6 +85,7 @@ import {
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
+import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { Pressable } from './src/ui/Pressable';
 import { useReducedMotion } from './src/ui/useReducedMotion';
 import {
@@ -296,11 +297,11 @@ const backSwipeVelocity = 0.45;
 const nextTurnDialogDelayMs = 1000;
 const nextTurnListRefreshMs = 5000;
 const upperBonusTarget = 63;
-const bonusValueColor = '#5A1308';
-const bonusFlashColor = '#8F0000';
-const awardedBonusColor = bonusValueColor;
-const bonusOutlineColor = '#5A1308';
-const awardedBonusOutlineColor = bonusOutlineColor;
+const bonusValueColor = bonusVisualColors.face;
+const bonusFlashColor = bonusVisualColors.flash;
+const awardedBonusColor = bonusVisualColors.awarded;
+const bonusOutlineColor = bonusVisualColors.outline;
+const awardedBonusOutlineColor = bonusVisualColors.outline;
 const bonusOutlineOffsets = [
   { x: -2, y: 0 },
   { x: 2, y: 0 },
