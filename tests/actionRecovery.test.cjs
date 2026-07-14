@@ -25,6 +25,29 @@ test('manual retries reuse the pending request ID for the same account and actio
   assert.equal(retried.pending.length, 1);
 });
 
+test('roll retries reuse the pending request after held dice change', () => {
+  const first = createOrReuseActionRequest(
+    [],
+    'alice',
+    { gameId: 'game-1', held: [true, false, false, false, false], type: 'roll' },
+    now,
+    () => 'request-1',
+    maxAgeMs,
+  );
+  const retried = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    { gameId: 'game-1', held: [false, true, false, false, false], type: 'roll' },
+    now + 1_000,
+    () => 'request-2',
+    maxAgeMs,
+  );
+
+  assert.equal(retried.request.requestId, 'request-1');
+  assert.deepEqual(retried.request.held, [true, false, false, false, false]);
+  assert.equal(retried.pending.length, 1);
+});
+
 test('pending requests and recovery are scoped to the signed-in account', () => {
   const alice = createOrReuseActionRequest([], 'alice', { type: 'create_invite' }, now, () => 'alice-1', maxAgeMs);
   const bob = createOrReuseActionRequest(
@@ -73,14 +96,22 @@ test('expired requests are discarded before retry or recovery', () => {
   );
 });
 
-test('action keys normalize invite codes and distinguish meaningful action input', () => {
+test('action keys normalize invite codes and keep one roll mutation in flight per game', () => {
   assert.equal(
     getActionKey({ inviteCode: ' ab12cd34 ', type: 'accept_invite' }),
     getActionKey({ inviteCode: 'AB12CD34', type: 'accept_invite' }),
   );
-  assert.notEqual(
+  assert.equal(
     getActionKey({ gameId: 'game-1', held: [true, false, false, false, false], type: 'roll' }),
     getActionKey({ gameId: 'game-1', held: [false, true, false, false, false], type: 'roll' }),
+  );
+  assert.equal(
+    getActionKey({ gameId: 'game-1', held: [true, false, false, false, false], type: 'extra_roll' }),
+    getActionKey({ gameId: 'game-1', held: [false, true, false, false, false], type: 'extra_roll' }),
+  );
+  assert.notEqual(
+    getActionKey({ gameId: 'game-1', type: 'roll' }),
+    getActionKey({ gameId: 'game-1', type: 'extra_roll' }),
   );
 });
 

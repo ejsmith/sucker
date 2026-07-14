@@ -81,7 +81,7 @@ export function getActionKey(action: MultiplayerAction) {
       return JSON.stringify([action.type, action.gameId]);
     case 'extra_roll':
     case 'roll':
-      return JSON.stringify([action.type, action.gameId, action.held ?? null]);
+      return JSON.stringify([action.type, action.gameId]);
     case 'score_category':
     case 'scratch_category':
       return JSON.stringify([action.type, action.gameId, action.category, action.held ?? null]);
