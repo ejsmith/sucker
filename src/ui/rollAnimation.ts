@@ -105,14 +105,7 @@ export function createRollingLaunch(
 export function createRollingScaleOutputRange(index: number, launch: RollingLaunch) {
   const landingScale = launch.landingScale;
 
-  return [
-    0.86 + index * 0.02,
-    1.18,
-    launch.peakScale,
-    Math.max(1.02, landingScale * 1.08),
-    landingScale,
-    landingScale,
-  ];
+  return [0.86 + index * 0.02, 1.18, launch.peakScale, Math.max(1.02, landingScale * 1.08), landingScale, landingScale];
 }
 
 export function measureInWindow(node: ViewRef | null): Promise<MeasuredRect | null> {
