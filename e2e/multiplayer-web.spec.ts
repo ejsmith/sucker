@@ -94,42 +94,26 @@ test('two players can create an invite and play turns through the web UI', async
   await alicePage.goto('/');
   await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
 
-  await alicePage.evaluate((email) => {
-    const root = document.documentElement;
-    const observedEmailGreetingAttribute = 'data-observed-email-greeting';
-    const checkGreeting = () => {
-      if (document.body.textContent?.includes(`Hi, ${email}`)) {
-        root.setAttribute(observedEmailGreetingAttribute, 'true');
-      }
-    };
-    const observer = new MutationObserver(checkGreeting);
-    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
-    (
-      window as typeof window & {
-        __SUCKER_E2E_EMAIL_GREETING_OBSERVER__?: MutationObserver;
-      }
-    ).__SUCKER_E2E_EMAIL_GREETING_OBSERVER__ = observer;
-    checkGreeting();
-  }, alice.email);
-  await openGameFromLobby(alicePage, gameId);
-  await alicePage.getByLabel('Back to games').click();
-  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
-  const observedEmailGreeting = await alicePage.evaluate(() => {
-    const root = document.documentElement;
-    const observerWindow = window as typeof window & {
-      __SUCKER_E2E_EMAIL_GREETING_OBSERVER__?: MutationObserver;
-    };
-    observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__?.disconnect();
-    delete observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__;
-    return root.getAttribute('data-observed-email-greeting');
-  });
-  expect(observedEmailGreeting).toBeNull();
+  const emailGreetingStorageKey = 'sucker.e2e.observed-email-greeting';
+  const emailGreetingObserverInput = { email: alice.email, storageKey: emailGreetingStorageKey };
+  await alicePage.evaluate((storageKey) => sessionStorage.removeItem(storageKey), emailGreetingStorageKey);
+  await alicePage.addInitScript(observeEmailGreeting, emailGreetingObserverInput);
+  await alicePage.evaluate(observeEmailGreeting, emailGreetingObserverInput);
 
   await alicePage.goto(`/?game=${encodeURIComponent(gameId)}`);
   await expect(alicePage.getByTestId('game-screen')).toBeVisible();
   await alicePage.goBack();
   await expect(alicePage).toHaveURL(new URL('/', e2eBaseUrl).href);
   await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+  const observedEmailGreeting = await alicePage.evaluate((storageKey) => {
+    const observerWindow = window as typeof window & {
+      __SUCKER_E2E_EMAIL_GREETING_OBSERVER__?: MutationObserver;
+    };
+    observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__?.disconnect();
+    delete observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__;
+    return sessionStorage.getItem(storageKey);
+  }, emailGreetingStorageKey);
+  expect(observedEmailGreeting).toBeNull();
 
   await expect(alicePage.getByTestId('turn-notification-prompt')).toBeVisible();
   await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('turn-notification-prompt.png', {
@@ -709,6 +693,30 @@ async function dismissTurnNotificationPrompt(page: Page) {
     .catch(() => false);
   if (appeared) {
     await page.getByTestId('turn-notification-not-now').click();
+  }
+}
+
+function observeEmailGreeting({ email, storageKey }: { email: string; storageKey: string }) {
+  const observerWindow = window as typeof window & {
+    __SUCKER_E2E_EMAIL_GREETING_OBSERVER__?: MutationObserver;
+  };
+  const startObserving = () => {
+    observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__?.disconnect();
+    const checkGreeting = () => {
+      if (document.body.textContent?.includes(`Hi, ${email}`)) {
+        sessionStorage.setItem(storageKey, 'true');
+      }
+    };
+    const observer = new MutationObserver(checkGreeting);
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+    observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__ = observer;
+    checkGreeting();
+  };
+
+  if (document.body) {
+    startObserving();
+  } else {
+    document.addEventListener('DOMContentLoaded', startObserving, { once: true });
   }
 }
 
