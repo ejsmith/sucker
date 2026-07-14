@@ -73,6 +73,7 @@ import { useAppActivity } from './src/ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
 import {
   createRollingLaunch,
+  createRollingScaleOutputRange,
   defaultRollingLaunch,
   measureInWindow,
   rollDisplayDie,
@@ -1082,6 +1083,8 @@ export function LocalGameScreen({
   const diceTrayHorizontalPadding = gameLayout.unit(16);
   const diceTrayAvailableWidth = Math.max(1, gameStageStyle.width - diceTrayHorizontalPadding);
   const diceSlotSize = Math.max(1, Math.min(gameLayout.unit(76), (diceTrayAvailableWidth - diceTrayGap * 4) / 5));
+  const rollingDieSize = gameLayout.unit(88);
+  const landingDieSize = Math.max(1, diceSlotSize - gameLayout.stroke(3) * 2);
   const standardRollsLeft = rollsRemaining(game);
   const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
   const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
@@ -1748,7 +1751,7 @@ export function LocalGameScreen({
     const launches = Object.fromEntries(
       rollingIndexes.map((index) => [
         index,
-        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null, gameLayout.unit(88)),
+        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null, rollingDieSize, landingDieSize),
       ]),
     ) as Partial<Record<number, RollingLaunch>>;
     setRollingLaunches(launches);
@@ -2648,7 +2651,7 @@ export function LocalGameScreen({
                 style={({ pressed }) => [styles.backButton, gameLayout.styles.backButton, pressed && styles.pressed]}
                 testID="game-back-button"
               >
-                <GameBackChevronIcon size={gameLayout.unit(34)} />
+                <GameBackChevronIcon size={gameLayout.unit(34)} testID="game-back-chevron" />
               </Pressable>
             )}
             <Pressable
@@ -2664,7 +2667,7 @@ export function LocalGameScreen({
               ]}
               testID="game-menu-button"
             >
-              <View style={[styles.menuDots, gameLayout.styles.menuDots]}>
+              <View style={[styles.menuDots, gameLayout.styles.menuDots]} testID="game-menu-dots">
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
@@ -2679,7 +2682,7 @@ export function LocalGameScreen({
                 onPress={() => setIsMenuOpen(false)}
                 style={StyleSheet.absoluteFill}
               />
-              <View style={[styles.topMenu, gameLayout.styles.topMenu]}>
+              <View style={[styles.topMenu, gameLayout.styles.topMenu]} testID="game-top-menu">
                 <Pressable
                   accessibilityLabel="View stats"
                   accessibilityRole="button"
@@ -2692,7 +2695,7 @@ export function LocalGameScreen({
                   testID="game-stats-menu-item"
                 >
                   <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
-                    Stats
+                    STATS
                   </Text>
                 </Pressable>
               </View>
@@ -2878,14 +2881,7 @@ export function LocalGameScreen({
                       testID={`die-slot-${index}`}
                     >
                       {showSlotDie && (
-                        <DieFace
-                          face={die}
-                          style={[
-                            styles.dieImage,
-                            showHeldDie && styles.heldDieImage,
-                            isScoring && styles.scoringSourceDieImage,
-                          ]}
-                        />
+                        <DieFace face={die} style={[styles.dieImage, isScoring && styles.scoringSourceDieImage]} />
                       )}
                     </Pressable>
                   </View>
@@ -2922,7 +2918,7 @@ export function LocalGameScreen({
                   });
                   const flyScale = diceAnimations[index].interpolate({
                     inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
-                    outputRange: [0.86 + index * 0.02, 1.18, launch.peakScale, 1.02, 0.78, 0.72],
+                    outputRange: createRollingScaleOutputRange(index, launch),
                   });
                   const flyRotate = diceAnimations[index].interpolate({
                     inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
@@ -2956,6 +2952,7 @@ export function LocalGameScreen({
                           ],
                         },
                       ]}
+                      testID={`flying-die-${index}`}
                     >
                       <DieFace face={face} style={[styles.rollingDieImage, gameLayout.styles.rollingDieImage]} />
                     </Animated.View>
@@ -4557,20 +4554,16 @@ function DieFace({
   return (
     <View style={style}>
       <Svg height="100%" viewBox="0 0 68 68" width="100%">
-        {variant !== 'pips' && (
+        {variant === 'background' && (
           <>
-            <Rect fill={variant === 'background' ? '#5A1308' : '#210505'} height={61} rx={11} width={61} x={4} y={5} />
-            <Rect
-              fill={variant === 'background' ? '#7A1208' : '#EEEEEE'}
-              height={61}
-              rx={11}
-              stroke={variant === 'background' ? '#5A1308' : '#838383'}
-              strokeWidth={1.5}
-              width={61}
-              x={2}
-              y={2}
-            />
-            {variant === 'white' && <Rect fill="#FFFFFF" height={56} rx={9} width={56} x={4.5} y={4.5} />}
+            <Rect fill="#5A1308" height={61} rx={11} width={61} x={4} y={5} />
+            <Rect fill="#7A1208" height={61} rx={11} stroke="#5A1308" strokeWidth={1.5} width={61} x={2} y={2} />
+          </>
+        )}
+        {variant === 'white' && (
+          <>
+            <Rect fill="#EEEEEE" height={66} rx={11} stroke="#838383" strokeWidth={1.5} width={66} x={1} y={1} />
+            <Rect fill="#FFFFFF" height={60} rx={9} width={60} x={4} y={4} />
           </>
         )}
         {diePipPositions[face].map(([cx, cy]) => (
@@ -4779,9 +4772,9 @@ function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
   );
 }
 
-function GameBackChevronIcon({ size }: { size: number }) {
+function GameBackChevronIcon({ size, testID }: { size: number; testID?: string }) {
   return (
-    <Svg height={size} viewBox="0 0 24 24" width={size}>
+    <Svg height={size} testID={testID} viewBox="0 0 24 24" width={size}>
       <Path
         d="M15 18 9 12l6-6"
         fill="none"
@@ -4970,7 +4963,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     left: 6,
     position: 'absolute',
-    top: -1,
     width: 48,
     zIndex: 25,
   },
@@ -4993,7 +4985,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'absolute',
     right: 10,
-    top: 11,
     width: 32,
     zIndex: 25,
   },
@@ -5002,28 +4993,38 @@ const styles = StyleSheet.create({
     zIndex: 80,
   },
   topMenu: {
-    backgroundColor: '#FFF3C2',
-    borderColor: '#210505',
-    borderRadius: 8,
-    borderWidth: 2,
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderWidth: 3,
+    ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.45)'),
     elevation: 12,
-    padding: 4,
+    padding: 6,
     position: 'absolute',
-    right: 18,
-    top: 50,
-    width: 116,
+    right: 8,
+    top: 64,
+    width: 132,
     zIndex: 82,
   },
   topMenuItem: {
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 7,
+    borderWidth: 2,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   topMenuText: {
-    color: '#210505',
-    fontSize: 13,
+    color: '#FFF3C2',
+    fontSize: 15,
     fontFamily: gameFontBlack,
     fontWeight: '900',
+    lineHeight: 18,
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
   },
   playerStrip: {
     backgroundColor: '#1B0505',
@@ -5437,9 +5438,6 @@ const styles = StyleSheet.create({
   },
   scoringSourceDieImage: {
     opacity: 0,
-  },
-  heldDieImage: {
-    transform: [{ scale: 1.03 }],
   },
   rollingDiceOverlay: {
     ...absoluteFillStyle,

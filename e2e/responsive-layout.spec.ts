@@ -97,6 +97,74 @@ test.describe('Chromium pixel baselines', () => {
     });
   }
 
+  for (const viewport of acceptedViewports) {
+    test(`${viewport.label} keeps rolled and held dice flush with their slots`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { height: viewport.height, width: viewport.width } });
+      const page = await context.newPage();
+      await installDeterministicNonSuckerRandom(page);
+
+      try {
+        await openLocalGame(page, `/?viewport=${viewport.key}`);
+        const rollButton = page.getByTestId('roll-button');
+        await waitForPressableEnabled(rollButton);
+        await rollButton.click();
+
+        const diceTray = page.getByTestId('dice-tray');
+        await expect(diceTray.locator('svg')).toHaveCount(5);
+        for (const index of [0, 2]) {
+          const die = page.getByTestId(`die-slot-${index}`);
+          await waitForPressableEnabled(die);
+          await die.click();
+          await expect(die).toHaveAccessibleName(/, held$/);
+        }
+
+        await expect(diceTray).toHaveScreenshot(`dice-tray-${viewport.key}.png`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  test('a rolling die lands at its permanent rendered size without a post-roll jump', async ({ page }) => {
+    await page.setViewportSize({ height: 852, width: 393 });
+    await installDeterministicNonSuckerRandom(page);
+    await openLocalGame(page, '/?viewport=iphone16');
+
+    const slot = page.getByTestId('die-slot-0');
+    const slotBorderWidth = await slot.evaluate((node) => Number.parseFloat(getComputedStyle(node).borderLeftWidth));
+    const rollButton = page.getByTestId('roll-button');
+    await waitForPressableEnabled(rollButton);
+    await rollButton.click();
+
+    const flyingDie = page.getByTestId('flying-die-0');
+    await expect(flyingDie).toBeVisible();
+    await expect
+      .poll(
+        async () => {
+          const [flyingBox, slotBox] = await Promise.all([flyingDie.boundingBox(), slot.boundingBox()]);
+          if (!flyingBox || !slotBox) {
+            return false;
+          }
+          const landingSize = Math.min(slotBox.width, slotBox.height) - slotBorderWidth * 2;
+
+          return (
+            Math.abs(flyingBox.width - landingSize) <= 1 &&
+            Math.abs(flyingBox.height - landingSize) <= 1 &&
+            Math.abs(centerX(flyingBox) - centerX(slotBox)) <= 1 &&
+            Math.abs(centerY(flyingBox) - centerY(slotBox)) <= 1
+          );
+        },
+        { intervals: [10, 10, 20, 20], timeout: 2500 },
+      )
+      .toBe(true);
+
+    await expect(flyingDie).toHaveCount(0);
+    const [finalDieBox, slotBox] = await Promise.all([visibleBox(slot.locator('svg')), visibleBox(slot)]);
+    const landingSize = Math.min(slotBox.width, slotBox.height) - slotBorderWidth * 2;
+    expectPixelMatch(finalDieBox.width, landingSize);
+    expectPixelMatch(finalDieBox.height, landingSize);
+  });
+
   test('wide web layouts center and cap the game stage', async ({ browser }) => {
     const viewport = { height: 900, width: 1440 };
     const context = await browser.newContext({ viewport });
@@ -214,9 +282,13 @@ test.describe('Chromium pixel baselines', () => {
 
         await page.getByTestId('token-menu-close-button').click();
         await page.getByTestId('game-menu-button').click();
+        const headerMenu = page.getByTestId('game-top-menu');
         const statsMenuItem = page.getByTestId('game-stats-menu-item');
+        await expect(headerMenu).toBeVisible();
+        await expectContainedBy(headerMenu, screenBox);
         await expectMinimumTouchTarget(statsMenuItem);
         await expectContainedBy(statsMenuItem, screenBox);
+        await expect(screen).toHaveScreenshot(`game-${viewport.key}-header-menu.png`);
         await statsMenuItem.click();
 
         const statsOverlay = page.getByTestId('stats-page-overlay');
@@ -382,6 +454,8 @@ function expectPixelMatch(actual: number, expected: number) {
 
 async function expectLayoutStackToFit(page: Page, screenBox: NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>) {
   const topBar = await visibleBox(page.getByTestId('game-top-bar'));
+  const backChevron = await visibleBox(page.getByTestId('game-back-chevron'));
+  const menuDots = await visibleBox(page.getByTestId('game-menu-dots'));
   const playerStrip = await visibleBox(page.getByTestId('player-strip'));
   const board = await visibleBox(page.getByTestId('scorecard-board'));
   const diceTray = await visibleBox(page.getByTestId('dice-tray'));
@@ -390,6 +464,9 @@ async function expectLayoutStackToFit(page: Page, screenBox: NonNullable<Awaited
   const scoreAboveChance = await visibleBox(page.getByTestId('home-score-box-sucker'));
 
   expect(topBar.y).toBeGreaterThanOrEqual(screenBox.y);
+  expectPixelMatch(centerY(backChevron), centerY(topBar));
+  expectPixelMatch(centerY(menuDots), centerY(topBar));
+  expectPixelMatch(centerY(backChevron), centerY(menuDots));
   expect(bottom(topBar)).toBeLessThanOrEqual(playerStrip.y);
   expect(bottom(playerStrip)).toBeLessThanOrEqual(board.y);
   expect(bottom(board)).toBeLessThanOrEqual(diceTray.y);
@@ -455,4 +532,12 @@ async function visibleBox(locator: Locator) {
 
 function bottom(box: { height: number; y: number }) {
   return box.y + box.height;
+}
+
+function centerX(box: { width: number; x: number }) {
+  return box.x + box.width / 2;
+}
+
+function centerY(box: { height: number; y: number }) {
+  return box.y + box.height / 2;
 }

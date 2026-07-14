@@ -77,7 +77,6 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       backButton: {
         height: touch(48),
         left: unit(6),
-        top: unit(-1),
         width: touch(48),
       },
       backgroundDie: {
@@ -188,7 +187,6 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       menuDotsButton: {
         height: touch(32),
         right: unit(10),
-        top: unit(11),
         width: touch(32),
       },
       opponentScoreText: {
@@ -693,21 +691,23 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         paddingVertical: unit(4),
       },
       topMenu: {
-        borderRadius: unit(8),
-        borderWidth: stroke(2),
-        padding: unit(4),
-        right: unit(18),
-        top: unit(50),
-        width: unit(116),
+        borderRadius: unit(10),
+        borderWidth: stroke(3),
+        padding: unit(6),
+        right: unit(8),
+        top: unit(64),
+        width: unit(132),
       },
       topMenuItem: {
-        borderRadius: unit(6),
+        borderRadius: unit(7),
+        borderWidth: stroke(2),
         minHeight: touch(44),
-        paddingHorizontal: unit(10),
-        paddingVertical: unit(9),
+        paddingHorizontal: unit(12),
+        paddingVertical: unit(8),
       },
       topMenuText: {
-        fontSize: unit(13),
+        fontSize: unit(15),
+        lineHeight: unit(18),
       },
     },
     strokeWidth: stroke,
