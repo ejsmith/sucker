@@ -57,7 +57,7 @@ test('rolling scale settles at the permanent die size before the animated die is
   const scaleOutput = createRollingScaleOutputRange(0, launch);
 
   assert.equal(scaleOutput.at(-1), 70 / 88);
-  assert.ok(scaleOutput.at(-2) < scaleOutput.at(-1));
+  assert.equal(scaleOutput.at(-2), scaleOutput.at(-1));
 });
 
 test('rolling launch fallback geometry scales with the rendered die', () => {
