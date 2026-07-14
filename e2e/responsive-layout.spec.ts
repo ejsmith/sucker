@@ -97,6 +97,34 @@ test.describe('Chromium pixel baselines', () => {
     });
   }
 
+  for (const viewport of acceptedViewports) {
+    test(`${viewport.label} keeps rolled and held dice flush with their slots`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { height: viewport.height, width: viewport.width } });
+      const page = await context.newPage();
+      await installDeterministicNonSuckerRandom(page);
+
+      try {
+        await openLocalGame(page, `/?viewport=${viewport.key}`);
+        const rollButton = page.getByTestId('roll-button');
+        await waitForPressableEnabled(rollButton);
+        await rollButton.click();
+
+        const diceTray = page.getByTestId('dice-tray');
+        await expect(diceTray.locator('svg')).toHaveCount(5);
+        for (const index of [0, 2]) {
+          const die = page.getByTestId(`die-slot-${index}`);
+          await waitForPressableEnabled(die);
+          await die.click();
+          await expect(die).toHaveAccessibleName(/, held$/);
+        }
+
+        await expect(diceTray).toHaveScreenshot(`dice-tray-${viewport.key}.png`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
   test('wide web layouts center and cap the game stage', async ({ browser }) => {
     const viewport = { height: 900, width: 1440 };
     const context = await browser.newContext({ viewport });
