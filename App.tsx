@@ -2997,11 +2997,12 @@ function LocalGameScreen({
                 const showDie = activePlayerViewIndex === 0 && (game.rollNumber > 0 || isRolling);
                 const showSlotDie = showDie && !isFlying;
                 const showHeldDie = showDie && game.held[index];
+                const showHeldStyle = showHeldDie && !isScoring;
                 const dieDisabled = !showDie || isRolling || isScoring || !isMyRemoteTurn || isRemoteInteractionPending;
 
                 return (
                   <View key={`die-${index}`} style={[styles.dieMotion, { height: diceSlotSize, width: diceSlotSize }]}>
-                    {showHeldDie && usesLegacyAndroidShadowFallback && (
+                    {showHeldStyle && usesLegacyAndroidShadowFallback && (
                       <View pointerEvents="none" style={[styles.heldDieGlow, gameLayout.styles.heldDieGlow]} />
                     )}
                     <Pressable
@@ -3026,7 +3027,7 @@ function LocalGameScreen({
                       style={({ pressed }) => [
                         styles.dieSlot,
                         gameLayout.styles.dieSlot,
-                        showHeldDie && styles.heldDie,
+                        showHeldStyle && styles.heldDie,
                         pressed && styles.pressed,
                       ]}
                       testID={`die-slot-${index}`}
@@ -3403,7 +3404,7 @@ function LocalGameScreen({
             </View>
           )}
           {scoreFlyDice.length > 0 && (
-            <View pointerEvents="none" style={styles.scoreDiceOverlay}>
+            <View pointerEvents="none" style={styles.scoreDiceOverlay} testID="score-dice-overlay">
               {scoreFlyDice.map((die, index) => {
                 const translateX = die.progress.interpolate({
                   inputRange: [0, 1],

@@ -166,6 +166,39 @@ test.describe('Chromium pixel baselines', () => {
     expect(Math.abs(finalDieBox.height - landingSize)).toBeLessThanOrEqual(0.5);
   });
 
+  test('scoring animation leaves every vacated dice slot black', async ({ page }) => {
+    await page.setViewportSize({ height: 852, width: 393 });
+    await installDeterministicNonSuckerRandom(page);
+    await openLocalGame(page, '/?viewport=iphone16');
+
+    const rollButton = page.getByTestId('roll-button');
+    await waitForPressableEnabled(rollButton);
+    await rollButton.click();
+    await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
+
+    for (const index of [0, 1, 3]) {
+      const die = page.getByTestId(`die-slot-${index}`);
+      await waitForPressableEnabled(die);
+      await die.click();
+      await expect(die).toHaveAccessibleName(/, held$/);
+    }
+
+    const score = page.getByTestId('home-score-box-ones');
+    await waitForPressableEnabled(score);
+    await score.click();
+    const playScore = page.getByTestId('play-score-button');
+    await expect(playScore).toBeEnabled();
+    await playScore.click();
+    await expect(page.getByTestId('score-dice-overlay')).toBeVisible();
+
+    const slotBackgrounds = await Promise.all(
+      [...Array(5)].map((_, index) =>
+        page.getByTestId(`die-slot-${index}`).evaluate((node) => getComputedStyle(node).backgroundColor),
+      ),
+    );
+    expect(new Set(slotBackgrounds)).toEqual(new Set(['rgb(33, 5, 5)']));
+  });
+
   test('wide web layouts center and cap the game stage', async ({ browser }) => {
     const viewport = { height: 900, width: 1440 };
     const context = await browser.newContext({ viewport });
