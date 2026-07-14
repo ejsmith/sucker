@@ -83,6 +83,7 @@ import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWin
 import { WebPortraitGuard } from './src/ui/WebPortraitGuard';
 import {
   createRollingLaunch,
+  createRollingScaleOutputRange,
   defaultRollingLaunch,
   measureInWindow,
   rollDisplayDie,
@@ -1227,6 +1228,8 @@ function LocalGameScreen({
   const diceTrayHorizontalPadding = gameLayout.unit(16);
   const diceTrayAvailableWidth = Math.max(1, gameStageStyle.width - diceTrayHorizontalPadding);
   const diceSlotSize = Math.max(1, Math.min(gameLayout.unit(76), (diceTrayAvailableWidth - diceTrayGap * 4) / 5));
+  const rollingDieSize = gameLayout.unit(88);
+  const landingDieSize = Math.max(1, diceSlotSize - gameLayout.stroke(3) * 2);
   const standardRollsLeft = rollsRemaining(game);
   const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
   const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
@@ -1893,7 +1896,14 @@ function LocalGameScreen({
     const launches = Object.fromEntries(
       rollingIndexes.map((index) => [
         index,
-        createRollingLaunch(index, launchSide, rollZoneRect, slotRects[index] ?? null, gameLayout.unit(88)),
+        createRollingLaunch(
+          index,
+          launchSide,
+          rollZoneRect,
+          slotRects[index] ?? null,
+          rollingDieSize,
+          landingDieSize,
+        ),
       ]),
     ) as Partial<Record<number, RollingLaunch>>;
     setRollingLaunches(launches);
@@ -3066,7 +3076,7 @@ function LocalGameScreen({
                   });
                   const flyScale = diceAnimations[index].interpolate({
                     inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
-                    outputRange: [0.86 + index * 0.02, 1.18, launch.peakScale, 1.02, 0.78, 0.72],
+                    outputRange: createRollingScaleOutputRange(index, launch),
                   });
                   const flyRotate = diceAnimations[index].interpolate({
                     inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
@@ -3100,6 +3110,7 @@ function LocalGameScreen({
                           ],
                         },
                       ]}
+                      testID={`flying-die-${index}`}
                     >
                       <DieFace face={face} style={[styles.rollingDieImage, gameLayout.styles.rollingDieImage]} />
                     </Animated.View>

@@ -125,6 +125,46 @@ test.describe('Chromium pixel baselines', () => {
     });
   }
 
+  test('a rolling die lands at its permanent rendered size without a post-roll jump', async ({ page }) => {
+    await page.setViewportSize({ height: 852, width: 393 });
+    await installDeterministicNonSuckerRandom(page);
+    await openLocalGame(page, '/?viewport=iphone16');
+
+    const slot = page.getByTestId('die-slot-0');
+    const slotBorderWidth = await slot.evaluate((node) => Number.parseFloat(getComputedStyle(node).borderLeftWidth));
+    const rollButton = page.getByTestId('roll-button');
+    await waitForPressableEnabled(rollButton);
+    await rollButton.click();
+
+    const flyingDie = page.getByTestId('flying-die-0');
+    await expect(flyingDie).toBeVisible();
+    await expect
+      .poll(
+        async () => {
+          const [flyingBox, slotBox] = await Promise.all([flyingDie.boundingBox(), slot.boundingBox()]);
+          if (!flyingBox || !slotBox) {
+            return false;
+          }
+          const landingSize = Math.min(slotBox.width, slotBox.height) - slotBorderWidth * 2;
+
+          return (
+            Math.abs(flyingBox.width - landingSize) <= 1 &&
+            Math.abs(flyingBox.height - landingSize) <= 1 &&
+            Math.abs(centerX(flyingBox) - centerX(slotBox)) <= 1 &&
+            Math.abs(centerY(flyingBox) - centerY(slotBox)) <= 1
+          );
+        },
+        { intervals: [10, 10, 20, 20], timeout: 2500 },
+      )
+      .toBe(true);
+
+    await expect(flyingDie).toHaveCount(0);
+    const [finalDieBox, slotBox] = await Promise.all([visibleBox(slot.locator('svg')), visibleBox(slot)]);
+    const landingSize = Math.min(slotBox.width, slotBox.height) - slotBorderWidth * 2;
+    expectPixelMatch(finalDieBox.width, landingSize);
+    expectPixelMatch(finalDieBox.height, landingSize);
+  });
+
   test('wide web layouts center and cap the game stage', async ({ browser }) => {
     const viewport = { height: 900, width: 1440 };
     const context = await browser.newContext({ viewport });
@@ -492,6 +532,10 @@ async function visibleBox(locator: Locator) {
 
 function bottom(box: { height: number; y: number }) {
   return box.y + box.height;
+}
+
+function centerX(box: { width: number; x: number }) {
+  return box.x + box.width / 2;
 }
 
 function centerY(box: { height: number; y: number }) {
