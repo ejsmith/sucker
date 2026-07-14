@@ -110,7 +110,7 @@ export function createRollingScaleOutputRange(index: number, launch: RollingLaun
     1.18,
     launch.peakScale,
     Math.max(1.02, landingScale * 1.08),
-    landingScale * 0.96,
+    landingScale,
     landingScale,
   ];
 }
