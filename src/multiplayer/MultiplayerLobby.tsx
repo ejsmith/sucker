@@ -723,7 +723,7 @@ export function MultiplayerLobby({
     });
   }
 
-  const playerName = profile?.display_name ?? session.user.email ?? 'player';
+  const playerName = profile?.display_name ?? getPlayerNameFromGames(visibleGames, activeProfileId) ?? 'Player';
   const usesWebPullRefresh = Platform.OS === 'web';
   const pullRefreshReady = pullRefreshDistance >= pullRefreshTriggerDistance;
   const pullRefreshVisible = usesWebPullRefresh && (pullRefreshDistance > 0 || isPullRefreshActive);
@@ -1982,6 +1982,17 @@ function sortCompletedGames(games: RemoteGameRow[]) {
 
 function getCompletedGameTime(game: RemoteGameRow) {
   return new Date(game.completed_at ?? game.updated_at).getTime();
+}
+
+function getPlayerNameFromGames(games: RemoteGameRow[], profileId: string) {
+  for (const game of games) {
+    const playerName = game.state.players.find((player) => player.id === profileId)?.name.trim();
+    if (playerName) {
+      return playerName;
+    }
+  }
+
+  return null;
 }
 
 function getGamePlayers(game: RemoteGameRow, profileId: string) {

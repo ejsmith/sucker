@@ -94,6 +94,37 @@ test('two players can create an invite and play turns through the web UI', async
   await alicePage.goto('/');
   await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
 
+  await alicePage.evaluate((email) => {
+    const root = document.documentElement;
+    const observedEmailGreetingAttribute = 'data-observed-email-greeting';
+    const checkGreeting = () => {
+      if (document.body.textContent?.includes(`Hi, ${email}`)) {
+        root.setAttribute(observedEmailGreetingAttribute, 'true');
+      }
+    };
+    const observer = new MutationObserver(checkGreeting);
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+    (
+      window as typeof window & {
+        __SUCKER_E2E_EMAIL_GREETING_OBSERVER__?: MutationObserver;
+      }
+    ).__SUCKER_E2E_EMAIL_GREETING_OBSERVER__ = observer;
+    checkGreeting();
+  }, alice.email);
+  await openGameFromLobby(alicePage, gameId);
+  await alicePage.getByLabel('Back to games').click();
+  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+  const observedEmailGreeting = await alicePage.evaluate(() => {
+    const root = document.documentElement;
+    const observerWindow = window as typeof window & {
+      __SUCKER_E2E_EMAIL_GREETING_OBSERVER__?: MutationObserver;
+    };
+    observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__?.disconnect();
+    delete observerWindow.__SUCKER_E2E_EMAIL_GREETING_OBSERVER__;
+    return root.getAttribute('data-observed-email-greeting');
+  });
+  expect(observedEmailGreeting).toBeNull();
+
   await alicePage.goto(`/?game=${encodeURIComponent(gameId)}`);
   await expect(alicePage.getByTestId('game-screen')).toBeVisible();
   await alicePage.goBack();
