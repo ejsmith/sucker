@@ -703,7 +703,7 @@ async function createSession(email: string) {
 }
 
 async function waitForAcceptedGame(inviteCode: string) {
-  return expect
+  const gameId = await expect
     .poll(async () => {
       const { data, error } = await admin
         .from('game_invites')
@@ -722,6 +722,14 @@ async function waitForAcceptedGame(inviteCode: string) {
       }
       return data.game_id;
     });
+
+  await expect
+    .poll(async () => {
+      const game = await loadGame(gameId);
+      return game.status === 'active' ? game.current_player_id : null;
+    })
+    .not.toBeNull();
+  return gameId;
 }
 
 async function loadGame(gameId: string) {
