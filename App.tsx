@@ -299,7 +299,7 @@ const upperBonusTarget = 63;
 const bonusValueColor = '#5A1308';
 const bonusFlashColor = '#8F0000';
 const awardedBonusColor = bonusValueColor;
-const bonusOutlineColor = '#5A1308';
+const bonusOutlineColor = '#FFF3C2';
 const awardedBonusOutlineColor = bonusOutlineColor;
 const bonusOutlineOffsets = [
   { x: -2, y: 0 },

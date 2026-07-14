@@ -9,5 +9,11 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "include": ["src/game/**/*.ts", "src/multiplayer/actionRecovery.ts", "src/ui/gameLayout.ts", "src/ui/phoneStage.ts"]
+  "include": [
+    "src/game/**/*.ts",
+    "src/multiplayer/actionRecovery.ts",
+    "src/multiplayer/realtimeTopics.ts",
+    "src/ui/gameLayout.ts",
+    "src/ui/phoneStage.ts"
+  ]
 }

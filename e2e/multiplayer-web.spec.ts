@@ -88,6 +88,7 @@ test('two players can create an invite and play turns through the web UI', async
   await dismissTurnNotificationPrompt(alicePage);
 
   await openGameFromLobby(alicePage, gameId);
+  await expect(alicePage.getByTestId('section-bonus-panel')).toHaveScreenshot('section-bonus.png');
   await expect(alicePage.getByTestId('game-screen')).toHaveScreenshot('active-turn.png');
   await expectNoSeriousAccessibilityViolations(alicePage);
 
