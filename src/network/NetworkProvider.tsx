@@ -2,24 +2,30 @@ import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, StyleSheet, Text, View } from 'react-native';
 import { getCurrentSession } from '../multiplayer/auth';
+import { mergeRecoveredActions, type RecoveredMultiplayerAction } from '../multiplayer/actionRecovery';
 import { recoverPendingMultiplayerActions } from '../multiplayer/games';
 import { reportError } from '../monitoring/exceptionless';
 
 type NetworkContextValue = {
   isOffline: boolean;
   isRecovering: boolean;
+  recoveredActions: RecoveredMultiplayerAction[];
+  consumeRecoveredActions: (requestIds: string[]) => void;
   refresh: () => Promise<void>;
 };
 
 const NetworkContext = createContext<NetworkContextValue>({
   isOffline: false,
   isRecovering: false,
+  recoveredActions: [],
+  consumeRecoveredActions: () => undefined,
   refresh: async () => undefined,
 });
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
   const [networkState, setNetworkState] = useState<NetInfoState | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveredActions, setRecoveredActions] = useState<RecoveredMultiplayerAction[]>([]);
   const isMounted = useRef(true);
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
@@ -30,7 +36,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         return;
       }
       setIsRecovering(true);
-      await recoverPendingMultiplayerActions();
+      const recovered = await recoverPendingMultiplayerActions(session.user.id);
+      if (isMounted.current && recovered.length > 0) {
+        setRecoveredActions((current) => mergeRecoveredActions(current, recovered));
+      }
     } catch (error) {
       await reportError(error, { Operation: 'RecoverPendingMultiplayerActions' });
     } finally {
@@ -38,6 +47,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         setIsRecovering(false);
       }
     }
+  }, []);
+
+  const consumeRecoveredActions = useCallback((requestIds: string[]) => {
+    const consumed = new Set(requestIds);
+    setRecoveredActions((current) => current.filter((item) => !consumed.has(item.requestId)));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -68,7 +82,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     };
   }, [recover, refresh]);
 
-  const value = useMemo(() => ({ isOffline, isRecovering, refresh }), [isOffline, isRecovering, refresh]);
+  const value = useMemo(
+    () => ({ consumeRecoveredActions, isOffline, isRecovering, recoveredActions, refresh }),
+    [consumeRecoveredActions, isOffline, isRecovering, recoveredActions, refresh],
+  );
   return <NetworkContext.Provider value={value}>{children}</NetworkContext.Provider>;
 }
 

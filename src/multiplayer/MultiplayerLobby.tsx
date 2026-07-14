@@ -48,6 +48,7 @@ import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindow
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
+import { useNetworkStatus } from '../network/NetworkProvider';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -98,6 +99,7 @@ export function MultiplayerLobby({
     session,
     verifySignInCode,
   } = useMultiplayerSession();
+  const { consumeRecoveredActions, recoveredActions } = useNetworkStatus();
   const [email, setEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [sentCodeEmail, setSentCodeEmail] = useState<string | null>(null);
@@ -205,6 +207,34 @@ export function MultiplayerLobby({
     },
     [onRefreshGames, profileId],
   );
+
+  useEffect(() => {
+    if (!profile) {
+      return;
+    }
+
+    const recovered = recoveredActions.filter((item) => item.actorId === profile.id);
+    if (recovered.length === 0) {
+      return;
+    }
+
+    const recoveredInvite = recovered.find(
+      (item) =>
+        item.action.type === 'create_invite' &&
+        'inviteCode' in item.result &&
+        typeof item.result.inviteCode === 'string',
+    );
+    const timer = setTimeout(() => {
+      consumeRecoveredActions(recovered.map((item) => item.requestId));
+      if (recoveredInvite && 'inviteCode' in recoveredInvite.result && recoveredInvite.result.inviteCode) {
+        setGeneratedInviteCode(recoveredInvite.result.inviteCode);
+        setMessage('Your recovered invite is ready to share.');
+        setPage('startFriend');
+      }
+      void refreshGames({ surfaceError: false });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [consumeRecoveredActions, profile, recoveredActions, refreshGames]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;

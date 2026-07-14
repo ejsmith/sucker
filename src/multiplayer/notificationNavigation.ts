@@ -56,20 +56,22 @@ export function getGameIdFromUrl(url: string | null) {
   return null;
 }
 
-export function useNotificationClicks(onNotificationClick: (gameId: string) => void) {
+export type NotificationClickSource = 'foreground' | 'initial';
+
+export function useNotificationClicks(onNotificationClick: (gameId: string, source: NotificationClickSource) => void) {
   useEffect(() => {
     if (Platform.OS !== 'web') {
       let active = true;
       void Notifications.getLastNotificationResponseAsync().then((response) => {
         const gameId = getGameIdFromNativeNotification(response);
         if (active && gameId) {
-          onNotificationClick(gameId);
+          onNotificationClick(gameId, 'initial');
           void Notifications.clearLastNotificationResponseAsync();
         }
       });
       const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
         const gameId = getGameIdFromNativeNotification(response);
-        if (gameId) onNotificationClick(gameId);
+        if (gameId) onNotificationClick(gameId, 'foreground');
       });
       return () => {
         active = false;
@@ -78,7 +80,7 @@ export function useNotificationClicks(onNotificationClick: (gameId: string) => v
     }
 
     const initialGameId = getInitialNotificationGameId();
-    if (initialGameId) onNotificationClick(initialGameId);
+    if (initialGameId) onNotificationClick(initialGameId, 'initial');
     const serviceWorker = getWebServiceWorker();
     if (!serviceWorker) {
       return undefined;
@@ -87,7 +89,7 @@ export function useNotificationClicks(onNotificationClick: (gameId: string) => v
     const handleMessage = (event: { data?: unknown }) => {
       const gameId = getGameIdFromNotificationMessage(event.data);
       if (gameId) {
-        onNotificationClick(gameId);
+        onNotificationClick(gameId, 'foreground');
       }
     };
 

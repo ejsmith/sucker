@@ -15,17 +15,22 @@ import {
 } from '../game';
 import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
 import { reportError } from '../monitoring/exceptionless';
+import {
+  createOrReuseActionRequest,
+  selectActionRequestsForRecovery,
+  toMultiplayerAction,
+  type ActionRequest,
+  type RecoveredMultiplayerAction,
+} from './actionRecovery';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
-type ActionRequest = MultiplayerAction & { createdAt: string; requestId: string };
-
-const pendingActionsKey = 'sucker:pending-multiplayer-actions:v1';
+const pendingActionsKey = 'sucker:pending-multiplayer-actions:v2';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
-let pendingStorageOperation = Promise.resolve();
-let recoveryPromise: Promise<void> | null = null;
+let pendingStorageOperation: Promise<unknown> = Promise.resolve();
+const recoveryPromises = new Map<string, Promise<RecoveredMultiplayerAction[]>>();
 
 export async function listMyGames() {
   const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
@@ -122,11 +127,17 @@ export async function removeRemoteGame(gameId: string) {
   return invokeReliableAction<{ removedGameId: string }>({ gameId, type: 'remove_game' });
 }
 
-export function recoverPendingMultiplayerActions() {
-  recoveryPromise ??= recoverPendingActions().finally(() => {
-    recoveryPromise = null;
+export function recoverPendingMultiplayerActions(actorId: string) {
+  const activeRecovery = recoveryPromises.get(actorId);
+  if (activeRecovery) {
+    return activeRecovery;
+  }
+
+  const recovery = recoverPendingActions(actorId).finally(() => {
+    recoveryPromises.delete(actorId);
   });
-  return recoveryPromise;
+  recoveryPromises.set(actorId, recovery);
+  return recovery;
 }
 
 async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise<TResult> {
@@ -135,12 +146,14 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
     throw new Error('You are offline. Reconnect before making a game move.');
   }
 
-  const request: ActionRequest = {
-    ...action,
-    createdAt: new Date().toISOString(),
-    requestId: randomUUID(),
-  };
-  await savePendingAction(request);
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.user.id) {
+    throw new Error('Sign in before making a game move.');
+  }
+
+  const request = await getOrCreatePendingAction(session.user.id, action);
 
   try {
     const result = await invokeActionRequest<TResult>(request);
@@ -167,7 +180,7 @@ async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TRe
       await delay(retryDelaysMs[attempt - 1]);
     }
 
-    const { createdAt: _createdAt, ...body } = request;
+    const { actionKey: _actionKey, actorId: _actorId, createdAt: _createdAt, ...body } = request;
     const { data, error } = await supabase.functions.invoke<TResult>('game-action', { body });
     if (!error && data) {
       return data;
@@ -184,18 +197,19 @@ async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TRe
   throw lastError instanceof Error ? lastError : new Error('Unable to update game.');
 }
 
-async function recoverPendingActions() {
-  const pending = await loadPendingActions();
+async function recoverPendingActions(actorId: string) {
+  const pending = await getPendingActionsForRecovery(actorId);
+  const recovered: RecoveredMultiplayerAction[] = [];
   for (const request of pending) {
-    const age = Date.now() - new Date(request.createdAt).getTime();
-    if (!Number.isFinite(age) || age > pendingActionMaxAgeMs) {
-      await removePendingAction(request.requestId);
-      continue;
-    }
-
     try {
-      await invokeActionRequest(request);
+      const result = await invokeActionRequest<MultiplayerActionResult | { removedGameId: string }>(request);
       await removePendingAction(request.requestId);
+      recovered.push({
+        action: toMultiplayerAction(request),
+        actorId,
+        requestId: request.requestId,
+        result,
+      });
     } catch (error) {
       if (!isRetryableActionError(error)) {
         await removePendingAction(request.requestId);
@@ -207,23 +221,50 @@ async function recoverPendingActions() {
       });
     }
   }
+  return recovered;
 }
 
-function savePendingAction(request: ActionRequest) {
-  return updatePendingActions((actions) => [
-    ...actions.filter((item) => item.requestId !== request.requestId),
-    request,
-  ]);
+function getOrCreatePendingAction(actorId: string, action: MultiplayerAction) {
+  return updatePendingActions((actions) => {
+    const { pending, request } = createOrReuseActionRequest(
+      actions,
+      actorId,
+      action,
+      Date.now(),
+      randomUUID,
+      pendingActionMaxAgeMs,
+    );
+    return { actions: pending, result: request };
+  });
+}
+
+function getPendingActionsForRecovery(actorId: string) {
+  return updatePendingActions((actions) => {
+    const { pending, recoverable } = selectActionRequestsForRecovery(
+      actions,
+      actorId,
+      Date.now(),
+      pendingActionMaxAgeMs,
+    );
+    return { actions: pending, result: recoverable };
+  });
 }
 
 function removePendingAction(requestId: string) {
-  return updatePendingActions((actions) => actions.filter((item) => item.requestId !== requestId));
+  return updatePendingActions((actions) => ({
+    actions: actions.filter((item) => item.requestId !== requestId),
+    result: undefined,
+  }));
 }
 
-function updatePendingActions(update: (actions: ActionRequest[]) => ActionRequest[]) {
-  const operation = pendingStorageOperation.then(async () => {
+function updatePendingActions<TResult>(
+  update: (actions: ActionRequest[]) => { actions: ActionRequest[]; result: TResult },
+) {
+  const operation = pendingStorageOperation.then(async (): Promise<TResult> => {
     const actions = await loadPendingActions();
-    await AsyncStorage.setItem(pendingActionsKey, JSON.stringify(update(actions)));
+    const updated = update(actions);
+    await AsyncStorage.setItem(pendingActionsKey, JSON.stringify(updated.actions));
+    return updated.result;
   });
   pendingStorageOperation = operation.catch(() => undefined);
   return operation;
@@ -247,6 +288,8 @@ function isActionRequest(value: unknown): value is ActionRequest {
     value &&
     typeof value === 'object' &&
     typeof (value as Partial<ActionRequest>).requestId === 'string' &&
+    typeof (value as Partial<ActionRequest>).actionKey === 'string' &&
+    typeof (value as Partial<ActionRequest>).actorId === 'string' &&
     typeof (value as Partial<ActionRequest>).createdAt === 'string' &&
     typeof (value as Partial<ActionRequest>).type === 'string',
   );

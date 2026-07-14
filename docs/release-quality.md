@@ -12,7 +12,7 @@ Use this checklist for store builds and any change to native dependencies, Expo 
 
 ## Native smoke test
 
-Run the **Native Build** GitHub workflow for iOS and Android. It also creates a preview smoke build for both platforms on the first day of each month. Install preview builds through TestFlight and the Play internal testing track when validating a release candidate.
+Run the manual **Native Build** GitHub workflow for iOS and Android when validating a release candidate. Install preview builds through TestFlight and the Play internal testing track.
 
 - Cold start, background for five minutes, resume, and force quit/reopen.
 - Sign in through email callback and confirm SecureStore session restoration.

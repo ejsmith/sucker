@@ -74,6 +74,13 @@ test('two players can create an invite and play turns through the web UI', async
   const gameId = await waitForAcceptedGame(inviteCode);
   await alicePage.goto('/');
   await expect(alicePage.getByTestId(`game-card-${gameId}`)).toBeVisible();
+
+  await alicePage.goto(`/?game=${encodeURIComponent(gameId)}`);
+  await expect(alicePage.getByTestId('game-screen')).toBeVisible();
+  await alicePage.goBack();
+  await expect(alicePage).toHaveURL(new URL('/', e2eBaseUrl).href);
+  await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+
   await expect(alicePage.getByTestId('turn-notification-prompt')).toBeVisible();
   await expect(alicePage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('turn-notification-prompt.png', {
     maxDiffPixelRatio: 0.07,

@@ -52,7 +52,17 @@ const styles = StyleSheet.create({
 
 function NotificationRouter() {
   const router = useRouter();
-  const openGame = useCallback((gameId: string) => router.push(`/game/${encodeURIComponent(gameId)}`), [router]);
+  const openGame = useCallback(
+    (gameId: string, source: 'foreground' | 'initial') => {
+      const path = `/game/${encodeURIComponent(gameId)}` as const;
+      if (source === 'initial') {
+        router.replace(path);
+      } else {
+        router.push(path);
+      }
+    },
+    [router],
+  );
   useNotificationClicks(openGame);
   return null;
 }

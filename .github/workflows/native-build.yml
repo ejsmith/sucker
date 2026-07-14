@@ -1,8 +1,6 @@
 name: Native Build
 
 on:
-  schedule:
-    - cron: '0 10 1 * *'
   workflow_dispatch:
     inputs:
       platform:
@@ -37,12 +35,12 @@ jobs:
       - name: Setup Expo and EAS
         uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
+          eas-version: 21.0.0
           token: ${{ secrets.EXPO_TOKEN }}
       - name: Install dependencies
         run: npm ci --prefer-offline
       - name: Build native app
         run: eas build --platform "$BUILD_PLATFORM" --profile "$BUILD_PROFILE" --non-interactive --wait
         env:
-          BUILD_PLATFORM: ${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}
-          BUILD_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'preview' }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          BUILD_PROFILE: ${{ inputs.profile }}
