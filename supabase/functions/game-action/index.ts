@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
+import { getActionRequestFailureDisposition } from '../_shared/actionRequestFailure.ts';
 import {
   createEmptyScorecard,
   type Dice,
@@ -88,6 +89,7 @@ type ActionInput =
   | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 type Action = ActionInput & { requestId: string };
+type ActionMutationState = { mayHaveWritten: boolean };
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -149,8 +151,9 @@ Deno.serve(async (request) => {
       );
     }
 
+    const mutationState: ActionMutationState = { mayHaveWritten: false };
     try {
-      const result = await timer.measure('action', () => applyAction(admin, user.id, action));
+      const result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
       await completeActionRequest(admin, user.id, action, result, 200);
       timer.logIfSlow(actionType);
       queueActionNotifications(admin, user.id, action, result);
@@ -158,9 +161,14 @@ Deno.serve(async (request) => {
     } catch (actionError) {
       const message = toErrorMessage(actionError);
       const status = toErrorStatus(actionError);
-      if (status >= 500 && !(actionError instanceof ActionRequestPersistenceError)) {
+      const disposition = getActionRequestFailureDisposition({
+        httpStatus: status,
+        mutationMayHaveWritten: mutationState.mayHaveWritten,
+        persistenceFailed: actionError instanceof ActionRequestPersistenceError,
+      });
+      if (disposition === 'release') {
         await releaseActionRequest(admin, user.id, action);
-      } else {
+      } else if (disposition === 'complete') {
         await completeActionRequest(admin, user.id, action, { error: message }, status);
       }
       throw actionError;
@@ -174,25 +182,31 @@ Deno.serve(async (request) => {
   }
 });
 
-async function applyAction(admin: DbClient, actorId: string, action: Action): Promise<ActionResult> {
+async function applyAction(
+  admin: DbClient,
+  actorId: string,
+  action: Action,
+  mutationState: ActionMutationState,
+): Promise<ActionResult> {
   switch (action.type) {
     case 'create_game':
-      return createRemoteGame(admin, actorId, action.opponentProfileId);
+      return createRemoteGame(admin, actorId, action.opponentProfileId, mutationState);
     case 'create_invite':
-      return createInvite(admin, actorId);
+      return createInvite(admin, actorId, mutationState);
     case 'accept_invite':
-      return acceptInvite(admin, actorId, action.inviteCode);
+      return acceptInvite(admin, actorId, action.inviteCode, mutationState);
     case 'remove_game':
-      return removeGameFromList(admin, actorId, action.gameId);
+      return removeGameFromList(admin, actorId, action.gameId, mutationState);
     case 'rematch_game':
-      return createRematchGame(admin, actorId, action.gameId);
+      return createRematchGame(admin, actorId, action.gameId, mutationState);
     case 'nudge_turn':
-      return nudgeTurn(admin, actorId, action.gameId);
+      return nudgeTurn(admin, actorId, action.gameId, mutationState);
     case 'roll':
       return mutateGame(
         admin,
         actorId,
         action.gameId,
+        mutationState,
         action.type,
         (state) => rollGame(state, actorId, action.held),
         (_state, nextState) => buildRollActionPayload(nextState.dice),
@@ -202,20 +216,21 @@ async function applyAction(admin: DbClient, actorId: string, action: Action): Pr
         admin,
         actorId,
         action.gameId,
+        mutationState,
         action.type,
         (state) => purchaseExtraRoll(state, actorId, action.held),
         (state) => buildExtraRollActionPayload(state, actorId),
       );
     case 'score_category':
-      return scoreRemoteTurn(admin, actorId, action.gameId, action.category, false, action.held);
+      return scoreRemoteTurn(admin, actorId, action.gameId, action.category, mutationState, false, action.held);
     case 'scratch_category':
-      return scratchRemoteScoreBox(admin, actorId, action.gameId, action.category, action.held);
+      return scratchRemoteScoreBox(admin, actorId, action.gameId, action.category, mutationState, action.held);
     case 'pass_response':
-      return passResponse(admin, actorId, action.gameId);
+      return passResponse(admin, actorId, action.gameId, mutationState);
     case 'mulligan':
-      return mulliganTurn(admin, actorId, action.gameId);
+      return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, action.chanceDie);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -840,7 +855,12 @@ function readHeld(record: Record<string, unknown>): GameState['held'] | undefine
   return record.held === undefined ? undefined : toHeldDice(record.held);
 }
 
-async function createRemoteGame(admin: DbClient, actorId: string, opponentId: string) {
+async function createRemoteGame(
+  admin: DbClient,
+  actorId: string,
+  opponentId: string,
+  mutationState: ActionMutationState,
+) {
   if (actorId === opponentId) {
     throw new Error('Choose a different opponent.');
   }
@@ -869,6 +889,7 @@ async function createRemoteGame(admin: DbClient, actorId: string, opponentId: st
     { id: opponentProfile.id, name: opponentProfile.display_name },
   ]);
 
+  mutationState.mayHaveWritten = true;
   const { data: game, error: gameError } = await admin
     .from('games')
     .insert({
@@ -910,7 +931,12 @@ async function createRemoteGame(admin: DbClient, actorId: string, opponentId: st
   return { game, notificationProfileIds: [opponentId] };
 }
 
-async function createRematchGame(admin: DbClient, actorId: string, originalGameId: string) {
+async function createRematchGame(
+  admin: DbClient,
+  actorId: string,
+  originalGameId: string,
+  mutationState: ActionMutationState,
+) {
   const originalGame = await loadGameForActor(admin, originalGameId, actorId);
   if (originalGame.status !== 'complete') {
     throw new Error('Rematches are only available after the game is complete.');
@@ -964,6 +990,7 @@ async function createRematchGame(admin: DbClient, actorId: string, originalGameI
   const gameId = crypto.randomUUID();
   const state = createGameState(gameId, orderedProfiles);
 
+  mutationState.mayHaveWritten = true;
   const { data: game, error: gameError } = await admin
     .from('games')
     .insert({
@@ -1009,7 +1036,7 @@ async function createRematchGame(admin: DbClient, actorId: string, originalGameI
   return { game, notificationProfileIds: orderedProfiles.map((profile) => profile.id) };
 }
 
-async function createInvite(admin: DbClient, actorId: string) {
+async function createInvite(admin: DbClient, actorId: string, mutationState: ActionMutationState) {
   const { data: profile, error } = await admin.from('profiles').select('id, display_name').eq('id', actorId).single();
 
   if (error) {
@@ -1023,6 +1050,7 @@ async function createInvite(admin: DbClient, actorId: string) {
       name: profile.display_name,
     },
   ]);
+  mutationState.mayHaveWritten = true;
   const { data: game, error: gameError } = await admin
     .from('games')
     .insert({
@@ -1069,7 +1097,7 @@ async function createInvite(admin: DbClient, actorId: string) {
   return { game, inviteCode: invite.invite_code };
 }
 
-async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string) {
+async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string, mutationState: ActionMutationState) {
   const normalizedInviteCode = inviteCode.trim().toUpperCase();
   const { data: invite, error: inviteError } = await admin
     .from('game_invites')
@@ -1108,6 +1136,7 @@ async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string
     { id: invitee.id, name: invitee.display_name },
   ]);
 
+  mutationState.mayHaveWritten = true;
   const { error: playerError } = await admin.from('game_players').insert({
     game_id: invite.game_id,
     player_id: actorId,
@@ -1148,7 +1177,12 @@ async function acceptInvite(admin: DbClient, actorId: string, inviteCode: string
   return { game, notificationProfileIds: [invite.inviter_id] };
 }
 
-async function removeGameFromList(admin: DbClient, actorId: string, gameId: string) {
+async function removeGameFromList(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  mutationState: ActionMutationState,
+) {
   const game = await loadGameForActor(admin, gameId, actorId);
 
   if (game.status === 'inviting') {
@@ -1156,6 +1190,7 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
       throw new Error('Only the invite creator can remove this invite.');
     }
 
+    mutationState.mayHaveWritten = true;
     const { error } = await admin.from('games').delete().eq('id', gameId);
     if (error) {
       throw error;
@@ -1164,6 +1199,7 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
     return { removedGameId: gameId };
   }
 
+  mutationState.mayHaveWritten = true;
   const { error } = await admin
     .from('game_players')
     .update({ hidden_at: new Date().toISOString() })
@@ -1177,7 +1213,7 @@ async function removeGameFromList(admin: DbClient, actorId: string, gameId: stri
   return { removedGameId: gameId };
 }
 
-async function nudgeTurn(admin: DbClient, actorId: string, gameId: string) {
+async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status === 'inviting' || game.status === 'complete' || !game.current_player_id) {
     throw new Error('This game is not waiting on another player.');
@@ -1210,6 +1246,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string) {
     throw new Error('You can nudge this player again 8 hours after your last nudge.');
   }
 
+  mutationState.mayHaveWritten = true;
   await insertAction(admin, gameId, actorId, 'nudge_turn', {
     targetPlayerId: game.current_player_id,
   });
@@ -1220,6 +1257,7 @@ async function mutateGame(
   admin: DbClient,
   actorId: string,
   gameId: string,
+  mutationState: ActionMutationState,
   actionType: ActionType,
   mutate: (state: GameState) => GameState,
   createPayload: (state: GameState, nextState: GameState) => Record<string, unknown> = () => ({}),
@@ -1227,6 +1265,7 @@ async function mutateGame(
   const game = await loadGameForActor(admin, gameId, actorId);
   const nextState = mutate(game.state);
   const nextPlayer = nextState.players[nextState.currentPlayerIndex];
+  mutationState.mayHaveWritten = true;
   const { data, error } = await admin
     .from('games')
     .update({
@@ -1254,6 +1293,7 @@ async function scoreRemoteTurn(
   actorId: string,
   gameId: string,
   category: ScoreCategory,
+  mutationState: ActionMutationState,
   scratch = false,
   submittedHeld?: GameState['held'],
 ) {
@@ -1311,6 +1351,7 @@ async function scoreRemoteTurn(
       ? rankedPlayers[0]
       : null;
 
+  mutationState.mayHaveWritten = true;
   const { data: insertedTurn, error: turnError } = await admin
     .from('turns')
     .insert({
@@ -1377,12 +1418,13 @@ function scratchRemoteScoreBox(
   actorId: string,
   gameId: string,
   category: ScoreCategory,
+  mutationState: ActionMutationState,
   held?: GameState['held'],
 ) {
-  return scoreRemoteTurn(admin, actorId, gameId, category, true, held);
+  return scoreRemoteTurn(admin, actorId, gameId, category, mutationState, true, held);
 }
 
-async function passResponse(admin: DbClient, actorId: string, gameId: string) {
+async function passResponse(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window') {
     throw new Error('There is no turn response to pass.');
@@ -1391,6 +1433,7 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string) {
     throw new Error('Only the responding player can pass.');
   }
 
+  mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
@@ -1410,7 +1453,7 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string) {
   return { game: updatedGame };
 }
 
-async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
+async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || !game.last_turn_id) {
     throw new Error('Mulligan is only available immediately after a submitted turn.');
@@ -1428,6 +1471,7 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string) {
   }
 
   const nextState = removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan);
+  mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
@@ -1464,6 +1508,7 @@ async function suckerPunchTurn(
   actorId: string,
   gameId: string,
   turnId: string,
+  mutationState: ActionMutationState,
   requestedChanceDie?: DieValue,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
@@ -1497,6 +1542,7 @@ async function suckerPunchTurn(
   }
   const nextPlayerId = outcome.landed ? turn.player_id : actorId;
 
+  mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
     .update({
