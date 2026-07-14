@@ -25,7 +25,7 @@ function loadRollAnimationModule() {
   return module.exports;
 }
 
-const { createRollingLaunch } = loadRollAnimationModule();
+const { createRollingLaunch, createRollingScaleOutputRange } = loadRollAnimationModule();
 
 function withFixedRandom(run) {
   const originalRandom = Math.random;
@@ -46,7 +46,18 @@ test('rolling launch centers every supported rendered die size over a measured s
 
     assert.equal(launch.toX + dieSize / 2, slot.x - rollZone.x + slot.width / 2);
     assert.equal(launch.toY + dieSize / 2, slot.y - rollZone.y + slot.height / 2);
+    assert.ok(Math.abs(launch.landingScale * dieSize - slot.width) < 1e-9);
   }
+});
+
+test('rolling scale settles at the permanent die size before the animated die is replaced', () => {
+  const rollZone = { x: 100, y: 200, width: 393, height: 120 };
+  const slot = { x: 140, y: 220, width: 76, height: 76 };
+  const launch = withFixedRandom(() => createRollingLaunch(0, 'left', rollZone, slot, 88, 70));
+  const scaleOutput = createRollingScaleOutputRange(0, launch);
+
+  assert.equal(scaleOutput.at(-1), 70 / 88);
+  assert.ok(scaleOutput.at(-2) < scaleOutput.at(-1));
 });
 
 test('rolling launch fallback geometry scales with the rendered die', () => {

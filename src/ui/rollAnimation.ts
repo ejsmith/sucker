@@ -16,6 +16,7 @@ export type RollingLaunch = {
   duration: number;
   fromX: number;
   fromY: number;
+  landingScale: number;
   midX: number;
   midY: number;
   peakScale: number;
@@ -32,6 +33,7 @@ export const defaultRollingLaunch: RollingLaunch = {
   duration: 1180,
   fromX: -104,
   fromY: 28,
+  landingScale: 64 / rollingDieBaseSize,
   midX: 72,
   midY: -24,
   peakScale: 1.45,
@@ -51,6 +53,7 @@ export function createRollingLaunch(
   rollZoneRect: MeasuredRect | null,
   slotRect: MeasuredRect | null,
   renderedDieSize = rollingDieBaseSize,
+  landingDieSize?: number,
 ): RollingLaunch {
   const dieSize = Number.isFinite(renderedDieSize) && renderedDieSize > 0 ? renderedDieSize : rollingDieBaseSize;
   const geometryScale = dieSize / rollingDieBaseSize;
@@ -63,6 +66,11 @@ export function createRollingLaunch(
   const fallbackToY = 35 * geometryScale - dieSize / 2;
   const toX = rollZoneRect && slotRect ? slotRect.x - rollZoneRect.x + slotRect.width / 2 - dieSize / 2 : fallbackToX;
   const toY = rollZoneRect && slotRect ? slotRect.y - rollZoneRect.y + slotRect.height / 2 - dieSize / 2 : fallbackToY;
+  const measuredLandingSize = slotRect ? Math.min(slotRect.width, slotRect.height) : fallbackSlotWidth;
+  const landingSize =
+    typeof landingDieSize === 'number' && Number.isFinite(landingDieSize) && landingDieSize > 0
+      ? landingDieSize
+      : measuredLandingSize;
   const rollZoneWidth = rollZoneRect?.width ?? 393 * geometryScale;
   const fromX =
     side === 'left'
@@ -83,6 +91,7 @@ export function createRollingLaunch(
     duration: Math.round(1040 + Math.random() * 320),
     fromX,
     fromY,
+    landingScale: landingSize / dieSize,
     midX,
     midY,
     peakScale: 1.26 + Math.random() * 0.38,
@@ -91,6 +100,19 @@ export function createRollingLaunch(
     toX,
     toY,
   };
+}
+
+export function createRollingScaleOutputRange(index: number, launch: RollingLaunch) {
+  const landingScale = launch.landingScale;
+
+  return [
+    0.86 + index * 0.02,
+    1.18,
+    launch.peakScale,
+    Math.max(1.02, landingScale * 1.08),
+    landingScale * 0.96,
+    landingScale,
+  ];
 }
 
 export function measureInWindow(node: ViewRef | null): Promise<MeasuredRect | null> {
