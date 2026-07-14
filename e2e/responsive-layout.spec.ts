@@ -138,6 +138,7 @@ test.describe('Chromium pixel baselines', () => {
 
     const flyingDie = page.getByTestId('flying-die-0');
     await expect(flyingDie).toBeVisible();
+    await expect(slot).toHaveCSS('opacity', '1');
     await expect
       .poll(
         async () => {
@@ -148,10 +149,10 @@ test.describe('Chromium pixel baselines', () => {
           const landingSize = Math.min(slotBox.width, slotBox.height) - slotBorderWidth * 2;
 
           return (
-            Math.abs(flyingBox.width - landingSize) <= 1 &&
-            Math.abs(flyingBox.height - landingSize) <= 1 &&
-            Math.abs(centerX(flyingBox) - centerX(slotBox)) <= 1 &&
-            Math.abs(centerY(flyingBox) - centerY(slotBox)) <= 1
+            Math.abs(flyingBox.width - landingSize) <= 0.5 &&
+            Math.abs(flyingBox.height - landingSize) <= 0.5 &&
+            Math.abs(centerX(flyingBox) - centerX(slotBox)) <= 0.5 &&
+            Math.abs(centerY(flyingBox) - centerY(slotBox)) <= 0.5
           );
         },
         { intervals: [10, 10, 20, 20], timeout: 2500 },
@@ -161,8 +162,8 @@ test.describe('Chromium pixel baselines', () => {
     await expect(flyingDie).toHaveCount(0);
     const [finalDieBox, slotBox] = await Promise.all([visibleBox(slot.locator('svg')), visibleBox(slot)]);
     const landingSize = Math.min(slotBox.width, slotBox.height) - slotBorderWidth * 2;
-    expectPixelMatch(finalDieBox.width, landingSize);
-    expectPixelMatch(finalDieBox.height, landingSize);
+    expect(Math.abs(finalDieBox.width - landingSize)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(finalDieBox.height - landingSize)).toBeLessThanOrEqual(0.5);
   });
 
   test('wide web layouts center and cap the game stage', async ({ browser }) => {

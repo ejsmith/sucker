@@ -3026,7 +3026,6 @@ function LocalGameScreen({
                       style={({ pressed }) => [
                         styles.dieSlot,
                         gameLayout.styles.dieSlot,
-                        isFlying && styles.settlingDieSlot,
                         showHeldDie && styles.heldDie,
                         pressed && styles.pressed,
                       ]}
@@ -5594,9 +5593,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...createBoxShadowStyle(0, 0, 2, 'rgba(5, 5, 5, 0.4)'),
     width: '100%',
-  },
-  settlingDieSlot: {
-    opacity: 0.55,
   },
   heldDie: {
     backgroundColor: '#FFF0A6',
