@@ -157,7 +157,12 @@ Deno.serve(async (request) => {
       return json(result, 200, timer.toHeaders());
     } catch (actionError) {
       const message = toErrorMessage(actionError);
-      await completeActionRequest(admin, user.id, action, { error: message }, toErrorStatus(actionError));
+      const status = toErrorStatus(actionError);
+      if (status >= 500 && !(actionError instanceof ActionRequestPersistenceError)) {
+        await releaseActionRequest(admin, user.id, action);
+      } else {
+        await completeActionRequest(admin, user.id, action, { error: message }, status);
+      }
       throw actionError;
     }
   } catch (error) {
@@ -295,6 +300,18 @@ async function completeActionRequest(
       response: response as Database['public']['Tables']['game_action_requests']['Update']['response'],
       status: 'completed',
     })
+    .eq('actor_id', actorId)
+    .eq('request_id', action.requestId)
+    .eq('status', 'processing');
+  if (error) {
+    throw new ActionRequestPersistenceError(error);
+  }
+}
+
+async function releaseActionRequest(admin: DbClient, actorId: string, action: Action) {
+  const { error } = await admin
+    .from('game_action_requests')
+    .delete()
     .eq('actor_id', actorId)
     .eq('request_id', action.requestId)
     .eq('status', 'processing');

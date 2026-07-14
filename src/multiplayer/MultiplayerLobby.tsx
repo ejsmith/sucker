@@ -175,9 +175,23 @@ export function MultiplayerLobby({
 
       const refresh = (async () => {
         try {
-          const nextGames = await onRefreshGames(profileId);
+          const [gamesResult, recordResult] = await Promise.allSettled([
+            onRefreshGames(profileId),
+            getAllTimeOpponentRecord(),
+          ]);
+          if (gamesResult.status === 'rejected') {
+            throw gamesResult.reason;
+          }
+          const nextGames = gamesResult.value;
           setNow(Date.now());
           await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId));
+          if (recordResult.status === 'fulfilled') {
+            setAllTimeOpponentRecord(recordResult.value);
+          } else if (surfaceError) {
+            setMessage(
+              recordResult.reason instanceof Error ? recordResult.reason.message : 'Unable to load all-time record.',
+            );
+          }
         } catch (refreshError) {
           if (surfaceError) {
             setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
@@ -221,21 +235,6 @@ export function MultiplayerLobby({
   useEffect(() => {
     if (session) void refreshGames();
   }, [refreshGames, session]);
-
-  useEffect(() => {
-    if (!profile) return;
-    let active = true;
-    void getAllTimeOpponentRecord()
-      .then((record) => {
-        if (active) setAllTimeOpponentRecord(record);
-      })
-      .catch((recordError: unknown) => {
-        if (active) setMessage(recordError instanceof Error ? recordError.message : 'Unable to load all-time record.');
-      });
-    return () => {
-      active = false;
-    };
-  }, [profile]);
 
   useEffect(() => {
     if (!profile || pendingAvatarRecoveryProfileId.current === profile.id) return;

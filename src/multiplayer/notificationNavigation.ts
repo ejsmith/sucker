@@ -19,7 +19,18 @@ export function getInitialNotificationGameId() {
     return null;
   }
 
-  return getGameIdFromUrl(getWebLocation()?.href ?? null);
+  const url = getWebLocation()?.href;
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    const queryGameId = parsedUrl.searchParams.get('game') ?? parsedUrl.searchParams.get('gameId');
+    return queryGameId?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 export function getGameIdFromUrl(url: string | null) {

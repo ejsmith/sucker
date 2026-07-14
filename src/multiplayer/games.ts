@@ -31,7 +31,13 @@ export async function listMyGames() {
   const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
     await Promise.all([
       supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
-      supabase.from('games').select('*').eq('status', 'complete').order('completed_at', { ascending: false }).limit(25),
+      supabase
+        .from('games')
+        .select('*')
+        .eq('status', 'complete')
+        .order('completed_at', { ascending: false, nullsFirst: false })
+        .order('updated_at', { ascending: false })
+        .limit(25),
     ]);
 
   if (activeError) {
@@ -261,6 +267,9 @@ function isRetryableActionError(error: unknown) {
     return true;
   }
   if (!error.status) {
+    return true;
+  }
+  if (error.status === 401) {
     return true;
   }
   if (error.status === 409) {

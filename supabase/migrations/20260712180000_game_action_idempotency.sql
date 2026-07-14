@@ -2,7 +2,9 @@ create table public.game_action_requests (
   actor_id uuid not null references public.profiles(id) on delete cascade,
   request_id uuid not null,
   action_type text not null,
-  game_id uuid references public.games(id) on delete cascade,
+  -- Keep the original game id after destructive actions delete the game so a
+  -- retried request can still return its stored result.
+  game_id uuid,
   status text not null default 'processing' check (status in ('processing', 'completed')),
   http_status integer check (http_status between 200 and 599),
   response jsonb,

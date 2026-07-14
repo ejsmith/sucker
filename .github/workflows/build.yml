@@ -275,6 +275,9 @@ jobs:
           EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
+      - name: Add GitHub Pages route fallback
+        run: cp dist/index.html dist/404.html
+
       - name: Add Apple associated domain file
         run: |
           mkdir -p dist/.well-known

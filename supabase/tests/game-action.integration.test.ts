@@ -185,8 +185,17 @@ Deno.test('game-action removes open invites and hides started games from the act
 
   const invite = await invokeGameAction(alice, { type: 'create_invite' });
   const inviteGameId = (invite.game as GameRow).id;
-  const removedInvite = await invokeGameAction(alice, { gameId: inviteGameId, type: 'remove_game' });
+  const removeInviteRequestId = crypto.randomUUID();
+  const removeInviteAction = { gameId: inviteGameId, requestId: removeInviteRequestId, type: 'remove_game' };
+  const removedInvite = await invokeGameAction(alice, removeInviteAction);
   assertEquals(removedInvite.removedGameId, inviteGameId);
+  const replayedRemoval = await invokeGameAction(alice, removeInviteAction);
+  assertEquals(replayedRemoval.removedGameId, inviteGameId);
+
+  const retainedRemovalRequest = await selectSingle<{ game_id: string; status: string }>(
+    admin.from('game_action_requests').select('game_id, status').eq('request_id', removeInviteRequestId).single(),
+  );
+  assertEquals(retainedRemovalRequest, { game_id: inviteGameId, status: 'completed' });
 
   const deletedGame = await selectMaybe<{ id: string }>(
     admin.from('games').select('id').eq('id', inviteGameId).maybeSingle(),

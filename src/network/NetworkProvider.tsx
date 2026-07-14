@@ -1,6 +1,7 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, StyleSheet, Text, View } from 'react-native';
+import { getCurrentSession } from '../multiplayer/auth';
 import { recoverPendingMultiplayerActions } from '../multiplayer/games';
 import { reportError } from '../monitoring/exceptionless';
 
@@ -22,22 +23,28 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const isMounted = useRef(true);
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
-  const recover = useCallback(() => {
-    setIsRecovering(true);
-    void recoverPendingMultiplayerActions()
-      .catch((error) => reportError(error, { Operation: 'RecoverPendingMultiplayerActions' }))
-      .finally(() => {
-        if (isMounted.current) {
-          setIsRecovering(false);
-        }
-      });
+  const recover = useCallback(async () => {
+    try {
+      const session = await getCurrentSession();
+      if (!session) {
+        return;
+      }
+      setIsRecovering(true);
+      await recoverPendingMultiplayerActions();
+    } catch (error) {
+      await reportError(error, { Operation: 'RecoverPendingMultiplayerActions' });
+    } finally {
+      if (isMounted.current) {
+        setIsRecovering(false);
+      }
+    }
   }, []);
 
   const refresh = useCallback(async () => {
     const state = await NetInfo.fetch();
     setNetworkState(state);
     if (state.isConnected !== false && state.isInternetReachable !== false) {
-      recover();
+      await recover();
     }
   }, [recover]);
 
@@ -46,7 +53,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     const unsubscribe = NetInfo.addEventListener((state) => {
       setNetworkState(state);
       if (state.isConnected !== false && state.isInternetReachable !== false) {
-        recover();
+        void recover();
       }
     });
     const appStateSubscription = AppState.addEventListener('change', (state) => {

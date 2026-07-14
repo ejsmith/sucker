@@ -127,6 +127,13 @@ type OpponentTurnReveal = {
 };
 
 const GameLayoutContext = createContext<GameLayout | null>(null);
+const absoluteFillStyle = {
+  bottom: 0,
+  left: 0,
+  position: 'absolute' as const,
+  right: 0,
+  top: 0,
+};
 
 function useGameLayout() {
   const layout = useContext(GameLayoutContext);
@@ -4923,7 +4930,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   backgroundPattern: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     opacity: 0.12,
   },
   backgroundDie: {
@@ -4947,7 +4954,7 @@ const styles = StyleSheet.create({
     zIndex: 60,
   },
   topBarBannerClip: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     borderRadius: 8,
     overflow: 'hidden',
     zIndex: 1,
@@ -4990,7 +4997,7 @@ const styles = StyleSheet.create({
     zIndex: 25,
   },
   topMenuLayer: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     zIndex: 80,
   },
   topMenu: {
@@ -5217,7 +5224,7 @@ const styles = StyleSheet.create({
     width: 50,
   },
   opponentScoreButton: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5252,7 +5259,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   suckerPunchScoreWipe: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -5434,7 +5441,7 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.03 }],
   },
   rollingDiceOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     zIndex: 8,
   },
   rollingDieTrack: {
@@ -5507,7 +5514,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   scoreDiceOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     zIndex: 24,
   },
   scoreFlyingDie: {
@@ -5522,7 +5529,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scoreNumberOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     zIndex: 25,
   },
   scoreFlyingNumber: {
@@ -5545,7 +5552,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   suckerPunchChanceOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.66)',
     justifyContent: 'center',
@@ -5643,7 +5650,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   suckerPunchNoticeOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
@@ -5710,7 +5717,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   nextTurnsOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.62)',
     justifyContent: 'center',
@@ -5892,7 +5899,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 0,
   },
   gameOverOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.68)',
     justifyContent: 'center',
@@ -6096,7 +6103,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   tokenMenuOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...absoluteFillStyle,
     alignItems: 'center',
     backgroundColor: 'rgba(20, 0, 0, 0.56)',
     justifyContent: 'flex-end',
