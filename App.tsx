@@ -2824,7 +2824,7 @@ function LocalGameScreen({
                 onPress={() => setIsMenuOpen(false)}
                 style={StyleSheet.absoluteFill}
               />
-              <View style={[styles.topMenu, gameLayout.styles.topMenu]}>
+              <View style={[styles.topMenu, gameLayout.styles.topMenu]} testID="game-top-menu">
                 <Pressable
                   accessibilityLabel="View stats"
                   accessibilityRole="button"
@@ -2837,7 +2837,7 @@ function LocalGameScreen({
                   testID="game-stats-menu-item"
                 >
                   <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
-                    Stats
+                    STATS
                   </Text>
                 </Pressable>
               </View>
@@ -5145,28 +5145,38 @@ const styles = StyleSheet.create({
     zIndex: 80,
   },
   topMenu: {
-    backgroundColor: '#FFF3C2',
-    borderColor: '#210505',
-    borderRadius: 8,
-    borderWidth: 2,
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderWidth: 3,
+    ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.45)'),
     elevation: 12,
-    padding: 4,
+    padding: 6,
     position: 'absolute',
-    right: 18,
-    top: 50,
-    width: 116,
+    right: 8,
+    top: 64,
+    width: 132,
     zIndex: 82,
   },
   topMenuItem: {
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 7,
+    borderWidth: 2,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   topMenuText: {
-    color: '#210505',
-    fontSize: 13,
+    color: '#FFF3C2',
+    fontSize: 15,
     fontFamily: gameFontBlack,
     fontWeight: '900',
+    lineHeight: 18,
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
   },
   playerStrip: {
     backgroundColor: '#1B0505',

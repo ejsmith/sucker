@@ -214,9 +214,13 @@ test.describe('Chromium pixel baselines', () => {
 
         await page.getByTestId('token-menu-close-button').click();
         await page.getByTestId('game-menu-button').click();
+        const headerMenu = page.getByTestId('game-top-menu');
         const statsMenuItem = page.getByTestId('game-stats-menu-item');
+        await expect(headerMenu).toBeVisible();
+        await expectContainedBy(headerMenu, screenBox);
         await expectMinimumTouchTarget(statsMenuItem);
         await expectContainedBy(statsMenuItem, screenBox);
+        await expect(screen).toHaveScreenshot(`game-${viewport.key}-header-menu.png`);
         await statsMenuItem.click();
 
         const statsOverlay = page.getByTestId('stats-page-overlay');
