@@ -3027,7 +3027,6 @@ function LocalGameScreen({
                           face={die}
                           style={[
                             styles.dieImage,
-                            showHeldDie && styles.heldDieImage,
                             isScoring && styles.scoringSourceDieImage,
                           ]}
                         />
@@ -4702,20 +4701,34 @@ function DieFace({
   return (
     <View style={style}>
       <Svg height="100%" viewBox="0 0 68 68" width="100%">
-        {variant !== 'pips' && (
+        {variant === 'background' && (
           <>
-            <Rect fill={variant === 'background' ? '#5A1308' : '#210505'} height={61} rx={11} width={61} x={4} y={5} />
+            <Rect fill="#5A1308" height={61} rx={11} width={61} x={4} y={5} />
             <Rect
-              fill={variant === 'background' ? '#7A1208' : '#EEEEEE'}
+              fill="#7A1208"
               height={61}
               rx={11}
-              stroke={variant === 'background' ? '#5A1308' : '#838383'}
+              stroke="#5A1308"
               strokeWidth={1.5}
               width={61}
               x={2}
               y={2}
             />
-            {variant === 'white' && <Rect fill="#FFFFFF" height={56} rx={9} width={56} x={4.5} y={4.5} />}
+          </>
+        )}
+        {variant === 'white' && (
+          <>
+            <Rect
+              fill="#EEEEEE"
+              height={66}
+              rx={11}
+              stroke="#838383"
+              strokeWidth={1.5}
+              width={66}
+              x={1}
+              y={1}
+            />
+            <Rect fill="#FFFFFF" height={60} rx={9} width={60} x={4} y={4} />
           </>
         )}
         {diePipPositions[face].map(([cx, cy]) => (
@@ -5590,9 +5603,6 @@ const styles = StyleSheet.create({
   },
   scoringSourceDieImage: {
     opacity: 0,
-  },
-  heldDieImage: {
-    transform: [{ scale: 1.03 }],
   },
   rollingDiceOverlay: {
     ...StyleSheet.absoluteFillObject,
