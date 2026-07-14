@@ -77,7 +77,6 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       backButton: {
         height: touch(48),
         left: unit(6),
-        top: unit(-1),
         width: touch(48),
       },
       backgroundDie: {
@@ -188,7 +187,6 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       menuDotsButton: {
         height: touch(32),
         right: unit(10),
-        top: unit(11),
         width: touch(32),
       },
       opponentScoreText: {

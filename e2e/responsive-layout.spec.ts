@@ -382,6 +382,8 @@ function expectPixelMatch(actual: number, expected: number) {
 
 async function expectLayoutStackToFit(page: Page, screenBox: NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>) {
   const topBar = await visibleBox(page.getByTestId('game-top-bar'));
+  const backChevron = await visibleBox(page.getByTestId('game-back-chevron'));
+  const menuDots = await visibleBox(page.getByTestId('game-menu-dots'));
   const playerStrip = await visibleBox(page.getByTestId('player-strip'));
   const board = await visibleBox(page.getByTestId('scorecard-board'));
   const diceTray = await visibleBox(page.getByTestId('dice-tray'));
@@ -390,6 +392,9 @@ async function expectLayoutStackToFit(page: Page, screenBox: NonNullable<Awaited
   const scoreAboveChance = await visibleBox(page.getByTestId('home-score-box-sucker'));
 
   expect(topBar.y).toBeGreaterThanOrEqual(screenBox.y);
+  expectPixelMatch(centerY(backChevron), centerY(topBar));
+  expectPixelMatch(centerY(menuDots), centerY(topBar));
+  expectPixelMatch(centerY(backChevron), centerY(menuDots));
   expect(bottom(topBar)).toBeLessThanOrEqual(playerStrip.y);
   expect(bottom(playerStrip)).toBeLessThanOrEqual(board.y);
   expect(bottom(board)).toBeLessThanOrEqual(diceTray.y);
@@ -455,4 +460,8 @@ async function visibleBox(locator: Locator) {
 
 function bottom(box: { height: number; y: number }) {
   return box.y + box.height;
+}
+
+function centerY(box: { height: number; y: number }) {
+  return box.y + box.height / 2;
 }

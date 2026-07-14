@@ -2793,7 +2793,7 @@ function LocalGameScreen({
                 style={({ pressed }) => [styles.backButton, gameLayout.styles.backButton, pressed && styles.pressed]}
                 testID="game-back-button"
               >
-                <GameBackChevronIcon size={gameLayout.unit(34)} />
+                <GameBackChevronIcon size={gameLayout.unit(34)} testID="game-back-chevron" />
               </Pressable>
             )}
             <Pressable
@@ -2809,7 +2809,7 @@ function LocalGameScreen({
               ]}
               testID="game-menu-button"
             >
-              <View style={[styles.menuDots, gameLayout.styles.menuDots]}>
+              <View style={[styles.menuDots, gameLayout.styles.menuDots]} testID="game-menu-dots">
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
                 <View style={[styles.menuDot, gameLayout.styles.menuDot]} />
@@ -4924,9 +4924,9 @@ function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
   );
 }
 
-function GameBackChevronIcon({ size }: { size: number }) {
+function GameBackChevronIcon({ size, testID }: { size: number; testID?: string }) {
   return (
-    <Svg height={size} viewBox="0 0 24 24" width={size}>
+    <Svg height={size} testID={testID} viewBox="0 0 24 24" width={size}>
       <Path
         d="M15 18 9 12l6-6"
         fill="none"
@@ -5115,7 +5115,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     left: 6,
     position: 'absolute',
-    top: -1,
     width: 48,
     zIndex: 25,
   },
@@ -5138,7 +5137,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'absolute',
     right: 10,
-    top: 11,
     width: 32,
     zIndex: 25,
   },
