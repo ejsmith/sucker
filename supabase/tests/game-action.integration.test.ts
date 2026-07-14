@@ -126,6 +126,21 @@ Deno.test('game-action request ids prevent replayed mutations and remain private
 
   const malformed = await invokeGameAction(alice, { gameId: game.id, requestId: 'not-a-uuid', type: 'roll' }, 400);
   assertEquals(malformed.error, 'Invalid multiplayer action field: requestId.');
+
+  const invalidInviteRequestId = crypto.randomUUID();
+  const invalidInviteAction = {
+    inviteCode: 'MISSING',
+    requestId: invalidInviteRequestId,
+    type: 'accept_invite',
+  };
+  const invalidInvite = await invokeGameAction(bob, invalidInviteAction, 400);
+  const replayedInvalidInvite = await invokeGameAction(bob, invalidInviteAction, 400);
+  assertEquals(replayedInvalidInvite.error, invalidInvite.error);
+
+  const terminalRequest = await selectSingle<{ http_status: number; status: string }>(
+    admin.from('game_action_requests').select('http_status, status').eq('request_id', invalidInviteRequestId).single(),
+  );
+  assertEquals(terminalRequest, { http_status: 400, status: 'completed' });
 });
 
 Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {

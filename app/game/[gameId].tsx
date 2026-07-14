@@ -14,11 +14,13 @@ export default function RemoteGameRoute() {
 
   return (
     <RemoteGameScreen
+      key={gameId}
       gameId={gameId}
       games={gameList.games}
       gamesProfileId={gameList.gamesProfileId}
       onExit={() => (router.canGoBack() ? router.back() : router.replace('/'))}
       onGameChange={gameList.rememberGame}
+      onOpenGame={(nextGameId) => router.replace(`/game/${encodeURIComponent(nextGameId)}`)}
       onRefreshGames={gameList.refreshGames}
     />
   );

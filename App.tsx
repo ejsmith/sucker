@@ -400,6 +400,7 @@ export function RemoteGameScreen({
   gamesProfileId,
   onExit,
   onGameChange,
+  onOpenGame,
   onRefreshGames,
 }: {
   gameId: string;
@@ -407,6 +408,7 @@ export function RemoteGameScreen({
   gamesProfileId: string | null;
   onExit: () => void;
   onGameChange: (profileId: string, game: RemoteGameRow) => void;
+  onOpenGame: (gameId: string) => void;
   onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
@@ -421,7 +423,6 @@ export function RemoteGameScreen({
     (remoteStageStyle.width > remoteStageViewportWidth || remoteStageStyle.height > remoteStageViewportHeight);
   const remoteStableHostStyle = Platform.OS === 'web' ? { minHeight: windowHeight, minWidth: windowWidth } : null;
   const isAppActive = useAppActivity();
-  const [activeGameId, setActiveGameId] = useState(gameId);
   const [error, setError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
@@ -433,7 +434,7 @@ export function RemoteGameScreen({
   const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
   const wasAppActive = useRef(isAppActive);
   const profileIdRef = useRef<string | null>(null);
-  const activeGameIdRef = useRef(activeGameId);
+  const activeGameIdRef = useRef(gameId);
   const nextTurnGames =
     nextTurnPrompt?.isGameListReady && profileId && gamesProfileId === profileId
       ? getNextTurnGames(games, profileId, nextTurnPrompt.gameId)
@@ -461,8 +462,8 @@ export function RemoteGameScreen({
   );
 
   useEffect(() => {
-    activeGameIdRef.current = activeGameId;
-  }, [activeGameId]);
+    activeGameIdRef.current = gameId;
+  }, [gameId]);
 
   useEffect(() => {
     if (
@@ -486,7 +487,7 @@ export function RemoteGameScreen({
       try {
         const [{ data: userData, error: userError }, nextGame] = await Promise.all([
           supabase.auth.getUser(),
-          getGame(activeGameId),
+          getGame(gameId),
         ]);
         if (userError) {
           throw userError;
@@ -515,7 +516,7 @@ export function RemoteGameScreen({
 
     void loadRemoteGame();
     const unsubscribe = subscribeToGame(
-      activeGameId,
+      gameId,
       (nextGame) => {
         if (isMounted) {
           setRemoteGame(nextGame);
@@ -535,7 +536,7 @@ export function RemoteGameScreen({
       isMounted = false;
       unsubscribe();
     };
-  }, [activeGameId, onGameChange]);
+  }, [gameId, onGameChange]);
 
   useEffect(() => {
     let isMounted = true;
@@ -572,7 +573,7 @@ export function RemoteGameScreen({
     }
 
     const interval = setInterval(() => {
-      void getGame(activeGameId)
+      void getGame(gameId)
         .then((nextGame) => {
           setRemoteGame(nextGame);
           if (profileIdRef.current) {
@@ -585,7 +586,7 @@ export function RemoteGameScreen({
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [activeGameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
+  }, [gameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
 
   useEffect(() => {
     const wasActive = wasAppActive.current;
@@ -596,7 +597,7 @@ export function RemoteGameScreen({
     }
 
     let isCurrent = true;
-    void getGame(activeGameId)
+    void getGame(gameId)
       .then((nextGame) => {
         if (!isCurrent) {
           return;
@@ -618,7 +619,7 @@ export function RemoteGameScreen({
     return () => {
       isCurrent = false;
     };
-  }, [activeGameId, isAppActive, onGameChange, profileId, remoteGame, syncRemoteBadgeCount]);
+  }, [gameId, isAppActive, onGameChange, profileId, remoteGame, syncRemoteBadgeCount]);
 
   useEffect(() => {
     if (!profileId || !isAppActive || !isNextTurnPromptReady) {
@@ -725,7 +726,7 @@ export function RemoteGameScreen({
     setRemoteGame(null);
     setRemoteLastTurn(null);
     setRemoteLastTurnLoadFailedId(null);
-    setActiveGameId(nextGameId);
+    onOpenGame(nextGameId);
   }
 
   function exitToLobby() {
@@ -784,7 +785,7 @@ export function RemoteGameScreen({
       return runRemoteAction(
         async () => {
           const result = await createRematch(remoteGame.id);
-          setActiveGameId(result.game.id);
+          onOpenGame(result.game.id);
           return result;
         },
         { showNextTurns: false },

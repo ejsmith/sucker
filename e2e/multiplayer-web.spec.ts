@@ -210,6 +210,10 @@ test('keep playing rows show queued opponent profile avatars', async ({ browser 
       .toBe(avatarUrl);
     await expect(fallbackGameRow.getByTestId(`next-turn-avatar-${fallbackGameId}-image`)).toHaveCount(0);
     await expect(dialog.getByLabel("Queue Charlie E2E's profile avatar", { exact: true })).toHaveCount(0);
+
+    await queuedGameRow.click();
+    await expect(alicePage).toHaveURL(`${e2eBaseUrl}/game/${queuedGameId}`);
+    await expect(alicePage.getByTestId('next-turns-dialog')).toHaveCount(0);
   } finally {
     await Promise.all(pages.map((page) => page.context().close()));
   }

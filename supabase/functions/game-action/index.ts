@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
-import { getActionRequestFailureDisposition } from '../_shared/actionRequestFailure.ts';
+import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
 import {
   createEmptyScorecard,
   type Dice,
@@ -2177,7 +2177,7 @@ function toErrorStatus(error: unknown) {
   if (error instanceof ActionRequestPersistenceError) {
     return 503;
   }
-  if (error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string') {
+  if (isRetryableDatabaseError(error)) {
     return 503;
   }
   return 400;

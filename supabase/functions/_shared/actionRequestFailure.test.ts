@@ -1,4 +1,4 @@
-import { getActionRequestFailureDisposition } from './actionRequestFailure.ts';
+import { getActionRequestFailureDisposition, isRetryableDatabaseError } from './actionRequestFailure.ts';
 
 Deno.test('action request failures release only retryable claims that cannot have written', () => {
   assertEquals(
@@ -33,6 +33,18 @@ Deno.test('action request failures release only retryable claims that cannot hav
     }),
     'complete',
   );
+});
+
+Deno.test('database errors are retryable only for transient failure codes', () => {
+  for (const code of ['PGRST000', '08006', '53300', '40001', '40P01', '55P03', 'ECONNRESET']) {
+    assertEquals(isRetryableDatabaseError({ code }), true);
+  }
+
+  for (const code of ['PGRST116', '22P02', '23505', '42501', 'UNKNOWN']) {
+    assertEquals(isRetryableDatabaseError({ code }), false);
+  }
+
+  assertEquals(isRetryableDatabaseError(new Error('No database code')), false);
 });
 
 function assertEquals<T>(actual: T, expected: T) {
