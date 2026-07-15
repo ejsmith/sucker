@@ -879,6 +879,7 @@ export function LocalGameScreen({
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showStatsPage, setShowStatsPage] = useState(false);
+  const [playerStatsTarget, setPlayerStatsTarget] = useState<'me' | 'opponent' | null>(null);
   const [isTokenMenuOpen, setIsTokenMenuOpen] = useState(false);
   const [dismissedGameOverId, setDismissedGameOverId] = useState<string | null>(null);
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
@@ -902,7 +903,9 @@ export function LocalGameScreen({
   const screenRef = useRef<ViewRef | null>(null);
   const menuButtonRef = useRef<ViewRef | null>(null);
   const gameOverStatsButtonRef = useRef<ViewRef | null>(null);
-  const statsReturnFocusTarget = useRef<'gameOver' | 'menu'>('menu');
+  const homeAvatarButtonRef = useRef<ViewRef | null>(null);
+  const opponentAvatarButtonRef = useRef<ViewRef | null>(null);
+  const statsReturnFocusTarget = useRef<'gameOver' | 'homeAvatar' | 'menu' | 'opponentAvatar'>('menu');
   const boardRef = useRef<ViewRef | null>(null);
   const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
@@ -930,6 +933,7 @@ export function LocalGameScreen({
     setIsMenuOpen(false);
     setIsTokenMenuOpen(false);
     setShowStatsPage(false);
+    setPlayerStatsTarget(null);
     setShowSuckerPunchNotice(false);
     clearSuckerPunchWipe();
     suckerPunchResultCompletion.current = null;
@@ -2429,17 +2433,34 @@ export function LocalGameScreen({
   function handleOpenStats(returnFocusTarget: 'gameOver' | 'menu') {
     statsReturnFocusTarget.current = returnFocusTarget;
     setIsMenuOpen(false);
+    setPlayerStatsTarget(null);
+    setShowStatsPage(true);
+    void refreshVisibleStats();
+  }
+
+  function handleOpenPlayerStats(target: 'me' | 'opponent') {
+    statsReturnFocusTarget.current = target === 'me' ? 'homeAvatar' : 'opponentAvatar';
+    setIsMenuOpen(false);
+    setPlayerStatsTarget(target);
     setShowStatsPage(true);
     void refreshVisibleStats();
   }
 
   function handleCloseStats() {
+    const returnFocusTarget = statsReturnFocusTarget.current;
     setShowStatsPage(false);
+    setPlayerStatsTarget(null);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        focusAccessibilityTarget(
-          statsReturnFocusTarget.current === 'gameOver' ? gameOverStatsButtonRef.current : menuButtonRef.current,
-        );
+        const target =
+          returnFocusTarget === 'gameOver'
+            ? gameOverStatsButtonRef.current
+            : returnFocusTarget === 'homeAvatar'
+              ? homeAvatarButtonRef.current
+              : returnFocusTarget === 'opponentAvatar'
+                ? opponentAvatarButtonRef.current
+                : menuButtonRef.current;
+        focusAccessibilityTarget(target);
       });
     });
   }
@@ -2704,48 +2725,76 @@ export function LocalGameScreen({
           )}
 
           <View style={styles.playerStrip} testID="player-strip">
-            {displayPlayers.map((player, index) => (
-              <View
-                key={player.id}
-                style={[
-                  styles.playerPill,
-                  gameLayout.styles.playerPill,
-                  player.id === currentPlayer.id && styles.activePlayer,
-                ]}
-              >
+            {displayPlayers.map((player, index) => {
+              const isHomePlayer = index === 0;
+              const avatar = (
                 <PlayerAvatar
-                  avatarUrl={isRemoteGame ? playerAvatars[player.id] : index === 0 ? localPlayerAvatarUrl : null}
+                  avatarUrl={isRemoteGame ? playerAvatars[player.id] : isHomePlayer ? localPlayerAvatarUrl : null}
+                  decorative={isRemoteGame}
                   fontFamily={gameFontBlack}
                   name={player.name}
-                  size={gameLayout.unit(54)}
-                  style={[
-                    styles.avatar,
-                    gameLayout.styles.avatar,
-                    player.id === currentPlayer.id && styles.activeAvatar,
-                  ]}
-                  testID={index === 0 ? 'home-player-avatar' : 'opponent-player-avatar'}
+                  size={gameLayout.unit(50)}
+                  style={[{ borderWidth: gameLayout.stroke(3) }, player.id === currentPlayer.id && styles.activeAvatar]}
+                  testID={isHomePlayer ? 'home-player-avatar' : 'opponent-player-avatar'}
                 />
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.playerScore, gameLayout.styles.playerScore]}
+              );
+              const avatarSlotStyle = [
+                styles.avatarSlot,
+                {
+                  borderRadius: gameLayout.unit(25),
+                  height: gameLayout.unit(50),
+                  left: gameLayout.unit(10),
+                  top: gameLayout.unit(7),
+                  width: gameLayout.unit(50),
+                },
+              ];
+
+              return (
+                <View
+                  key={player.id}
+                  style={[
+                    styles.playerPill,
+                    gameLayout.styles.playerPill,
+                    player.id === currentPlayer.id && styles.activePlayer,
+                  ]}
                 >
-                  {totalScore(player.scorecard)}
-                </Text>
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  numberOfLines={1}
-                  style={[styles.playerName, gameLayout.styles.playerName]}
-                >
-                  {player.name}
-                </Text>
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.tokenText, gameLayout.styles.tokenText]}
-                >
-                  {player.suckerTokens} Tokens
-                </Text>
-              </View>
-            ))}
+                  {isRemoteGame ? (
+                    <Pressable
+                      accessibilityHint="Opens overall multiplayer stats"
+                      accessibilityLabel={`View ${player.name}'s stats`}
+                      accessibilityRole="button"
+                      onPress={() => handleOpenPlayerStats(isHomePlayer ? 'me' : 'opponent')}
+                      ref={isHomePlayer ? homeAvatarButtonRef : opponentAvatarButtonRef}
+                      style={({ pressed }) => [avatarSlotStyle, pressed && styles.avatarPressed]}
+                      testID={isHomePlayer ? 'home-player-avatar-stats-button' : 'opponent-player-avatar-stats-button'}
+                    >
+                      {avatar}
+                    </Pressable>
+                  ) : (
+                    <View style={avatarSlotStyle}>{avatar}</View>
+                  )}
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.playerScore, gameLayout.styles.playerScore]}
+                  >
+                    {totalScore(player.scorecard)}
+                  </Text>
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    numberOfLines={1}
+                    style={[styles.playerName, gameLayout.styles.playerName]}
+                  >
+                    {player.name}
+                  </Text>
+                  <Text
+                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                    style={[styles.tokenText, gameLayout.styles.tokenText]}
+                  >
+                    {player.suckerTokens} Tokens
+                  </Text>
+                </View>
+              );
+            })}
           </View>
           <View ref={boardRef} style={[styles.board, gameLayout.styles.board]} testID="scorecard-board">
             {upperCategories.map((leftCategory, index) => (
@@ -3617,7 +3666,7 @@ export function LocalGameScreen({
           )}
           {showStatsPage && (
             <Modal
-              accessibilityLabel="Game stats"
+              accessibilityLabel={playerStatsTarget ? 'Player stats' : 'Game stats'}
               animationType="none"
               navigationBarTranslucent
               onRequestClose={handleCloseStats}
@@ -3641,11 +3690,17 @@ export function LocalGameScreen({
                   testID="stats-modal-stage"
                 >
                   <StatsPage
+                    currentOpponentAvatarUrl={isRemoteGame ? playerAvatars[opponentPlayer.id] : null}
                     currentOpponentName={opponentPlayer.name}
+                    currentPlayerAvatarUrl={isRemoteGame ? playerAvatars[homePlayer.id] : localPlayerAvatarUrl}
+                    currentPlayerName={homePlayer.name}
+                    currentPlayerOverallStats={isRemoteGame ? (headToHeadStats?.mineOverall ?? null) : null}
                     currentScore={totalScore(homePlayer.scorecard)}
                     onClose={handleCloseStats}
+                    opponentOverallStats={isRemoteGame ? (headToHeadStats?.opponentOverall ?? null) : null}
                     opponentScore={totalScore(opponentPlayer.scorecard)}
                     opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}
+                    playerStatsTarget={playerStatsTarget}
                     stats={isRemoteGame ? (headToHeadStats?.mine ?? null) : computerStats}
                     statsKind={isRemoteGame ? 'headToHead' : 'computer'}
                   />
@@ -5068,18 +5123,11 @@ const styles = StyleSheet.create({
     fontFamily: gameFontBlack,
     fontWeight: '900',
   },
-  avatar: {
-    alignItems: 'center',
-    backgroundColor: '#160303',
-    borderColor: '#FFD329',
-    borderRadius: 25,
-    borderWidth: 3,
-    height: 50,
-    justifyContent: 'center',
-    left: 10,
+  avatarSlot: {
     position: 'absolute',
-    top: 7,
-    width: 50,
+  },
+  avatarPressed: {
+    opacity: 0.72,
   },
   activeAvatar: {
     backgroundColor: '#FFD76A',

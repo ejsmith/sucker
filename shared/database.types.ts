@@ -503,6 +503,40 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      get_profile_stat_rates: {
+        Args: {
+          target_profile_id: string;
+        };
+        Returns: {
+          average_score: number;
+          average_sucker_tokens_leftover: number;
+          average_sucker_tokens_spent: number;
+          blowout_losses: number;
+          blowout_wins: number;
+          buzzer_beater_wins: number;
+          comeback_wins: number;
+          extra_rolls_used: number;
+          forced_rerolls: number;
+          four_of_a_kind_pct: number;
+          full_house_pct: number;
+          games_played: number;
+          highest_score: number;
+          large_straight_pct: number;
+          losses: number;
+          mulligans_used: number;
+          small_straight_pct: number;
+          sucker_blockers_used: number;
+          sucker_hunt_misses: number;
+          sucker_hunts: number;
+          sucker_pct: number;
+          sucker_punch_landed_pct: number;
+          sucker_punches_received: number;
+          sucker_punches_used: number;
+          three_of_a_kind_pct: number;
+          upper_bonus_pct: number;
+          wins: number;
+        }[];
+      };
       record_computer_game_result: {
         Args: {
           computer_scored_four_of_a_kind: boolean;

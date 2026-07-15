@@ -1,4 +1,7 @@
+import type { Database } from '../../shared/database.types';
 import { supabase } from './supabase';
+
+export type ProfileStats = Database['public']['Functions']['get_profile_stat_rates']['Returns'][number];
 
 export type AllTimeOpponentRecord = {
   gamesPlayed: number;
@@ -20,29 +23,46 @@ export async function getHeadToHeadStats(opponentProfileId: string) {
     throw new Error('You must be signed in to view stats.');
   }
 
-  const { data: mine, error } = await supabase
-    .from('head_to_head_stat_rates')
-    .select('*')
-    .eq('player_id', user.id)
-    .eq('opponent_id', opponentProfileId)
-    .maybeSingle();
+  const [mineResult, opponentResult, mineOverall, opponentOverall] = await Promise.all([
+    supabase
+      .from('head_to_head_stat_rates')
+      .select('*')
+      .eq('player_id', user.id)
+      .eq('opponent_id', opponentProfileId)
+      .maybeSingle(),
+    supabase
+      .from('head_to_head_stat_rates')
+      .select('*')
+      .eq('player_id', opponentProfileId)
+      .eq('opponent_id', user.id)
+      .maybeSingle(),
+    getProfileStats(user.id),
+    getProfileStats(opponentProfileId),
+  ]);
+
+  if (mineResult.error) {
+    throw mineResult.error;
+  }
+  if (opponentResult.error) {
+    throw opponentResult.error;
+  }
+
+  return {
+    mine: mineResult.data,
+    mineOverall,
+    opponent: opponentResult.data,
+    opponentOverall,
+  };
+}
+
+export async function getProfileStats(profileId: string): Promise<ProfileStats | null> {
+  const { data, error } = await supabase.rpc('get_profile_stat_rates', { target_profile_id: profileId });
 
   if (error) {
     throw error;
   }
 
-  const { data: opponent, error: opponentError } = await supabase
-    .from('head_to_head_stat_rates')
-    .select('*')
-    .eq('player_id', opponentProfileId)
-    .eq('opponent_id', user.id)
-    .maybeSingle();
-
-  if (opponentError) {
-    throw opponentError;
-  }
-
-  return { mine, opponent };
+  return (data?.[0] as ProfileStats | undefined) ?? null;
 }
 
 export async function getAllTimeOpponentRecord(): Promise<AllTimeOpponentRecord> {

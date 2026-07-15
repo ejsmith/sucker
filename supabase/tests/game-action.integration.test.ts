@@ -16,6 +16,7 @@ type TokenEventRow = Database['public']['Tables']['token_events']['Row'];
 type GamePlayerTokenRow = Pick<Database['public']['Tables']['game_players']['Row'], 'player_id' | 'sucker_tokens'>;
 type GamePlayerResultRow = Database['public']['Tables']['game_player_results']['Row'];
 type HeadToHeadStatsRow = Database['public']['Tables']['head_to_head_stats']['Row'];
+type ProfileStatsRow = Database['public']['Functions']['get_profile_stat_rates']['Returns'][number];
 type TestUser = {
   client: DbClient;
   email: string;
@@ -97,6 +98,78 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
     actions.map((action) => action.action_type),
     ['create_invite', 'accept_invite'],
   );
+});
+
+Deno.test('profile stats aggregate every matchup and remain private to prior opponents', async () => {
+  const [alice, bob, charlie] = await createUsers('profile-stats', ['Alice', 'Bob', 'Charlie']);
+  await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+
+  const inserted = await Promise.all([
+    admin.from('head_to_head_stats').insert({
+      games_played: 1,
+      highest_score: 120,
+      losses: 1,
+      opponent_id: bob.id,
+      player_id: alice.id,
+      total_score: 120,
+    }),
+    admin.from('head_to_head_stats').insert({
+      blowout_wins: 1,
+      games_played: 2,
+      highest_score: 200,
+      losses: 1,
+      opponent_id: alice.id,
+      player_id: bob.id,
+      sucker_punches_landed: 1,
+      sucker_punches_used: 2,
+      sucker_tokens_leftover: 16,
+      sucker_tokens_spent: 4,
+      total_score: 300,
+      upper_bonus_games: 1,
+      wins: 1,
+    }),
+    admin.from('head_to_head_stats').insert({
+      blowout_wins: 2,
+      games_played: 3,
+      highest_score: 300,
+      losses: 1,
+      opponent_id: charlie.id,
+      player_id: bob.id,
+      sucker_punches_landed: 2,
+      sucker_punches_used: 3,
+      sucker_tokens_leftover: 24,
+      sucker_tokens_spent: 11,
+      total_score: 750,
+      upper_bonus_games: 2,
+      wins: 2,
+    }),
+  ]);
+  inserted.forEach((result) => assertNoError(result.error));
+
+  const [bobOverall] = await selectMany<ProfileStatsRow>(
+    alice.client.rpc('get_profile_stat_rates', { target_profile_id: bob.id }),
+  );
+  assertEquals(bobOverall.games_played, 5);
+  assertEquals(bobOverall.wins, 3);
+  assertEquals(bobOverall.losses, 2);
+  assertEquals(bobOverall.highest_score, 300);
+  assertEquals(bobOverall.average_score, 210);
+  assertEquals(bobOverall.blowout_wins, 3);
+  assertEquals(bobOverall.upper_bonus_pct, 60);
+  assertEquals(bobOverall.sucker_punch_landed_pct, 60);
+  assertEquals(bobOverall.average_sucker_tokens_spent, 3);
+  assertEquals(bobOverall.average_sucker_tokens_leftover, 8);
+
+  const [aliceOverall] = await selectMany<ProfileStatsRow>(
+    alice.client.rpc('get_profile_stat_rates', { target_profile_id: alice.id }),
+  );
+  assertEquals(aliceOverall.games_played, 1);
+  assertEquals(aliceOverall.average_score, 120);
+
+  const forbidden = await alice.client.rpc('get_profile_stat_rates', { target_profile_id: charlie.id });
+  if (!forbidden.error) {
+    throw new Error('Expected overall stats to remain private to players who have shared a game.');
+  }
 });
 
 Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {
@@ -469,7 +542,9 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     true,
   );
 
-  const stats = await selectMany<HeadToHeadStatsRow>(admin.from('head_to_head_stats').select('*'));
+  const stats = await selectMany<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+  );
   assertEquals(stats.length, 2);
   assertEquals(
     stats.every((row) => row.games_played === 1),

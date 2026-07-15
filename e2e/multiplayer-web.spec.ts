@@ -467,6 +467,78 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
     .toBe(0);
 });
 
+test('player avatars open separate overall stats pages', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`stats-alice-${runId}`, 'Alice Stats E2E');
+  const bob = await createUser(`stats-bob-${runId}`, 'Bob Stats E2E');
+  await Promise.all([seedProfileAvatar(alice.id), seedProfileAvatar(bob.id)]);
+
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  const gameId = await createAcceptedGame(alicePage, bobPage);
+
+  const inserted = await Promise.all([
+    admin.from('head_to_head_stats').insert({
+      average_score: 150,
+      games_played: 2,
+      highest_score: 190,
+      losses: 1,
+      opponent_id: bob.id,
+      player_id: alice.id,
+      total_score: 300,
+      wins: 1,
+    }),
+    admin.from('head_to_head_stats').insert({
+      average_score: 165,
+      games_played: 2,
+      highest_score: 210,
+      losses: 1,
+      opponent_id: alice.id,
+      player_id: bob.id,
+      total_score: 330,
+      wins: 1,
+    }),
+  ]);
+  inserted.forEach((result) => assertNoError(result.error));
+
+  await openGameFromLobby(alicePage, gameId);
+  await alicePage.getByTestId('game-menu-button').click();
+  await alicePage.getByTestId('game-stats-menu-item').click();
+
+  const headToHeadPage = alicePage.getByTestId('stats-page-overlay');
+  await expect(headToHeadPage).toBeVisible();
+  await expect(headToHeadPage.getByText('Current Game')).toHaveCount(0);
+  await expect(headToHeadPage.getByText('Overall Player Stats')).toHaveCount(0);
+  await alicePage.getByTestId('stats-page-close-button').click();
+
+  const homeAvatarButton = alicePage.getByTestId('home-player-avatar-stats-button');
+  const opponentAvatarButton = alicePage.getByTestId('opponent-player-avatar-stats-button');
+  await expect(homeAvatarButton).toHaveAccessibleName(`View ${alice.displayName}'s stats`);
+  await expect(opponentAvatarButton).toHaveAccessibleName(`View ${bob.displayName}'s stats`);
+
+  await homeAvatarButton.click();
+  const playerStatsPage = alicePage.getByTestId('player-stats-page-overlay');
+  await expect(playerStatsPage).toBeVisible();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(alice.displayName);
+  await expect(alicePage.getByTestId('player-stats-avatar-image')).toBeVisible();
+  await expect(playerStatsPage.getByText('1-1')).toBeVisible();
+  await expectNoSeriousAccessibilityViolations(alicePage);
+
+  await alicePage.getByTestId('player-stats-back-button').click();
+  await expect(playerStatsPage).toHaveCount(0);
+  await expect(homeAvatarButton).toBeFocused();
+
+  await opponentAvatarButton.click();
+  await expect(playerStatsPage).toBeVisible();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+  await expect(alicePage.getByTestId('player-stats-avatar-image')).toBeVisible();
+  await expect(playerStatsPage.getByText('165')).toBeVisible();
+  await expectNoSeriousAccessibilityViolations(alicePage);
+
+  await alicePage.context().close();
+  await bobPage.context().close();
+});
+
 async function openAuthedPage(browser: Browser, user: TestUser) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   const session = await createSession(user.email);

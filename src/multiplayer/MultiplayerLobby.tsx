@@ -877,10 +877,13 @@ export function MultiplayerLobby({
     if (selectedCompletedGame && me && opponent) {
       return renderShell(
         <StatsPage
+          currentOpponentAvatarUrl={profileAvatars[opponent.id]}
           currentOpponentName={opponent.name}
-          currentScore={totalScore(me.scorecard)}
+          currentPlayerAvatarUrl={profileAvatars[me.id] ?? profile?.avatar_url}
+          currentPlayerName={me.name}
+          currentPlayerOverallStats={completedGameStats?.mineOverall ?? null}
           onClose={() => setPage('completedGameDetail')}
-          opponentScore={totalScore(opponent.scorecard)}
+          opponentOverallStats={completedGameStats?.opponentOverall ?? null}
           opponentStats={completedGameStats?.opponent ?? null}
           stats={completedGameStats?.mine ?? null}
           statsKind="headToHead"

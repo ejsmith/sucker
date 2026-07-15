@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
-import type { getHeadToHeadStats } from '../multiplayer/stats';
+import type { getHeadToHeadStats, ProfileStats } from '../multiplayer/stats';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
+import { PlayerAvatar } from './PlayerAvatar';
 import { formatRecord } from './statsFormat';
 import { Pressable } from './Pressable';
 
@@ -15,19 +16,31 @@ type StatsSnapshot = ComputerStatsRow | HeadToHeadStatsRow | null;
 const statsMaxFontSizeMultiplier = 1.2;
 
 export function StatsPage({
+  currentOpponentAvatarUrl,
   currentOpponentName,
+  currentPlayerAvatarUrl,
+  currentPlayerName = 'You',
+  currentPlayerOverallStats,
   currentScore,
   onClose,
+  opponentOverallStats,
   opponentScore,
   opponentStats,
+  playerStatsTarget,
   stats,
   statsKind,
 }: {
+  currentOpponentAvatarUrl?: string | null;
   currentOpponentName: string;
-  currentScore: number;
+  currentPlayerAvatarUrl?: string | null;
+  currentPlayerName?: string;
+  currentPlayerOverallStats?: ProfileStats | null;
+  currentScore?: number;
   onClose: () => void;
+  opponentOverallStats?: ProfileStats | null;
+  opponentScore?: number;
   opponentStats?: HeadToHeadStatsRow | null;
-  opponentScore: number;
+  playerStatsTarget?: 'me' | 'opponent' | null;
   stats: StatsSnapshot;
   statsKind: StatsKind;
 }) {
@@ -39,6 +52,19 @@ export function StatsPage({
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(closeButtonRef.current));
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  if (statsKind === 'headToHead' && playerStatsTarget) {
+    const isMe = playerStatsTarget === 'me';
+    return (
+      <PlayerStatsPage
+        avatarUrl={isMe ? currentPlayerAvatarUrl : currentOpponentAvatarUrl}
+        name={isMe ? currentPlayerName : currentOpponentName}
+        onBack={onClose}
+        onClose={onClose}
+        stats={isMe ? currentPlayerOverallStats : opponentOverallStats}
+      />
+    );
+  }
 
   return (
     <View
@@ -77,15 +103,17 @@ export function StatsPage({
         style={styles.statsScroll}
         testID="stats-page-scroll"
       >
-        <View style={styles.currentGameStatsCard}>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-            Current Game
-          </Text>
-          <View style={styles.statsScoreRow}>
-            <StatBox label="You" value={String(currentScore)} />
-            <StatBox label="Them" value={String(opponentScore)} />
+        {statsKind === 'computer' && currentScore !== undefined && opponentScore !== undefined && (
+          <View style={styles.currentGameStatsCard}>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+              Current Game
+            </Text>
+            <View style={styles.statsScoreRow}>
+              <StatBox label="You" value={String(currentScore)} />
+              <StatBox label="Them" value={String(opponentScore)} />
+            </View>
           </View>
-        </View>
+        )}
 
         {hasStats && stats ? (
           <>
@@ -242,6 +270,147 @@ export function StatsPage({
   );
 }
 
+function PlayerStatsPage({
+  avatarUrl,
+  name,
+  onBack,
+  onClose,
+  stats,
+}: {
+  avatarUrl?: string | null;
+  name: string;
+  onBack: () => void;
+  onClose: () => void;
+  stats?: ProfileStats | null;
+}) {
+  const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
+  const hasStats = Boolean(stats && stats.games_played > 0);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => focusAccessibilityTarget(backButtonRef.current));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <View
+      accessibilityLabel={`${name} overall stats`}
+      accessibilityViewIsModal
+      onAccessibilityEscape={onBack}
+      role="dialog"
+      style={styles.statsOverlay}
+      testID="player-stats-page-overlay"
+    >
+      <View style={styles.playerStatsHeader}>
+        <Pressable
+          accessibilityLabel="Back to game"
+          accessibilityRole="button"
+          onPress={onBack}
+          ref={backButtonRef}
+          style={({ pressed }) => [styles.statsBackButton, pressed && styles.pressed]}
+          testID="player-stats-back-button"
+        >
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsBackText}>
+            ‹
+          </Text>
+        </Pressable>
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerStatsHeaderTitle}>
+          Player Stats
+        </Text>
+        <Pressable
+          accessibilityLabel="Close stats"
+          accessibilityRole="button"
+          onPress={onClose}
+          style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
+          testID="player-stats-close-button"
+        >
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsCloseText}>
+            X
+          </Text>
+        </Pressable>
+      </View>
+
+      <ScrollView
+        accessibilityLabel={`${name} overall statistics`}
+        contentContainerStyle={styles.statsScrollContent}
+        showsVerticalScrollIndicator={false}
+        style={styles.statsScroll}
+        tabIndex={0}
+        testID="player-stats-page-scroll"
+      >
+        <View style={styles.playerIdentityCard}>
+          <PlayerAvatar avatarUrl={avatarUrl} decorative name={name} size={82} testID="player-stats-avatar" />
+          <View style={styles.playerIdentityText}>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEyebrow}>
+              Overall Multiplayer
+            </Text>
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={2}
+              style={styles.playerIdentityName}
+              testID="player-stats-name"
+            >
+              {name}
+            </Text>
+          </View>
+        </View>
+
+        {hasStats && stats ? (
+          <>
+            <View style={styles.statsGrid}>
+              <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
+              <StatBox label="Games" value={String(stats.games_played)} />
+              <StatBox label="Avg Score" value={formatStatNumber(stats.average_score)} />
+              <StatBox label="High Score" value={String(stats.highest_score)} />
+            </View>
+
+            <View style={styles.statsDetailCard}>
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+                Sucker Skills
+              </Text>
+              <StatsValueLine label="Blowout wins" value={formatSkillStat(stats, 'blowout_wins')} />
+              <StatsValueLine label="Comeback wins" value={formatSkillStat(stats, 'comeback_wins')} />
+              <StatsValueLine label="Buzzer beaters" value={formatSkillStat(stats, 'buzzer_beater_wins')} />
+              <StatsValueLine label="Extra rolls" value={formatSkillStat(stats, 'extra_rolls_used')} />
+              <StatsValueLine label="Mulligans" value={formatSkillStat(stats, 'mulligans_used')} />
+              <StatsValueLine label="Sucker punches thrown" value={formatSkillStat(stats, 'sucker_punches_used')} />
+              <StatsValueLine label="Sucker punches landed" value={formatSkillPct(stats, 'sucker_punch_landed_pct')} />
+              <StatsValueLine label="Sucker hunts" value={formatSkillStat(stats, 'sucker_hunts')} />
+              <StatsValueLine label="Hunt misses" value={formatSkillStat(stats, 'sucker_hunt_misses')} />
+              <StatsValueLine label="Avg tokens used" value={formatSkillStat(stats, 'average_sucker_tokens_spent')} />
+              <StatsValueLine
+                label="Avg tokens left"
+                value={formatSkillStat(stats, 'average_sucker_tokens_leftover')}
+              />
+            </View>
+
+            <View style={styles.statsDetailCard}>
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+                Category Rates
+              </Text>
+              <StatsValueLine label="Upper bonus" value={formatProfileCategoryRate(stats, 'upper_bonus')} />
+              <StatsValueLine label="Sucker" value={formatProfileCategoryRate(stats, 'sucker')} />
+              <StatsValueLine label="3 of a kind" value={formatProfileCategoryRate(stats, 'three_of_a_kind')} />
+              <StatsValueLine label="4 of a kind" value={formatProfileCategoryRate(stats, 'four_of_a_kind')} />
+              <StatsValueLine label="Full house" value={formatProfileCategoryRate(stats, 'full_house')} />
+              <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
+              <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
+            </View>
+          </>
+        ) : (
+          <View style={styles.statsEmptyCard}>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
+              No saved stats yet
+            </Text>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
+              {name} has not finished a signed-in multiplayer game yet.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
 type CategoryRateKey =
   | 'four_of_a_kind'
   | 'full_house'
@@ -304,6 +473,10 @@ function formatCategoryRate(
   const countKey = `${key}_games` as keyof ComputerStatsRow;
   const count = Number(computerStats[countKey] ?? 0);
   return formatStatsPct(count, computerStats.games_played);
+}
+
+function formatProfileCategoryRate(stats: ProfileStats, key: CategoryRateKey) {
+  return `${formatStatNumber(stats[`${key}_pct`])}%`;
 }
 
 function StatBox({ label, value }: { label: string; value: string }) {
@@ -383,11 +556,11 @@ function formatStatsPct(count: number, gamesPlayed: number) {
   return `${Math.round((count / gamesPlayed) * 100)}%`;
 }
 
-function formatSkillStat(row: HeadToHeadStatsRow | null | undefined, key: SkillStatKey) {
+function formatSkillStat(row: HeadToHeadStatsRow | ProfileStats | null | undefined, key: SkillStatKey) {
   return formatStatNumber(Number(row?.[key] ?? 0));
 }
 
-function formatSkillPct(row: HeadToHeadStatsRow | null | undefined, key: SkillPctKey) {
+function formatSkillPct(row: HeadToHeadStatsRow | ProfileStats | null | undefined, key: SkillPctKey) {
   return `${formatStatNumber(Number(row?.[key] ?? 0))}%`;
 }
 
@@ -407,6 +580,41 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72,
+  },
+  playerIdentityCard: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 14,
+    padding: 14,
+    width: '100%',
+  },
+  playerIdentityName: {
+    color: '#FFF3C2',
+    fontSize: 28,
+    fontWeight: '900',
+    lineHeight: 31,
+  },
+  playerIdentityText: {
+    flex: 1,
+    gap: 2,
+  },
+  playerStatsHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  playerStatsHeaderTitle: {
+    color: '#FFF3C2',
+    flex: 1,
+    fontSize: 22,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   statBox: {
     alignItems: 'center',
@@ -443,6 +651,22 @@ const styles = StyleSheet.create({
     color: '#FFF3C2',
     fontSize: 16,
     fontWeight: '900',
+  },
+  statsBackButton: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  statsBackText: {
+    color: '#FFF3C2',
+    fontSize: 34,
+    fontWeight: '900',
+    lineHeight: 36,
   },
   statsComparisonHeader: {
     gap: 4,
