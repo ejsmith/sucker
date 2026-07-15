@@ -51,9 +51,12 @@ Deno.test('Edge shared game rules award a token for scratches, not zero scores',
 });
 
 Deno.test('Edge shared game rules expose the Sucker Punch chance ladder', () => {
-  assertEquals(suckerPunchChanceByDie[1], 20);
-  assertEquals(suckerPunchChanceByDie[5], 75);
-  assertEquals(suckerPunchChanceByDie[6], 90);
+  assertEquals(suckerPunchChanceByDie[1], 10);
+  assertEquals(suckerPunchChanceByDie[2], 20);
+  assertEquals(suckerPunchChanceByDie[3], 30);
+  assertEquals(suckerPunchChanceByDie[4], 45);
+  assertEquals(suckerPunchChanceByDie[5], 60);
+  assertEquals(suckerPunchChanceByDie[6], 75);
 });
 
 Deno.test('Edge shared game state defaults legacy missing extra rolls to zero', () => {

@@ -422,7 +422,7 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   const punchAction = actions.find((action) => action.action_type === 'sucker_punch');
   assertEquals(actionPayloadValue(punchAction?.payload, 'landed'), true);
   assertEquals(actionPayloadValue(punchAction?.payload, 'chanceDie'), 6);
-  assertEquals(actionPayloadValue(punchAction?.payload, 'chancePercent'), 90);
+  assertEquals(actionPayloadValue(punchAction?.payload, 'chancePercent'), 75);
 });
 
 Deno.test('game-action scoring zero does not award a sucker token', async () => {

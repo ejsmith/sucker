@@ -178,19 +178,20 @@ Rules
 - Cannot target older turns
 - The chance die is rolled in a dedicated dialog over the game board, not in the normal dice tray or slots
 - The attacking player rolls one die to set the hit chance:
-  - 1 = 20%
-  - 2 = 35%
-  - 3 = 50%
-  - 4 = 65%
-  - 5 = 75%
-  - 6 = 90%
+  - 1 = 10%
+  - 2 = 20%
+  - 3 = 30%
+  - 4 = 45%
+  - 5 = 60%
+  - 6 = 75%
 - If the punch lands:
   - Original score is removed
   - Opponent must replay the turn
+  - Both players see the Punch Landed result image
 - If the punch is blocked:
   - Original score remains intact
   - Attacking player keeps the turn and plays normally
-  - Opponent later sees a blocked-punch notice
+  - Both players see the Punch Blocked result image
 
 Timing
 

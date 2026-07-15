@@ -371,8 +371,8 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
   });
   const page = await context.newPage();
 
-  await page.goto(e2eBaseUrl);
-  await page.getByTestId('play-computer-button').click();
+  await page.goto('/local');
+  await expect(page.getByTestId('game-screen')).toBeVisible();
   await page.getByTestId('roll-button').click();
   const suckerScoreBox = page.getByTestId('home-score-box-sucker');
   await waitForPressableEnabled(suckerScoreBox);
@@ -382,6 +382,9 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
 
   const notice = page.getByTestId('sucker-punch-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
+  await expect(notice).toContainText('Punch landed!');
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toBeVisible();
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'Punch landed');
   await expect(notice).toBeHidden({ timeout: 5_000 });
   await page.waitForTimeout(200);
   await expect(suckerScoreBox).toContainText('50');
@@ -401,6 +404,31 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
   expect(impactCenterAfterGrowth.y).toBeCloseTo(impactCenterBeforeGrowth.y, 1);
   await page.waitForTimeout(1_420);
   await expect(suckerScoreBox).not.toContainText('50');
+});
+
+test('blocked Sucker Punch shows the blocked artwork to the target', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  await context.addInitScript(() => {
+    Math.random = () => 0.99;
+  });
+  const page = await context.newPage();
+
+  await page.goto('/local');
+  await expect(page.getByTestId('game-screen')).toBeVisible();
+  await page.getByTestId('roll-button').click();
+  const suckerScoreBox = page.getByTestId('home-score-box-sucker');
+  await waitForPressableEnabled(suckerScoreBox);
+  await suckerScoreBox.click();
+  await expect(page.getByTestId('play-score-button')).toBeEnabled();
+  await page.getByTestId('play-score-button').click();
+
+  const notice = page.getByTestId('sucker-punch-blocked-notice');
+  await expect(notice).toBeVisible({ timeout: 10_000 });
+  await expect(notice).toContainText('Punch blocked!');
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toBeVisible();
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'Punch blocked');
+  await expect(notice).toBeHidden({ timeout: 5_000 });
+  await expect(suckerScoreBox).toContainText('50');
 });
 
 test('a player can add and remove a profile avatar in the PWA', async ({ browser }) => {

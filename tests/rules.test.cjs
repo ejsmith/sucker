@@ -71,14 +71,14 @@ test('players start with sucker tokens and can roll up to four times', () => {
   assert.equal(blocked.rollNumber, 4);
 });
 
-test('sucker punch chance ladder steps from 20 to 90 percent', () => {
+test('sucker punch chance ladder steps from 10 to 75 percent', () => {
   assert.deepEqual(suckerPunchChanceByDie, {
-    1: 20,
-    2: 35,
-    3: 50,
-    4: 65,
-    5: 75,
-    6: 90,
+    1: 10,
+    2: 20,
+    3: 30,
+    4: 45,
+    5: 60,
+    6: 75,
   });
 });
 

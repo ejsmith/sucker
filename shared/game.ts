@@ -81,12 +81,12 @@ export const suckerTokenCosts = {
 } as const;
 
 export const suckerPunchChanceByDie = {
-  1: 20,
-  2: 35,
-  3: 50,
-  4: 65,
-  5: 75,
-  6: 90,
+  1: 10,
+  2: 20,
+  3: 30,
+  4: 45,
+  5: 60,
+  6: 75,
 } as const satisfies Record<DieValue, number>;
 
 export type SuckerPunchOutcome = {

@@ -214,8 +214,6 @@ type SuckerPunchDialogState = {
 };
 type SuckerBlockedNotice = {
   remoteRevealTurnId?: string;
-  text: string;
-  title: string;
 };
 type SuckerPunchWipe = {
   category: ScoreCategory;
@@ -1450,8 +1448,6 @@ export function LocalGameScreen({
         setRemoteBlockedPunchRevealGate({ status: 'showing', turnId: revealTurnId });
         setSuckerBlockedNotice({
           remoteRevealTurnId: revealTurnId,
-          text: 'Sucker Punch!',
-          title: 'You blocked',
         });
       })
       .catch((blockedPunchError) => {
@@ -1872,10 +1868,7 @@ export function LocalGameScreen({
   }
 
   async function showBlockedSuckerPunchBeforeTurnReveal() {
-    setSuckerBlockedNotice({
-      text: 'Sucker Punch!',
-      title: 'You blocked',
-    });
+    setSuckerBlockedNotice({});
     await wait(suckerBlockedNoticeDurationMs);
     setSuckerBlockedNotice(null);
   }
@@ -3396,19 +3389,16 @@ export function LocalGameScreen({
               style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
               testID="sucker-punch-notice"
             >
-              <View style={[styles.suckerPunchNotice, gameLayout.styles.suckerPunchNotice]}>
+              <View style={[styles.suckerPunchChancePanel, gameLayout.styles.suckerPunchChancePanel]}>
                 <Text
                   maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
+                  style={[styles.suckerPunchChanceTitle, gameLayout.styles.suckerPunchChanceTitle]}
                 >
-                  You got
+                  Punch landed!
                 </Text>
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
-                >
-                  Sucker Punched!
-                </Text>
+                <View style={[styles.suckerPunchResultImageShell, gameLayout.styles.suckerPunchResultImageShell]}>
+                  <SuckerPunchResultImage landed testID="sucker-punch-recipient-result-image" />
+                </View>
               </View>
             </View>
           )}
@@ -3416,20 +3406,18 @@ export function LocalGameScreen({
             <View
               pointerEvents="none"
               style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
+              testID="sucker-punch-blocked-notice"
             >
-              <View style={[styles.suckerPunchNotice, gameLayout.styles.suckerPunchNotice]}>
+              <View style={[styles.suckerPunchChancePanel, gameLayout.styles.suckerPunchChancePanel]}>
                 <Text
                   maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
+                  style={[styles.suckerPunchChanceTitle, gameLayout.styles.suckerPunchChanceTitle]}
                 >
-                  {suckerBlockedNotice.title}
+                  Punch blocked!
                 </Text>
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
-                >
-                  {suckerBlockedNotice.text}
-                </Text>
+                <View style={[styles.suckerPunchResultImageShell, gameLayout.styles.suckerPunchResultImageShell]}>
+                  <SuckerPunchResultImage landed={false} testID="sucker-punch-recipient-result-image" />
+                </View>
               </View>
             </View>
           )}
@@ -4047,11 +4035,7 @@ function SuckerPunchChanceDialog({
           }
         >
           {isResult ? (
-            <Image
-              source={didBlock ? suckerPunchBlockedImage : suckerPunchLandedImage}
-              style={styles.suckerPunchResultImage}
-              testID="sucker-punch-result-image"
-            />
+            <SuckerPunchResultImage landed={!didBlock} testID="sucker-punch-result-image" />
           ) : (
             <Animated.View
               style={[
@@ -4094,6 +4078,17 @@ function SuckerPunchChanceDialog({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function SuckerPunchResultImage({ landed, testID }: { landed: boolean; testID: string }) {
+  return (
+    <Image
+      accessibilityLabel={landed ? 'Punch landed' : 'Punch blocked'}
+      source={landed ? suckerPunchLandedImage : suckerPunchBlockedImage}
+      style={styles.suckerPunchResultImage}
+      testID={testID}
+    />
   );
 }
 
