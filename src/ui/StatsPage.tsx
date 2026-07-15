@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import type { getHeadToHeadStats, ProfileStats } from '../multiplayer/stats';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
+import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
 import { formatRecord } from './statsFormat';
 import { Pressable } from './Pressable';
@@ -91,9 +92,7 @@ export function StatsPage({
           style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
           testID="stats-page-close-button"
         >
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsCloseText}>
-            X
-          </Text>
+          <CloseIcon />
         </Pressable>
       </View>
 
@@ -309,9 +308,7 @@ function PlayerStatsPage({
           style={({ pressed }) => [styles.statsBackButton, pressed && styles.pressed]}
           testID="player-stats-back-button"
         >
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsBackText}>
-            ‹
-          </Text>
+          <BackChevronIcon size={28} strokeWidth={4.5} />
         </Pressable>
         <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerStatsHeaderTitle}>
           Player Stats
@@ -323,9 +320,7 @@ function PlayerStatsPage({
           style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
           testID="player-stats-close-button"
         >
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsCloseText}>
-            X
-          </Text>
+          <CloseIcon />
         </Pressable>
       </View>
 
@@ -647,11 +642,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 44,
   },
-  statsCloseText: {
-    color: '#FFF3C2',
-    fontSize: 16,
-    fontWeight: '900',
-  },
   statsBackButton: {
     alignItems: 'center',
     backgroundColor: '#210505',
@@ -661,12 +651,6 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     width: 44,
-  },
-  statsBackText: {
-    color: '#FFF3C2',
-    fontSize: 34,
-    fontWeight: '900',
-    lineHeight: 36,
   },
   statsComparisonHeader: {
     gap: 4,

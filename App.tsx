@@ -86,6 +86,7 @@ import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
+import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
 import { useReducedMotion } from './src/ui/useReducedMotion';
 import {
@@ -3144,12 +3145,7 @@ export function LocalGameScreen({
                     style={[styles.tokenMenuClose, gameLayout.styles.tokenMenuClose]}
                     testID="token-menu-close-button"
                   >
-                    <Text
-                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                      style={[styles.tokenMenuCloseText, gameLayout.styles.tokenMenuCloseText]}
-                    >
-                      X
-                    </Text>
+                    <CloseIcon size={gameLayout.unit(18)} />
                   </Pressable>
                 </View>
 
@@ -3494,12 +3490,7 @@ export function LocalGameScreen({
                   ]}
                   testID="next-turns-close-button"
                 >
-                  <Text
-                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                    style={[styles.nextTurnsCloseText, gameLayout.styles.nextTurnsCloseText]}
-                  >
-                    X
-                  </Text>
+                  <CloseIcon size={gameLayout.unit(18)} />
                 </Pressable>
                 <Text maxFontSizeMultiplier={1.2} style={[styles.nextTurnsEyebrow, gameLayout.styles.nextTurnsEyebrow]}>
                   Turn Finished
@@ -3570,12 +3561,7 @@ export function LocalGameScreen({
                   ]}
                   testID="game-over-close-button"
                 >
-                  <Text
-                    maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                    style={[styles.gameOverCloseText, gameLayout.styles.gameOverCloseText]}
-                  >
-                    ×
-                  </Text>
+                  <CloseIcon color="#FFD329" size={gameLayout.unit(22)} />
                 </Pressable>
                 <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
                   Game Over
