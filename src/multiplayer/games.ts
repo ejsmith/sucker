@@ -33,6 +33,16 @@ const retryDelaysMs = [350, 900];
 let pendingStorageOperation: Promise<unknown> = Promise.resolve();
 const recoveryPromises = new Map<string, Promise<RecoveredMultiplayerAction[]>>();
 
+export class PendingMultiplayerActionError extends Error {
+  constructor(
+    message: string,
+    readonly requestId: string,
+  ) {
+    super(message);
+    this.name = 'PendingMultiplayerActionError';
+  }
+}
+
 export async function listMyGames() {
   const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
     await Promise.all([
@@ -141,6 +151,15 @@ export function recoverPendingMultiplayerActions(actorId: string) {
   return recovery;
 }
 
+export function listPendingMultiplayerActions(actorId: string) {
+  return getPendingActionsForRecovery(actorId);
+}
+
+export async function hasPendingMultiplayerAction(actorId: string, requestId: string) {
+  const pending = await getPendingActionsForRecovery(actorId);
+  return pending.some((request) => request.requestId === requestId);
+}
+
 async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise<TResult> {
   const networkState = await NetInfo.fetch();
   if (networkState.isConnected === false || networkState.isInternetReachable === false) {
@@ -154,7 +173,13 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
     throw new Error('Sign in before making a game move.');
   }
 
-  const request = await getOrCreatePendingAction(session.user.id, action);
+  const { hasPayloadConflict, request } = await getOrCreatePendingAction(session.user.id, action);
+  if (hasPayloadConflict) {
+    throw new PendingMultiplayerActionError(
+      'Confirming your previous move before applying new dice selections.',
+      request.requestId,
+    );
+  }
 
   try {
     const result = await invokeActionRequest<TResult>(request);
@@ -167,6 +192,10 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
         Operation: 'MultiplayerAction',
         RequestId: request.requestId,
       });
+      throw new PendingMultiplayerActionError(
+        'We could not confirm the move yet. It will be recovered before play continues.',
+        request.requestId,
+      );
     } else {
       await removePendingAction(request.requestId);
     }
@@ -227,7 +256,7 @@ async function recoverPendingActions(actorId: string) {
 
 function getOrCreatePendingAction(actorId: string, action: MultiplayerAction) {
   return updatePendingActions((actions) => {
-    const { pending, request } = createOrReuseActionRequest(
+    const { hasPayloadConflict, pending, request } = createOrReuseActionRequest(
       actions,
       actorId,
       action,
@@ -235,7 +264,7 @@ function getOrCreatePendingAction(actorId: string, action: MultiplayerAction) {
       randomUUID,
       pendingActionMaxAgeMs,
     );
-    return { actions: pending, result: request };
+    return { actions: pending, result: { hasPayloadConflict, request } };
   });
 }
 

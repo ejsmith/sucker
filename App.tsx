@@ -51,6 +51,8 @@ import {
   getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
+  hasPendingMultiplayerAction,
+  PendingMultiplayerActionError,
   rollRemoteGame,
   scoreRemoteCategory,
   scratchRemoteCategory,
@@ -58,6 +60,7 @@ import {
   subscribeToGameListChanges,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
+import { preserveLocalHeldDice } from './src/multiplayer/heldDice';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
 import { getProfilesByIds } from './src/multiplayer/profiles';
 import { supabase } from './src/multiplayer/supabase';
@@ -90,6 +93,7 @@ import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
 import { useReducedMotion } from './src/ui/useReducedMotion';
+import { useNetworkStatus } from './src/network/NetworkProvider';
 import {
   buildExtraRollActionPayload,
   buildRollActionPayload,
@@ -413,6 +417,13 @@ export function RemoteGameScreen({
   onOpenGame: (gameId: string) => void;
   onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
 }) {
+  const {
+    consumeRecoveredActions,
+    isRecovering,
+    pendingActions,
+    recoveredActions,
+    refresh: refreshNetwork,
+  } = useNetworkStatus();
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const remoteStageStyle = getSafeGameStageStyle(windowWidth, windowHeight, safeAreaInsets, {
@@ -433,6 +444,7 @@ export function RemoteGameScreen({
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
+  const [unresolvedRequestId, setUnresolvedRequestId] = useState<string | null>(null);
   const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
   const wasAppActive = useRef(isAppActive);
   const profileIdRef = useRef<string | null>(null);
@@ -539,6 +551,45 @@ export function RemoteGameScreen({
       unsubscribe();
     };
   }, [gameId, onGameChange]);
+
+  const pendingGameAction = pendingActions.find(
+    (request) => request.actorId === profileId && 'gameId' in request && request.gameId === gameId,
+  );
+  const isPendingGameAction = Boolean(unresolvedRequestId || pendingGameAction);
+
+  useEffect(() => {
+    if (!pendingGameAction) {
+      return;
+    }
+    setError((current) => current ?? 'Confirming your previous move before play continues…');
+  }, [pendingGameAction]);
+
+  useEffect(() => {
+    if (!profileId) {
+      return;
+    }
+
+    const recovered = recoveredActions.filter(
+      (item) => item.actorId === profileId && 'gameId' in item.action && item.action.gameId === gameId,
+    );
+    if (recovered.length === 0) {
+      return;
+    }
+
+    const latestWithGame = [...recovered].reverse().find((item) => 'game' in item.result && Boolean(item.result.game));
+    consumeRecoveredActions(recovered.map((item) => item.requestId));
+    setUnresolvedRequestId(null);
+
+    if (!latestWithGame || !('game' in latestWithGame.result)) {
+      return;
+    }
+
+    const nextGame = latestWithGame.result.game;
+    setError(null);
+    setRemoteGame(nextGame);
+    onGameChange(profileId, nextGame);
+    void syncRemoteBadgeCount(profileId);
+  }, [consumeRecoveredActions, gameId, onGameChange, profileId, recoveredActions, syncRemoteBadgeCount]);
 
   useEffect(() => {
     let isMounted = true;
@@ -688,10 +739,37 @@ export function RemoteGameScreen({
       }
       return result;
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : 'Unable to update game.');
+      if (actionError instanceof PendingMultiplayerActionError) {
+        setUnresolvedRequestId(actionError.requestId);
+        setError('Confirming your previous move before play continues…');
+        void confirmPendingAction(actionError.requestId);
+      } else {
+        setError(actionError instanceof Error ? actionError.message : 'Unable to update game.');
+      }
       return null;
     } finally {
       setIsRemoteBusy(false);
+    }
+  }
+
+  async function confirmPendingAction(requestId: string) {
+    if (!profileId) {
+      return;
+    }
+
+    await refreshNetwork();
+    if (await hasPendingMultiplayerAction(profileId, requestId)) {
+      return;
+    }
+
+    try {
+      const nextGame = await getGame(gameId);
+      setRemoteGame(nextGame);
+      onGameChange(profileId, nextGame);
+      setUnresolvedRequestId((current) => (current === requestId ? null : current));
+      setError(null);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Unable to confirm the previous move.');
     }
   }
 
@@ -804,7 +882,7 @@ export function RemoteGameScreen({
 
   return (
     <LocalGameScreen
-      isRemoteBusy={isRemoteBusy}
+      isRemoteBusy={isRemoteBusy || isRecovering || isPendingGameAction}
       myProfileId={profileId}
       nextTurnGames={nextTurnGames}
       onDismissNextTurns={() => setNextTurnPrompt(null)}
@@ -1554,7 +1632,8 @@ export function LocalGameScreen({
       remoteGame &&
       !shouldHoldRemoteTurnReveal
     ) {
-      setVisibleRemoteGame(concealActiveOpponentDice(remoteGame, myProfileId));
+      const gameWithLocalHolds = preserveLocalHeldDice(remoteGame, liveGameRef.current, myProfileId);
+      setVisibleRemoteGame(concealActiveOpponentDice(gameWithLocalHolds, myProfileId));
       visibleRemoteTurnId.current = remoteLastTurnId ?? null;
     }
   }, [

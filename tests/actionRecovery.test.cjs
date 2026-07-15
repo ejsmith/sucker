@@ -25,7 +25,7 @@ test('manual retries reuse the pending request ID for the same account and actio
   assert.equal(retried.pending.length, 1);
 });
 
-test('roll retries reuse the pending request after held dice change', () => {
+test('roll retries keep the original request but flag changed held dice as a conflict', () => {
   const first = createOrReuseActionRequest(
     [],
     'alice',
@@ -45,10 +45,11 @@ test('roll retries reuse the pending request after held dice change', () => {
 
   assert.equal(retried.request.requestId, 'request-1');
   assert.deepEqual(retried.request.held, [true, false, false, false, false]);
+  assert.equal(retried.hasPayloadConflict, true);
   assert.equal(retried.pending.length, 1);
 });
 
-test('score retries reuse the pending request after held dice change', () => {
+test('score retries keep the original request but flag changed held dice as a conflict', () => {
   const first = createOrReuseActionRequest(
     [],
     'alice',
@@ -78,7 +79,31 @@ test('score retries reuse the pending request after held dice change', () => {
 
   assert.equal(retried.request.requestId, 'request-1');
   assert.deepEqual(retried.request.held, [true, false, false, false, false]);
+  assert.equal(retried.hasPayloadConflict, true);
   assert.equal(retried.pending.length, 1);
+});
+
+test('an exact roll retry safely reuses the pending request', () => {
+  const held = [true, false, true, false, false];
+  const first = createOrReuseActionRequest(
+    [],
+    'alice',
+    { gameId: 'game-1', held, type: 'roll' },
+    now,
+    () => 'request-1',
+    maxAgeMs,
+  );
+  const retried = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    { gameId: 'game-1', held: [...held], type: 'roll' },
+    now + 1_000,
+    () => 'request-2',
+    maxAgeMs,
+  );
+
+  assert.equal(retried.request.requestId, 'request-1');
+  assert.equal(retried.hasPayloadConflict, false);
 });
 
 test('pending requests and recovery are scoped to the signed-in account', () => {

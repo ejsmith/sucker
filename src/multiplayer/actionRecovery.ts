@@ -1,5 +1,7 @@
 import type { MultiplayerAction, MultiplayerActionResult, RemoveGameActionResult } from './types';
 
+type HeldDice = Extract<MultiplayerAction, { type: 'roll' }>['held'];
+
 export type ActionRequest = MultiplayerAction & {
   actionKey: string;
   actorId: string;
@@ -26,7 +28,11 @@ export function createOrReuseActionRequest(
   const actionKey = getActionKey(action);
   const existing = pending.find((request) => request.actorId === actorId && request.actionKey === actionKey);
   if (existing) {
-    return { pending, request: existing };
+    return {
+      hasPayloadConflict: !hasMatchingActionPayload(existing, action),
+      pending,
+      request: existing,
+    };
   }
 
   const request = {
@@ -36,7 +42,7 @@ export function createOrReuseActionRequest(
     createdAt: new Date(now).toISOString(),
     requestId: createRequestId(),
   } as ActionRequest;
-  return { pending: [...pending, request], request };
+  return { hasPayloadConflict: false, pending: [...pending, request], request };
 }
 
 export function selectActionRequestsForRecovery(
@@ -88,6 +94,34 @@ export function getActionKey(action: MultiplayerAction) {
     case 'sucker_punch':
       return JSON.stringify([action.type, action.gameId, action.turnId, action.chanceDie ?? null]);
   }
+}
+
+function hasMatchingActionPayload(existing: MultiplayerAction, incoming: MultiplayerAction) {
+  if (existing.type !== incoming.type) {
+    return false;
+  }
+
+  switch (existing.type) {
+    case 'extra_roll':
+    case 'roll':
+      return incoming.type === existing.type && heldDiceMatch(existing.held, incoming.held);
+    case 'score_category':
+    case 'scratch_category':
+      return (
+        incoming.type === existing.type &&
+        existing.category === incoming.category &&
+        heldDiceMatch(existing.held, incoming.held)
+      );
+    default:
+      return true;
+  }
+}
+
+function heldDiceMatch(left: HeldDice, right: HeldDice) {
+  if (!left || !right) {
+    return left === right;
+  }
+  return left.every((held, index) => held === right[index]);
 }
 
 function isFreshActionRequest(request: ActionRequest, now: number, maxAgeMs: number) {
