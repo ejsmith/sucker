@@ -49,6 +49,20 @@ function shouldUseStableWebHeight(width: number) {
 
   const navigator = getWebNavigator();
   const matchMedia = getWebMatchMedia();
+  const standaloneNavigator = navigator as (Navigator & { standalone?: boolean }) | null;
+  const isInstalledWebApp = Boolean(
+    standaloneNavigator?.standalone === true ||
+    matchMedia?.('(display-mode: standalone)').matches ||
+    matchMedia?.('(display-mode: fullscreen)').matches,
+  );
+
+  if (isInstalledWebApp) {
+    // Installed PWAs have no collapsible browser toolbar. Respect every real
+    // viewport-height update so iOS cannot retain its larger launch height and
+    // clip the bottom of the game after the status-bar viewport settles.
+    return false;
+  }
+
   return Boolean(
     (typeof navigator?.maxTouchPoints === 'number' && navigator.maxTouchPoints > 0) ||
     matchMedia?.('(hover: none) and (pointer: coarse)').matches,

@@ -404,6 +404,33 @@ test('a short desktop viewport keeps the full game reachable in a vertical stage
   await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
 });
 
+test('an installed PWA follows the settled visible viewport instead of clipping its controls', async ({ browser }) => {
+  const context = await browser.newContext({
+    hasTouch: true,
+    viewport: { height: 852, width: 393 },
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
+  });
+
+  try {
+    await openLocalGame(page, '/');
+    await page.setViewportSize({ height: 797, width: 393 });
+
+    const screen = page.getByTestId('game-screen');
+    await expect.poll(async () => (await screen.boundingBox())?.height ?? 0).toBeCloseTo(797, 0);
+    const screenBox = await visibleBox(screen);
+    expectProportionalWebStage(screenBox);
+    expect(bottom(screenBox)).toBeLessThanOrEqual(797);
+    await expect(page.getByTestId('game-stage-scroll')).toHaveCount(0);
+    await expectLayoutStackToFit(page, screenBox);
+    await expectNoOverflow(page, screen);
+  } finally {
+    await context.close();
+  }
+});
+
 test.describe('mobile WebKit geometry', () => {
   test.skip(({ browserName }) => browserName !== 'webkit', 'This suite exercises the mobile WebKit engine.');
 
