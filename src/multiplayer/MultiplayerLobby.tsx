@@ -19,7 +19,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   createGameAgainst,
   createRematch,
@@ -876,18 +876,20 @@ export function MultiplayerLobby({
 
     if (selectedCompletedGame && me && opponent) {
       return renderShell(
-        <StatsPage
-          currentOpponentAvatarUrl={profileAvatars[opponent.id]}
-          currentOpponentName={opponent.name}
-          currentPlayerAvatarUrl={profileAvatars[me.id] ?? profile?.avatar_url}
-          currentPlayerName={me.name}
-          currentPlayerOverallStats={completedGameStats?.mineOverall ?? null}
-          onClose={() => setPage('completedGameDetail')}
-          opponentOverallStats={completedGameStats?.opponentOverall ?? null}
-          opponentStats={completedGameStats?.opponent ?? null}
-          stats={completedGameStats?.mine ?? null}
-          statsKind="headToHead"
-        />,
+        <View style={lobbyStyles.fullPageContent} testID="completed-game-stats-safe-host">
+          <StatsPage
+            currentOpponentAvatarUrl={profileAvatars[opponent.id]}
+            currentOpponentName={opponent.name}
+            currentPlayerAvatarUrl={profileAvatars[me.id] ?? profile?.avatar_url}
+            currentPlayerName={me.name}
+            currentPlayerOverallStats={completedGameStats?.mineOverall ?? null}
+            onClose={() => setPage('completedGameDetail')}
+            opponentOverallStats={completedGameStats?.opponentOverall ?? null}
+            opponentStats={completedGameStats?.opponent ?? null}
+            stats={completedGameStats?.mine ?? null}
+            statsKind="headToHead"
+          />
+        </View>,
       );
     }
 
@@ -1173,7 +1175,7 @@ export function MultiplayerLobby({
           transparent
           visible={avatarPickerVisible}
         >
-          <View style={lobbyStyles.modalBackdrop}>
+          <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={lobbyStyles.modalBackdrop}>
             <Pressable
               accessible={false}
               onPress={() => setAvatarPickerVisible(false)}
@@ -1211,7 +1213,7 @@ export function MultiplayerLobby({
                 <Text style={lobbyStyles.avatarPickerCancelText}>Cancel</Text>
               </Pressable>
             </View>
-          </View>
+          </SafeAreaView>
         </Modal>
       </ScrollView>,
     );
@@ -2946,6 +2948,11 @@ const lobbyStyles = StyleSheet.create({
   completedScorePillWin: {
     backgroundColor: '#DFF7A8',
     borderColor: '#2F8F3E',
+  },
+  fullPageContent: {
+    flex: 1,
+    position: 'relative',
+    width: '100%',
   },
   scroll: {
     width: '100%',

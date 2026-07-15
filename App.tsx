@@ -3649,18 +3649,13 @@ export function LocalGameScreen({
               transparent
               visible
             >
-              <View style={[styles.statsModalHost, needsScrollableStage && styles.statsModalScrollableHost]}>
+              <SafeAreaView
+                edges={['top', 'right', 'bottom', 'left']}
+                style={[styles.statsModalHost, needsScrollableStage && styles.statsModalScrollableHost]}
+                testID="stats-modal-safe-area"
+              >
                 <View
-                  style={[
-                    styles.statsModalStage,
-                    gameStageStyle,
-                    {
-                      transform: [
-                        { translateX: (effectiveSafeAreaInsets.left - effectiveSafeAreaInsets.right) / 2 },
-                        { translateY: (effectiveSafeAreaInsets.top - effectiveSafeAreaInsets.bottom) / 2 },
-                      ],
-                    },
-                  ]}
+                  style={[styles.statsModalStage, gameStageStyle, devViewportStageOffset]}
                   testID="stats-modal-stage"
                 >
                   <StatsPage
@@ -3679,7 +3674,7 @@ export function LocalGameScreen({
                     statsKind={isRemoteGame ? 'headToHead' : 'computer'}
                   />
                 </View>
-              </View>
+              </SafeAreaView>
             </Modal>
           )}
         </View>
@@ -4868,6 +4863,7 @@ const styles = StyleSheet.create({
   },
   statsModalHost: {
     alignItems: 'center',
+    backgroundColor: '#8F0000',
     flex: 1,
     justifyContent: 'center',
     overflow: 'hidden',

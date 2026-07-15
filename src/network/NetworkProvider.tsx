@@ -1,6 +1,7 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, StyleSheet, Text, View } from 'react-native';
+import { AppState, StyleSheet, Text } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCurrentSession } from '../multiplayer/auth';
 import { mergeRecoveredActions, type RecoveredMultiplayerAction } from '../multiplayer/actionRecovery';
 import { recoverPendingMultiplayerActions } from '../multiplayer/games';
@@ -96,11 +97,16 @@ export function NetworkStatusBanner() {
   }
 
   return (
-    <View accessibilityLiveRegion="polite" role="status" style={[styles.banner, isOffline && styles.offline]}>
+    <SafeAreaView
+      accessibilityLiveRegion="polite"
+      edges={['top']}
+      role="status"
+      style={[styles.banner, isOffline && styles.offline]}
+    >
       <Text style={styles.text}>
         {isOffline ? 'Offline — showing saved games. Actions resume when connected.' : 'Synchronizing game actions…'}
       </Text>
-    </View>
+    </SafeAreaView>
   );
 }
 

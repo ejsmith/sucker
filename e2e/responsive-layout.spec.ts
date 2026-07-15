@@ -336,6 +336,9 @@ test.describe('Chromium pixel baselines', () => {
         await expectMinimumTouchTarget(statsCloseButton);
         await expect(statsCloseButton).toHaveAccessibleName('Close stats');
         await expect(statsCloseButton).toBeFocused();
+        const statsCloseButtonBox = await visibleBox(statsCloseButton);
+        expect(statsCloseButtonBox.y).toBeGreaterThanOrEqual(viewport.insets.top);
+        expect(bottom(statsCloseButtonBox)).toBeLessThanOrEqual(viewport.height - viewport.insets.bottom);
         await expectNoOverflow(page, screen);
         await expect(screen).toHaveScreenshot(`game-${viewport.key}-stats-overlay.png`);
         if (viewport.key === 'iphone16') {
