@@ -59,7 +59,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "node scripts/start-web.cjs",
-    "build:web": "expo export --platform web --output-dir dist",
+    "build:web": "expo export --platform web --output-dir dist --source-maps external",
     "check:bundle-size": "node scripts/check-web-bundle-size.cjs",
     "check:expo": "expo install --check",
     "doctor:expo": "expo-doctor",
