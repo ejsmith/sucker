@@ -49,6 +49,8 @@ Upper Section
 - Fours
 - Fives
 - Sixes
+- A base upper-section total of 63 or more awards a 35-point section bonus.
+- Extra 50-point Sucker bonuses do not count toward the 63-point upper-section total.
 
 Lower Section
 

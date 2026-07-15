@@ -33,6 +33,7 @@ import {
   suckerTokenCosts,
   toggleHold,
   totalScore,
+  upperSectionBaseScore,
 } from './src/game';
 import {
   applyLocalSuckerPunch,
@@ -1090,8 +1091,8 @@ export function LocalGameScreen({
   const rollingDieSize = gameLayout.unit(88);
   const landingDieSize = Math.max(1, diceSlotSize - gameLayout.stroke(3) * 2);
   const standardRollsLeft = rollsRemaining(game);
-  const homeUpperTotal = upperSectionTotal(homePlayer.scorecard);
-  const opponentUpperTotal = upperSectionTotal(opponentPlayer.scorecard);
+  const homeUpperTotal = upperSectionBaseScore(homePlayer.scorecard);
+  const opponentUpperTotal = upperSectionBaseScore(opponentPlayer.scorecard);
   const homeSectionBonusAwarded = homeUpperTotal >= upperBonusTarget;
   const homeScore = totalScore(homePlayer.scorecard);
   const opponentScore = totalScore(opponentPlayer.scorecard);
@@ -3794,10 +3795,6 @@ function NextTurnGameButton({
   );
 }
 
-function upperSectionTotal(scorecard: PlayerView['scorecard']) {
-  return upperCategories.reduce((sum, category) => sum + (scorecard[category] ?? 0), 0);
-}
-
 function didAwardUpperBonusForPlayer(beforeGame: GameState, afterGame: GameState, playerId: string) {
   const beforePlayer = beforeGame.players.find((player) => player.id === playerId);
   const afterPlayer = afterGame.players.find((player) => player.id === playerId);
@@ -3807,8 +3804,8 @@ function didAwardUpperBonusForPlayer(beforeGame: GameState, afterGame: GameState
   }
 
   return (
-    upperSectionTotal(beforePlayer.scorecard) < upperBonusTarget &&
-    upperSectionTotal(afterPlayer.scorecard) >= upperBonusTarget
+    upperSectionBaseScore(beforePlayer.scorecard) < upperBonusTarget &&
+    upperSectionBaseScore(afterPlayer.scorecard) >= upperBonusTarget
   );
 }
 
@@ -4307,11 +4304,15 @@ function ScoreCell({
             <SuckerPunchScoreWipe home progress={homeWipe.progress} score={homeWipe.score} />
           ) : (
             <Text
+              adjustsFontSizeToFit
               maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              minimumFontScale={0.7}
               numberOfLines={1}
               style={[
                 styles.scoreBoxText,
                 layout.styles.scoreBoxText,
+                scoreText.length > 1 && styles.compactScoreBoxText,
+                scoreText.length > 1 && layout.styles.compactScoreBoxText,
                 homePreviewScore !== null && styles.previewScoreText,
               ]}
             >
@@ -4346,11 +4347,15 @@ function ScoreCell({
             <SuckerPunchScoreWipe home={false} progress={opponentWipe.progress} score={opponentWipe.score} />
           ) : (
             <Text
+              adjustsFontSizeToFit
               maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              minimumFontScale={0.7}
               numberOfLines={1}
               style={[
                 styles.opponentScoreText,
                 layout.styles.opponentScoreText,
+                opponentScoreText.length > 1 && styles.compactScoreBoxText,
+                opponentScoreText.length > 1 && layout.styles.compactScoreBoxText,
                 opponentPreviewScore !== null && styles.previewScoreText,
               ]}
             >
@@ -4420,11 +4425,15 @@ function SuckerPunchScoreWipe({ home, progress, score }: { home: boolean; progre
         </Svg>
       </Animated.View>
       <Animated.Text
+        adjustsFontSizeToFit
         maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+        minimumFontScale={0.7}
         numberOfLines={1}
         style={[
           home ? styles.scoreBoxText : styles.opponentScoreText,
           home ? layout.styles.scoreBoxText : layout.styles.opponentScoreText,
+          String(score).length > 1 && styles.compactScoreBoxText,
+          String(score).length > 1 && layout.styles.compactScoreBoxText,
           styles.suckerPunchWipeScoreText,
           {
             opacity: scoreOpacity,
@@ -5218,6 +5227,10 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontFamily: gameFontBlack,
     fontWeight: '900',
+  },
+  compactScoreBoxText: {
+    fontSize: 28,
+    lineHeight: 30,
   },
   scoreBox: {
     alignItems: 'center',

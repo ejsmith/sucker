@@ -305,6 +305,10 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         borderWidth: stroke(3),
         height: touch(56),
       },
+      compactScoreBoxText: {
+        fontSize: unit(28),
+        lineHeight: unit(30),
+      },
       scoreBoxShadow: {
         borderRadius: unit(12),
         left: unit(3),

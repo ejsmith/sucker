@@ -28,7 +28,7 @@ test('computer strategy clears a strong 1000-game average', () => {
   const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
 
   assert.equal(result.gameCount, 1000);
-  assert.equal(Number(result.averageScore.toFixed(3)), 301.366);
+  assert.equal(Number(result.averageScore.toFixed(3)), 298.822);
   assert.equal(result.lowScore, 119);
   assert.equal(result.highScore, 579);
 });

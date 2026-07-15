@@ -110,6 +110,18 @@ test('the standard iPhone safe stage keeps reference-sized game elements', () =>
   assert.equal(layout.styles.controlsRow.height, 60);
 });
 
+test('multi-digit score boxes use compact text that fits the fixed score column', () => {
+  for (const key of ['se', 'iphone16', 'max']) {
+    const fixture = acceptedPhoneViewports.find((viewport) => viewport.key === key);
+    assert.ok(fixture);
+    const stage = getSafeGameStageStyle(fixture.width, fixture.height, fixture.insets);
+    const layout = createGameLayout(stage.width, stage.height);
+
+    assert.ok(layout.styles.compactScoreBoxText.fontSize < layout.styles.scoreBoxText.fontSize, key);
+    assert.ok(layout.styles.compactScoreBoxText.lineHeight <= layout.styles.scoreBox.height, key);
+  }
+});
+
 test('layout values change continuously across nearby viewport widths', () => {
   const narrow = createGameLayout(389, gameDesignHeight);
   const wide = createGameLayout(390, gameDesignHeight);

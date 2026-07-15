@@ -12,6 +12,7 @@ const {
   toGameState,
   toHeldDice,
   upperBonus,
+  upperSectionBaseScore,
   maxRollsPerTurn,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -233,6 +234,30 @@ test('upper bonus is included in total score', () => {
 
   assert.equal(upperBonus(scorecard), 35);
   assert.equal(totalScore(scorecard), 98);
+});
+
+test('extra sucker bonuses do not count toward the upper section bonus', () => {
+  const scorecard = createGame(['Erin']).players[0].scorecard;
+  scorecard.ones = 5;
+  scorecard.twos = 60;
+
+  assert.equal(upperSectionBaseScore(scorecard), 15);
+  assert.equal(upperBonus(scorecard), 0);
+  assert.equal(totalScore(scorecard), 65);
+});
+
+test('upper section bonus still applies when base scores reach 63 alongside an extra sucker bonus', () => {
+  const scorecard = createGame(['Erin']).players[0].scorecard;
+  scorecard.ones = 53;
+  scorecard.twos = 6;
+  scorecard.threes = 9;
+  scorecard.fours = 12;
+  scorecard.fives = 15;
+  scorecard.sixes = 18;
+
+  assert.equal(upperSectionBaseScore(scorecard), 63);
+  assert.equal(upperBonus(scorecard), 35);
+  assert.equal(totalScore(scorecard), 148);
 });
 
 test('stored game state is validated before use', () => {

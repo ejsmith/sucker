@@ -74,6 +74,7 @@ export const categoryLabels: Record<ScoreCategory, string> = {
 
 export const maxRollsPerTurn = 4;
 export const startingSuckerTokens = 10;
+export const extraSuckerBonusPoints = 50;
 export const suckerTokenCosts = {
   extraRoll: 1,
   mulligan: 3,
@@ -254,7 +255,7 @@ export function scoreCategory(dice: Dice, category: ScoreCategory): number {
 }
 
 export function scoreCategoryForScorecard(dice: Dice, category: ScoreCategory, scorecard: Scorecard): number {
-  return scoreCategory(dice, category) + (hasExtraSuckerBonus(dice, category, scorecard) ? 50 : 0);
+  return scoreCategory(dice, category) + (hasExtraSuckerBonus(dice, category, scorecard) ? extraSuckerBonusPoints : 0);
 }
 
 export function totalScore(scorecard: Scorecard): number {
@@ -262,11 +263,15 @@ export function totalScore(scorecard: Scorecard): number {
 }
 
 export function upperBonus(scorecard: Scorecard): number {
-  const upperTotal = (['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'] as const).reduce(
-    (total, category) => total + (scorecard[category] ?? 0),
-    0,
-  );
-  return upperTotal >= 63 ? 35 : 0;
+  return upperSectionBaseScore(scorecard) >= 63 ? 35 : 0;
+}
+
+export function upperSectionBaseScore(scorecard: Scorecard): number {
+  return (['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'] as const).reduce((total, category) => {
+    const storedScore = scorecard[category] ?? 0;
+    const baseScore = storedScore >= extraSuckerBonusPoints ? storedScore - extraSuckerBonusPoints : storedScore;
+    return total + baseScore;
+  }, 0);
 }
 
 export function rollDie(random: () => number = Math.random): DieValue {

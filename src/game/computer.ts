@@ -14,6 +14,7 @@ import {
   scratchScoreBox,
   suckerTokenCosts,
   totalScore,
+  upperSectionBaseScore,
   type DieValue,
   type GameState,
   type ScoreCategory,
@@ -1129,7 +1130,7 @@ function upperBonusPressure(scorecard: GameState['players'][number]['scorecard']
     return false;
   }
 
-  const scoredUpperTotal = upperCategories.reduce((total, category) => total + (scorecard[category] ?? 0), 0);
+  const scoredUpperTotal = upperSectionBaseScore(scorecard);
   const remainingTarget = openUpperCategories.reduce((total, category) => total + upperCategoryTarget(category), 0);
   return scoredUpperTotal + remainingTarget >= 63;
 }
