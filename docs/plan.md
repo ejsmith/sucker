@@ -22,7 +22,7 @@
 
 - Mulligan costs 3 tokens and replays the current player's just-completed turn before submission.
 - Sucker Punch costs 3 tokens and targets the opponent's most recently submitted turn before the current player takes their next turn.
-- A Sucker Punch rolls one die for hit chance: 1 = 20%, 2 = 35%, 3 = 50%, 4 = 65%, 5 = 75%, 6 = 90%.
+- A Sucker Punch rolls one die for hit chance: 1 = 10%, 2 = 25%, 3 = 40%, 4 = 55%, 5 = 65%, 6 = 75%.
 - A landed punch makes the target replay; a blocked punch keeps the target score and lets the attacker take their normal turn.
 
 ## Async Flow

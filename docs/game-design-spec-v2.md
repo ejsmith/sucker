@@ -178,12 +178,12 @@ Rules
 - Cannot target older turns
 - The chance die is rolled in a dedicated dialog over the game board, not in the normal dice tray or slots
 - The attacking player rolls one die to set the hit chance:
-  - 1 = 20%
-  - 2 = 35%
-  - 3 = 50%
-  - 4 = 65%
-  - 5 = 75%
-  - 6 = 90%
+  - 1 = 10%
+  - 2 = 25%
+  - 3 = 40%
+  - 4 = 55%
+  - 5 = 65%
+  - 6 = 75%
 - If the punch lands:
   - Original score is removed
   - Opponent must replay the turn

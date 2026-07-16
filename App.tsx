@@ -3085,6 +3085,7 @@ function LocalGameScreen({
           <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
             <View style={styles.suckerPunchNotice}>
               <Text style={styles.suckerPunchNoticeTitle}>You got</Text>
+              <SuckerPunchGraphic state="landed" />
               <Text style={styles.suckerPunchNoticeText}>Sucker Punched!</Text>
             </View>
           </View>
@@ -3093,6 +3094,7 @@ function LocalGameScreen({
           <View pointerEvents="none" style={styles.suckerPunchNoticeOverlay}>
             <View style={styles.suckerPunchNotice}>
               <Text style={styles.suckerPunchNoticeTitle}>{suckerBlockedNotice.title}</Text>
+              <SuckerPunchGraphic state="blocked" />
               <Text style={styles.suckerPunchNoticeText}>{suckerBlockedNotice.text}</Text>
             </View>
           </View>
@@ -3383,6 +3385,8 @@ function SuckerPunchChanceDialog({
   const isRolled = phase === 'rolled';
   const isRollingChance = phase === 'rolling';
   const isThrowing = phase === 'throwing';
+  const showChanceDie = phase === 'ready' || isRollingChance;
+  const punchGraphicState = isResult ? (outcome?.landed ? 'landed' : 'blocked') : isThrowing ? 'throwing' : 'ready';
   const chancePercent = suckerPunchChanceByDie[face];
   const title = isResult
     ? outcome?.landed
@@ -3422,18 +3426,22 @@ function SuckerPunchChanceDialog({
         {isRolled && <Text style={styles.suckerPunchChanceHint}>{chancePercent}% chance to land.</Text>}
         {isThrowing && <Text style={styles.suckerPunchChanceHint}>Will it land?</Text>}
 
-        <View style={styles.suckerPunchChanceDieShell}>
-          <Animated.View
-            style={[
-              styles.suckerPunchChanceDieTrack,
-              isRollingChance && {
-                transform: [{ translateX: flyX }, { translateY: flyY }, { rotate: flyRotate }, { scale: flyScale }],
-              },
-            ]}
-            testID="sucker-punch-chance-die-track"
-          >
-            <Image source={whiteDiceImages[face]} style={styles.suckerPunchChanceDieImage} />
-          </Animated.View>
+        <View style={styles.suckerPunchChanceStage}>
+          {showChanceDie ? (
+            <Animated.View
+              style={[
+                styles.suckerPunchChanceDieTrack,
+                isRollingChance && {
+                  transform: [{ translateX: flyX }, { translateY: flyY }, { rotate: flyRotate }, { scale: flyScale }],
+                },
+              ]}
+              testID="sucker-punch-chance-die-track"
+            >
+              <Image source={whiteDiceImages[face]} style={styles.suckerPunchChanceDieImage} />
+            </Animated.View>
+          ) : (
+            <SuckerPunchGraphic state={punchGraphicState} />
+          )}
         </View>
 
         <Pressable
@@ -3449,6 +3457,58 @@ function SuckerPunchChanceDialog({
           <Text style={styles.suckerPunchRollButtonText}>{buttonLabel}</Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+function SuckerPunchGraphic({ state }: { state: 'blocked' | 'landed' | 'ready' | 'throwing' }) {
+  const isBlocked = state === 'blocked';
+  const isLanded = state === 'landed';
+  const isThrowing = state === 'throwing';
+  const fistX = isThrowing || isLanded ? 40 : 30;
+  const guardX = isBlocked ? 58 : 70;
+
+  return (
+    <View style={styles.suckerPunchGraphicWrap} testID={`sucker-punch-graphic-${state}`}>
+      <Svg height={128} viewBox="0 0 128 128" width={128}>
+        <Circle cx="64" cy="64" fill={isBlocked ? '#2A6FB5' : isLanded ? '#F12D22' : '#7A220D'} opacity="0.24" r="54" />
+        {isLanded && (
+          <>
+            <Path d="M66 18 L74 44 L100 32 L84 54 L112 60 L84 70 L100 96 L74 82 L66 110 L58 82 L32 96 L48 70 L20 60 L48 54 L32 32 L58 44 Z" fill="#FFD329" />
+            <Path d="M66 32 L72 50 L90 42 L78 58 L98 62 L78 68 L90 86 L72 78 L66 98 L60 78 L42 86 L54 68 L34 62 L54 58 L42 42 L60 50 Z" fill="#FFF3C2" />
+          </>
+        )}
+        {isBlocked && (
+          <>
+            <Path d="M80 24 C94 30 105 38 110 48 L104 84 C101 101 91 113 80 118 C69 113 59 101 56 84 L50 48 C55 38 66 30 80 24 Z" fill="#D9ECFF" stroke="#184A7A" strokeWidth="5" />
+            <Path d="M80 38 C90 43 96 49 99 56 L94 82 C92 92 87 100 80 104 C73 100 68 92 66 82 L61 56 C64 49 70 43 80 38 Z" fill="#6DB5FF" />
+          </>
+        )}
+        <Path
+          d={`M${guardX} 76 C72 62 78 48 90 44 C100 41 110 48 109 59 C108 70 99 76 88 79 C82 81 75 81 ${guardX} 76 Z`}
+          fill="#F7C96E"
+          stroke="#5A1308"
+          strokeWidth="5"
+        />
+        <Path d={`M${guardX + 5} 61 C80 54 91 51 102 54`} stroke="#FFF3C2" strokeLinecap="round" strokeWidth="5" />
+        <Path
+          d={`M${fistX} 74 C31 63 32 48 43 43 C46 31 60 31 64 42 C69 33 83 36 83 49 C93 51 96 63 88 71 C89 83 78 93 64 91 L42 88 C34 87 28 82 ${fistX} 74 Z`}
+          fill="#E7A845"
+          stroke="#5A1308"
+          strokeWidth="5"
+        />
+        <Path d={`M43 45 C51 42 58 43 64 49`} stroke="#FFF3C2" strokeLinecap="round" strokeWidth="5" />
+        <Path d={`M63 45 C72 43 78 46 82 53`} stroke="#FFF3C2" strokeLinecap="round" strokeWidth="5" />
+        <Path d={`M38 66 C52 69 69 69 87 65`} stroke="#5A1308" strokeLinecap="round" strokeWidth="4" />
+        {isThrowing && (
+          <>
+            <Path d="M16 48 C27 40 38 38 48 42" stroke="#FFD329" strokeLinecap="round" strokeWidth="5" />
+            <Path d="M14 68 C27 63 38 63 49 66" stroke="#FFD329" strokeLinecap="round" strokeWidth="5" />
+            <Path d="M20 88 C31 82 42 79 53 80" stroke="#FFD329" strokeLinecap="round" strokeWidth="5" />
+          </>
+        )}
+        {isBlocked && <Path d="M62 52 L98 88" stroke="#184A7A" strokeLinecap="round" strokeWidth="6" />}
+      </Svg>
     </View>
   );
 }
@@ -4701,11 +4761,12 @@ const styles = StyleSheet.create({
     marginTop: -8,
     textAlign: 'center',
   },
-  suckerPunchChanceDieShell: {
+  suckerPunchChanceStage: {
     alignItems: 'center',
-    height: 116,
+    height: 132,
     justifyContent: 'center',
-    width: 116,
+    overflow: 'visible',
+    width: 132,
   },
   suckerPunchChanceDieTrack: {
     alignItems: 'center',
@@ -4717,6 +4778,12 @@ const styles = StyleSheet.create({
     height: 112,
     resizeMode: 'contain',
     width: 112,
+  },
+  suckerPunchGraphicWrap: {
+    alignItems: 'center',
+    height: 128,
+    justifyContent: 'center',
+    width: 128,
   },
   suckerPunchRollButton: {
     alignItems: 'center',

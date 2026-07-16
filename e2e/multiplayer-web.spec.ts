@@ -173,13 +173,16 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Rolled [1-6]/, {
     timeout: 3_000,
   });
+  await expect(page.getByTestId('sucker-punch-graphic-ready')).toBeVisible();
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/\d+% chance to land\./);
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
   await page.getByTestId('sucker-punch-chance-roll-button').click();
+  await expect(page.getByTestId('sucker-punch-graphic-throwing')).toBeVisible();
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROWING');
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Punch landed!|Punch blocked!/, {
     timeout: 3_000,
   });
+  await expect(page.locator('[data-testid="sucker-punch-graphic-landed"], [data-testid="sucker-punch-graphic-blocked"]')).toBeVisible();
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('CONTINUE');
   await page.getByTestId('sucker-punch-chance-roll-button').click();
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toBeHidden();
