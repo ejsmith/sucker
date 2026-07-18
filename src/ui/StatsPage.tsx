@@ -1,7 +1,15 @@
-import { useEffect, useRef } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
-import type { getHeadToHeadStats, ProfileStats } from '../multiplayer/stats';
+import {
+  getProfileRecentGames,
+  getProfileStats,
+  type getHeadToHeadStats,
+  type ProfileRecentGame,
+  type ProfileRecentGamePlayer,
+  type ProfileStats,
+} from '../multiplayer/stats';
+import { categoryLabels, scoreCategories, upperBonus } from '../game';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -19,11 +27,14 @@ const statsMaxFontSizeMultiplier = 1.2;
 export function StatsPage({
   currentOpponentAvatarUrl,
   currentOpponentName,
+  currentOpponentProfileId,
   currentPlayerAvatarUrl,
   currentPlayerName = 'You',
   currentPlayerOverallStats,
+  currentPlayerProfileId,
   currentScore,
   onClose,
+  onStartGameAgainst,
   opponentOverallStats,
   opponentScore,
   opponentStats,
@@ -33,11 +44,14 @@ export function StatsPage({
 }: {
   currentOpponentAvatarUrl?: string | null;
   currentOpponentName: string;
+  currentOpponentProfileId?: string;
   currentPlayerAvatarUrl?: string | null;
   currentPlayerName?: string;
   currentPlayerOverallStats?: ProfileStats | null;
+  currentPlayerProfileId?: string;
   currentScore?: number;
   onClose: () => void;
+  onStartGameAgainst?: (profileId: string) => Promise<void>;
   opponentOverallStats?: ProfileStats | null;
   opponentScore?: number;
   opponentStats?: HeadToHeadStatsRow | null;
@@ -56,15 +70,23 @@ export function StatsPage({
 
   if (statsKind === 'headToHead' && playerStatsTarget) {
     const isMe = playerStatsTarget === 'me';
-    return (
-      <PlayerStatsPage
-        avatarUrl={isMe ? currentPlayerAvatarUrl : currentOpponentAvatarUrl}
-        name={isMe ? currentPlayerName : currentOpponentName}
-        onBack={onClose}
-        onClose={onClose}
-        stats={isMe ? currentPlayerOverallStats : opponentOverallStats}
-      />
-    );
+    const profileId = isMe ? currentPlayerProfileId : currentOpponentProfileId;
+    if (profileId) {
+      return (
+        <PlayerStatsPage
+          currentUserProfileId={currentPlayerProfileId}
+          initialProfile={{
+            avatarUrl: isMe ? currentPlayerAvatarUrl : currentOpponentAvatarUrl,
+            id: profileId,
+            name: isMe ? currentPlayerName : currentOpponentName,
+            stats: isMe ? currentPlayerOverallStats : opponentOverallStats,
+          }}
+          key={profileId}
+          onClose={onClose}
+          onStartGameAgainst={onStartGameAgainst}
+        />
+      );
+    }
   }
 
   return (
@@ -269,52 +291,140 @@ export function StatsPage({
   );
 }
 
-function PlayerStatsPage({
-  avatarUrl,
-  name,
-  onBack,
-  onClose,
-  stats,
-}: {
+type PlayerStatsProfile = {
   avatarUrl?: string | null;
+  id: string;
   name: string;
-  onBack: () => void;
-  onClose: () => void;
   stats?: ProfileStats | null;
+};
+
+type PlayerStatsPageName = 'detail' | 'games' | 'stats';
+
+function PlayerStatsPage({
+  currentUserProfileId,
+  initialProfile,
+  onClose,
+  onStartGameAgainst,
+}: {
+  currentUserProfileId?: string;
+  initialProfile: PlayerStatsProfile;
+  onClose: () => void;
+  onStartGameAgainst?: (profileId: string) => Promise<void>;
 }) {
+  const [activeProfile, setActiveProfile] = useState(initialProfile);
+  const [games, setGames] = useState<ProfileRecentGame[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [page, setPage] = useState<PlayerStatsPageName>('stats');
+  const [profileStack, setProfileStack] = useState<PlayerStatsProfile[]>([]);
+  const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
-  const hasStats = Boolean(stats && stats.games_played > 0);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(backButtonRef.current));
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [activeProfile.id, page]);
+
+  async function openGames() {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      setGames(await getProfileRecentGames(activeProfile.id));
+      setPage('games');
+    } catch (historyError) {
+      setMessage(historyError instanceof Error ? historyError.message : 'Unable to load completed games.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function openPlayer(player: ProfileRecentGamePlayer) {
+    if (player.id === activeProfile.id) {
+      setPage('stats');
+      return;
+    }
+
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const nextStats = await getProfileStats(player.id);
+      setProfileStack((stack) => [...stack, activeProfile]);
+      setActiveProfile({ avatarUrl: player.avatarUrl, id: player.id, name: player.name, stats: nextStats });
+      setGames([]);
+      setSelectedGame(null);
+      setPage('stats');
+    } catch (profileError) {
+      setMessage(profileError instanceof Error ? profileError.message : 'Unable to load player stats.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function goBack() {
+    if (page === 'detail') {
+      setSelectedGame(null);
+      setPage('games');
+      return;
+    }
+    if (page === 'games') {
+      setPage('stats');
+      return;
+    }
+    const previousProfile = profileStack.at(-1);
+    if (previousProfile) {
+      setProfileStack((stack) => stack.slice(0, -1));
+      setActiveProfile(previousProfile);
+      setGames([]);
+      setSelectedGame(null);
+      return;
+    }
+    onClose();
+  }
+
+  async function startGame() {
+    if (!onStartGameAgainst) return;
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      await onStartGameAgainst(activeProfile.id);
+    } catch (startError) {
+      setMessage(startError instanceof Error ? startError.message : 'Unable to start the game.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  const title = page === 'detail' ? 'Game Card' : page === 'games' ? 'Recent Games' : 'Player Stats';
 
   return (
     <View
-      accessibilityLabel={`${name} overall stats`}
+      accessibilityLabel={`${activeProfile.name} ${title}`}
       accessibilityViewIsModal
-      onAccessibilityEscape={onBack}
+      onAccessibilityEscape={goBack}
       role="dialog"
       style={styles.statsOverlay}
       testID="player-stats-page-overlay"
     >
       <View style={styles.playerStatsHeader}>
         <Pressable
-          accessibilityLabel="Back to game"
+          accessibilityLabel={`Back from ${title}`}
           accessibilityRole="button"
-          onPress={onBack}
+          onPress={goBack}
           ref={backButtonRef}
           style={({ pressed }) => [styles.statsBackButton, pressed && styles.pressed]}
           testID="player-stats-back-button"
         >
           <BackChevronIcon size={28} strokeWidth={4.5} />
         </Pressable>
-        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerStatsHeaderTitle}>
-          Player Stats
+        <Text
+          maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+          numberOfLines={1}
+          style={styles.playerStatsHeaderTitle}
+        >
+          {title}
         </Text>
         <Pressable
-          accessibilityLabel="Close stats"
+          accessibilityLabel="Close player stats"
           accessibilityRole="button"
           onPress={onClose}
           style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
@@ -324,86 +434,460 @@ function PlayerStatsPage({
         </Pressable>
       </View>
 
-      <ScrollView
-        accessibilityLabel={`${name} overall statistics`}
-        contentContainerStyle={styles.statsScrollContent}
-        showsVerticalScrollIndicator={false}
-        style={styles.statsScroll}
-        tabIndex={0}
-        testID="player-stats-page-scroll"
-      >
-        <View style={styles.playerIdentityCard}>
-          <PlayerAvatar avatarUrl={avatarUrl} decorative name={name} size={82} testID="player-stats-avatar" />
-          <View style={styles.playerIdentityText}>
-            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEyebrow}>
-              Overall Multiplayer
-            </Text>
-            <Text
-              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-              numberOfLines={2}
-              style={styles.playerIdentityName}
-              testID="player-stats-name"
-            >
-              {name}
-            </Text>
-          </View>
-        </View>
-
-        {hasStats && stats ? (
-          <>
-            <View style={styles.statsGrid}>
-              <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
-              <StatBox label="Games" value={String(stats.games_played)} />
-              <StatBox label="Avg Score" value={formatStatNumber(stats.average_score)} />
-              <StatBox label="High Score" value={String(stats.highest_score)} />
-            </View>
-
-            <View style={styles.statsDetailCard}>
-              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-                Sucker Skills
-              </Text>
-              <StatsValueLine label="Blowout wins" value={formatSkillStat(stats, 'blowout_wins')} />
-              <StatsValueLine label="Comeback wins" value={formatSkillStat(stats, 'comeback_wins')} />
-              <StatsValueLine label="Buzzer beaters" value={formatSkillStat(stats, 'buzzer_beater_wins')} />
-              <StatsValueLine label="Extra rolls" value={formatSkillStat(stats, 'extra_rolls_used')} />
-              <StatsValueLine label="Mulligans" value={formatSkillStat(stats, 'mulligans_used')} />
-              <StatsValueLine label="Sucker punches thrown" value={formatSkillStat(stats, 'sucker_punches_used')} />
-              <StatsValueLine label="Sucker punches landed" value={formatSkillPct(stats, 'sucker_punch_landed_pct')} />
-              <StatsValueLine label="Sucker hunts" value={formatSkillStat(stats, 'sucker_hunts')} />
-              <StatsValueLine label="Hunt misses" value={formatSkillStat(stats, 'sucker_hunt_misses')} />
-              <StatsValueLine label="Avg tokens used" value={formatSkillStat(stats, 'average_sucker_tokens_spent')} />
-              <StatsValueLine
-                label="Avg tokens left"
-                value={formatSkillStat(stats, 'average_sucker_tokens_leftover')}
-              />
-            </View>
-
-            <View style={styles.statsDetailCard}>
-              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-                Category Rates
-              </Text>
-              <StatsValueLine label="Upper bonus" value={formatProfileCategoryRate(stats, 'upper_bonus')} />
-              <StatsValueLine label="Sucker" value={formatProfileCategoryRate(stats, 'sucker')} />
-              <StatsValueLine label="3 of a kind" value={formatProfileCategoryRate(stats, 'three_of_a_kind')} />
-              <StatsValueLine label="4 of a kind" value={formatProfileCategoryRate(stats, 'four_of_a_kind')} />
-              <StatsValueLine label="Full house" value={formatProfileCategoryRate(stats, 'full_house')} />
-              <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
-              <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
-            </View>
-          </>
-        ) : (
-          <View style={styles.statsEmptyCard}>
-            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
-              No saved stats yet
-            </Text>
-            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
-              {name} has not finished a signed-in multiplayer game yet.
-            </Text>
-          </View>
-        )}
-      </ScrollView>
+      {page === 'stats' && (
+        <PlayerStatsSummary
+          isLoading={isLoading}
+          message={message}
+          onOpenGames={() => void openGames()}
+          onStartGame={() => void startGame()}
+          profile={activeProfile}
+          showStartGame={Boolean(onStartGameAgainst && activeProfile.id !== currentUserProfileId)}
+        />
+      )}
+      {page === 'games' && (
+        <PlayerGameHistory
+          games={games}
+          isLoading={isLoading}
+          message={message}
+          onOpenGame={(game) => {
+            setSelectedGame(game);
+            setPage('detail');
+          }}
+          profile={activeProfile}
+        />
+      )}
+      {page === 'detail' && selectedGame && (
+        <PlayerGameCard game={selectedGame} onOpenPlayer={(player) => void openPlayer(player)} />
+      )}
     </View>
   );
+}
+
+function PlayerStatsSummary({
+  isLoading,
+  message,
+  onOpenGames,
+  onStartGame,
+  profile,
+  showStartGame,
+}: {
+  isLoading: boolean;
+  message: string | null;
+  onOpenGames: () => void;
+  onStartGame: () => void;
+  profile: PlayerStatsProfile;
+  showStartGame: boolean;
+}) {
+  const stats = profile.stats;
+  const hasStats = Boolean(stats && stats.games_played > 0);
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.statsScrollContent}
+      showsVerticalScrollIndicator={false}
+      style={styles.statsScroll}
+    >
+      <View style={styles.playerIdentityCard}>
+        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={76} testID="player-stats-avatar" />
+        <View style={styles.playerIdentityText}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEyebrow}>
+            Overall Multiplayer
+          </Text>
+          <Text
+            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+            numberOfLines={2}
+            style={styles.playerIdentityName}
+            testID="player-stats-name"
+          >
+            {profile.name}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.playerStatsActions}>
+        {showStartGame && (
+          <Pressable
+            disabled={isLoading}
+            onPress={onStartGame}
+            style={({ pressed }) => [
+              styles.playerPrimaryButton,
+              isLoading && styles.disabled,
+              pressed && styles.pressed,
+            ]}
+            testID="player-stats-start-game-button"
+          >
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerPrimaryButtonText}>
+              Start Game
+            </Text>
+          </Pressable>
+        )}
+        <Pressable
+          disabled={isLoading}
+          onPress={onOpenGames}
+          style={({ pressed }) => [
+            styles.playerSecondaryButton,
+            isLoading && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+          testID="player-stats-games-button"
+        >
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerSecondaryButtonText}>
+            Recent Games
+          </Text>
+        </Pressable>
+      </View>
+
+      {isLoading && <ActivityIndicator color="#FFD329" />}
+      {message && (
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
+          {message}
+        </Text>
+      )}
+
+      {hasStats && stats ? (
+        <>
+          <View style={styles.statsGrid}>
+            <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
+            <StatBox label="Games" value={String(stats.games_played)} />
+            <StatBox label="Avg Score" value={formatStatNumber(stats.average_score)} />
+            <StatBox label="High Score" value={String(stats.highest_score)} />
+          </View>
+          <View style={styles.statsDetailCard}>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+              Sucker Skills
+            </Text>
+            <StatsValueLine label="Blowout wins" value={formatSkillStat(stats, 'blowout_wins')} />
+            <StatsValueLine label="Comeback wins" value={formatSkillStat(stats, 'comeback_wins')} />
+            <StatsValueLine label="Buzzer beaters" value={formatSkillStat(stats, 'buzzer_beater_wins')} />
+            <StatsValueLine label="Extra rolls" value={formatSkillStat(stats, 'extra_rolls_used')} />
+            <StatsValueLine label="Mulligans" value={formatSkillStat(stats, 'mulligans_used')} />
+            <StatsValueLine label="Sucker punches thrown" value={formatSkillStat(stats, 'sucker_punches_used')} />
+            <StatsValueLine label="Sucker punches landed" value={formatSkillPct(stats, 'sucker_punch_landed_pct')} />
+            <StatsValueLine label="Sucker hunts" value={formatSkillStat(stats, 'sucker_hunts')} />
+            <StatsValueLine label="Hunt misses" value={formatSkillStat(stats, 'sucker_hunt_misses')} />
+            <StatsValueLine label="Avg tokens used" value={formatSkillStat(stats, 'average_sucker_tokens_spent')} />
+            <StatsValueLine label="Avg tokens left" value={formatSkillStat(stats, 'average_sucker_tokens_leftover')} />
+          </View>
+          <View style={styles.statsDetailCard}>
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+              Category Rates
+            </Text>
+            <StatsValueLine label="Upper bonus" value={formatProfileCategoryRate(stats, 'upper_bonus')} />
+            <StatsValueLine label="Sucker" value={formatProfileCategoryRate(stats, 'sucker')} />
+            <StatsValueLine label="3 of a kind" value={formatProfileCategoryRate(stats, 'three_of_a_kind')} />
+            <StatsValueLine label="4 of a kind" value={formatProfileCategoryRate(stats, 'four_of_a_kind')} />
+            <StatsValueLine label="Full house" value={formatProfileCategoryRate(stats, 'full_house')} />
+            <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
+            <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
+          </View>
+        </>
+      ) : (
+        <View style={styles.statsEmptyCard}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
+            No saved stats yet
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
+            {profile.name} has not finished a signed-in multiplayer game yet.
+          </Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function PlayerGameHistory({
+  games,
+  isLoading,
+  message,
+  onOpenGame,
+  profile,
+}: {
+  games: ProfileRecentGame[];
+  isLoading: boolean;
+  message: string | null;
+  onOpenGame: (game: ProfileRecentGame) => void;
+  profile: PlayerStatsProfile;
+}) {
+  return (
+    <ScrollView
+      contentContainerStyle={styles.statsScrollContent}
+      showsVerticalScrollIndicator={false}
+      style={styles.statsScroll}
+    >
+      <View style={styles.historyIdentityRow}>
+        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={50} />
+        <View style={styles.historyIdentityText}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={1} style={styles.historyIdentityName}>
+            {profile.name}
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyIdentityLabel}>
+            Most recent completed games
+          </Text>
+        </View>
+      </View>
+      {isLoading && <ActivityIndicator color="#FFD329" />}
+      {message && (
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
+          {message}
+        </Text>
+      )}
+      {!isLoading && games.length === 0 && (
+        <View style={styles.statsEmptyCard}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
+            No completed games
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
+            This player does not have any completed multiplayer games yet.
+          </Text>
+        </View>
+      )}
+      {games.length > 0 && (
+        <View style={styles.historyListPanel}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyListTitle}>
+            Last 25
+          </Text>
+          {games.map((game) => {
+            const result = getPlayerGameResult(game);
+            const resultTone = result === 'Won' ? 'win' : result === 'Lost' ? 'loss' : 'tie';
+            return (
+              <Pressable
+                key={game.gameId}
+                onPress={() => onOpenGame(game)}
+                style={({ pressed }) => [
+                  styles.historyGameRow,
+                  resultTone === 'win' && styles.historyGameWin,
+                  resultTone === 'loss' && styles.historyGameLoss,
+                  resultTone === 'tie' && styles.historyGameTie,
+                  pressed && styles.pressed,
+                ]}
+                testID={`player-history-game-${game.gameId}`}
+              >
+                <View style={styles.historyGameTop}>
+                  <PlayerAvatar avatarUrl={game.opponent.avatarUrl} name={game.opponent.name} size={50} />
+                  <View style={styles.historyGameText}>
+                    <Text
+                      maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+                      numberOfLines={1}
+                      style={styles.historyOpponentName}
+                    >
+                      {game.opponent.name}
+                    </Text>
+                    <Text
+                      maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+                      style={[
+                        styles.historyResult,
+                        resultTone === 'win' && styles.historyResultWin,
+                        resultTone === 'loss' && styles.historyResultLoss,
+                        resultTone === 'tie' && styles.historyResultTie,
+                      ]}
+                    >
+                      {resultTone === 'win' ? 'You won' : resultTone === 'loss' ? 'You lost' : 'Tie'}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.historyScorePill,
+                      resultTone === 'win' && styles.historyScorePillWin,
+                      resultTone === 'loss' && styles.historyScorePillLoss,
+                      resultTone === 'tie' && styles.historyScorePillTie,
+                    ]}
+                  >
+                    <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyScore}>
+                      {game.player.score}
+                    </Text>
+                    <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyScoreDivider}>
+                      -
+                    </Text>
+                    <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyScore}>
+                      {game.opponent.score}
+                    </Text>
+                  </View>
+                </View>
+                <Text
+                  maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+                  numberOfLines={1}
+                  style={styles.historyGameDate}
+                >
+                  {formatPlayerGameDate(game.completedAt)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function PlayerGameCard({
+  game,
+  onOpenPlayer,
+}: {
+  game: ProfileRecentGame;
+  onOpenPlayer: (player: ProfileRecentGamePlayer) => void;
+}) {
+  return (
+    <ScrollView
+      contentContainerStyle={styles.statsScrollContent}
+      showsVerticalScrollIndicator={false}
+      style={styles.statsScroll}
+    >
+      <View style={styles.gamePlayersCard}>
+        <GameCardPlayer player={game.player} onPress={() => onOpenPlayer(game.player)} />
+        <View style={styles.gameCardResult}>
+          <Text
+            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+            numberOfLines={1}
+            style={styles.gameCardScore}
+          >
+            {game.player.score}–{game.opponent.score}
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.gameCardDate}>
+            {formatPlayerGameDate(game.completedAt)}
+          </Text>
+        </View>
+        <GameCardPlayer player={game.opponent} onPress={() => onOpenPlayer(game.opponent)} />
+      </View>
+      <View style={styles.gameScorecard}>
+        <View style={[styles.gameScoreRow, styles.gameScoreHeader]}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={[styles.gameCategory, styles.gameHeaderText]}>
+            Category
+          </Text>
+          <Text
+            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+            style={[styles.gameValue, styles.gameHeaderText]}
+            numberOfLines={1}
+          >
+            {firstName(game.player.name)}
+          </Text>
+          <Text
+            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+            style={[styles.gameValue, styles.gameHeaderText]}
+            numberOfLines={1}
+          >
+            {firstName(game.opponent.name)}
+          </Text>
+        </View>
+        {scoreCategories.map((category) => (
+          <GameScoreRow
+            key={category}
+            label={categoryLabels[category]}
+            opponentValue={formatScore(game.opponent.scorecard[category])}
+            playerValue={formatScore(game.player.scorecard[category])}
+          />
+        ))}
+        <GameScoreRow
+          label="Upper bonus"
+          opponentValue={String(upperBonus(game.opponent.scorecard))}
+          playerValue={String(upperBonus(game.player.scorecard))}
+        />
+        <GameScoreRow
+          emphasized
+          label="Total"
+          opponentValue={String(game.opponent.score)}
+          playerValue={String(game.player.score)}
+        />
+      </View>
+      <View style={styles.gameScorecard}>
+        <View style={[styles.gameScoreRow, styles.gameScoreHeader]}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={[styles.gameCategory, styles.gameHeaderText]}>
+            Sucker tokens
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={[styles.gameValue, styles.gameHeaderText]}>
+            Used
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={[styles.gameValue, styles.gameHeaderText]}>
+            Left
+          </Text>
+        </View>
+        <GameScoreRow
+          label={game.player.name}
+          opponentValue={String(game.player.suckerTokens)}
+          playerValue={String(game.player.suckerTokensSpent)}
+        />
+        <GameScoreRow
+          label={game.opponent.name}
+          opponentValue={String(game.opponent.suckerTokens)}
+          playerValue={String(game.opponent.suckerTokensSpent)}
+        />
+      </View>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.gameAvatarHint}>
+        Tap either player’s avatar to view their stats.
+      </Text>
+    </ScrollView>
+  );
+}
+
+function GameCardPlayer({ player, onPress }: { player: ProfileRecentGamePlayer; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityLabel={`View ${player.name}'s stats`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.gameCardPlayer, pressed && styles.pressed]}
+    >
+      <PlayerAvatar avatarUrl={player.avatarUrl} name={player.name} size={58} />
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={2} style={styles.gameCardPlayerName}>
+        {player.name}
+      </Text>
+    </Pressable>
+  );
+}
+
+function GameScoreRow({
+  emphasized = false,
+  label,
+  opponentValue,
+  playerValue,
+}: {
+  emphasized?: boolean;
+  label: string;
+  opponentValue: string;
+  playerValue: string;
+}) {
+  return (
+    <View style={[styles.gameScoreRow, emphasized && styles.gameScoreTotal]}>
+      <Text
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        numberOfLines={1}
+        style={[styles.gameCategory, emphasized && styles.gameScoreTotalText]}
+      >
+        {label}
+      </Text>
+      <Text
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        style={[styles.gameValue, emphasized && styles.gameScoreTotalText]}
+      >
+        {playerValue}
+      </Text>
+      <Text
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        style={[styles.gameValue, emphasized && styles.gameScoreTotalText]}
+      >
+        {opponentValue}
+      </Text>
+    </View>
+  );
+}
+
+function getPlayerGameResult(game: ProfileRecentGame) {
+  if (game.player.score === game.opponent.score) return 'Tied';
+  return game.player.score > game.opponent.score ? 'Won' : 'Lost';
+}
+
+function formatPlayerGameDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(
+    new Date(value),
+  );
+}
+
+function formatScore(value: number | null) {
+  return value === null ? '—' : String(value);
+}
+
+function firstName(value: string) {
+  return value.trim().split(/\s+/)[0] || 'Player';
 }
 
 type CategoryRateKey =
@@ -533,10 +1017,16 @@ function StatsComparisonLine({ label, opponentValue, value }: { label: string; o
 function StatsValueLine({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.statsLine}>
-      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineLabel}>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={2} style={styles.statsLineLabel}>
         {label}
       </Text>
-      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineValue}>
+      <Text
+        adjustsFontSizeToFit
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        minimumFontScale={0.85}
+        numberOfLines={1}
+        style={styles.statsSingleLineValue}
+      >
         {value}
       </Text>
     </View>
@@ -573,8 +1063,240 @@ const styles = StyleSheet.create({
     padding: 10,
     width: '100%',
   },
-  pressed: {
-    opacity: 0.72,
+  disabled: {
+    opacity: 0.55,
+  },
+  gameAvatarHint: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  gameCardDate: {
+    color: '#FFD76B',
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  gameCardPlayer: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 5,
+  },
+  gameCardPlayerName: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 14,
+    textAlign: 'center',
+  },
+  gameCardResult: {
+    alignItems: 'center',
+    gap: 3,
+    justifyContent: 'center',
+    width: 112,
+  },
+  gameCardScore: {
+    color: '#FFD329',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  gameCategory: {
+    color: '#FFF3C2',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  gameHeaderText: {
+    color: '#FFD329',
+    fontSize: 10,
+    textTransform: 'uppercase',
+  },
+  gamePlayersCard: {
+    alignItems: 'flex-start',
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    padding: 12,
+    width: '100%',
+  },
+  gameScoreHeader: {
+    backgroundColor: '#8F3B10',
+    borderBottomWidth: 0,
+  },
+  gameScoreRow: {
+    alignItems: 'center',
+    borderBottomColor: '#8F3B10',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 30,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  gameScoreTotal: {
+    backgroundColor: '#FFF3C2',
+    borderBottomWidth: 0,
+  },
+  gameScoreTotalText: {
+    color: '#210505',
+    fontSize: 13,
+  },
+  gameScorecard: {
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  gameValue: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'center',
+    width: 64,
+  },
+  historyGameDate: {
+    color: '#806B56',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  historyGameLoss: {
+    backgroundColor: '#FFE2D6',
+    borderColor: '#C62B22',
+  },
+  historyGameRow: {
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderRadius: 8,
+    borderWidth: 3,
+    gap: 2,
+    padding: 6,
+    width: '100%',
+  },
+  historyGameTie: {
+    backgroundColor: '#FFF3C2',
+    borderColor: '#B97812',
+  },
+  historyGameText: {
+    flex: 1,
+    gap: 3,
+  },
+  historyGameTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  historyGameWin: {
+    backgroundColor: '#F1FFD8',
+    borderColor: '#2F8F3E',
+  },
+  historyIdentityLabel: {
+    color: '#FFD76B',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  historyIdentityName: {
+    color: '#FFF3C2',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  historyIdentityRow: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 10,
+    padding: 10,
+    width: '100%',
+  },
+  historyIdentityText: {
+    flex: 1,
+  },
+  historyListPanel: {
+    backgroundColor: '#210505',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 6,
+    padding: 8,
+    width: '100%',
+  },
+  historyListTitle: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  historyOpponentName: {
+    color: '#210505',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  historyResult: {
+    alignSelf: 'flex-start',
+    borderRadius: 6,
+    borderWidth: 2,
+    fontSize: 11,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  historyResultLoss: {
+    backgroundColor: '#C62B22',
+    borderColor: '#7A1208',
+    color: '#FFF3C2',
+  },
+  historyResultTie: {
+    backgroundColor: '#FFE08A',
+    borderColor: '#B97812',
+    color: '#5A1308',
+  },
+  historyResultWin: {
+    backgroundColor: '#7DD957',
+    borderColor: '#2F8F3E',
+    color: '#183B12',
+  },
+  historyScore: {
+    color: '#210505',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  historyScoreDivider: {
+    color: '#8F3B10',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  historyScorePill: {
+    alignItems: 'center',
+    backgroundColor: '#FFD76B',
+    borderColor: '#8F3B10',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 4,
+    height: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    width: 108,
+  },
+  historyScorePillLoss: {
+    backgroundColor: '#FFB6A6',
+    borderColor: '#C62B22',
+  },
+  historyScorePillTie: {
+    backgroundColor: '#FFE08A',
+    borderColor: '#B97812',
+  },
+  historyScorePillWin: {
+    backgroundColor: '#DFF7A8',
+    borderColor: '#2F8F3E',
   },
   playerIdentityCard: {
     alignItems: 'center',
@@ -597,12 +1319,52 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  playerPrimaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
+    borderRadius: 9,
+    borderWidth: 3,
+    flex: 1,
+    height: 50,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  playerPrimaryButtonText: {
+    color: '#210505',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  playerSecondaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 9,
+    borderWidth: 2,
+    flex: 1,
+    height: 50,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  playerSecondaryButtonText: {
+    color: '#FFD329',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  playerStatsActions: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
   playerStatsHeader: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexShrink: 0,
     gap: 10,
     justifyContent: 'space-between',
+    position: 'relative',
     width: '100%',
+    zIndex: 1,
   },
   playerStatsHeaderTitle: {
     color: '#FFF3C2',
@@ -610,6 +1372,9 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '900',
     textAlign: 'center',
+  },
+  pressed: {
+    opacity: 0.72,
   },
   statBox: {
     alignItems: 'center',
@@ -750,6 +1515,20 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'right',
     width: 68,
+  },
+  statsMessage: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  statsSingleLineValue: {
+    color: '#FFD329',
+    flexShrink: 0,
+    fontSize: 16,
+    fontWeight: '900',
+    minWidth: 88,
+    textAlign: 'right',
   },
   statsOverlay: {
     backgroundColor: '#8F0000',

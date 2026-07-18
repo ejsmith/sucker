@@ -47,6 +47,7 @@ import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './s
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import {
   buyRemoteExtraRoll,
+  createGameAgainst,
   createRematch,
   getLatestRemoteBlockedSuckerPunch,
   getGame,
@@ -809,6 +810,31 @@ export function RemoteGameScreen({
     onOpenGame(nextGameId);
   }
 
+  async function startGameAgainst(opponentProfileId: string) {
+    const activeProfileId = profileIdRef.current;
+    if (!activeProfileId) {
+      throw new Error('Sign in again to start a game.');
+    }
+    setIsRemoteBusy(true);
+    setError(null);
+    try {
+      const result = await createGameAgainst(opponentProfileId);
+      setNextTurnPrompt(null);
+      setRemoteGame(result.game);
+      setRemoteLastTurn(null);
+      setRemoteLastTurnLoadFailedId(null);
+      onGameChange(activeProfileId, result.game);
+      void syncRemoteGameList(activeProfileId);
+      onOpenGame(result.game.id);
+    } catch (startError) {
+      const startMessage = startError instanceof Error ? startError.message : 'Unable to start the game.';
+      setError(startMessage);
+      throw new Error(startMessage);
+    } finally {
+      setIsRemoteBusy(false);
+    }
+  }
+
   function exitToLobby() {
     setNextTurnPrompt(null);
     onExit();
@@ -888,6 +914,7 @@ export function RemoteGameScreen({
       onDismissNextTurns={() => setNextTurnPrompt(null)}
       onExit={exitToLobby}
       onOpenNextTurnGame={openNextTurnGame}
+      onStartGameAgainst={startGameAgainst}
       remoteError={error}
       remoteGame={remoteGame.state}
       remoteHandlers={handlers}
@@ -908,6 +935,7 @@ export function LocalGameScreen({
   onDismissNextTurns,
   onExit,
   onOpenNextTurnGame,
+  onStartGameAgainst,
   remoteError,
   remoteGame,
   remoteHandlers,
@@ -924,6 +952,7 @@ export function LocalGameScreen({
   onDismissNextTurns?: () => void;
   onExit?: () => void;
   onOpenNextTurnGame?: (gameId: string) => void;
+  onStartGameAgainst?: (profileId: string) => Promise<void>;
   remoteError?: string | null;
   remoteGame?: ReturnType<typeof createGame>;
   remoteHandlers?: RemoteActionHandlers;
@@ -3741,11 +3770,22 @@ export function LocalGameScreen({
                   <StatsPage
                     currentOpponentAvatarUrl={isRemoteGame ? playerAvatars[opponentPlayer.id] : null}
                     currentOpponentName={opponentPlayer.name}
+                    currentOpponentProfileId={isRemoteGame ? opponentPlayer.id : undefined}
                     currentPlayerAvatarUrl={isRemoteGame ? playerAvatars[homePlayer.id] : localPlayerAvatarUrl}
                     currentPlayerName={homePlayer.name}
                     currentPlayerOverallStats={isRemoteGame ? (headToHeadStats?.mineOverall ?? null) : null}
+                    currentPlayerProfileId={isRemoteGame ? homePlayer.id : undefined}
                     currentScore={totalScore(homePlayer.scorecard)}
                     onClose={handleCloseStats}
+                    onStartGameAgainst={
+                      onStartGameAgainst
+                        ? async (profileId) => {
+                            await onStartGameAgainst(profileId);
+                            setShowStatsPage(false);
+                            setPlayerStatsTarget(null);
+                          }
+                        : undefined
+                    }
                     opponentOverallStats={isRemoteGame ? (headToHeadStats?.opponentOverall ?? null) : null}
                     opponentScore={totalScore(opponentPlayer.scorecard)}
                     opponentStats={isRemoteGame ? (headToHeadStats?.opponent ?? null) : null}

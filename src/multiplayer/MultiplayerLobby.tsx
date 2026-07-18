@@ -880,12 +880,22 @@ export function MultiplayerLobby({
           <StatsPage
             currentOpponentAvatarUrl={profileAvatars[opponent.id]}
             currentOpponentName={opponent.name}
+            currentOpponentProfileId={opponent.id}
             currentPlayerAvatarUrl={profileAvatars[me.id] ?? profile?.avatar_url}
             currentPlayerName={me.name}
             currentPlayerOverallStats={completedGameStats?.mineOverall ?? null}
+            currentPlayerProfileId={me.id}
+            currentScore={totalScore(me.scorecard)}
             onClose={() => setPage('completedGameDetail')}
+            onStartGameAgainst={async (opponentProfileId) => {
+              const result = await createGameAgainst(opponentProfileId);
+              await refreshGames({ surfaceError: false });
+              onOpenGame(result.game.id);
+            }}
             opponentOverallStats={completedGameStats?.opponentOverall ?? null}
+            opponentScore={totalScore(opponent.scorecard)}
             opponentStats={completedGameStats?.opponent ?? null}
+            playerStatsTarget="opponent"
             stats={completedGameStats?.mine ?? null}
             statsKind="headToHead"
           />
@@ -1127,6 +1137,7 @@ export function MultiplayerLobby({
                   username: username.trim() || null,
                 });
                 setMessage('Profile saved.');
+                void refreshGames({ surfaceError: false });
               })
             }
             style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
