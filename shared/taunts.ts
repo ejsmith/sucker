@@ -1,6 +1,5 @@
 export type TauntScenario =
   | 'base'
-  | 'big-score'
   | 'four-kind'
   | 'full-house'
   | 'punch-landed'
@@ -21,8 +20,8 @@ export const baseTaunts = [
 export const suckerRollTaunts = [
   { id: 'sucker', scenario: 'sucker-roll', text: 'SUCKER!' },
   { id: 'punch-me', scenario: 'sucker-roll', text: 'Punch me. I dare you.' },
-  { id: 'five-dice-sucker', scenario: 'sucker-roll', text: 'Five dice. One giant Sucker.' },
-  { id: 'name-of-game', scenario: 'sucker-roll', text: 'I rolled the name of the game.' },
+  { id: 'five-dice-sucker', scenario: 'sucker-roll', text: 'Five dice. One Sucker.' },
+  { id: 'name-of-game', scenario: 'sucker-roll', text: "Even the dice know you're a Sucker." },
 ] as const;
 
 export const scratchTaunts = [
@@ -30,13 +29,6 @@ export const scratchTaunts = [
   { id: 'spotted-one', scenario: 'scratch', text: "I spotted you one. Don't waste it." },
   { id: 'zero-swagger', scenario: 'scratch', text: 'Even my zero has swagger.' },
   { id: 'keeping-interesting', scenario: 'scratch', text: 'Just keeping it interesting, Sucker.' },
-] as const;
-
-export const bigScoreTaunts = [
-  { id: 'score-zip-code', scenario: 'big-score', text: 'That score needs its own ZIP code.' },
-  { id: 'calculator', scenario: 'big-score', text: 'Hope you brought a calculator.' },
-  { id: 'chasing-that', scenario: 'big-score', text: 'Try not to pull something chasing that.' },
-  { id: 'put-on-scoreboard', scenario: 'big-score', text: 'Put THAT on the scoreboard, Sucker.' },
 ] as const;
 
 export const straightTaunts = [
@@ -82,7 +74,6 @@ export const taunts = [
   ...baseTaunts,
   ...suckerRollTaunts,
   ...scratchTaunts,
-  ...bigScoreTaunts,
   ...straightTaunts,
   ...fullHouseTaunts,
   ...fourKindTaunts,
@@ -94,7 +85,6 @@ export type TauntId = (typeof taunts)[number]['id'];
 export type Taunt = (typeof taunts)[number];
 
 const scenarioTaunts: Record<Exclude<TauntScenario, 'base'>, readonly Taunt[]> = {
-  'big-score': bigScoreTaunts,
   'four-kind': fourKindTaunts,
   'full-house': fullHouseTaunts,
   'punch-landed': landedPunchTaunts,
@@ -106,13 +96,12 @@ const scenarioTaunts: Record<Exclude<TauntScenario, 'base'>, readonly Taunt[]> =
 
 export const tauntScenarioLabels: Record<TauntScenario, string> = {
   base: 'ANY PLAY',
-  'big-score': 'BIG SCORE',
   'four-kind': 'FOUR OF A KIND',
   'full-house': 'FULL HOUSE',
   'punch-landed': 'LANDED SUCKER PUNCH',
   'punch-missed': 'MISSED SUCKER PUNCH',
   scratch: 'SCRATCH',
-  straight: 'STRAIGHT',
+  straight: 'LARGE STRAIGHT',
   'sucker-roll': 'SUCKER ROLL',
 };
 
@@ -127,7 +116,6 @@ export function isTauntAvailableForScenario(tauntId: TauntId, scenario: TauntSce
 export function getTurnTauntScenario({
   category,
   dice,
-  score,
   scratched,
 }: {
   category: string;
@@ -141,17 +129,17 @@ export function getTurnTauntScenario({
   if (dice.length === 5 && dice.every((die) => die === dice[0])) {
     return 'sucker-roll';
   }
-  if (category === 'largeStraight' || category === 'smallStraight') {
+  if (category === 'largeStraight') {
     return 'straight';
+  }
+  if (category === 'smallStraight') {
+    return 'base';
   }
   if (category === 'fullHouse') {
     return 'full-house';
   }
   if (category === 'fourOfAKind') {
     return 'four-kind';
-  }
-  if (score >= 30) {
-    return 'big-score';
   }
   return 'base';
 }
