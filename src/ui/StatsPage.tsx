@@ -447,6 +447,7 @@ function PlayerStatsPage({
       {page === 'games' && (
         <PlayerGameHistory
           games={games}
+          isCurrentUser={activeProfile.id === currentUserProfileId}
           isLoading={isLoading}
           message={message}
           onOpenGame={(game) => {
@@ -597,12 +598,14 @@ function PlayerStatsSummary({
 
 function PlayerGameHistory({
   games,
+  isCurrentUser,
   isLoading,
   message,
   onOpenGame,
   profile,
 }: {
   games: ProfileRecentGame[];
+  isCurrentUser: boolean;
   isLoading: boolean;
   message: string | null;
   onOpenGame: (game: ProfileRecentGame) => void;
@@ -644,11 +647,12 @@ function PlayerGameHistory({
       {games.length > 0 && (
         <View style={styles.historyListPanel}>
           <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyListTitle}>
-            Last 25
+            Recent Games
           </Text>
           {games.map((game) => {
             const result = getPlayerGameResult(game);
             const resultTone = result === 'Won' ? 'win' : result === 'Lost' ? 'loss' : 'tie';
+            const resultLabel = getPlayerGameResultLabel(result, isCurrentUser);
             return (
               <Pressable
                 key={game.gameId}
@@ -681,7 +685,7 @@ function PlayerGameHistory({
                         resultTone === 'tie' && styles.historyResultTie,
                       ]}
                     >
-                      {resultTone === 'win' ? 'You won' : resultTone === 'loss' ? 'You lost' : 'Tie'}
+                      {resultLabel}
                     </Text>
                   </View>
                   <View
@@ -874,6 +878,11 @@ function GameScoreRow({
 function getPlayerGameResult(game: ProfileRecentGame) {
   if (game.player.score === game.opponent.score) return 'Tied';
   return game.player.score > game.opponent.score ? 'Won' : 'Lost';
+}
+
+function getPlayerGameResultLabel(result: ReturnType<typeof getPlayerGameResult>, isCurrentUser: boolean) {
+  if (result === 'Tied') return 'Tie';
+  return isCurrentUser ? `You ${result.toLowerCase()}` : result;
 }
 
 function formatPlayerGameDate(value: string) {
