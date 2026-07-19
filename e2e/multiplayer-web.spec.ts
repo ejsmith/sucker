@@ -530,15 +530,6 @@ test('player avatars open separate overall stats pages', async ({ browser }) => 
   inserted.forEach((result) => assertNoError(result.error));
 
   await openGameFromLobby(alicePage, gameId);
-  await alicePage.getByTestId('game-menu-button').click();
-  await alicePage.getByTestId('game-stats-menu-item').click();
-
-  const headToHeadPage = alicePage.getByTestId('stats-page-overlay');
-  await expect(headToHeadPage).toBeVisible();
-  await expect(headToHeadPage.getByText('Current Game')).toHaveCount(0);
-  await expect(headToHeadPage.getByText('Overall Player Stats')).toHaveCount(0);
-  await alicePage.getByTestId('stats-page-close-button').click();
-
   const homeAvatarButton = alicePage.getByTestId('home-player-avatar-stats-button');
   const opponentAvatarButton = alicePage.getByTestId('opponent-player-avatar-stats-button');
   await expect(homeAvatarButton).toHaveAccessibleName(`View ${alice.displayName}'s stats`);
@@ -555,6 +546,15 @@ test('player avatars open separate overall stats pages', async ({ browser }) => 
   await alicePage.getByTestId('player-stats-back-button').click();
   await expect(playerStatsPage).toHaveCount(0);
   await expect(homeAvatarButton).toBeFocused();
+
+  await alicePage.getByTestId('game-menu-button').click();
+  await alicePage.getByTestId('game-stats-menu-item').click();
+
+  const headToHeadPage = alicePage.getByTestId('stats-page-overlay');
+  await expect(headToHeadPage).toBeVisible();
+  await expect(headToHeadPage.getByText('Current Game')).toHaveCount(0);
+  await expect(headToHeadPage.getByText('Overall Player Stats')).toHaveCount(0);
+  await alicePage.getByTestId('stats-page-close-button').click();
 
   await opponentAvatarButton.click();
   await expect(playerStatsPage).toBeVisible();

@@ -112,6 +112,7 @@ export function MultiplayerLobby({
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
   const [completedGameStats, setCompletedGameStats] = useState<HeadToHeadStatsSnapshot | null>(null);
+  const [completedGamePlayerStatsTarget, setCompletedGamePlayerStatsTarget] = useState<'opponent' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
@@ -129,6 +130,7 @@ export function MultiplayerLobby({
   const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
   const pendingAvatarRecoveryProfileId = useRef<string | null>(null);
+  const completedGameStatsBackHandler = useRef<(() => void) | null>(null);
   const refreshGamesInFlight = useRef<Promise<void> | null>(null);
   const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileId = profile?.id ?? session?.user.id ?? null;
@@ -248,6 +250,10 @@ export function MultiplayerLobby({
       }
       if (removeGameToConfirm) {
         setRemoveGameToConfirm(null);
+        return true;
+      }
+      if (page === 'completedGameStats' && completedGameStatsBackHandler.current) {
+        completedGameStatsBackHandler.current();
         return true;
       }
       if (page !== 'games') {
@@ -709,7 +715,7 @@ export function MultiplayerLobby({
   const selectedCompletedGame = selectedCompletedGameId
     ? visibleGames.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
     : null;
-  async function handleOpenCompletedGameStats(game: RemoteGameRow) {
+  async function handleOpenCompletedGameStats(game: RemoteGameRow, playerStatsTarget: 'opponent' | null) {
     const { opponent } = getGamePlayers(game, activeProfileId);
     if (!opponent) {
       setMessage('Stats are unavailable for this game.');
@@ -718,6 +724,7 @@ export function MultiplayerLobby({
 
     await runAction(async () => {
       setCompletedGameStats(await getHeadToHeadStats(opponent.id));
+      setCompletedGamePlayerStatsTarget(playerStatsTarget);
       setSelectedCompletedGameId(game.id);
       setPage('completedGameStats');
     });
@@ -851,8 +858,8 @@ export function MultiplayerLobby({
             avatarUrl={profileAvatars[getGamePlayers(selectedCompletedGame, activeProfileId).opponent?.id ?? '']}
             game={selectedCompletedGame}
             isBusy={isBusy || isLoading}
-            onOpenPlayerStats={handleOpenCompletedGameStats}
-            onOpenStats={handleOpenCompletedGameStats}
+            onOpenPlayerStats={(game) => void handleOpenCompletedGameStats(game, 'opponent')}
+            onOpenStats={(game) => void handleOpenCompletedGameStats(game, null)}
             onRematchGame={handleRematchGame}
             profileId={activeProfileId}
           />
@@ -888,6 +895,7 @@ export function MultiplayerLobby({
             currentPlayerOverallStats={completedGameStats?.mineOverall ?? null}
             currentPlayerProfileId={me.id}
             currentScore={totalScore(me.scorecard)}
+            nestedBackHandlerRef={completedGameStatsBackHandler}
             onClose={() => setPage('completedGameDetail')}
             onStartGameAgainst={async (opponentProfileId) => {
               const result = await createGameAgainst(opponentProfileId);
@@ -897,7 +905,7 @@ export function MultiplayerLobby({
             opponentOverallStats={completedGameStats?.opponentOverall ?? null}
             opponentScore={totalScore(opponent.scorecard)}
             opponentStats={completedGameStats?.opponent ?? null}
-            playerStatsTarget="opponent"
+            playerStatsTarget={completedGamePlayerStatsTarget}
             stats={completedGameStats?.mine ?? null}
             statsKind="headToHead"
           />

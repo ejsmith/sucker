@@ -1013,6 +1013,7 @@ export function LocalGameScreen({
   const homeAvatarButtonRef = useRef<ViewRef | null>(null);
   const opponentAvatarButtonRef = useRef<ViewRef | null>(null);
   const statsReturnFocusTarget = useRef<'gameOver' | 'homeAvatar' | 'menu' | 'opponentAvatar'>('menu');
+  const statsNestedBackHandler = useRef<(() => void) | null>(null);
   const boardRef = useRef<ViewRef | null>(null);
   const rollZoneRef = useRef<ViewRef | null>(null);
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
@@ -2551,6 +2552,7 @@ export function LocalGameScreen({
 
   function handleCloseStats() {
     const returnFocusTarget = statsReturnFocusTarget.current;
+    statsNestedBackHandler.current = null;
     setShowStatsPage(false);
     setPlayerStatsTarget(null);
     requestAnimationFrame(() => {
@@ -3752,7 +3754,11 @@ export function LocalGameScreen({
               accessibilityLabel={playerStatsTarget ? 'Player stats' : 'Game stats'}
               animationType="none"
               navigationBarTranslucent
-              onRequestClose={handleCloseStats}
+              onRequestClose={() => {
+                const nestedBackHandler = statsNestedBackHandler.current;
+                if (nestedBackHandler) nestedBackHandler();
+                else handleCloseStats();
+              }}
               presentationStyle="overFullScreen"
               statusBarTranslucent
               transparent
@@ -3776,6 +3782,7 @@ export function LocalGameScreen({
                     currentPlayerOverallStats={isRemoteGame ? (headToHeadStats?.mineOverall ?? null) : null}
                     currentPlayerProfileId={isRemoteGame ? homePlayer.id : undefined}
                     currentScore={totalScore(homePlayer.scorecard)}
+                    nestedBackHandlerRef={statsNestedBackHandler}
                     onClose={handleCloseStats}
                     onStartGameAgainst={
                       onStartGameAgainst

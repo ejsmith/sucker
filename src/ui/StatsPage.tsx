@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import {
@@ -33,6 +33,7 @@ export function StatsPage({
   currentPlayerOverallStats,
   currentPlayerProfileId,
   currentScore,
+  nestedBackHandlerRef,
   onClose,
   onStartGameAgainst,
   opponentOverallStats,
@@ -50,6 +51,7 @@ export function StatsPage({
   currentPlayerOverallStats?: ProfileStats | null;
   currentPlayerProfileId?: string;
   currentScore?: number;
+  nestedBackHandlerRef?: MutableRefObject<(() => void) | null>;
   onClose: () => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
   opponentOverallStats?: ProfileStats | null;
@@ -82,6 +84,7 @@ export function StatsPage({
             stats: isMe ? currentPlayerOverallStats : opponentOverallStats,
           }}
           key={profileId}
+          nestedBackHandlerRef={nestedBackHandlerRef}
           onClose={onClose}
           onStartGameAgainst={onStartGameAgainst}
         />
@@ -300,14 +303,23 @@ type PlayerStatsProfile = {
 
 type PlayerStatsPageName = 'detail' | 'games' | 'stats';
 
+type PlayerStatsRoute = {
+  games: ProfileRecentGame[];
+  page: PlayerStatsPageName;
+  profile: PlayerStatsProfile;
+  selectedGame: ProfileRecentGame | null;
+};
+
 function PlayerStatsPage({
   currentUserProfileId,
   initialProfile,
+  nestedBackHandlerRef,
   onClose,
   onStartGameAgainst,
 }: {
   currentUserProfileId?: string;
   initialProfile: PlayerStatsProfile;
+  nestedBackHandlerRef?: MutableRefObject<(() => void) | null>;
   onClose: () => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
 }) {
@@ -316,20 +328,23 @@ function PlayerStatsPage({
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [page, setPage] = useState<PlayerStatsPageName>('stats');
-  const [profileStack, setProfileStack] = useState<PlayerStatsProfile[]>([]);
+  const [routeStack, setRouteStack] = useState<PlayerStatsRoute[]>([]);
   const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
+  const playerNavigationPendingRef = useRef(false);
+  const visibleProfile =
+    activeProfile.id === initialProfile.id ? { ...activeProfile, ...initialProfile } : activeProfile;
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(backButtonRef.current));
     return () => cancelAnimationFrame(frame);
-  }, [activeProfile.id, page]);
+  }, [page, visibleProfile.id]);
 
   async function openGames() {
     setIsLoading(true);
     setMessage(null);
     try {
-      setGames(await getProfileRecentGames(activeProfile.id));
+      setGames(await getProfileRecentGames(visibleProfile.id));
       setPage('games');
     } catch (historyError) {
       setMessage(historyError instanceof Error ? historyError.message : 'Unable to load completed games.');
@@ -339,17 +354,23 @@ function PlayerStatsPage({
   }
 
   async function openPlayer(player: ProfileRecentGamePlayer) {
-    if (player.id === activeProfile.id) {
-      setPage('stats');
-      return;
-    }
+    if (playerNavigationPendingRef.current) return;
+    playerNavigationPendingRef.current = true;
 
     setIsLoading(true);
     setMessage(null);
     try {
-      const nextStats = await getProfileStats(player.id);
-      setProfileStack((stack) => [...stack, activeProfile]);
-      setActiveProfile({ avatarUrl: player.avatarUrl, id: player.id, name: player.name, stats: nextStats });
+      const nextProfile =
+        player.id === visibleProfile.id
+          ? visibleProfile
+          : {
+              avatarUrl: player.avatarUrl,
+              id: player.id,
+              name: player.name,
+              stats: await getProfileStats(player.id),
+            };
+      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, selectedGame }]);
+      setActiveProfile(nextProfile);
       setGames([]);
       setSelectedGame(null);
       setPage('stats');
@@ -357,10 +378,13 @@ function PlayerStatsPage({
       setMessage(profileError instanceof Error ? profileError.message : 'Unable to load player stats.');
     } finally {
       setIsLoading(false);
+      requestAnimationFrame(() => {
+        playerNavigationPendingRef.current = false;
+      });
     }
   }
 
-  function goBack() {
+  const goBack = useCallback(() => {
     if (page === 'detail') {
       setSelectedGame(null);
       setPage('games');
@@ -370,23 +394,32 @@ function PlayerStatsPage({
       setPage('stats');
       return;
     }
-    const previousProfile = profileStack.at(-1);
-    if (previousProfile) {
-      setProfileStack((stack) => stack.slice(0, -1));
-      setActiveProfile(previousProfile);
-      setGames([]);
-      setSelectedGame(null);
+    const previousRoute = routeStack.at(-1);
+    if (previousRoute) {
+      setRouteStack((stack) => stack.slice(0, -1));
+      setActiveProfile(previousRoute.profile);
+      setGames(previousRoute.games);
+      setPage(previousRoute.page);
+      setSelectedGame(previousRoute.selectedGame);
       return;
     }
     onClose();
-  }
+  }, [onClose, page, routeStack]);
+
+  useEffect(() => {
+    if (!nestedBackHandlerRef) return;
+    nestedBackHandlerRef.current = goBack;
+    return () => {
+      if (nestedBackHandlerRef.current === goBack) nestedBackHandlerRef.current = null;
+    };
+  }, [goBack, nestedBackHandlerRef]);
 
   async function startGame() {
     if (!onStartGameAgainst) return;
     setIsLoading(true);
     setMessage(null);
     try {
-      await onStartGameAgainst(activeProfile.id);
+      await onStartGameAgainst(visibleProfile.id);
     } catch (startError) {
       setMessage(startError instanceof Error ? startError.message : 'Unable to start the game.');
     } finally {
@@ -398,7 +431,7 @@ function PlayerStatsPage({
 
   return (
     <View
-      accessibilityLabel={`${activeProfile.name} ${title}`}
+      accessibilityLabel={`${visibleProfile.name} ${title}`}
       accessibilityViewIsModal
       onAccessibilityEscape={goBack}
       role="dialog"
@@ -440,25 +473,25 @@ function PlayerStatsPage({
           message={message}
           onOpenGames={() => void openGames()}
           onStartGame={() => void startGame()}
-          profile={activeProfile}
-          showStartGame={Boolean(onStartGameAgainst && activeProfile.id !== currentUserProfileId)}
+          profile={visibleProfile}
+          showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
         />
       )}
       {page === 'games' && (
         <PlayerGameHistory
           games={games}
-          isCurrentUser={activeProfile.id === currentUserProfileId}
+          isCurrentUser={visibleProfile.id === currentUserProfileId}
           isLoading={isLoading}
           message={message}
           onOpenGame={(game) => {
             setSelectedGame(game);
             setPage('detail');
           }}
-          profile={activeProfile}
+          profile={visibleProfile}
         />
       )}
       {page === 'detail' && selectedGame && (
-        <PlayerGameCard game={selectedGame} onOpenPlayer={(player) => void openPlayer(player)} />
+        <PlayerGameCard game={selectedGame} isLoading={isLoading} onOpenPlayer={(player) => void openPlayer(player)} />
       )}
     </View>
   );
@@ -725,9 +758,11 @@ function PlayerGameHistory({
 
 function PlayerGameCard({
   game,
+  isLoading,
   onOpenPlayer,
 }: {
   game: ProfileRecentGame;
+  isLoading: boolean;
   onOpenPlayer: (player: ProfileRecentGamePlayer) => void;
 }) {
   return (
@@ -737,7 +772,7 @@ function PlayerGameCard({
       style={styles.statsScroll}
     >
       <View style={styles.gamePlayersCard}>
-        <GameCardPlayer player={game.player} onPress={() => onOpenPlayer(game.player)} />
+        <GameCardPlayer disabled={isLoading} player={game.player} onPress={() => onOpenPlayer(game.player)} />
         <View style={styles.gameCardResult}>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
@@ -752,7 +787,7 @@ function PlayerGameCard({
             {formatPlayerGameDate(game.completedAt)}
           </Text>
         </View>
-        <GameCardPlayer player={game.opponent} onPress={() => onOpenPlayer(game.opponent)} />
+        <GameCardPlayer disabled={isLoading} player={game.opponent} onPress={() => onOpenPlayer(game.opponent)} />
       </View>
       <View style={styles.gameScorecard}>
         <View style={[styles.gameScoreRow, styles.gameScoreHeader]}>
@@ -826,12 +861,21 @@ function PlayerGameCard({
   );
 }
 
-function GameCardPlayer({ player, onPress }: { player: ProfileRecentGamePlayer; onPress: () => void }) {
+function GameCardPlayer({
+  disabled,
+  player,
+  onPress,
+}: {
+  disabled: boolean;
+  player: ProfileRecentGamePlayer;
+  onPress: () => void;
+}) {
   return (
     <Pressable
       accessibilityLabel={`View ${player.name}'s stats`}
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.gameCardPlayer, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.gameCardPlayer, disabled && styles.disabled, pressed && styles.pressed]}
     >
       <PlayerAvatar avatarUrl={player.avatarUrl} name={player.name} size={58} />
       <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.gameCardPlayerName}>
