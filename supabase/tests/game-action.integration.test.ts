@@ -578,6 +578,24 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     latestGame.state.players.find((player) => player.id === bob.id)?.scorecard,
   );
 
+  const removedCompletedGame = await invokeGameAction(alice, { gameId, type: 'remove_game' });
+  assertEquals(removedCompletedGame.removedGameId, gameId);
+
+  const { data: hiddenHistory, error: hiddenHistoryError } = await charlie.client.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: alice.id,
+  });
+  assertNoError(hiddenHistoryError);
+  assertEquals(hiddenHistory?.length, 0);
+
+  const { data: opponentHistory, error: opponentHistoryError } = await charlie.client.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: bob.id,
+  });
+  assertNoError(opponentHistoryError);
+  assertEquals(opponentHistory?.length, 1);
+  assertEquals(opponentHistory?.[0]?.game_id, gameId);
+
   const actions = await loadActions(gameId);
   assertEquals(
     actions.filter((action) => action.action_type === 'scratch_category').length,

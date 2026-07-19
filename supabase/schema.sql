@@ -471,6 +471,7 @@ begin
   join public.game_players selected_player
     on selected_player.game_id = game.id
     and selected_player.player_id = target_profile_id
+    and selected_player.hidden_at is null
   join public.game_players opponent_player
     on opponent_player.game_id = game.id
     and opponent_player.player_id <> target_profile_id
