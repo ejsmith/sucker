@@ -761,15 +761,17 @@ function PlayerGameCard({
           </Text>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-            style={[styles.gameValue, styles.gameHeaderText, styles.gamePlayerHeaderName]}
+            numberOfLines={1}
+            style={[styles.gameValue, styles.gameHeaderText]}
           >
-            {game.player.name}
+            Player
           </Text>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-            style={[styles.gameValue, styles.gameHeaderText, styles.gamePlayerHeaderName]}
+            numberOfLines={1}
+            style={[styles.gameValue, styles.gameHeaderText]}
           >
-            {game.opponent.name}
+            Opponent
           </Text>
         </View>
         {scoreCategories.map((category) => (
@@ -1118,10 +1120,6 @@ const styles = StyleSheet.create({
     color: '#FFD329',
     fontSize: 10,
     textTransform: 'uppercase',
-  },
-  gamePlayerHeaderName: {
-    lineHeight: 12,
-    textTransform: 'none',
   },
   gamePlayersCard: {
     alignItems: 'flex-start',
