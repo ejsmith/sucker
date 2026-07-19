@@ -1873,6 +1873,8 @@ export function LocalGameScreen({
       !remoteTaunt ||
       remoteTaunt.actorId === myProfileId ||
       remoteStatus === 'complete' ||
+      game.rollNumber > 0 ||
+      remoteTaunt.turnId !== remoteLastTurnId ||
       lastQueuedIncomingTauntId.current === remoteTaunt.id
     ) {
       return;
@@ -1897,7 +1899,7 @@ export function LocalGameScreen({
     return () => {
       isCurrent = false;
     };
-  }, [game.id, isRemoteGame, myProfileId, remoteStatus, remoteTaunt]);
+  }, [game.id, game.rollNumber, isRemoteGame, myProfileId, remoteLastTurnId, remoteStatus, remoteTaunt]);
 
   useEffect(() => {
     if (

@@ -255,6 +255,27 @@ Deno.test('post-turn taunts expire when the recipient starts rolling', async () 
   assertEquals(lateTaunt.error, 'You can only taunt after finishing your own turn.');
 });
 
+Deno.test('a missed-punch taunt remains available when the puncher is the active player', async () => {
+  const [alice, bob] = await createUsers('missed-punch-taunts', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const afterTurn = await scratchAndPass(game.id, alice, bob, 'ones');
+  assertString(afterTurn.last_turn_id);
+
+  const { error } = await admin.from('turn_actions').insert({
+    action_type: 'sucker_punch',
+    actor_id: bob.id,
+    game_id: game.id,
+    payload: { landed: false, targetTurnId: afterTurn.last_turn_id },
+    turn_id: afterTurn.last_turn_id,
+  });
+  assertNoError(error);
+
+  await invokeGameAction(bob, { gameId: game.id, tauntId: 'disrespect-didnt', type: 'taunt' });
+  const taunts = (await loadActions(game.id)).filter((action) => action.action_type === 'taunt');
+  assertEquals(taunts.length, 1);
+  assertEquals(taunts[0]?.actor_id, bob.id);
+});
+
 Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {
   const [alice, bob] = await createUsers('action-abuse', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

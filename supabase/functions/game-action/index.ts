@@ -1315,6 +1315,7 @@ async function sendTaunt(
     target_actor_id: actorId,
     target_game_id: gameId,
     target_payload: { scenario: opportunity.scenario, tauntId },
+    target_source: opportunity.source,
     target_turn_id: turn.id,
   });
 

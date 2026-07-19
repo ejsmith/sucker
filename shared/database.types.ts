@@ -508,6 +508,7 @@ export type Database = {
           target_actor_id: string;
           target_game_id: string;
           target_payload: Json;
+          target_source: string;
           target_turn_id: string;
         };
         Returns: boolean;
