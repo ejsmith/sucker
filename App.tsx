@@ -587,6 +587,7 @@ export function RemoteGameScreen({
           return;
         }
 
+        setTauntOpportunityRefreshKey((current) => current + 1);
         void getLatestRemoteTaunt(gameId, currentProfileId)
           .then((latestTaunt) => {
             if (isMounted) {

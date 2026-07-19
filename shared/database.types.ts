@@ -503,6 +503,15 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      insert_taunt_if_open: {
+        Args: {
+          target_actor_id: string;
+          target_game_id: string;
+          target_payload: Json;
+          target_turn_id: string;
+        };
+        Returns: boolean;
+      };
       get_profile_stat_rates: {
         Args: {
           target_profile_id: string;

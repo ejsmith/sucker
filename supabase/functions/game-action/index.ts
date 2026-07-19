@@ -1311,12 +1311,11 @@ async function sendTaunt(
   }
 
   mutationState.mayHaveWritten = true;
-  const { error } = await admin.from('turn_actions').insert({
-    action_type: 'taunt',
-    actor_id: actorId,
-    game_id: gameId,
-    payload: { scenario: opportunity.scenario, tauntId },
-    turn_id: turn.id,
+  const { data: inserted, error } = await admin.rpc('insert_taunt_if_open', {
+    target_actor_id: actorId,
+    target_game_id: gameId,
+    target_payload: { scenario: opportunity.scenario, tauntId },
+    target_turn_id: turn.id,
   });
 
   if (error) {
@@ -1324,6 +1323,9 @@ async function sendTaunt(
       throw new Error('Save some trash talk for the next turn.');
     }
     throw error;
+  }
+  if (!inserted) {
+    throw new Error('You can only taunt after finishing your own turn.');
   }
 
   return { game };
