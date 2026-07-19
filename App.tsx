@@ -728,15 +728,15 @@ export function RemoteGameScreen({
 
   async function runRemoteAction(
     action: () => Promise<{ game: RemoteGameRow }>,
-    { showNextTurns = true }: { showNextTurns?: boolean } = {},
+    options: { preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
   ) {
-    const result = await runRemoteActionResult(action, { showNextTurns });
+    const result = await runRemoteActionResult(action, options);
     return result?.game.state ?? null;
   }
 
   async function runRemoteActionResult<Result extends { game: RemoteGameRow }>(
     action: () => Promise<Result>,
-    { showNextTurns = true }: { showNextTurns?: boolean } = {},
+    { preserveNextTurns = false, showNextTurns = true }: { preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
   ) {
     setIsRemoteBusy(true);
     setError(null);
@@ -748,7 +748,9 @@ export function RemoteGameScreen({
         if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
           void prepareNextTurnPrompt(profileId, result.game);
         } else {
-          setNextTurnPrompt(null);
+          if (!preserveNextTurns) {
+            setNextTurnPrompt(null);
+          }
           void syncRemoteGameList(profileId);
         }
       }
@@ -894,7 +896,11 @@ export function RemoteGameScreen({
       const result = await runRemoteActionResult(() => useRemoteSuckerPunch(remoteGame.id, turnId, chanceDie));
       return result ? { game: result.game.state, outcome: result.suckerPunchOutcome ?? null } : null;
     },
-    onTaunt: (tauntId) => runRemoteAction(() => sendRemoteTaunt(remoteGame.id, tauntId), { showNextTurns: false }),
+    onTaunt: (tauntId) =>
+      runRemoteAction(() => sendRemoteTaunt(remoteGame.id, tauntId), {
+        preserveNextTurns: true,
+        showNextTurns: false,
+      }),
   };
 
   return (
@@ -978,6 +984,7 @@ export function LocalGameScreen({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
   const [isSendingTaunt, setIsSendingTaunt] = useState(false);
+  const [sentTauntTurnId, setSentTauntTurnId] = useState<string | null>(null);
   const [pendingIncomingTaunt, setPendingIncomingTaunt] = useState<RemoteTaunt | null>(null);
   const [visibleIncomingTaunt, setVisibleIncomingTaunt] = useState<RemoteTaunt | null>(null);
   const [showStatsPage, setShowStatsPage] = useState(false);
@@ -1124,6 +1131,13 @@ export function LocalGameScreen({
     remoteStatus &&
     remoteStatus !== 'inviting' &&
     remoteStatus !== 'complete' &&
+    remoteLastTurn &&
+    remoteLastTurn.id === remoteLastTurnId &&
+    remoteLastTurn.player_id === myProfileId &&
+    currentPlayer.id !== myProfileId &&
+    sentTauntTurnId !== remoteLastTurnId &&
+    !(remoteTaunt?.actorId === myProfileId && remoteTaunt.turnId === remoteLastTurnId) &&
+    !isScoring &&
     !isRemoteBusy &&
     !isSendingTaunt,
   );
@@ -1212,7 +1226,13 @@ export function LocalGameScreen({
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
   const hasNextTurnPrompt = nextTurnGames !== null && nextTurnGames !== undefined;
   const nextTurnsVisible = Boolean(
-    isRemoteGame && hasNextTurnPrompt && isNextTurnsDelayComplete && !isRolling && !isScoring && !gameOverVisible,
+    isRemoteGame &&
+    hasNextTurnPrompt &&
+    isNextTurnsDelayComplete &&
+    !isRolling &&
+    !isScoring &&
+    !isTauntPickerOpen &&
+    !gameOverVisible,
   );
   const winnerName =
     homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
@@ -1283,6 +1303,7 @@ export function LocalGameScreen({
 
   useEffect(() => {
     setIsTauntPickerOpen(false);
+    setSentTauntTurnId(null);
     setPendingIncomingTaunt(null);
     setVisibleIncomingTaunt(null);
     lastQueuedIncomingTauntId.current = null;
@@ -2833,6 +2854,7 @@ export function LocalGameScreen({
     try {
       const result = await remoteHandlers.onTaunt(tauntId);
       if (result) {
+        setSentTauntTurnId(remoteLastTurnId ?? null);
         setIsTauntPickerOpen(false);
       }
     } finally {
@@ -3087,10 +3109,10 @@ export function LocalGameScreen({
               style={({ pressed }) => [
                 styles.tauntMenuButton,
                 {
-                  height: gameLayout.unit(44),
-                  left: gameLayout.unit(44),
-                  top: gameLayout.unit(98),
-                  width: gameLayout.unit(54),
+                  height: gameLayout.unit(32),
+                  left: gameLayout.unit(36),
+                  top: gameLayout.unit(108),
+                  width: gameLayout.unit(40),
                 },
                 pressed && styles.pressed,
               ]}
@@ -3100,16 +3122,16 @@ export function LocalGameScreen({
                 style={[
                   styles.tauntMenuBubble,
                   {
-                    borderRadius: gameLayout.unit(8),
+                    borderRadius: gameLayout.unit(6),
                     borderWidth: gameLayout.stroke(2),
-                    height: gameLayout.unit(29),
-                    width: gameLayout.unit(46),
+                    height: gameLayout.unit(20),
+                    width: gameLayout.unit(30),
                   },
                 ]}
               >
                 <Text
                   maxFontSizeMultiplier={1.2}
-                  style={[styles.tauntMenuDotsText, { fontSize: gameLayout.unit(22), lineHeight: gameLayout.unit(22) }]}
+                  style={[styles.tauntMenuDotsText, { fontSize: gameLayout.unit(17), lineHeight: gameLayout.unit(18) }]}
                 >
                   …
                 </Text>
@@ -3118,11 +3140,11 @@ export function LocalGameScreen({
                 style={[
                   styles.tauntMenuPointer,
                   {
-                    borderBottomWidth: gameLayout.unit(7),
-                    borderLeftWidth: gameLayout.unit(5),
-                    borderRightWidth: gameLayout.unit(5),
+                    borderBottomWidth: gameLayout.unit(6),
+                    borderLeftWidth: gameLayout.unit(4),
+                    borderRightWidth: gameLayout.unit(4),
                     left: gameLayout.unit(3),
-                    top: gameLayout.unit(1),
+                    top: 0,
                   },
                 ]}
               />
@@ -5557,7 +5579,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'absolute',
-    zIndex: 68,
+    elevation: 20,
+    zIndex: 96,
   },
   tauntMenuBubble: {
     alignItems: 'center',
@@ -5570,7 +5593,7 @@ const styles = StyleSheet.create({
     color: '#210505',
     fontFamily: gameFontBlack,
     fontWeight: '900',
-    marginTop: -5,
+    marginTop: -4,
   },
   tauntMenuPointer: {
     borderBottomColor: '#210505',

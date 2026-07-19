@@ -239,22 +239,39 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   const board = alicePage.getByTestId('scorecard-board');
   const menuButton = alicePage.getByTestId('taunt-menu-button');
   const boardBefore = await board.boundingBox();
-  const menuButtonBox = await menuButton.boundingBox();
   expect(boardBefore).not.toBeNull();
-  expect(menuButtonBox).not.toBeNull();
-  expect(menuButtonBox!.y + menuButtonBox!.height).toBeLessThanOrEqual(boardBefore!.y + 1);
-
-  await menuButton.click();
   await expect(menuButton).toHaveCount(0);
-  await expect(alicePage.getByTestId('taunt-picker')).toBeVisible();
-  const [boardAfter, avatarBox, panelBox, pointerBox] = await Promise.all([
+  await alicePage.getByTestId('roll-button').click();
+  await expect(menuButton).toHaveCount(0);
+  await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+  await alicePage.getByTestId('home-score-box-ones').click();
+  await expect(alicePage.getByTestId('play-score-button')).toBeEnabled();
+  await alicePage.getByTestId('play-score-button').click();
+  await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible({ timeout: 15_000 });
+  await expect(menuButton).toBeVisible();
+
+  const [boardAfter, avatarBox, menuButtonBox] = await Promise.all([
     board.boundingBox(),
     alicePage.getByTestId('home-player-avatar').boundingBox(),
-    alicePage.getByTestId('taunt-picker-panel').boundingBox(),
-    alicePage.getByTestId('taunt-picker-pointer').boundingBox(),
+    menuButton.boundingBox(),
   ]);
   expect(boardAfter).toEqual(boardBefore);
   expect(avatarBox).not.toBeNull();
+  expect(menuButtonBox).not.toBeNull();
+  expect(menuButtonBox!.width).toBeLessThan(avatarBox!.width);
+  expect(menuButtonBox!.height).toBeLessThan(avatarBox!.height);
+  expect(menuButtonBox!.y).toBeGreaterThan(avatarBox!.y + avatarBox!.height / 2);
+  expect(menuButtonBox!.y).toBeLessThan(avatarBox!.y + avatarBox!.height);
+
+  await menuButton.click();
+  await expect(alicePage.getByTestId('next-turns-dialog')).toHaveCount(0);
+  await expect(menuButton).toHaveCount(0);
+  await expect(alicePage.getByTestId('taunt-picker')).toBeVisible();
+  const [panelBox, pointerBox] = await Promise.all([
+    alicePage.getByTestId('taunt-picker-panel').boundingBox(),
+    alicePage.getByTestId('taunt-picker-pointer').boundingBox(),
+  ]);
   expect(panelBox).not.toBeNull();
   expect(pointerBox).not.toBeNull();
   expect(panelBox!.y).toBeLessThanOrEqual(boardBefore!.y + 1);
@@ -262,18 +279,13 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   expect(pointerBox!.y).toBeLessThanOrEqual(avatarBox!.y + avatarBox!.height);
 
   await alicePage.getByTestId('taunt-picker-close-button').click();
-  await alicePage.getByTestId('roll-button').click();
-  await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
-  await alicePage.getByTestId('home-score-box-ones').click();
-  await expect(alicePage.getByTestId('play-score-button')).toBeEnabled();
-  await alicePage.getByTestId('play-score-button').click();
-  await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
-  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible({ timeout: 15_000 });
-  await alicePage.getByTestId('next-turns-close-button').click();
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible();
 
   await menuButton.click();
   await alicePage.getByTestId('taunt-option-punch-me').click();
   await expect(alicePage.getByTestId('taunt-picker')).toHaveCount(0);
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible();
+  await expect(menuButton).toHaveCount(0);
   await openGameFromLobby(bobPage, gameId);
 
   await expect(bobPage.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 15_000 });

@@ -1283,13 +1283,21 @@ async function sendTaunt(
   if (game.status === 'inviting' || game.status === 'complete') {
     throw new Error('Taunting is only available during a game.');
   }
+  if (!game.last_turn_id) {
+    throw new Error('Finish your turn before sending a taunt.');
+  }
+
+  const turn = await loadTurn(admin, game.last_turn_id);
+  if (turn.game_id !== gameId || turn.player_id !== actorId || game.current_player_id === actorId) {
+    throw new Error('You can only taunt after finishing your own turn.');
+  }
 
   const { error } = await admin.from('turn_actions').insert({
     action_type: 'taunt',
     actor_id: actorId,
     game_id: gameId,
     payload: { tauntId },
-    turn_id: game.last_turn_id,
+    turn_id: turn.id,
   });
 
   if (error) {
