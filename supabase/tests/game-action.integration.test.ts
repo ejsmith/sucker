@@ -229,8 +229,15 @@ Deno.test('taunts are available only after the sender finishes the latest turn',
   const opponentTaunt = await invokeGameAction(bob, { gameId: game.id, tauntId: 'sucker', type: 'taunt' }, 400);
   assertEquals(opponentTaunt.error, 'You can only taunt after finishing your own turn.');
 
-  await invokeGameAction(alice, { gameId: game.id, tauntId: 'punch-me', type: 'taunt' });
-  const duplicate = await invokeGameAction(alice, { gameId: game.id, tauntId: 'beat-that', type: 'taunt' }, 400);
+  const lockedScenarioTaunt = await invokeGameAction(
+    alice,
+    { gameId: game.id, tauntId: 'sucker-punched', type: 'taunt' },
+    400,
+  );
+  assertEquals(lockedScenarioTaunt.error, 'That taunt is not available for this play.');
+
+  await invokeGameAction(alice, { gameId: game.id, tauntId: 'beat-that', type: 'taunt' });
+  const duplicate = await invokeGameAction(alice, { gameId: game.id, tauntId: 'all-that', type: 'taunt' }, 400);
   assertEquals(duplicate.error, 'Save some trash talk for the next turn.');
 
   const taunts = (await loadActions(game.id)).filter((action) => action.action_type === 'taunt');
@@ -418,6 +425,8 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertPlayerTokens(punched, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
   assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'punched');
   assertEquals(punched.state.players.find((player) => player.id === alice.id)?.scorecard.ones, null);
+
+  await invokeGameAction(bob, { gameId: game.id, tauntId: 'sucker-punched', type: 'taunt' });
 
   const events = await loadTokenEvents(game.id);
   assertEquals(

@@ -3,7 +3,13 @@ import NetInfo from '@react-native-community/netinfo';
 import { getRandomBytes } from 'expo-crypto';
 import { supabase } from './supabase';
 import type { Database } from './database.types';
-import type { MultiplayerAction, MultiplayerActionResult, RemoteTaunt, RemoteTurnRow } from './types';
+import type {
+  MultiplayerAction,
+  MultiplayerActionResult,
+  RemoteTaunt,
+  RemoteTauntOpportunity,
+  RemoteTurnRow,
+} from './types';
 import {
   scoreCategories,
   type DieValue,
@@ -24,7 +30,7 @@ import {
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
 import { createGameListRealtimeTopic } from './realtimeTopics';
-import { isTauntId, type TauntId } from '../../shared/taunts';
+import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -96,6 +102,63 @@ export async function getTurn(turnId: string) {
   }
 
   return toRemoteTurnRow(data);
+}
+
+export async function getRemoteTauntOpportunity(
+  gameId: string,
+  actorId: string,
+  turn: RemoteTurnRow,
+): Promise<RemoteTauntOpportunity | null> {
+  const { data, error } = await supabase
+    .from('turn_actions')
+    .select('action_type, actor_id, created_at, payload')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .in('action_type', ['score_category', 'scratch_category', 'sucker_punch'])
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    throw error;
+  }
+
+  for (const action of data ?? []) {
+    const payload = action.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      continue;
+    }
+
+    const values = payload as Record<string, unknown>;
+    const actionTurnId = values.targetTurnId ?? values.turnId;
+    if (actionTurnId !== turn.id) {
+      continue;
+    }
+
+    if (action.action_type === 'sucker_punch') {
+      return {
+        scenario: values.landed === false ? 'punch-missed' : 'punch-landed',
+        source: 'punch',
+        turnId: turn.id,
+      };
+    }
+
+    if (turn.player_id !== actorId) {
+      continue;
+    }
+
+    return {
+      scenario: getTurnTauntScenario({
+        category: turn.category,
+        dice: turn.dice,
+        score: turn.score,
+        scratched: action.action_type === 'scratch_category' || values.scratched === true,
+      }),
+      source: 'turn',
+      turnId: turn.id,
+    };
+  }
+
+  return null;
 }
 
 export async function getLatestRemoteBlockedSuckerPunch(

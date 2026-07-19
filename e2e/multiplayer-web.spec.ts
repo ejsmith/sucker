@@ -268,6 +268,9 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   await expect(alicePage.getByTestId('next-turns-dialog')).toHaveCount(0);
   await expect(menuButton).toHaveCount(0);
   await expect(alicePage.getByTestId('taunt-picker')).toBeVisible();
+  await expect(alicePage.getByTestId('taunt-option-sucker')).toBeVisible();
+  await expect(alicePage.getByTestId('taunt-option-name-of-game')).toBeVisible();
+  await expect(alicePage.getByTestId('taunt-option-beat-that')).toBeVisible();
   const [panelBox, pointerBox] = await Promise.all([
     alicePage.getByTestId('taunt-picker-panel').boundingBox(),
     alicePage.getByTestId('taunt-picker-pointer').boundingBox(),
@@ -275,6 +278,8 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   expect(panelBox).not.toBeNull();
   expect(pointerBox).not.toBeNull();
   expect(panelBox!.y).toBeLessThanOrEqual(boardBefore!.y + 1);
+  expect(Math.abs(panelBox!.x - boardBefore!.x)).toBeLessThan(2);
+  expect(Math.abs(panelBox!.x + panelBox!.width - (boardBefore!.x + boardBefore!.width))).toBeLessThan(2);
   expect(Math.abs(pointerBox!.x + pointerBox!.width / 2 - (avatarBox!.x + avatarBox!.width / 2))).toBeLessThan(5);
   expect(pointerBox!.y).toBeLessThanOrEqual(avatarBox!.y + avatarBox!.height);
 
@@ -295,9 +300,23 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
   await expect(bobPage.getByTestId('score-dice-overlay')).toHaveCount(0, { timeout: 5_000 });
   await expect(bobPage.getByTestId('received-taunt')).toContainText('Punch me. I dare you.');
-  await bobPage.waitForTimeout(1_000);
+  await expect(bobPage.getByTestId('dismiss-taunt')).toBeVisible();
+  const [receivedPointerBox, opponentAvatarBox] = await Promise.all([
+    bobPage.getByTestId('received-taunt-pointer').boundingBox(),
+    bobPage.getByTestId('opponent-player-avatar').boundingBox(),
+  ]);
+  expect(receivedPointerBox).not.toBeNull();
+  expect(opponentAvatarBox).not.toBeNull();
+  expect(
+    Math.abs(
+      receivedPointerBox!.x + receivedPointerBox!.width / 2 -
+        (opponentAvatarBox!.x + opponentAvatarBox!.width / 2),
+    ),
+  ).toBeLessThan(5);
+  await bobPage.waitForTimeout(2_500);
   await expect(bobPage.getByTestId('received-taunt')).toBeVisible();
-  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0, { timeout: 1_500 });
+  await bobPage.getByTestId('roll-button').click();
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
 });
 
 test('friend games work when crypto.randomUUID is unavailable', async ({ browser }) => {

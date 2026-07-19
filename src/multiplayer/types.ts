@@ -1,5 +1,5 @@
 import type { Dice, DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from '../game';
-import type { TauntId } from '../../shared/taunts';
+import type { TauntId, TauntScenario } from '../../shared/taunts';
 
 export type RemoteGameStatus = 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
 
@@ -39,6 +39,12 @@ export type RemoteTaunt = {
   id: string;
   tauntId: TauntId;
   turnId: string | null;
+};
+
+export type RemoteTauntOpportunity = {
+  scenario: TauntScenario;
+  source: 'punch' | 'turn';
+  turnId: string;
 };
 
 export type MultiplayerAction =

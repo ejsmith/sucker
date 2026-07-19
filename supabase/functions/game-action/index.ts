@@ -33,7 +33,13 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
-import { isTauntId, type TauntId } from '../_shared/taunts.ts';
+import {
+  getTurnTauntScenario,
+  isTauntAvailableForScenario,
+  isTauntId,
+  type TauntId,
+  type TauntScenario,
+} from '../_shared/taunts.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -1288,15 +1294,23 @@ async function sendTaunt(
   }
 
   const turn = await loadTurn(admin, game.last_turn_id);
-  if (turn.game_id !== gameId || turn.player_id !== actorId || game.current_player_id === actorId) {
+  const opportunity = await loadTauntOpportunity(admin, gameId, actorId, turn);
+  const isPostTurnOpportunity =
+    opportunity?.source === 'turn' && turn.player_id === actorId && game.current_player_id !== actorId;
+  const isPostPunchOpportunity =
+    opportunity?.source === 'punch' && game.status === 'active' && toGameState(game.state).rollNumber === 0;
+  if (turn.game_id !== gameId || !opportunity || (!isPostTurnOpportunity && !isPostPunchOpportunity)) {
     throw new Error('You can only taunt after finishing your own turn.');
+  }
+  if (!isTauntAvailableForScenario(tauntId, opportunity.scenario)) {
+    throw new Error('That taunt is not available for this play.');
   }
 
   const { error } = await admin.from('turn_actions').insert({
     action_type: 'taunt',
     actor_id: actorId,
     game_id: gameId,
-    payload: { tauntId },
+    payload: { scenario: opportunity.scenario, tauntId },
     turn_id: turn.id,
   });
 
@@ -1309,6 +1323,66 @@ async function sendTaunt(
 
   mutationState.mayHaveWritten = true;
   return { game };
+}
+
+type TauntOpportunity = {
+  scenario: TauntScenario;
+  source: 'punch' | 'turn';
+};
+
+async function loadTauntOpportunity(
+  admin: DbClient,
+  gameId: string,
+  actorId: string,
+  turn: TurnRow,
+): Promise<TauntOpportunity | null> {
+  const { data, error } = await admin
+    .from('turn_actions')
+    .select('action_type, payload')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .in('action_type', ['score_category', 'scratch_category', 'sucker_punch'])
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    throw error;
+  }
+
+  for (const action of data ?? []) {
+    const payload = action.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      continue;
+    }
+
+    const values = payload as Record<string, unknown>;
+    if ((values.targetTurnId ?? values.turnId) !== turn.id) {
+      continue;
+    }
+
+    if (action.action_type === 'sucker_punch') {
+      return {
+        scenario: values.landed === false ? 'punch-missed' : 'punch-landed',
+        source: 'punch',
+      };
+    }
+
+    if (turn.player_id !== actorId) {
+      continue;
+    }
+
+    return {
+      scenario: getTurnTauntScenario({
+        category: toScoreCategory(turn.category),
+        dice: toDice(turn.dice),
+        score: turn.score,
+        scratched: action.action_type === 'scratch_category' || values.scratched === true,
+      }),
+      source: 'turn',
+    };
+  }
+
+  return null;
 }
 
 async function mutateGame(
