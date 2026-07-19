@@ -3032,7 +3032,7 @@ export function LocalGameScreen({
                 styles.tauntMenuButton,
                 {
                   height: gameLayout.unit(44),
-                  left: gameLayout.unit(24),
+                  left: gameLayout.unit(44),
                   top: gameLayout.unit(98),
                   width: gameLayout.unit(54),
                 },
@@ -3065,7 +3065,7 @@ export function LocalGameScreen({
                     borderBottomWidth: gameLayout.unit(7),
                     borderLeftWidth: gameLayout.unit(5),
                     borderRightWidth: gameLayout.unit(5),
-                    left: gameLayout.unit(12),
+                    left: gameLayout.unit(3),
                     top: gameLayout.unit(1),
                   },
                 ]}
