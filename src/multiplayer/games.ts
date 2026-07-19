@@ -560,6 +560,7 @@ export function subscribeToGameTaunts(
   gameId: string,
   onTaunt: (taunt: RemoteTaunt) => void,
   onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onOpportunityAction?: () => void,
 ) {
   const channel = supabase
     .channel(`game-taunts:${gameId}`)
@@ -574,6 +575,9 @@ export function subscribeToGameTaunts(
       (payload) => {
         const action = payload.new as TurnActionRow;
         if (action.action_type !== 'taunt') {
+          if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
+            onOpportunityAction?.();
+          }
           return;
         }
 

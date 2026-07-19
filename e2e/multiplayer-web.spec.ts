@@ -315,6 +315,20 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   ).toBeLessThan(5);
   await bobPage.waitForTimeout(2_500);
   await expect(bobPage.getByTestId('received-taunt')).toBeVisible();
+
+  const gameActionRoute = /\/functions\/v1\/game-action/;
+  await bobPage.route(gameActionRoute, async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ error: 'Test roll failed' }),
+      contentType: 'application/json',
+      status: 400,
+    });
+  });
+  await bobPage.getByTestId('roll-button').click();
+  await expect(bobPage.getByTestId('received-taunt')).toBeVisible();
+  await waitForPressableEnabled(bobPage.getByTestId('roll-button'));
+  await bobPage.unroute(gameActionRoute);
+
   await bobPage.getByTestId('roll-button').click();
   await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
 });

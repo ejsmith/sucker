@@ -597,6 +597,7 @@ export function RemoteGameScreen({
           })
           .catch((tauntError) => console.warn('Unable to refresh latest taunt', tauntError));
       },
+      () => setTauntOpportunityRefreshKey((current) => current + 1),
     );
 
     return () => {
@@ -2065,9 +2066,6 @@ export function LocalGameScreen({
       return;
     }
 
-    markIncomingTauntsSeen(pendingIncomingTaunt, visibleIncomingTaunt);
-    setPendingIncomingTaunt(null);
-    setVisibleIncomingTaunt(null);
     const sourceGame = liveGameRef.current;
 
     if (!isRemoteGame && pendingTurn) {
@@ -2077,7 +2075,17 @@ export function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
 
     if (isRemoteGame && remoteHandlers) {
-      await animateRemoteRoll(remoteHandlers.onRoll(sourceGame.held), sourceGame);
+      const pendingTaunt = pendingIncomingTaunt;
+      const visibleTaunt = visibleIncomingTaunt;
+      const nextGamePromise = remoteHandlers.onRoll(sourceGame.held).then((nextGame) => {
+        if (nextGame) {
+          markIncomingTauntsSeen(pendingTaunt, visibleTaunt);
+          setPendingIncomingTaunt(null);
+          setVisibleIncomingTaunt(null);
+        }
+        return nextGame;
+      });
+      await animateRemoteRoll(nextGamePromise, sourceGame);
       return;
     }
 
