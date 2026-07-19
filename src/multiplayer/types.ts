@@ -42,6 +42,7 @@ export type RemoteTaunt = {
 };
 
 export type RemoteTauntOpportunity = {
+  hasTaunted: boolean;
   scenario: TauntScenario;
   source: 'punch' | 'turn';
   turnId: string;

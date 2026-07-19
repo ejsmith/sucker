@@ -1210,8 +1210,8 @@ export function LocalGameScreen({
     remoteTauntOpportunity &&
     remoteTauntOpportunity.turnId === remoteLastTurnId &&
     (isPostTurnTauntOpportunity || isPostPunchTauntOpportunity) &&
+    !remoteTauntOpportunity.hasTaunted &&
     sentTauntTurnId !== tauntOpportunityTurnId &&
-    !(remoteTaunt?.actorId === myProfileId && remoteTaunt?.turnId === tauntOpportunityTurnId) &&
     !suckerPunchDialog &&
     !isScoring &&
     !isRemoteBusy &&

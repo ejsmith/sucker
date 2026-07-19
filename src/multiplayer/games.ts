@@ -112,10 +112,10 @@ export async function getRemoteTauntOpportunity(
 ): Promise<RemoteTauntOpportunity | null> {
   const { data, error } = await supabase
     .from('turn_actions')
-    .select('action_type, actor_id, created_at, payload')
+    .select('action_type, actor_id, created_at, payload, turn_id')
     .eq('game_id', gameId)
     .eq('actor_id', actorId)
-    .in('action_type', ['score_category', 'scratch_category', 'sucker_punch'])
+    .in('action_type', ['score_category', 'scratch_category', 'sucker_punch', 'taunt'])
     .order('created_at', { ascending: false })
     .limit(20);
 
@@ -123,7 +123,12 @@ export async function getRemoteTauntOpportunity(
     throw error;
   }
 
+  const hasTaunted = (data ?? []).some((action) => action.action_type === 'taunt' && action.turn_id === turn.id);
   for (const action of data ?? []) {
+    if (action.action_type === 'taunt') {
+      continue;
+    }
+
     const payload = action.payload;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       continue;
@@ -137,6 +142,7 @@ export async function getRemoteTauntOpportunity(
 
     if (action.action_type === 'sucker_punch') {
       return {
+        hasTaunted,
         scenario: values.landed === false ? 'punch-missed' : 'punch-landed',
         source: 'punch',
         turnId: turn.id,
@@ -148,6 +154,7 @@ export async function getRemoteTauntOpportunity(
     }
 
     return {
+      hasTaunted,
       scenario: getTurnTauntScenario({
         category: turn.category,
         dice: turn.dice,
