@@ -848,8 +848,10 @@ export function MultiplayerLobby({
 
         {selectedCompletedGame ? (
           <CompletedGameScorecard
+            avatarUrl={profileAvatars[getGamePlayers(selectedCompletedGame, activeProfileId).opponent?.id ?? '']}
             game={selectedCompletedGame}
             isBusy={isBusy || isLoading}
+            onOpenPlayerStats={handleOpenCompletedGameStats}
             onOpenStats={handleOpenCompletedGameStats}
             onRematchGame={handleRematchGame}
             profileId={activeProfileId}
@@ -1738,76 +1740,80 @@ function CompletedGameListItem({
   const resultTone = getCompletedResultTone(myScore, opponentScore);
 
   return (
-    <Pressable
-      onPress={() => onOpenGame(game)}
-      style={({ pressed }) => [
+    <View
+      style={[
         lobbyStyles.gameCard,
         resultTone === 'win' && lobbyStyles.completedGameWin,
         resultTone === 'loss' && lobbyStyles.completedGameLoss,
         resultTone === 'tie' && lobbyStyles.completedGameTie,
-        pressed && lobbyStyles.pressed,
       ]}
-      testID={`completed-game-${game.id}`}
     >
-      <View style={lobbyStyles.gameCardTop}>
-        <PlayerAvatar avatarUrl={avatarUrl} name={opponentName} size={50} />
-        <View style={lobbyStyles.gameSummary}>
-          <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
-            {opponentName}
-          </Text>
-          <Text
+      <Pressable
+        onPress={() => onOpenGame(game)}
+        style={({ pressed }) => [lobbyStyles.completedGameOpenButton, pressed && lobbyStyles.pressed]}
+        testID={`completed-game-${game.id}`}
+      >
+        <View style={lobbyStyles.gameCardTop}>
+          <PlayerAvatar avatarUrl={avatarUrl} name={opponentName} size={50} />
+          <View style={lobbyStyles.gameSummary}>
+            <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
+              {opponentName}
+            </Text>
+            <Text
+              style={[
+                lobbyStyles.resultBadge,
+                resultTone === 'win' && lobbyStyles.resultBadgeWin,
+                resultTone === 'loss' && lobbyStyles.resultBadgeLoss,
+                resultTone === 'tie' && lobbyStyles.resultBadgeTie,
+              ]}
+            >
+              {getCompletedResultLabel(myScore, opponentScore)}
+            </Text>
+          </View>
+          <View
             style={[
-              lobbyStyles.resultBadge,
-              resultTone === 'win' && lobbyStyles.resultBadgeWin,
-              resultTone === 'loss' && lobbyStyles.resultBadgeLoss,
-              resultTone === 'tie' && lobbyStyles.resultBadgeTie,
+              lobbyStyles.scorePill,
+              resultTone === 'win' && lobbyStyles.completedScorePillWin,
+              resultTone === 'loss' && lobbyStyles.completedScorePillLoss,
+              resultTone === 'tie' && lobbyStyles.completedScorePillTie,
             ]}
           >
-            {getCompletedResultLabel(myScore, opponentScore)}
+            <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
+            <Text style={lobbyStyles.scoreDivider}>-</Text>
+            <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
+          </View>
+        </View>
+        <View style={lobbyStyles.completedGameFooter}>
+          <Text numberOfLines={1} style={lobbyStyles.waitText}>
+            {formatCompletedDate(game.completed_at ?? game.updated_at)}
           </Text>
         </View>
-        <View
-          style={[
-            lobbyStyles.scorePill,
-            resultTone === 'win' && lobbyStyles.completedScorePillWin,
-            resultTone === 'loss' && lobbyStyles.completedScorePillLoss,
-            resultTone === 'tie' && lobbyStyles.completedScorePillTie,
-          ]}
-        >
-          <Text style={lobbyStyles.scorePillText}>{myScore}</Text>
-          <Text style={lobbyStyles.scoreDivider}>-</Text>
-          <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
-        </View>
-      </View>
-      <View style={lobbyStyles.completedGameFooter}>
-        <Text numberOfLines={1} style={lobbyStyles.waitText}>
-          {formatCompletedDate(game.completed_at ?? game.updated_at)}
-        </Text>
-        <Pressable
-          disabled={isBusy}
-          onPress={(event) => {
-            event.stopPropagation();
-            onRematchGame(game);
-          }}
-          style={({ pressed }) => [lobbyStyles.completedRematchButton, pressed && lobbyStyles.pressed]}
-          testID={`rematch-completed-game-${game.id}`}
-        >
-          <Text style={lobbyStyles.completedRematchText}>Rematch</Text>
-        </Pressable>
-      </View>
-    </Pressable>
+      </Pressable>
+      <Pressable
+        disabled={isBusy}
+        onPress={() => onRematchGame(game)}
+        style={({ pressed }) => [lobbyStyles.completedRematchButton, pressed && lobbyStyles.pressed]}
+        testID={`rematch-completed-game-${game.id}`}
+      >
+        <Text style={lobbyStyles.completedRematchText}>Rematch</Text>
+      </Pressable>
+    </View>
   );
 }
 
 function CompletedGameScorecard({
+  avatarUrl,
   game,
   isBusy,
+  onOpenPlayerStats,
   onOpenStats,
   onRematchGame,
   profileId,
 }: {
+  avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
+  onOpenPlayerStats: (game: RemoteGameRow) => void;
   onOpenStats: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
   profileId: string;
@@ -1838,14 +1844,22 @@ function CompletedGameScorecard({
       ]}
     >
       <View style={lobbyStyles.completedScoreHeader}>
-        <View style={lobbyStyles.completedScoreTitleBlock}>
-          <Text numberOfLines={1} style={lobbyStyles.completedScoreTitle}>
-            Vs {opponent.name}
-          </Text>
-          <Text style={lobbyStyles.completedScoreDate}>
-            {formatCompletedDate(game.completed_at ?? game.updated_at)}
-          </Text>
-        </View>
+        <Pressable
+          accessibilityLabel={`View ${opponent.name}'s stats`}
+          onPress={() => void onOpenPlayerStats(game)}
+          style={({ pressed }) => [lobbyStyles.completedScorePlayer, pressed && lobbyStyles.pressed]}
+          testID={`completed-scorecard-opponent-${game.id}`}
+        >
+          <PlayerAvatar avatarUrl={avatarUrl} decorative name={opponent.name} size={48} />
+          <View style={lobbyStyles.completedScoreTitleBlock}>
+            <Text numberOfLines={1} style={lobbyStyles.completedScoreTitle}>
+              {opponent.name}
+            </Text>
+            <Text style={lobbyStyles.completedScoreDate}>
+              {formatCompletedDate(game.completed_at ?? game.updated_at)}
+            </Text>
+          </View>
+        </Pressable>
         <Text
           style={[
             lobbyStyles.resultBadge,
@@ -2361,8 +2375,12 @@ const lobbyStyles = StyleSheet.create({
   completedGameFooter: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: 8,
+    minHeight: 40,
+    paddingRight: 100,
+  },
+  completedGameOpenButton: {
+    gap: 2,
   },
   completedGameLoss: {
     backgroundColor: '#FFE2D6',
@@ -2404,6 +2422,9 @@ const lobbyStyles = StyleSheet.create({
     justifyContent: 'center',
     minWidth: 92,
     paddingHorizontal: 10,
+    position: 'absolute',
+    right: gameCardPadding,
+    bottom: gameCardPadding,
   },
   completedRematchText: {
     color: '#210505',
@@ -2422,6 +2443,15 @@ const lobbyStyles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     justifyContent: 'space-between',
+  },
+  completedScorePlayer: {
+    alignItems: 'center',
+    borderRadius: 10,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 9,
+    minHeight: 48,
+    minWidth: 0,
   },
   completedScoreTitle: {
     color: '#FFD329',
