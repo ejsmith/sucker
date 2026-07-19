@@ -761,17 +761,15 @@ function PlayerGameCard({
           </Text>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-            style={[styles.gameValue, styles.gameHeaderText]}
-            numberOfLines={1}
+            style={[styles.gameValue, styles.gameHeaderText, styles.gamePlayerHeaderName]}
           >
-            {firstName(game.player.name)}
+            {game.player.name}
           </Text>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-            style={[styles.gameValue, styles.gameHeaderText]}
-            numberOfLines={1}
+            style={[styles.gameValue, styles.gameHeaderText, styles.gamePlayerHeaderName]}
           >
-            {firstName(game.opponent.name)}
+            {game.opponent.name}
           </Text>
         </View>
         {scoreCategories.map((category) => (
@@ -810,11 +808,13 @@ function PlayerGameCard({
           label={game.player.name}
           opponentValue={String(game.player.suckerTokens)}
           playerValue={String(game.player.suckerTokensSpent)}
+          wrapLabel
         />
         <GameScoreRow
           label={game.opponent.name}
           opponentValue={String(game.opponent.suckerTokens)}
           playerValue={String(game.opponent.suckerTokensSpent)}
+          wrapLabel
         />
       </View>
       <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.gameAvatarHint}>
@@ -832,7 +832,7 @@ function GameCardPlayer({ player, onPress }: { player: ProfileRecentGamePlayer; 
       style={({ pressed }) => [styles.gameCardPlayer, pressed && styles.pressed]}
     >
       <PlayerAvatar avatarUrl={player.avatarUrl} name={player.name} size={58} />
-      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={2} style={styles.gameCardPlayerName}>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.gameCardPlayerName}>
         {player.name}
       </Text>
     </Pressable>
@@ -844,17 +844,19 @@ function GameScoreRow({
   label,
   opponentValue,
   playerValue,
+  wrapLabel = false,
 }: {
   emphasized?: boolean;
   label: string;
   opponentValue: string;
   playerValue: string;
+  wrapLabel?: boolean;
 }) {
   return (
     <View style={[styles.gameScoreRow, emphasized && styles.gameScoreTotal]}>
       <Text
         maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-        numberOfLines={1}
+        numberOfLines={wrapLabel ? undefined : 1}
         style={[styles.gameCategory, emphasized && styles.gameScoreTotalText]}
       >
         {label}
@@ -893,10 +895,6 @@ function formatPlayerGameDate(value: string) {
 
 function formatScore(value: number | null) {
   return value === null ? '—' : String(value);
-}
-
-function firstName(value: string) {
-  return value.trim().split(/\s+/)[0] || 'Player';
 }
 
 type CategoryRateKey =
@@ -1121,6 +1119,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textTransform: 'uppercase',
   },
+  gamePlayerHeaderName: {
+    lineHeight: 12,
+    textTransform: 'none',
+  },
   gamePlayersCard: {
     alignItems: 'flex-start',
     backgroundColor: '#210505',
@@ -1166,7 +1168,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
     textAlign: 'center',
-    width: 64,
+    width: 72,
   },
   historyGameDate: {
     color: '#806B56',
