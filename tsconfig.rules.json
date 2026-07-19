@@ -13,6 +13,7 @@
     "src/game/**/*.ts",
     "src/multiplayer/actionRecovery.ts",
     "src/multiplayer/heldDice.ts",
+    "src/multiplayer/localDevelopment.ts",
     "src/multiplayer/realtimeTopics.ts",
     "src/ui/bonusVisuals.ts",
     "src/ui/gameLayout.ts",

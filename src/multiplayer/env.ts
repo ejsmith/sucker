@@ -1,3 +1,5 @@
+import { isLocalBackendUrl } from './localDevelopment';
+
 type BrowserMultiplayerConfig = {
   accessToken?: string;
   refreshToken?: string;
@@ -45,4 +47,9 @@ export function getMultiplayerConfig(): MultiplayerConfig {
     supabaseAnonKey,
     supabaseUrl,
   };
+}
+
+export function isLocalMultiplayerDevelopment() {
+  const config = getMultiplayerConfig();
+  return __DEV__ && config.enabled && isLocalBackendUrl(config.supabaseUrl);
 }

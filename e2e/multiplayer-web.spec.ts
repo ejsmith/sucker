@@ -34,6 +34,29 @@ const scoreCategories = [
   'chance',
 ] as const;
 
+test('local development offers reusable Test 1 and Test 2 logins at the bottom', async ({ browser }) => {
+  for (const player of [1, 2, 1] as const) {
+    const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+    const page = await context.newPage();
+    await page.goto('/');
+
+    const shell = page.getByTestId('multiplayer-lobby-shell');
+    const localLogin = page.getByTestId('local-test-login');
+    const loginButton = page.getByTestId(`local-test-login-${player}`);
+    await expect(localLogin).toBeVisible();
+    await expect(loginButton).toHaveText(`Login as Test ${player}`);
+
+    const [shellBox, localLoginBox] = await Promise.all([shell.boundingBox(), localLogin.boundingBox()]);
+    expect(shellBox).not.toBeNull();
+    expect(localLoginBox).not.toBeNull();
+    expect(shellBox!.y + shellBox!.height - (localLoginBox!.y + localLoginBox!.height)).toBeLessThanOrEqual(16);
+
+    await loginButton.click();
+    await expect(page.getByText(`Hi, Test Player ${player}`)).toBeVisible();
+    await context.close();
+  }
+});
+
 test('two players can create an invite and play turns through the web UI', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`alice-${runId}`, 'Alice E2E');

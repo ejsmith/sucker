@@ -1,6 +1,24 @@
 import { Platform } from 'react-native';
+import { isLocalMultiplayerDevelopment } from './env';
 import { supabase } from './supabase';
 import type { ProfileInput } from './types';
+
+export type LocalTestPlayer = 1 | 2;
+
+const localTestPlayers = {
+  1: {
+    displayName: 'Test Player 1',
+    email: 'test1@sucker.local',
+    password: 'sucker-local-test-1',
+    username: 'test1',
+  },
+  2: {
+    displayName: 'Test Player 2',
+    email: 'test2@sucker.local',
+    password: 'sucker-local-test-2',
+    username: 'test2',
+  },
+} as const;
 
 export async function getCurrentSession() {
   const { data, error } = await supabase.auth.getSession();
@@ -40,6 +58,44 @@ export async function verifyEmailCode(email: string, token: string) {
   }
 
   return data.session;
+}
+
+export async function signInAsLocalTestPlayer(player: LocalTestPlayer) {
+  if (!isLocalMultiplayerDevelopment()) {
+    throw new Error('Test player login is only available with a local development backend.');
+  }
+
+  const testPlayer = localTestPlayers[player];
+  const signInResult = await supabase.auth.signInWithPassword({
+    email: testPlayer.email,
+    password: testPlayer.password,
+  });
+  let session = signInResult.data.session;
+
+  if (
+    signInResult.error &&
+    signInResult.error.status === 400 &&
+    signInResult.error.message.toLowerCase().includes('invalid login credentials')
+  ) {
+    const signUpResult = await supabase.auth.signUp({
+      email: testPlayer.email,
+      options: { data: { display_name: testPlayer.displayName } },
+      password: testPlayer.password,
+    });
+    if (signUpResult.error) {
+      throw signUpResult.error;
+    }
+    session = signUpResult.data.session;
+  } else if (signInResult.error) {
+    throw signInResult.error;
+  }
+
+  if (!session) {
+    throw new Error('Local email confirmations must be disabled to use test player login.');
+  }
+
+  await upsertProfile({ displayName: testPlayer.displayName, username: testPlayer.username });
+  return session;
 }
 
 export function getAuthRedirectUrl() {

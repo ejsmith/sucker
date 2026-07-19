@@ -5,10 +5,12 @@ import {
   createSessionFromAuthUrl,
   getCurrentSession,
   hasAuthCallbackParams,
+  signInAsLocalTestPlayer,
   signInWithEmail,
   signOut,
   upsertProfile,
   verifyEmailCode,
+  type LocalTestPlayer,
 } from './auth';
 import { registerPushToken } from './notifications';
 import { getMyProfile } from './profiles';
@@ -185,6 +187,23 @@ export function useMultiplayerSession() {
     }
   }
 
+  async function signInAsLocalTestUser(player: LocalTestPlayer) {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const nextSession = await signInAsLocalTestPlayer(player);
+      setSession(nextSession);
+      await refreshProfile();
+      return nextSession;
+    } catch (signInError) {
+      const message = toErrorMessage(signInError);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function saveProfile(input: ProfileInput) {
     setError(null);
     setIsLoading(true);
@@ -216,6 +235,7 @@ export function useMultiplayerSession() {
     refreshProfile,
     saveProfile,
     sendSignInCode,
+    signInAsLocalTestUser,
     session,
     verifySignInCode,
   };
