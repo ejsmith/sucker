@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { randomUUID } from 'expo-crypto';
+import { getRandomBytes } from 'expo-crypto';
 import { supabase } from './supabase';
 import type { Database } from './database.types';
 import type { MultiplayerAction, MultiplayerActionResult, RemoteTaunt, RemoteTurnRow } from './types';
@@ -17,6 +17,7 @@ import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/
 import { reportError } from '../monitoring/exceptionless';
 import {
   createOrReuseActionRequest,
+  createUuidV4,
   selectActionRequestsForRecovery,
   toMultiplayerAction,
   type ActionRequest,
@@ -262,7 +263,7 @@ function getOrCreatePendingAction(actorId: string, action: MultiplayerAction) {
       actorId,
       action,
       Date.now(),
-      randomUUID,
+      () => createUuidV4(getRandomBytes(16)),
       pendingActionMaxAgeMs,
     );
     return { actions: pending, result: { hasPayloadConflict, request } };

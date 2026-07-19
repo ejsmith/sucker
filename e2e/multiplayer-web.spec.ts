@@ -265,6 +265,31 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0, { timeout: 1_500 });
 });
 
+test('friend games work when crypto.randomUUID is unavailable', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`no-uuid-alice-${runId}`, 'No UUID Alice E2E');
+  const bob = await createUser(`no-uuid-bob-${runId}`, 'No UUID Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+
+  await alicePage.addInitScript(() => {
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await alicePage.reload();
+  await expect(alicePage.getByText(`Hi, ${alice.displayName}`)).toBeVisible();
+  expect(await alicePage.evaluate(() => typeof globalThis.crypto.randomUUID)).toBe('undefined');
+
+  await alicePage.getByTestId('start-with-friend-button').click();
+  await alicePage.getByTestId('profile-search-input').fill(bob.displayName);
+  await alicePage.getByTestId('profile-search-button').click();
+  await alicePage.getByTestId(`profile-play-${bob.id}`).click();
+
+  await expect(alicePage.getByText(`Game started with ${bob.displayName}.`)).toBeVisible();
+  await expect(alicePage.getByTestId(new RegExp(`^game-card-`))).toContainText(bob.displayName);
+});
+
 test('awarding the section bonus stays legible and keeps the game usable', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`bonus-alice-${runId}`, 'Bonus Alice E2E');
