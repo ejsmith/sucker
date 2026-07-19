@@ -49,16 +49,22 @@ import {
   buyRemoteExtraRoll,
   createGameAgainst,
   createRematch,
+  getLatestRemoteTaunt,
+  getRemoteTauntOpportunity,
   getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
+  hasSeenRemoteTaunt,
   hasPendingMultiplayerAction,
+  markRemoteTauntSeen,
   PendingMultiplayerActionError,
   rollRemoteGame,
   scoreRemoteCategory,
+  sendRemoteTaunt,
   scratchRemoteCategory,
   subscribeToGame,
   subscribeToGameListChanges,
+  subscribeToGameTaunts,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
 import { preserveLocalHeldDice } from './src/multiplayer/heldDice';
@@ -66,7 +72,13 @@ import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/not
 import { getProfilesByIds } from './src/multiplayer/profiles';
 import { supabase } from './src/multiplayer/supabase';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
-import type { RemoteGameRow, RemoteGameStatus, RemoteTurnRow } from './src/multiplayer/types';
+import type {
+  RemoteGameRow,
+  RemoteGameStatus,
+  RemoteTaunt,
+  RemoteTauntOpportunity,
+  RemoteTurnRow,
+} from './src/multiplayer/types';
 import {
   createGameLayout,
   gameViewportPresets,
@@ -102,6 +114,7 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from './shared/stats';
+import { getTauntText, getTauntsForScenario, type TauntId } from './shared/taunts';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 type ScoreFlyDie = {
@@ -239,6 +252,7 @@ type RemoteActionHandlers = {
   onScore: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onScratch: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerPunch: (turnId: string, chanceDie: DieValue) => Promise<RemoteSuckerPunchResult | null>;
+  onTaunt: (tauntId: TauntId) => Promise<ReturnType<typeof createGame> | null>;
 };
 type RemoteGameRequest = {
   gameId: string;
@@ -440,6 +454,9 @@ export function RemoteGameScreen({
   const [error, setError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
+  const [remoteTaunt, setRemoteTaunt] = useState<RemoteTaunt | null>(null);
+  const [remoteTauntOpportunity, setRemoteTauntOpportunity] = useState<RemoteTauntOpportunity | null>(null);
+  const [tauntOpportunityRefreshKey, setTauntOpportunityRefreshKey] = useState(0);
   const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
   const [remoteLastTurnLoadFailedId, setRemoteLastTurnLoadFailedId] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
@@ -500,23 +517,25 @@ export function RemoteGameScreen({
       setIsLoading(true);
       setError(null);
       try {
-        const [{ data: userData, error: userError }, nextGame] = await Promise.all([
-          supabase.auth.getUser(),
-          getGame(gameId),
-        ]);
+        const { data: userData, error: userError } = await supabase.auth.getUser();
         if (userError) {
           throw userError;
         }
         if (!userData.user) {
           throw new Error('Sign in again to open this game.');
         }
+        profileIdRef.current = userData.user.id;
+        const [nextGame, latestTaunt] = await Promise.all([
+          getGame(gameId),
+          getLatestRemoteTaunt(gameId, userData.user.id),
+        ]);
         if (!isMounted) {
           return;
         }
 
-        profileIdRef.current = userData.user.id;
         setProfileId(userData.user.id);
         setRemoteGame(nextGame);
+        setRemoteTaunt(latestTaunt);
         onGameChange(userData.user.id, nextGame);
       } catch (loadError) {
         if (isMounted) {
@@ -546,10 +565,45 @@ export function RemoteGameScreen({
         }
       },
     );
+    const unsubscribeTaunts = subscribeToGameTaunts(
+      gameId,
+      (taunt) => {
+        if (!isMounted) {
+          return;
+        }
+
+        if (taunt.actorId === profileIdRef.current) {
+          setTauntOpportunityRefreshKey((current) => current + 1);
+        } else {
+          setRemoteTaunt(taunt);
+        }
+      },
+      (status) => {
+        if (!isMounted || status !== 'SUBSCRIBED') {
+          return;
+        }
+
+        const currentProfileId = profileIdRef.current;
+        if (!currentProfileId) {
+          return;
+        }
+
+        setTauntOpportunityRefreshKey((current) => current + 1);
+        void getLatestRemoteTaunt(gameId, currentProfileId)
+          .then((latestTaunt) => {
+            if (isMounted) {
+              setRemoteTaunt(latestTaunt);
+            }
+          })
+          .catch((tauntError) => console.warn('Unable to refresh latest taunt', tauntError));
+      },
+      () => setTauntOpportunityRefreshKey((current) => current + 1),
+    );
 
     return () => {
       isMounted = false;
       unsubscribe();
+      unsubscribeTaunts();
     };
   }, [gameId, onGameChange]);
 
@@ -577,7 +631,12 @@ export function RemoteGameScreen({
       return;
     }
 
-    const latestWithGame = [...recovered].reverse().find((item) => 'game' in item.result && Boolean(item.result.game));
+    const latestWithGame = [...recovered]
+      .reverse()
+      .find((item) => item.action.type !== 'taunt' && 'game' in item.result && Boolean(item.result.game));
+    if (recovered.some((item) => item.action.type === 'taunt')) {
+      setTauntOpportunityRefreshKey((current) => current + 1);
+    }
     consumeRecoveredActions(recovered.map((item) => item.requestId));
     setUnresolvedRequestId(null);
 
@@ -622,14 +681,40 @@ export function RemoteGameScreen({
   }, [remoteGame?.last_turn_id]);
 
   useEffect(() => {
-    if (!remoteGame || isRealtimeConnected || !isAppActive) {
+    let isMounted = true;
+    if (!remoteGame || !profileId || !remoteLastTurn || remoteLastTurn.id !== remoteGame.last_turn_id) {
+      setRemoteTauntOpportunity(null);
+      return;
+    }
+
+    void getRemoteTauntOpportunity(remoteGame.id, profileId, remoteLastTurn)
+      .then((opportunity) => {
+        if (isMounted) {
+          setRemoteTauntOpportunity(opportunity);
+        }
+      })
+      .catch((opportunityError) => {
+        console.warn('Unable to load taunt opportunity', opportunityError);
+        if (isMounted) {
+          setRemoteTauntOpportunity(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [profileId, remoteGame, remoteLastTurn, tauntOpportunityRefreshKey]);
+
+  useEffect(() => {
+    if (!remoteGame || !profileId || isRealtimeConnected || !isAppActive) {
       return;
     }
 
     const interval = setInterval(() => {
-      void getGame(gameId)
-        .then((nextGame) => {
+      void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId, profileId)])
+        .then(([nextGame, latestTaunt]) => {
           setRemoteGame(nextGame);
+          setRemoteTaunt(latestTaunt);
           if (profileIdRef.current) {
             onGameChange(profileIdRef.current, nextGame);
           }
@@ -640,25 +725,26 @@ export function RemoteGameScreen({
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [gameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
+  }, [gameId, isAppActive, isRealtimeConnected, onGameChange, profileId, remoteGame]);
 
   useEffect(() => {
     const wasActive = wasAppActive.current;
     wasAppActive.current = isAppActive;
 
-    if (!remoteGame || !isAppActive || wasActive) {
+    if (!remoteGame || !profileId || !isAppActive || wasActive) {
       return;
     }
 
     let isCurrent = true;
-    void getGame(gameId)
-      .then((nextGame) => {
+    void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId, profileId)])
+      .then(([nextGame, latestTaunt]) => {
         if (!isCurrent) {
           return;
         }
 
         setError(null);
         setRemoteGame(nextGame);
+        setRemoteTaunt(latestTaunt);
         if (profileId) {
           onGameChange(profileId, nextGame);
           void syncRemoteBadgeCount(profileId);
@@ -714,27 +800,35 @@ export function RemoteGameScreen({
 
   async function runRemoteAction(
     action: () => Promise<{ game: RemoteGameRow }>,
-    { showNextTurns = true }: { showNextTurns?: boolean } = {},
+    options: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
   ) {
-    const result = await runRemoteActionResult(action, { showNextTurns });
+    const result = await runRemoteActionResult(action, options);
     return result?.game.state ?? null;
   }
 
   async function runRemoteActionResult<Result extends { game: RemoteGameRow }>(
     action: () => Promise<Result>,
-    { showNextTurns = true }: { showNextTurns?: boolean } = {},
+    {
+      applyGameResult = true,
+      preserveNextTurns = false,
+      showNextTurns = true,
+    }: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
   ) {
     setIsRemoteBusy(true);
     setError(null);
     try {
       const result = await action();
-      setRemoteGame(result.game);
-      if (profileId) {
+      if (applyGameResult) {
+        setRemoteGame(result.game);
+      }
+      if (profileId && applyGameResult) {
         onGameChange(profileId, result.game);
         if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
           void prepareNextTurnPrompt(profileId, result.game);
         } else {
-          setNextTurnPrompt(null);
+          if (!preserveNextTurns) {
+            setNextTurnPrompt(null);
+          }
           void syncRemoteGameList(profileId);
         }
       }
@@ -805,6 +899,8 @@ export function RemoteGameScreen({
     setError(null);
     setIsLoading(true);
     setRemoteGame(null);
+    setRemoteTaunt(null);
+    setRemoteTauntOpportunity(null);
     setRemoteLastTurn(null);
     setRemoteLastTurnLoadFailedId(null);
     onOpenGame(nextGameId);
@@ -904,6 +1000,12 @@ export function RemoteGameScreen({
       const result = await runRemoteActionResult(() => useRemoteSuckerPunch(remoteGame.id, turnId, chanceDie));
       return result ? { game: result.game.state, outcome: result.suckerPunchOutcome ?? null } : null;
     },
+    onTaunt: (tauntId) =>
+      runRemoteAction(() => sendRemoteTaunt(remoteGame.id, tauntId), {
+        applyGameResult: false,
+        preserveNextTurns: true,
+        showNextTurns: false,
+      }),
   };
 
   return (
@@ -921,6 +1023,8 @@ export function RemoteGameScreen({
       remoteLastTurn={remoteLastTurn}
       remoteLastTurnLoadFailedId={remoteLastTurnLoadFailedId}
       remoteLastTurnId={remoteGame.last_turn_id}
+      remoteTaunt={remoteTaunt}
+      remoteTauntOpportunity={remoteTauntOpportunity}
       remoteStatus={remoteGame.status}
     />
   );
@@ -942,6 +1046,8 @@ export function LocalGameScreen({
   remoteLastTurn,
   remoteLastTurnLoadFailedId,
   remoteLastTurnId,
+  remoteTaunt,
+  remoteTauntOpportunity,
   remoteStatus,
 }: {
   isRemoteBusy?: boolean;
@@ -959,6 +1065,8 @@ export function LocalGameScreen({
   remoteLastTurn?: RemoteTurnRow | null;
   remoteLastTurnLoadFailedId?: string | null;
   remoteLastTurnId?: string | null;
+  remoteTaunt?: RemoteTaunt | null;
+  remoteTauntOpportunity?: RemoteTauntOpportunity | null;
   remoteStatus?: RemoteGameStatus;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
@@ -985,6 +1093,11 @@ export function LocalGameScreen({
   const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
+  const [isSendingTaunt, setIsSendingTaunt] = useState(false);
+  const [sentTauntTurnId, setSentTauntTurnId] = useState<string | null>(null);
+  const [pendingIncomingTaunt, setPendingIncomingTaunt] = useState<RemoteTaunt | null>(null);
+  const [visibleIncomingTaunt, setVisibleIncomingTaunt] = useState<RemoteTaunt | null>(null);
   const [showStatsPage, setShowStatsPage] = useState(false);
   const [playerStatsTarget, setPlayerStatsTarget] = useState<'me' | 'opponent' | null>(null);
   const [isTokenMenuOpen, setIsTokenMenuOpen] = useState(false);
@@ -1026,6 +1139,7 @@ export function LocalGameScreen({
   const lastRemoteBlockedPunchNoticeId = useRef<string | null>(null);
   const remoteBlockedPunchRevealCheckTurnId = useRef<string | null>(null);
   const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
+  const lastQueuedIncomingTauntId = useRef<string | null>(null);
   const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suckerPunchWipeStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRemoteTurnId = useRef<string | null>(null);
@@ -1039,6 +1153,7 @@ export function LocalGameScreen({
   const backSwipeStartedAtEdge = useRef(false);
   const exitGame = useCallback(() => {
     setIsMenuOpen(false);
+    setIsTauntPickerOpen(false);
     setIsTokenMenuOpen(false);
     setShowStatsPage(false);
     setPlayerStatsTarget(null);
@@ -1078,6 +1193,7 @@ export function LocalGameScreen({
     }),
   ).current;
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
+  const incomingTauntRollNumber = remoteGame?.rollNumber ?? game.rollNumber;
   const avatarProfileIdsKey = [
     ...new Set([
       ...game.players.map((player) => player.id),
@@ -1123,6 +1239,35 @@ export function LocalGameScreen({
   const opponentPlayer =
     game.players[opponentPlayerIndex] ?? game.players.find((player) => player.id !== homePlayer.id) ?? game.players[1];
   const displayPlayers = [homePlayer, opponentPlayer];
+  const isPostTurnTauntOpportunity = Boolean(
+    remoteTauntOpportunity?.source === 'turn' &&
+    remoteLastTurn?.player_id === myProfileId &&
+    currentPlayer.id !== myProfileId &&
+    game.rollNumber === 0,
+  );
+  const isPostPunchTauntOpportunity = Boolean(
+    remoteTauntOpportunity?.source === 'punch' && remoteStatus === 'active' && game.rollNumber === 0,
+  );
+  const tauntOpportunityTurnId = remoteTauntOpportunity?.turnId ?? null;
+  const canTaunt = Boolean(
+    isRemoteGame &&
+    remoteStatus &&
+    remoteStatus !== 'inviting' &&
+    remoteStatus !== 'complete' &&
+    remoteLastTurn &&
+    remoteLastTurn.id === remoteLastTurnId &&
+    remoteTauntOpportunity &&
+    remoteTauntOpportunity.turnId === remoteLastTurnId &&
+    (isPostTurnTauntOpportunity || isPostPunchTauntOpportunity) &&
+    !remoteTauntOpportunity.hasTaunted &&
+    sentTauntTurnId !== tauntOpportunityTurnId &&
+    !suckerPunchDialog &&
+    !isScoring &&
+    !isRemoteBusy &&
+    !isSendingTaunt,
+  );
+  const tauntScenario = remoteTauntOpportunity?.scenario ?? 'base';
+  const availableTaunts = getTauntsForScenario(tauntScenario);
   const activePlayerViewIndex = currentPlayer.id === homePlayer.id ? 0 : 1;
   const canPlaySelected =
     selectedCategory !== null &&
@@ -1208,7 +1353,13 @@ export function LocalGameScreen({
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
   const hasNextTurnPrompt = nextTurnGames !== null && nextTurnGames !== undefined;
   const nextTurnsVisible = Boolean(
-    isRemoteGame && hasNextTurnPrompt && isNextTurnsDelayComplete && !isRolling && !isScoring && !gameOverVisible,
+    isRemoteGame &&
+    hasNextTurnPrompt &&
+    isNextTurnsDelayComplete &&
+    !isRolling &&
+    !isScoring &&
+    !isTauntPickerOpen &&
+    !gameOverVisible,
   );
   const winnerName =
     homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
@@ -1276,6 +1427,20 @@ export function LocalGameScreen({
   useEffect(() => {
     liveGameRef.current = game;
   }, [game]);
+
+  useEffect(() => {
+    setIsTauntPickerOpen(false);
+    setSentTauntTurnId(null);
+    setPendingIncomingTaunt(null);
+    setVisibleIncomingTaunt(null);
+    lastQueuedIncomingTauntId.current = null;
+  }, [game.id]);
+
+  useEffect(() => {
+    if (!canTaunt) {
+      setIsTauntPickerOpen(false);
+    }
+  }, [canTaunt]);
 
   useEffect(() => {
     setIsNextTurnsDelayComplete(false);
@@ -1703,6 +1868,104 @@ export function LocalGameScreen({
     shouldHoldRemoteTurnRevealForBlockedPunch,
   ]);
 
+  useEffect(() => {
+    if (
+      !isRemoteGame ||
+      !myProfileId ||
+      !remoteTaunt ||
+      remoteTaunt.actorId === myProfileId ||
+      remoteStatus === 'complete' ||
+      incomingTauntRollNumber > 0 ||
+      remoteTaunt.turnId !== remoteLastTurnId ||
+      lastQueuedIncomingTauntId.current === remoteTaunt.id
+    ) {
+      return;
+    }
+
+    const incomingTaunt = remoteTaunt;
+    let isCurrent = true;
+    lastQueuedIncomingTauntId.current = incomingTaunt.id;
+    void hasSeenRemoteTaunt(game.id, myProfileId, incomingTaunt.id)
+      .then((hasSeenTaunt) => {
+        if (isCurrent && !hasSeenTaunt) {
+          setPendingIncomingTaunt(incomingTaunt);
+        }
+      })
+      .catch((seenTauntError) => {
+        console.warn('Unable to check whether the taunt was seen', seenTauntError);
+        if (isCurrent) {
+          setPendingIncomingTaunt(incomingTaunt);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [game.id, incomingTauntRollNumber, isRemoteGame, myProfileId, remoteLastTurnId, remoteStatus, remoteTaunt]);
+
+  useEffect(() => {
+    const incomingTaunts = [pendingIncomingTaunt, visibleIncomingTaunt].filter(
+      (incomingTaunt): incomingTaunt is RemoteTaunt => Boolean(incomingTaunt),
+    );
+    if (
+      !isRemoteGame ||
+      !myProfileId ||
+      incomingTaunts.length === 0 ||
+      (incomingTauntRollNumber === 0 &&
+        incomingTaunts.every((incomingTaunt) => incomingTaunt.turnId === remoteLastTurnId))
+    ) {
+      return;
+    }
+
+    const latestIncomingTaunt = incomingTaunts.reduce((latest, incomingTaunt) =>
+      latest.createdAt >= incomingTaunt.createdAt ? latest : incomingTaunt,
+    );
+    void markRemoteTauntSeen(game.id, myProfileId, latestIncomingTaunt.id).catch((seenTauntError) =>
+      console.warn('Unable to remember the dismissed taunt', seenTauntError),
+    );
+    setPendingIncomingTaunt(null);
+    setVisibleIncomingTaunt(null);
+  }, [
+    game.id,
+    incomingTauntRollNumber,
+    isRemoteGame,
+    myProfileId,
+    pendingIncomingTaunt,
+    remoteLastTurnId,
+    visibleIncomingTaunt,
+  ]);
+
+  useEffect(() => {
+    if (
+      !pendingIncomingTaunt ||
+      visibleIncomingTaunt ||
+      isTauntPickerOpen ||
+      isScoring ||
+      opponentTurnReveal ||
+      scoreFlyDice.length > 0 ||
+      scoreFlyNumber ||
+      revealingRemoteTurnId ||
+      remoteOpponentTurnNeedsReveal ||
+      shouldHoldRemoteTurnReveal
+    ) {
+      return;
+    }
+
+    setPendingIncomingTaunt(null);
+    setVisibleIncomingTaunt(pendingIncomingTaunt);
+  }, [
+    isScoring,
+    isTauntPickerOpen,
+    opponentTurnReveal,
+    pendingIncomingTaunt,
+    remoteOpponentTurnNeedsReveal,
+    revealingRemoteTurnId,
+    scoreFlyDice.length,
+    scoreFlyNumber,
+    shouldHoldRemoteTurnReveal,
+    visibleIncomingTaunt,
+  ]);
+
   async function refreshComputerStats() {
     try {
       setComputerStats(await getComputerStats());
@@ -1761,6 +2024,29 @@ export function LocalGameScreen({
     setVisibleRemoteGame(nextGame);
   }
 
+  function markIncomingTauntsSeen(...incomingTaunts: Array<RemoteTaunt | null>) {
+    if (!isRemoteGame || !myProfileId) {
+      return;
+    }
+
+    const latestIncomingTaunt = incomingTaunts.reduce<RemoteTaunt | null>((latest, incomingTaunt) => {
+      if (!incomingTaunt || (latest && latest.createdAt >= incomingTaunt.createdAt)) {
+        return latest;
+      }
+      return incomingTaunt;
+    }, null);
+    if (latestIncomingTaunt) {
+      void markRemoteTauntSeen(game.id, myProfileId, latestIncomingTaunt.id).catch((seenTauntError) =>
+        console.warn('Unable to remember the dismissed taunt', seenTauntError),
+      );
+    }
+  }
+
+  function dismissIncomingTaunt() {
+    markIncomingTauntsSeen(visibleIncomingTaunt);
+    setVisibleIncomingTaunt(null);
+  }
+
   function settleRemoteOptimisticAction(
     result: Promise<ReturnType<typeof createGame> | null>,
     rollbackGame: ReturnType<typeof createGame>,
@@ -1789,7 +2075,17 @@ export function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
 
     if (isRemoteGame && remoteHandlers) {
-      await animateRemoteRoll(remoteHandlers.onRoll(sourceGame.held), sourceGame);
+      const pendingTaunt = pendingIncomingTaunt;
+      const visibleTaunt = visibleIncomingTaunt;
+      const nextGamePromise = remoteHandlers.onRoll(sourceGame.held).then((nextGame) => {
+        if (nextGame) {
+          markIncomingTauntsSeen(pendingTaunt, visibleTaunt);
+          setPendingIncomingTaunt(null);
+          setVisibleIncomingTaunt(null);
+        }
+        return nextGame;
+      });
+      await animateRemoteRoll(nextGamePromise, sourceGame);
       return;
     }
 
@@ -2755,6 +3051,23 @@ export function LocalGameScreen({
     });
   }
 
+  async function handleSendTaunt(tauntId: TauntId) {
+    if (!remoteHandlers || !canTaunt) {
+      return;
+    }
+
+    setIsSendingTaunt(true);
+    try {
+      const result = await remoteHandlers.onTaunt(tauntId);
+      if (result) {
+        setSentTauntTurnId(tauntOpportunityTurnId);
+        setIsTauntPickerOpen(false);
+      }
+    } finally {
+      setIsSendingTaunt(false);
+    }
+  }
+
   function renderGameScreen() {
     return (
       <GameLayoutContext.Provider value={gameLayout}>
@@ -2992,6 +3305,240 @@ export function LocalGameScreen({
               />
             </View>
           </View>
+
+          {canTaunt && !isTauntPickerOpen && (
+            <Pressable
+              accessibilityHint="Opens a list of trash-talking taunts"
+              accessibilityLabel="Pick a taunt"
+              accessibilityRole="button"
+              onPress={() => setIsTauntPickerOpen(true)}
+              style={({ pressed }) => [
+                styles.tauntMenuButton,
+                {
+                  height: gameLayout.unit(32),
+                  left: gameLayout.unit(36),
+                  top: gameLayout.unit(108),
+                  width: gameLayout.unit(40),
+                },
+                pressed && styles.pressed,
+              ]}
+              testID="taunt-menu-button"
+            >
+              <View
+                style={[
+                  styles.tauntMenuBubble,
+                  {
+                    borderRadius: gameLayout.unit(6),
+                    borderWidth: gameLayout.stroke(2),
+                    height: gameLayout.unit(20),
+                    width: gameLayout.unit(30),
+                  },
+                ]}
+              >
+                <Text
+                  maxFontSizeMultiplier={1.2}
+                  style={[styles.tauntMenuDotsText, { fontSize: gameLayout.unit(17), lineHeight: gameLayout.unit(18) }]}
+                >
+                  …
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.tauntMenuPointer,
+                  {
+                    borderBottomWidth: gameLayout.unit(6),
+                    borderLeftWidth: gameLayout.unit(4),
+                    borderRightWidth: gameLayout.unit(4),
+                    left: gameLayout.unit(3),
+                    top: 0,
+                  },
+                ]}
+              />
+            </Pressable>
+          )}
+
+          {isTauntPickerOpen && canTaunt && (
+            <View style={styles.tauntPickerLayer} testID="taunt-picker">
+              <Pressable
+                accessibilityLabel="Close taunt picker"
+                accessibilityRole="button"
+                onPress={() => setIsTauntPickerOpen(false)}
+                style={StyleSheet.absoluteFill}
+              />
+              <View
+                style={[
+                  styles.tauntPickerPanel,
+                  {
+                    borderRadius: gameLayout.unit(14),
+                    borderWidth: gameLayout.stroke(3),
+                    left: gameLayout.unit(6),
+                    padding: gameLayout.unit(10),
+                    right: gameLayout.unit(6),
+                    top: gameLayout.unit(140),
+                  },
+                ]}
+                testID="taunt-picker-panel"
+              >
+                <View
+                  style={[
+                    styles.tauntPickerPointerBorder,
+                    {
+                      borderBottomWidth: gameLayout.unit(16),
+                      borderLeftWidth: gameLayout.unit(12),
+                      borderRightWidth: gameLayout.unit(12),
+                      left: gameLayout.unit(20),
+                      top: gameLayout.unit(-17),
+                    },
+                  ]}
+                  testID="taunt-picker-pointer"
+                />
+                <View
+                  style={[
+                    styles.tauntPickerPointer,
+                    {
+                      borderBottomWidth: gameLayout.unit(12),
+                      borderLeftWidth: gameLayout.unit(9),
+                      borderRightWidth: gameLayout.unit(9),
+                      left: gameLayout.unit(23),
+                      top: gameLayout.unit(-12),
+                    },
+                  ]}
+                />
+                <View style={styles.tauntPickerHeader}>
+                  <View>
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[
+                        styles.tauntPickerTitle,
+                        { fontSize: gameLayout.unit(17), lineHeight: gameLayout.unit(20) },
+                      ]}
+                    >
+                      SEND A MESSAGE
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="Close taunt picker"
+                    accessibilityRole="button"
+                    onPress={() => setIsTauntPickerOpen(false)}
+                    style={({ pressed }) => [
+                      styles.tauntPickerClose,
+                      {
+                        borderRadius: gameLayout.unit(16),
+                        height: gameLayout.unit(32),
+                        width: gameLayout.unit(32),
+                      },
+                      pressed && styles.pressed,
+                    ]}
+                    testID="taunt-picker-close-button"
+                  >
+                    <CloseIcon color="#FFF3C2" size={gameLayout.unit(17)} />
+                  </Pressable>
+                </View>
+                <View style={[styles.tauntOptions, { gap: gameLayout.unit(7), marginTop: gameLayout.unit(9) }]}>
+                  {availableTaunts.map((taunt) => (
+                    <Pressable
+                      accessibilityLabel={`Send taunt: ${taunt.text}`}
+                      accessibilityRole="button"
+                      disabled={isSendingTaunt}
+                      key={taunt.id}
+                      onPress={() => void handleSendTaunt(taunt.id)}
+                      style={({ pressed }) => [
+                        styles.tauntOption,
+                        {
+                          borderRadius: gameLayout.unit(8),
+                          borderWidth: gameLayout.stroke(2),
+                          minHeight: gameLayout.unit(42),
+                          paddingHorizontal: gameLayout.unit(7),
+                          paddingVertical: gameLayout.unit(5),
+                        },
+                        pressed && styles.tauntOptionPressed,
+                      ]}
+                      testID={`taunt-option-${taunt.id}`}
+                    >
+                      <Text
+                        maxFontSizeMultiplier={1.15}
+                        style={[
+                          styles.tauntOptionText,
+                          { fontSize: gameLayout.unit(11), lineHeight: gameLayout.unit(13) },
+                        ]}
+                      >
+                        {taunt.text}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
+
+          {visibleIncomingTaunt && !isTauntPickerOpen && remoteStatus !== 'complete' && (
+            <View
+              pointerEvents="box-none"
+              style={[
+                styles.receivedTauntWrap,
+                {
+                  right: gameLayout.unit(12),
+                  top: gameLayout.unit(140),
+                  width: gameLayout.unit(235),
+                },
+              ]}
+              testID="received-taunt"
+            >
+              <View
+                style={[
+                  styles.receivedTauntPointerBorder,
+                  {
+                    borderBottomWidth: gameLayout.unit(16),
+                    borderLeftWidth: gameLayout.unit(12),
+                    borderRightWidth: gameLayout.unit(12),
+                    left: gameLayout.unit(74),
+                    top: gameLayout.unit(-16),
+                  },
+                ]}
+              />
+              <View
+                style={[
+                  styles.receivedTauntPointer,
+                  {
+                    borderBottomWidth: gameLayout.unit(12),
+                    borderLeftWidth: gameLayout.unit(9),
+                    borderRightWidth: gameLayout.unit(9),
+                    left: gameLayout.unit(77),
+                    top: gameLayout.unit(-11),
+                  },
+                ]}
+                testID="received-taunt-pointer"
+              />
+              <Text maxFontSizeMultiplier={1.2} style={[styles.receivedTauntName, { fontSize: gameLayout.unit(10) }]}>
+                {opponentPlayer.name} says
+              </Text>
+              <Text
+                maxFontSizeMultiplier={1.2}
+                style={[styles.receivedTauntText, { fontSize: gameLayout.unit(17), lineHeight: gameLayout.unit(20) }]}
+              >
+                {getTauntText(visibleIncomingTaunt.tauntId)}
+              </Text>
+              <Pressable
+                accessibilityLabel="Dismiss taunt"
+                accessibilityRole="button"
+                hitSlop={gameLayout.unit(8)}
+                onPress={dismissIncomingTaunt}
+                style={({ pressed }) => [
+                  styles.receivedTauntClose,
+                  {
+                    height: gameLayout.unit(30),
+                    right: gameLayout.unit(4),
+                    top: gameLayout.unit(4),
+                    width: gameLayout.unit(30),
+                  },
+                  pressed && styles.pressed,
+                ]}
+                testID="dismiss-taunt"
+              >
+                <CloseIcon color="#210505" size={gameLayout.unit(14)} />
+              </Pressable>
+            </View>
+          )}
 
           <View ref={rollZoneRef} style={[styles.rollZone, gameLayout.styles.rollZone]}>
             <View style={[styles.diceTray, { gap: diceTrayGap, height: diceSlotSize }]} testID="dice-tray">
@@ -3305,7 +3852,11 @@ export function LocalGameScreen({
             />
           )}
           {opponentTurnReveal && (
-            <View pointerEvents="none" style={[styles.opponentTurnRevealOverlay, { top: opponentTurnReveal.top }]}>
+            <View
+              pointerEvents="none"
+              style={[styles.opponentTurnRevealOverlay, { top: opponentTurnReveal.top }]}
+              testID="opponent-turn-reveal"
+            >
               <View style={[styles.opponentTurnRevealPanel, gameLayout.styles.opponentTurnRevealPanel]}>
                 <View style={[styles.opponentTurnRevealDiceRow, { gap: opponentTurnReveal.gap }]}>
                   {opponentTurnReveal.dice.map((face, index) => {
@@ -5240,6 +5791,148 @@ const styles = StyleSheet.create({
   },
   avatarPressed: {
     opacity: 0.72,
+  },
+  tauntMenuButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    elevation: 20,
+    zIndex: 96,
+  },
+  tauntMenuBubble: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#210505',
+    justifyContent: 'center',
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.35)'),
+  },
+  tauntMenuDotsText: {
+    color: '#210505',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+    marginTop: -4,
+  },
+  tauntMenuPointer: {
+    borderBottomColor: '#210505',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    height: 0,
+    position: 'absolute',
+    width: 0,
+  },
+  tauntPickerLayer: {
+    ...absoluteFillStyle,
+    zIndex: 72,
+  },
+  tauntPickerPanel: {
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    ...createBoxShadowStyle(0, 8, 0, 'rgba(5, 5, 5, 0.7)'),
+    elevation: 16,
+    position: 'absolute',
+  },
+  tauntPickerPointerBorder: {
+    borderBottomColor: '#FFD329',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    height: 0,
+    position: 'absolute',
+    width: 0,
+  },
+  tauntPickerPointer: {
+    borderBottomColor: '#210505',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    height: 0,
+    position: 'absolute',
+    width: 0,
+  },
+  tauntPickerHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  tauntPickerTitle: {
+    color: '#FFD329',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+  },
+  tauntPickerClose: {
+    alignItems: 'center',
+    backgroundColor: '#8F0000',
+    borderColor: '#FFD329',
+    borderWidth: 2,
+    justifyContent: 'center',
+    ...createBoxShadowStyle(0, 2, 0, 'rgba(5, 5, 5, 0.5)'),
+  },
+  tauntOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  tauntOption: {
+    alignItems: 'center',
+    backgroundColor: '#B91510',
+    borderColor: '#FFD329',
+    justifyContent: 'center',
+    ...createBoxShadowStyle(0, 3, 0, 'rgba(5, 5, 5, 0.48)'),
+    width: '48%',
+  },
+  tauntOptionPressed: {
+    backgroundColor: '#D61F17',
+    transform: [{ translateY: 1 }],
+  },
+  tauntOptionText: {
+    color: '#FFF3C2',
+    fontFamily: gameFontExtraBold,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  receivedTauntWrap: {
+    backgroundColor: '#FFF3C2',
+    borderColor: '#210505',
+    borderRadius: 12,
+    borderWidth: 3,
+    ...createBoxShadowStyle(0, 5, 0, 'rgba(5, 5, 5, 0.48)'),
+    elevation: 14,
+    paddingBottom: 12,
+    paddingHorizontal: 13,
+    paddingTop: 10,
+    position: 'absolute',
+    zIndex: 71,
+  },
+  receivedTauntPointerBorder: {
+    borderBottomColor: '#210505',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    height: 0,
+    position: 'absolute',
+    width: 0,
+  },
+  receivedTauntPointer: {
+    borderBottomColor: '#FFF3C2',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    height: 0,
+    position: 'absolute',
+    width: 0,
+  },
+  receivedTauntName: {
+    color: '#8F0000',
+    fontFamily: gameFontExtraBold,
+    fontWeight: '800',
+    paddingRight: 26,
+    textTransform: 'uppercase',
+  },
+  receivedTauntText: {
+    color: '#210505',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+    paddingRight: 20,
+  },
+  receivedTauntClose: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
   },
   activeAvatar: {
     backgroundColor: '#FFD76A',

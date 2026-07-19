@@ -215,6 +215,67 @@ Deno.test('game-action request ids prevent replayed mutations and remain private
   assertEquals(terminalRequest, { http_status: 400, status: 'completed' });
 });
 
+Deno.test('taunts are available only after the sender finishes the latest turn', async () => {
+  const [alice, bob] = await createUsers('post-turn-taunts', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  const beforeTurn = await invokeGameAction(alice, { gameId: game.id, tauntId: 'sucker', type: 'taunt' }, 400);
+  assertEquals(beforeTurn.error, 'Finish your turn before sending a taunt.');
+
+  await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+  await invokeGameAction(alice, { category: 'ones', gameId: game.id, held: falseHeld, type: 'score_category' });
+
+  const opponentTaunt = await invokeGameAction(bob, { gameId: game.id, tauntId: 'sucker', type: 'taunt' }, 400);
+  assertEquals(opponentTaunt.error, 'You can only taunt after finishing your own turn.');
+
+  const lockedScenarioTaunt = await invokeGameAction(
+    alice,
+    { gameId: game.id, tauntId: 'sucker-punched', type: 'taunt' },
+    400,
+  );
+  assertEquals(lockedScenarioTaunt.error, 'That taunt is not available for this play.');
+
+  await invokeGameAction(alice, { gameId: game.id, tauntId: 'beat-that', type: 'taunt' });
+  const duplicate = await invokeGameAction(alice, { gameId: game.id, tauntId: 'all-that', type: 'taunt' }, 400);
+  assertEquals(duplicate.error, 'Save some trash talk for the next turn.');
+
+  const taunts = (await loadActions(game.id)).filter((action) => action.action_type === 'taunt');
+  assertEquals(taunts.length, 1);
+  assertEquals(taunts[0]?.actor_id, alice.id);
+});
+
+Deno.test('post-turn taunts expire when the recipient starts rolling', async () => {
+  const [alice, bob] = await createUsers('expired-post-turn-taunts', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  await scratchAndPass(game.id, alice, bob, 'ones');
+  await invokeGameAction(bob, { gameId: game.id, held: falseHeld, type: 'roll' });
+
+  const lateTaunt = await invokeGameAction(alice, { gameId: game.id, tauntId: 'beat-that', type: 'taunt' }, 400);
+  assertEquals(lateTaunt.error, 'You can only taunt after finishing your own turn.');
+});
+
+Deno.test('a missed-punch taunt remains available when the puncher is the active player', async () => {
+  const [alice, bob] = await createUsers('missed-punch-taunts', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const afterTurn = await scratchAndPass(game.id, alice, bob, 'ones');
+  assertString(afterTurn.last_turn_id);
+
+  const { error } = await admin.from('turn_actions').insert({
+    action_type: 'sucker_punch',
+    actor_id: bob.id,
+    game_id: game.id,
+    payload: { landed: false, targetTurnId: afterTurn.last_turn_id },
+    turn_id: afterTurn.last_turn_id,
+  });
+  assertNoError(error);
+
+  await invokeGameAction(bob, { gameId: game.id, tauntId: 'disrespect-didnt', type: 'taunt' });
+  const taunts = (await loadActions(game.id)).filter((action) => action.action_type === 'taunt');
+  assertEquals(taunts.length, 1);
+  assertEquals(taunts[0]?.actor_id, bob.id);
+});
+
 Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {
   const [alice, bob] = await createUsers('action-abuse', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
@@ -395,6 +456,8 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertPlayerTokens(punched, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
   assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'punched');
   assertEquals(punched.state.players.find((player) => player.id === alice.id)?.scorecard.ones, null);
+
+  await invokeGameAction(bob, { gameId: game.id, tauntId: 'sucker-punched', type: 'taunt' });
 
   const events = await loadTokenEvents(game.id);
   assertEquals(

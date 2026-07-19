@@ -34,6 +34,29 @@ const scoreCategories = [
   'chance',
 ] as const;
 
+test('local development offers reusable Test 1 and Test 2 logins at the bottom', async ({ browser }) => {
+  for (const player of [1, 2, 1] as const) {
+    const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
+    const page = await context.newPage();
+    await page.goto('/');
+
+    const shell = page.getByTestId('multiplayer-lobby-shell');
+    const localLogin = page.getByTestId('local-test-login');
+    const loginButton = page.getByTestId(`local-test-login-${player}`);
+    await expect(localLogin).toBeVisible();
+    await expect(loginButton).toHaveText(`Login as Test ${player}`);
+
+    const [shellBox, localLoginBox] = await Promise.all([shell.boundingBox(), localLogin.boundingBox()]);
+    expect(shellBox).not.toBeNull();
+    expect(localLoginBox).not.toBeNull();
+    expect(shellBox!.y + shellBox!.height - (localLoginBox!.y + localLoginBox!.height)).toBeLessThanOrEqual(16);
+
+    await loginButton.click();
+    await expect(page.getByText(`Hi, Test Player ${player}`)).toBeVisible();
+    await context.close();
+  }
+});
+
 test('two players can create an invite and play turns through the web UI', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`alice-${runId}`, 'Alice E2E');
@@ -202,6 +225,137 @@ test('two players can create an invite and play turns through the web UI', async
     mask: [bobPage.getByTestId('game-over-home-score'), bobPage.getByTestId('game-over-opponent-score')],
     maxDiffPixelRatio: 0.12,
   });
+});
+
+test('taunt picker stays connected to the avatar without moving the scorecard', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`taunt-alice-${runId}`, 'Taunt Alice E2E');
+  const bob = await createUser(`taunt-bob-${runId}`, 'Taunt Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  const gameId = await createAcceptedGame(alicePage, bobPage);
+
+  await openGameFromLobby(alicePage, gameId);
+  const board = alicePage.getByTestId('scorecard-board');
+  const menuButton = alicePage.getByTestId('taunt-menu-button');
+  const boardBefore = await board.boundingBox();
+  expect(boardBefore).not.toBeNull();
+  await expect(menuButton).toHaveCount(0);
+  await alicePage.getByTestId('roll-button').click();
+  await expect(menuButton).toHaveCount(0);
+  await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+  await alicePage.getByTestId('home-score-box-ones').click();
+  await expect(alicePage.getByTestId('play-score-button')).toBeEnabled();
+  await alicePage.getByTestId('play-score-button').click();
+  await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible({ timeout: 15_000 });
+  await expect(menuButton).toBeVisible();
+
+  const [boardAfter, avatarBox, menuButtonBox] = await Promise.all([
+    board.boundingBox(),
+    alicePage.getByTestId('home-player-avatar').boundingBox(),
+    menuButton.boundingBox(),
+  ]);
+  expect(boardAfter).toEqual(boardBefore);
+  expect(avatarBox).not.toBeNull();
+  expect(menuButtonBox).not.toBeNull();
+  expect(menuButtonBox!.width).toBeLessThan(avatarBox!.width);
+  expect(menuButtonBox!.height).toBeLessThan(avatarBox!.height);
+  expect(menuButtonBox!.y).toBeGreaterThan(avatarBox!.y + avatarBox!.height / 2);
+  expect(menuButtonBox!.y).toBeLessThan(avatarBox!.y + avatarBox!.height);
+
+  await menuButton.click();
+  await expect(alicePage.getByTestId('next-turns-dialog')).toHaveCount(0);
+  await expect(menuButton).toHaveCount(0);
+  await expect(alicePage.getByTestId('taunt-picker')).toBeVisible();
+  await expect(alicePage.getByTestId('taunt-option-sucker')).toBeVisible();
+  await expect(alicePage.getByTestId('taunt-option-name-of-game')).toBeVisible();
+  await expect(alicePage.getByTestId('taunt-option-beat-that')).toBeVisible();
+  const [panelBox, pointerBox] = await Promise.all([
+    alicePage.getByTestId('taunt-picker-panel').boundingBox(),
+    alicePage.getByTestId('taunt-picker-pointer').boundingBox(),
+  ]);
+  expect(panelBox).not.toBeNull();
+  expect(pointerBox).not.toBeNull();
+  expect(panelBox!.y).toBeLessThanOrEqual(boardBefore!.y + 1);
+  expect(Math.abs(panelBox!.x - boardBefore!.x)).toBeLessThan(2);
+  expect(Math.abs(panelBox!.x + panelBox!.width - (boardBefore!.x + boardBefore!.width))).toBeLessThan(2);
+  expect(Math.abs(pointerBox!.x + pointerBox!.width / 2 - (avatarBox!.x + avatarBox!.width / 2))).toBeLessThan(5);
+  expect(pointerBox!.y).toBeLessThanOrEqual(avatarBox!.y + avatarBox!.height);
+
+  await alicePage.getByTestId('taunt-picker-close-button').click();
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible();
+
+  await menuButton.click();
+  await alicePage.getByTestId('taunt-option-punch-me').click();
+  await expect(alicePage.getByTestId('taunt-picker')).toHaveCount(0);
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible();
+  await expect(menuButton).toHaveCount(0);
+  await openGameFromLobby(bobPage, gameId);
+
+  await expect(bobPage.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 15_000 });
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
+  await expect(bobPage.getByTestId('opponent-turn-reveal')).toHaveCount(0, { timeout: 15_000 });
+  await expect(bobPage.getByTestId('score-dice-overlay')).toBeVisible();
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
+  await expect(bobPage.getByTestId('score-dice-overlay')).toHaveCount(0, { timeout: 5_000 });
+  await expect(bobPage.getByTestId('received-taunt')).toContainText('Punch me. I dare you.');
+  await expect(bobPage.getByTestId('dismiss-taunt')).toBeVisible();
+  const [receivedPointerBox, opponentAvatarBox] = await Promise.all([
+    bobPage.getByTestId('received-taunt-pointer').boundingBox(),
+    bobPage.getByTestId('opponent-player-avatar').boundingBox(),
+  ]);
+  expect(receivedPointerBox).not.toBeNull();
+  expect(opponentAvatarBox).not.toBeNull();
+  expect(
+    Math.abs(
+      receivedPointerBox!.x + receivedPointerBox!.width / 2 -
+        (opponentAvatarBox!.x + opponentAvatarBox!.width / 2),
+    ),
+  ).toBeLessThan(5);
+  await bobPage.waitForTimeout(2_500);
+  await expect(bobPage.getByTestId('received-taunt')).toBeVisible();
+
+  const gameActionRoute = /\/functions\/v1\/game-action/;
+  await bobPage.route(gameActionRoute, async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ error: 'Test roll failed' }),
+      contentType: 'application/json',
+      status: 400,
+    });
+  });
+  await bobPage.getByTestId('roll-button').click();
+  await expect(bobPage.getByTestId('received-taunt')).toBeVisible();
+  await waitForPressableEnabled(bobPage.getByTestId('roll-button'));
+  await bobPage.unroute(gameActionRoute);
+
+  await bobPage.getByTestId('roll-button').click();
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
+});
+
+test('friend games work when crypto.randomUUID is unavailable', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`no-uuid-alice-${runId}`, 'No UUID Alice E2E');
+  const bob = await createUser(`no-uuid-bob-${runId}`, 'No UUID Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+
+  await alicePage.addInitScript(() => {
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await alicePage.reload();
+  await expect(alicePage.getByText(`Hi, ${alice.displayName}`)).toBeVisible();
+  expect(await alicePage.evaluate(() => typeof globalThis.crypto.randomUUID)).toBe('undefined');
+
+  await alicePage.getByTestId('start-with-friend-button').click();
+  await alicePage.getByTestId('profile-search-input').fill(bob.displayName);
+  await alicePage.getByTestId('profile-search-button').click();
+  await alicePage.getByTestId(`profile-play-${bob.id}`).click();
+
+  await expect(alicePage.getByText(`Game started with ${bob.displayName}.`)).toBeVisible();
+  await expect(alicePage.getByTestId(new RegExp(`^game-card-`))).toContainText(bob.displayName);
 });
 
 test('awarding the section bonus stays legible and keeps the game usable', async ({ browser }) => {

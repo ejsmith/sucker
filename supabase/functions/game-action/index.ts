@@ -33,6 +33,13 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
+import {
+  getTurnTauntScenario,
+  isTauntAvailableForScenario,
+  isTauntId,
+  type TauntId,
+  type TauntScenario,
+} from '../_shared/taunts.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -70,6 +77,7 @@ type ActionInput =
   | { type: 'remove_game'; gameId: string }
   | { type: 'rematch_game'; gameId: string }
   | { type: 'nudge_turn'; gameId: string }
+  | { type: 'taunt'; gameId: string; tauntId: TauntId }
   | { type: 'extra_roll'; gameId: string; held?: GameState['held'] }
   | { type: 'roll'; gameId: string; held?: GameState['held'] }
   | {
@@ -201,6 +209,8 @@ async function applyAction(
       return createRematchGame(admin, actorId, action.gameId, mutationState);
     case 'nudge_turn':
       return nudgeTurn(admin, actorId, action.gameId, mutationState);
+    case 'taunt':
+      return sendTaunt(admin, actorId, action.gameId, action.tauntId, mutationState);
     case 'roll':
       return mutateGame(
         admin,
@@ -789,6 +799,13 @@ function toAction(value: unknown): Action {
         requestId,
         type,
       };
+    case 'taunt':
+      return {
+        gameId: readString(action, 'gameId'),
+        requestId,
+        tauntId: readTauntId(action),
+        type,
+      };
     case 'extra_roll':
     case 'roll':
       return {
@@ -853,6 +870,14 @@ function readUuid(record: Record<string, unknown>, key: string): string {
 
 function readHeld(record: Record<string, unknown>): GameState['held'] | undefined {
   return record.held === undefined ? undefined : toHeldDice(record.held);
+}
+
+function readTauntId(record: Record<string, unknown>): TauntId {
+  const tauntId = readString(record, 'tauntId');
+  if (!isTauntId(tauntId)) {
+    throw new Error('Choose one of the available taunts.');
+  }
+  return tauntId;
 }
 
 async function createRemoteGame(
@@ -1251,6 +1276,120 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
     targetPlayerId: game.current_player_id,
   });
   return { game, notificationProfileIds: [game.current_player_id] };
+}
+
+async function sendTaunt(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  tauntId: TauntId,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status === 'inviting' || game.status === 'complete') {
+    throw new Error('Taunting is only available during a game.');
+  }
+  if (!game.last_turn_id) {
+    throw new Error('Finish your turn before sending a taunt.');
+  }
+
+  const turn = await loadTurn(admin, game.last_turn_id);
+  const opportunity = await loadTauntOpportunity(admin, gameId, actorId, turn);
+  const gameState = toGameState(game.state);
+  const isPostTurnOpportunity =
+    opportunity?.source === 'turn' &&
+    turn.player_id === actorId &&
+    game.current_player_id !== actorId &&
+    gameState.rollNumber === 0;
+  const isPostPunchOpportunity =
+    opportunity?.source === 'punch' && game.status === 'active' && gameState.rollNumber === 0;
+  if (turn.game_id !== gameId || !opportunity || (!isPostTurnOpportunity && !isPostPunchOpportunity)) {
+    throw new Error('You can only taunt after finishing your own turn.');
+  }
+  if (!isTauntAvailableForScenario(tauntId, opportunity.scenario)) {
+    throw new Error('That taunt is not available for this play.');
+  }
+
+  mutationState.mayHaveWritten = true;
+  const { data: inserted, error } = await admin.rpc('insert_taunt_if_open', {
+    target_actor_id: actorId,
+    target_game_id: gameId,
+    target_payload: { scenario: opportunity.scenario, tauntId },
+    target_source: opportunity.source,
+    target_turn_id: turn.id,
+  });
+
+  if (error) {
+    if (error.code === '23505') {
+      throw new Error('Save some trash talk for the next turn.');
+    }
+    throw error;
+  }
+  if (!inserted) {
+    throw new Error('You can only taunt after finishing your own turn.');
+  }
+
+  return { game };
+}
+
+type TauntOpportunity = {
+  scenario: TauntScenario;
+  source: 'punch' | 'turn';
+};
+
+async function loadTauntOpportunity(
+  admin: DbClient,
+  gameId: string,
+  actorId: string,
+  turn: TurnRow,
+): Promise<TauntOpportunity | null> {
+  const { data, error } = await admin
+    .from('turn_actions')
+    .select('action_type, payload')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .in('action_type', ['score_category', 'scratch_category', 'sucker_punch'])
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    throw error;
+  }
+
+  for (const action of data ?? []) {
+    const payload = action.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      continue;
+    }
+
+    const values = payload as Record<string, unknown>;
+    if ((values.targetTurnId ?? values.turnId) !== turn.id) {
+      continue;
+    }
+
+    if (action.action_type === 'sucker_punch') {
+      return {
+        scenario: values.landed === false ? 'punch-missed' : 'punch-landed',
+        source: 'punch',
+      };
+    }
+
+    if (turn.player_id !== actorId) {
+      continue;
+    }
+
+    return {
+      scenario: getTurnTauntScenario({
+        category: toScoreCategory(turn.category),
+        dice: toDice(turn.dice),
+        score: turn.score,
+        scratched: action.action_type === 'scratch_category' || values.scratched === true,
+      }),
+      source: 'turn',
+    };
+  }
+
+  return null;
 }
 
 async function mutateGame(

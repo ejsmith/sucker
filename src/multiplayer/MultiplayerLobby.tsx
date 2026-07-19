@@ -39,6 +39,8 @@ import {
 import { getProfilesByIds, searchProfiles } from './profiles';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
+import { isLocalMultiplayerDevelopment } from './env';
+import type { LocalTestPlayer } from './auth';
 import type { RemoteGameRow } from './types';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle } from '../ui/phoneStage';
@@ -99,6 +101,7 @@ export function MultiplayerLobby({
     refreshProfile,
     saveProfile,
     sendSignInCode,
+    signInAsLocalTestUser,
     session,
     verifySignInCode,
   } = useMultiplayerSession();
@@ -548,6 +551,15 @@ export function MultiplayerLobby({
     });
   }
 
+  async function handleLocalTestLogin(player: LocalTestPlayer) {
+    await runAction(async () => {
+      await signInAsLocalTestUser(player);
+      setSentCodeEmail(null);
+      setLoginCode('');
+      setMessage(null);
+    });
+  }
+
   async function shareInviteLink() {
     if (!generatedInviteCode) {
       return;
@@ -589,6 +601,7 @@ export function MultiplayerLobby({
   }
 
   if (!session) {
+    const showLocalTestLogin = isLocalMultiplayerDevelopment();
     const isCodeSent = sentCodeEmail !== null;
     const isLoginBusy = isBusy || isLoading;
     const loginMessage = message ?? error;
@@ -694,6 +707,28 @@ export function MultiplayerLobby({
             <Text style={lobbyStyles.soloButtonText}>Play Computer</Text>
           </Pressable>
         </View>
+        {showLocalTestLogin && (
+          <View style={lobbyStyles.localTestLoginGroup} testID="local-test-login">
+            <Text style={lobbyStyles.localTestLoginTitle}>Local Testing</Text>
+            <View style={lobbyStyles.localTestLoginButtons}>
+              {([1, 2] as const).map((player) => (
+                <Pressable
+                  disabled={isLoginBusy}
+                  key={player}
+                  onPress={() => void handleLocalTestLogin(player)}
+                  style={({ pressed }) => [
+                    lobbyStyles.localTestLoginButton,
+                    isLoginBusy && lobbyStyles.primaryButtonDisabled,
+                    pressed && lobbyStyles.pressed,
+                  ]}
+                  testID={`local-test-login-${player}`}
+                >
+                  <Text style={lobbyStyles.localTestLoginButtonText}>Login as Test {player}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        )}
       </>,
     );
   }
@@ -2587,6 +2622,38 @@ const lobbyStyles = StyleSheet.create({
     color: '#FFF3C2',
     fontSize: 12,
     fontWeight: '900',
+  },
+  localTestLoginButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 2,
+    flex: 1,
+    height: 42,
+    justifyContent: 'center',
+  },
+  localTestLoginButtonText: {
+    color: '#FFD329',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  localTestLoginButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  localTestLoginGroup: {
+    gap: 6,
+    marginTop: 'auto',
+    width: '100%',
+  },
+  localTestLoginTitle: {
+    color: '#FFF3C2',
+    fontSize: 10,
+    fontWeight: '900',
+    textAlign: 'center',
+    textTransform: 'uppercase',
   },
   loginActionGroup: {
     backgroundColor: '#210505',

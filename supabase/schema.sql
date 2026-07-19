@@ -111,6 +111,56 @@ create table public.turn_actions (
   created_at timestamptz not null default now()
 );
 
+create unique index turn_actions_one_taunt_per_turn
+on public.turn_actions (
+  game_id,
+  actor_id,
+  coalesce(turn_id, '00000000-0000-0000-0000-000000000000'::uuid)
+)
+where action_type = 'taunt';
+
+create or replace function public.insert_taunt_if_open(
+  target_game_id uuid,
+  target_actor_id uuid,
+  target_turn_id uuid,
+  target_payload jsonb,
+  target_source text
+)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  locked_game public.games%rowtype;
+begin
+  select game.*
+  into locked_game
+  from public.games game
+  where game.id = target_game_id
+  for update;
+
+  if not found
+    or locked_game.status in ('inviting', 'complete')
+    or locked_game.last_turn_id is distinct from target_turn_id
+    or target_source not in ('turn', 'punch')
+    or (target_source = 'turn' and locked_game.current_player_id is not distinct from target_actor_id)
+    or (target_source = 'punch' and locked_game.status <> 'active')
+    or coalesce((locked_game.state ->> 'rollNumber')::integer, 0) <> 0
+  then
+    return false;
+  end if;
+
+  insert into public.turn_actions (action_type, actor_id, game_id, payload, turn_id)
+  values ('taunt', target_actor_id, target_game_id, target_payload, target_turn_id);
+
+  return true;
+end;
+$$;
+
+revoke all on function public.insert_taunt_if_open(uuid, uuid, uuid, jsonb, text) from public, anon, authenticated;
+grant execute on function public.insert_taunt_if_open(uuid, uuid, uuid, jsonb, text) to service_role;
+
 create table public.game_action_requests (
   actor_id uuid not null references public.profiles(id) on delete cascade,
   request_id uuid not null,
@@ -784,6 +834,19 @@ begin
       and tablename = 'games'
   ) then
     alter publication supabase_realtime add table public.games;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'turn_actions'
+  ) then
+    alter publication supabase_realtime add table public.turn_actions;
   end if;
 end $$;
 

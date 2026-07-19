@@ -2,10 +2,18 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   createOrReuseActionRequest,
+  createUuidV4,
   getActionKey,
   mergeRecoveredActions,
   selectActionRequestsForRecovery,
 } = require('../.build/src/multiplayer/actionRecovery');
+
+test('createUuidV4 builds a standards-compliant UUID without crypto.randomUUID', () => {
+  const uuid = createUuidV4(Uint8Array.from({ length: 16 }, (_, index) => index));
+
+  assert.equal(uuid, '00010203-0405-4607-8809-0a0b0c0d0e0f');
+  assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
 
 const now = Date.parse('2026-07-14T12:00:00.000Z');
 const maxAgeMs = 5 * 60_000;
@@ -47,6 +55,38 @@ test('roll retries keep the original request but flag changed held dice as a con
   assert.deepEqual(retried.request.held, [true, false, false, false, false]);
   assert.equal(retried.hasPayloadConflict, true);
   assert.equal(retried.pending.length, 1);
+});
+
+test('taunt retries reuse exact payloads and reject a changed taunt while pending', () => {
+  const first = createOrReuseActionRequest(
+    [],
+    'alice',
+    { gameId: 'game-1', tauntId: 'sucker', type: 'taunt' },
+    now,
+    () => 'request-1',
+    maxAgeMs,
+  );
+  const exactRetry = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    { gameId: 'game-1', tauntId: 'sucker', type: 'taunt' },
+    now + 1_000,
+    () => 'request-2',
+    maxAgeMs,
+  );
+  const changedRetry = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    { gameId: 'game-1', tauntId: 'beat-that', type: 'taunt' },
+    now + 2_000,
+    () => 'request-3',
+    maxAgeMs,
+  );
+
+  assert.equal(exactRetry.request.requestId, 'request-1');
+  assert.equal(exactRetry.hasPayloadConflict, false);
+  assert.equal(changedRetry.request.requestId, 'request-1');
+  assert.equal(changedRetry.hasPayloadConflict, true);
 });
 
 test('score retries keep the original request but flag changed held dice as a conflict', () => {

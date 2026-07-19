@@ -16,6 +16,18 @@ export type RecoveredMultiplayerAction = {
   result: MultiplayerActionResult | RemoveGameActionResult;
 };
 
+export function createUuidV4(randomBytes: Uint8Array) {
+  if (randomBytes.length !== 16) {
+    throw new Error('UUID generation requires exactly 16 random bytes.');
+  }
+
+  const bytes = Uint8Array.from(randomBytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function createOrReuseActionRequest(
   actions: ActionRequest[],
   actorId: string,
@@ -82,6 +94,7 @@ export function getActionKey(action: MultiplayerAction) {
     case 'remove_game':
     case 'rematch_game':
     case 'nudge_turn':
+    case 'taunt':
     case 'pass_response':
     case 'mulligan':
       return JSON.stringify([action.type, action.gameId]);
@@ -112,6 +125,8 @@ function hasMatchingActionPayload(existing: MultiplayerAction, incoming: Multipl
         existing.category === incoming.category &&
         heldDiceMatch(existing.held, incoming.held)
       );
+    case 'taunt':
+      return incoming.type === 'taunt' && existing.tauntId === incoming.tauntId;
     default:
       return true;
   }
