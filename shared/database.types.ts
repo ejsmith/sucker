@@ -512,6 +512,30 @@ export type Database = {
         };
         Returns: boolean;
       };
+      get_profile_recent_games: {
+        Args: {
+          game_limit?: number;
+          target_profile_id: string;
+        };
+        Returns: {
+          completed_at: string;
+          game_id: string;
+          opponent_avatar_url: string | null;
+          opponent_id: string;
+          opponent_name: string;
+          opponent_score: number;
+          opponent_scorecard: Json;
+          opponent_sucker_tokens: number;
+          opponent_sucker_tokens_spent: number;
+          player_avatar_url: string | null;
+          player_id: string;
+          player_name: string;
+          player_score: number;
+          player_scorecard: Json;
+          player_sucker_tokens: number;
+          player_sucker_tokens_spent: number;
+        }[];
+      };
       get_profile_stat_rates: {
         Args: {
           target_profile_id: string;

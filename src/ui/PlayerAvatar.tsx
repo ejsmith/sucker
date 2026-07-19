@@ -37,6 +37,9 @@ export function PlayerAvatar({
     >
       {showImage ? (
         <Image
+          accessibilityLabel={decorative ? undefined : `${name}'s profile avatar`}
+          accessible={!decorative}
+          aria-hidden={decorative || undefined}
           cachePolicy="memory-disk"
           contentFit="cover"
           onError={() => setFailedUrl(avatarUrl ?? null)}

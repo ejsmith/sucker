@@ -100,7 +100,7 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
 });
 
-Deno.test('profile stats aggregate every matchup and remain private to prior opponents', async () => {
+Deno.test('profile stats aggregate every matchup and are visible to signed-in players', async () => {
   const [alice, bob, charlie] = await createUsers('profile-stats', ['Alice', 'Bob', 'Charlie']);
   await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
 
@@ -166,10 +166,9 @@ Deno.test('profile stats aggregate every matchup and remain private to prior opp
   assertEquals(aliceOverall.games_played, 1);
   assertEquals(aliceOverall.average_score, 120);
 
-  const forbidden = await alice.client.rpc('get_profile_stat_rates', { target_profile_id: charlie.id });
-  if (!forbidden.error) {
-    throw new Error('Expected overall stats to remain private to players who have shared a game.');
-  }
+  const charlieStats = await alice.client.rpc('get_profile_stat_rates', { target_profile_id: charlie.id });
+  assertNoError(charlieStats.error);
+  assertEquals(charlieStats.data?.length, 0);
 });
 
 Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {
@@ -545,7 +544,7 @@ Deno.test('game-action lets a punched player replay instead of blocking', async 
 });
 
 Deno.test('game-action scratches, pass responses, game completion, and stats are written end to end', async () => {
-  const [alice, bob] = await createUsers('completion', ['Alice', 'Bob']);
+  const [alice, bob, charlie] = await createUsers('completion', ['Alice', 'Bob', 'Charlie']);
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
   const gameId = (created.game as GameRow).id;
   let latestGame = created.game as GameRow;
@@ -596,6 +595,48 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     stats.every((row) => row.wins === 0 && row.losses === 0),
     true,
   );
+
+  const { data: publicStats, error: publicStatsError } = await charlie.client.rpc('get_profile_stat_rates', {
+    target_profile_id: alice.id,
+  });
+  assertNoError(publicStatsError);
+  assertEquals(publicStats?.[0]?.games_played, 1);
+
+  const { data: publicHistory, error: publicHistoryError } = await charlie.client.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: alice.id,
+  });
+  assertNoError(publicHistoryError);
+  assertEquals(publicHistory?.length, 1);
+  assertEquals(publicHistory?.[0]?.game_id, gameId);
+  assertEquals(publicHistory?.[0]?.player_name, 'Alice');
+  assertEquals(publicHistory?.[0]?.opponent_name, 'Bob');
+  assertEquals(
+    publicHistory?.[0]?.player_scorecard,
+    latestGame.state.players.find((player) => player.id === alice.id)?.scorecard,
+  );
+  assertEquals(
+    publicHistory?.[0]?.opponent_scorecard,
+    latestGame.state.players.find((player) => player.id === bob.id)?.scorecard,
+  );
+
+  const removedCompletedGame = await invokeGameAction(alice, { gameId, type: 'remove_game' });
+  assertEquals(removedCompletedGame.removedGameId, gameId);
+
+  const { data: hiddenHistory, error: hiddenHistoryError } = await charlie.client.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: alice.id,
+  });
+  assertNoError(hiddenHistoryError);
+  assertEquals(hiddenHistory?.length, 0);
+
+  const { data: opponentHistory, error: opponentHistoryError } = await charlie.client.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: bob.id,
+  });
+  assertNoError(opponentHistoryError);
+  assertEquals(opponentHistory?.length, 1);
+  assertEquals(opponentHistory?.[0]?.game_id, gameId);
 
   const actions = await loadActions(gameId);
   assertEquals(

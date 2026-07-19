@@ -1,7 +1,27 @@
+import type { Scorecard } from '../game';
 import type { Database } from '../../shared/database.types';
+import { getSafeAvatarUrl } from './profiles';
 import { supabase } from './supabase';
 
 export type ProfileStats = Database['public']['Functions']['get_profile_stat_rates']['Returns'][number];
+type ProfileRecentGameRow = Database['public']['Functions']['get_profile_recent_games']['Returns'][number];
+
+export type ProfileRecentGame = {
+  completedAt: string;
+  gameId: string;
+  opponent: ProfileRecentGamePlayer;
+  player: ProfileRecentGamePlayer;
+};
+
+export type ProfileRecentGamePlayer = {
+  avatarUrl: string | null;
+  id: string;
+  name: string;
+  score: number;
+  scorecard: Scorecard;
+  suckerTokens: number;
+  suckerTokensSpent: number;
+};
 
 export type AllTimeOpponentRecord = {
   gamesPlayed: number;
@@ -40,12 +60,8 @@ export async function getHeadToHeadStats(opponentProfileId: string) {
     getProfileStats(opponentProfileId),
   ]);
 
-  if (mineResult.error) {
-    throw mineResult.error;
-  }
-  if (opponentResult.error) {
-    throw opponentResult.error;
-  }
+  if (mineResult.error) throw mineResult.error;
+  if (opponentResult.error) throw opponentResult.error;
 
   return {
     mine: mineResult.data,
@@ -58,11 +74,40 @@ export async function getHeadToHeadStats(opponentProfileId: string) {
 export async function getProfileStats(profileId: string): Promise<ProfileStats | null> {
   const { data, error } = await supabase.rpc('get_profile_stat_rates', { target_profile_id: profileId });
 
-  if (error) {
-    throw error;
-  }
-
+  if (error) throw error;
   return (data?.[0] as ProfileStats | undefined) ?? null;
+}
+
+export async function getProfileRecentGames(profileId: string): Promise<ProfileRecentGame[]> {
+  const { data, error } = await supabase.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: profileId,
+  });
+
+  if (error) throw error;
+  return (data ?? []).map(toProfileRecentGame);
+}
+
+function toProfileRecentGame(row: ProfileRecentGameRow): ProfileRecentGame {
+  return {
+    completedAt: row.completed_at,
+    gameId: row.game_id,
+    opponent: toProfileRecentGamePlayer(row, 'opponent'),
+    player: toProfileRecentGamePlayer(row, 'player'),
+  };
+}
+
+function toProfileRecentGamePlayer(row: ProfileRecentGameRow, side: 'opponent' | 'player'): ProfileRecentGamePlayer {
+  const id = row[`${side}_id`];
+  return {
+    avatarUrl: getSafeAvatarUrl(row[`${side}_avatar_url`], id),
+    id,
+    name: row[`${side}_name`],
+    score: row[`${side}_score`],
+    scorecard: row[`${side}_scorecard`] as Scorecard,
+    suckerTokens: row[`${side}_sucker_tokens`],
+    suckerTokensSpent: row[`${side}_sucker_tokens_spent`],
+  };
 }
 
 export async function getAllTimeOpponentRecord(): Promise<AllTimeOpponentRecord> {
