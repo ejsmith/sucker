@@ -343,21 +343,9 @@ security definer
 set search_path = ''
 stable
 as $$
-declare
-  viewer_id uuid := auth.uid();
 begin
-  if viewer_id is null then
+  if auth.uid() is null then
     raise exception 'You must be signed in to view stats.' using errcode = '42501';
-  end if;
-
-  if target_profile_id <> viewer_id and not exists (
-    select 1
-    from public.game_players viewer
-    join public.game_players target on target.game_id = viewer.game_id
-    where viewer.player_id = viewer_id
-      and target.player_id = target_profile_id
-  ) then
-    raise exception 'You can only view stats for players you have played.' using errcode = '42501';
   end if;
 
   return query
@@ -431,6 +419,90 @@ $$;
 
 revoke all on function public.get_profile_stat_rates(uuid) from public;
 grant execute on function public.get_profile_stat_rates(uuid) to authenticated;
+
+create or replace function public.get_profile_recent_games(target_profile_id uuid, game_limit integer default 25)
+returns table (
+  game_id uuid,
+  completed_at timestamptz,
+  player_id uuid,
+  player_name text,
+  player_avatar_url text,
+  player_score integer,
+  player_scorecard jsonb,
+  player_sucker_tokens integer,
+  player_sucker_tokens_spent integer,
+  opponent_id uuid,
+  opponent_name text,
+  opponent_avatar_url text,
+  opponent_score integer,
+  opponent_scorecard jsonb,
+  opponent_sucker_tokens integer,
+  opponent_sucker_tokens_spent integer
+)
+language plpgsql
+security definer
+set search_path = ''
+stable
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in to view completed games.' using errcode = '42501';
+  end if;
+
+  return query
+  select
+    game.id,
+    coalesce(game.completed_at, game.updated_at),
+    selected_player.player_id,
+    selected_profile.display_name,
+    selected_profile.avatar_url,
+    selected_result.final_score,
+    coalesce(selected_state.value -> 'scorecard', '{}'::jsonb),
+    selected_result.sucker_tokens_leftover,
+    selected_result.sucker_tokens_spent,
+    opponent_player.player_id,
+    opponent_profile.display_name,
+    opponent_profile.avatar_url,
+    opponent_result.final_score,
+    coalesce(opponent_state.value -> 'scorecard', '{}'::jsonb),
+    opponent_result.sucker_tokens_leftover,
+    opponent_result.sucker_tokens_spent
+  from public.games game
+  join public.game_players selected_player
+    on selected_player.game_id = game.id
+    and selected_player.player_id = target_profile_id
+    and selected_player.hidden_at is null
+  join public.game_players opponent_player
+    on opponent_player.game_id = game.id
+    and opponent_player.player_id <> target_profile_id
+  join public.game_player_results selected_result
+    on selected_result.game_id = game.id
+    and selected_result.player_id = selected_player.player_id
+  join public.game_player_results opponent_result
+    on opponent_result.game_id = game.id
+    and opponent_result.player_id = opponent_player.player_id
+  join public.profiles selected_profile on selected_profile.id = selected_player.player_id
+  join public.profiles opponent_profile on opponent_profile.id = opponent_player.player_id
+  cross join lateral (
+    select player.value
+    from jsonb_array_elements(game.state -> 'players') player(value)
+    where player.value ->> 'id' = selected_player.player_id::text
+    limit 1
+  ) selected_state
+  cross join lateral (
+    select player.value
+    from jsonb_array_elements(game.state -> 'players') player(value)
+    where player.value ->> 'id' = opponent_player.player_id::text
+    limit 1
+  ) opponent_state
+  where game.status = 'complete'
+  order by coalesce(game.completed_at, game.updated_at) desc
+  limit least(greatest(coalesce(game_limit, 25), 1), 25);
+end;
+$$;
+
+revoke all on function public.get_profile_recent_games(uuid, integer) from public;
+grant execute on function public.get_profile_recent_games(uuid, integer) to authenticated;
 
 create or replace function public.touch_updated_at()
 returns trigger
