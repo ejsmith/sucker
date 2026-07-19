@@ -116,6 +116,7 @@ export function isTauntAvailableForScenario(tauntId: TauntId, scenario: TauntSce
 export function getTurnTauntScenario({
   category,
   dice,
+  score,
   scratched,
 }: {
   category: string;
@@ -129,16 +130,16 @@ export function getTurnTauntScenario({
   if (dice.length === 5 && dice.every((die) => die === dice[0])) {
     return 'sucker-roll';
   }
-  if (category === 'largeStraight') {
+  if (category === 'largeStraight' && score > 0) {
     return 'straight';
   }
   if (category === 'smallStraight') {
     return 'base';
   }
-  if (category === 'fullHouse') {
+  if (category === 'fullHouse' && score > 0) {
     return 'full-house';
   }
-  if (category === 'fourOfAKind') {
+  if (category === 'fourOfAKind' && score > 0) {
     return 'four-kind';
   }
   return 'base';

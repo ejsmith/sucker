@@ -36,6 +36,7 @@ type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
 const pendingActionsKey = 'sucker:pending-multiplayer-actions:v2';
+const seenRemoteTauntKeyPrefix = 'sucker:seen-remote-taunt:v1';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
 let pendingStorageOperation: Promise<unknown> = Promise.resolve();
@@ -539,7 +540,19 @@ export async function getLatestRemoteTaunt(gameId: string) {
   return data ? toRemoteTaunt(data) : null;
 }
 
-export function subscribeToGameTaunts(gameId: string, onTaunt: (taunt: RemoteTaunt) => void) {
+export async function hasSeenRemoteTaunt(gameId: string, actorId: string, tauntId: string) {
+  return (await AsyncStorage.getItem(`${seenRemoteTauntKeyPrefix}:${actorId}:${gameId}`)) === tauntId;
+}
+
+export async function markRemoteTauntSeen(gameId: string, actorId: string, tauntId: string) {
+  await AsyncStorage.setItem(`${seenRemoteTauntKeyPrefix}:${actorId}:${gameId}`, tauntId);
+}
+
+export function subscribeToGameTaunts(
+  gameId: string,
+  onTaunt: (taunt: RemoteTaunt) => void,
+  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+) {
   const channel = supabase
     .channel(`game-taunts:${gameId}`)
     .on(
@@ -562,7 +575,7 @@ export function subscribeToGameTaunts(gameId: string, onTaunt: (taunt: RemoteTau
         }
       },
     )
-    .subscribe();
+    .subscribe((status) => onStatus?.(status));
 
   return () => {
     void supabase.removeChannel(channel);

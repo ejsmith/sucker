@@ -39,11 +39,23 @@ test('turn outcomes select the strongest relevant taunt scenario', () => {
     'straight',
   );
   assert.equal(
+    getTurnTauntScenario({ category: 'largeStraight', dice: [1, 1, 2, 3, 4], score: 0, scratched: false }),
+    'base',
+  );
+  assert.equal(
     getTurnTauntScenario({ category: 'smallStraight', dice: [1, 2, 3, 4, 6], score: 30, scratched: false }),
     'base',
   );
   assert.equal(
     getTurnTauntScenario({ category: 'chance', dice: [6, 6, 6, 6, 5], score: 35, scratched: false }),
+    'base',
+  );
+  assert.equal(
+    getTurnTauntScenario({ category: 'fullHouse', dice: [1, 1, 2, 3, 4], score: 0, scratched: false }),
+    'base',
+  );
+  assert.equal(
+    getTurnTauntScenario({ category: 'fourOfAKind', dice: [1, 1, 2, 3, 4], score: 0, scratched: false }),
     'base',
   );
   assert.equal(

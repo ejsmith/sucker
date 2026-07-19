@@ -53,7 +53,9 @@ import {
   getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
+  hasSeenRemoteTaunt,
   hasPendingMultiplayerAction,
+  markRemoteTauntSeen,
   PendingMultiplayerActionError,
   rollRemoteGame,
   scoreRemoteCategory,
@@ -561,11 +563,27 @@ export function RemoteGameScreen({
         }
       },
     );
-    const unsubscribeTaunts = subscribeToGameTaunts(gameId, (taunt) => {
-      if (isMounted) {
-        setRemoteTaunt(taunt);
-      }
-    });
+    const unsubscribeTaunts = subscribeToGameTaunts(
+      gameId,
+      (taunt) => {
+        if (isMounted) {
+          setRemoteTaunt(taunt);
+        }
+      },
+      (status) => {
+        if (!isMounted || status !== 'SUBSCRIBED') {
+          return;
+        }
+
+        void getLatestRemoteTaunt(gameId)
+          .then((latestTaunt) => {
+            if (isMounted) {
+              setRemoteTaunt(latestTaunt);
+            }
+          })
+          .catch((tauntError) => console.warn('Unable to refresh latest taunt', tauntError));
+      },
+    );
 
     return () => {
       isMounted = false;
@@ -598,7 +616,9 @@ export function RemoteGameScreen({
       return;
     }
 
-    const latestWithGame = [...recovered].reverse().find((item) => 'game' in item.result && Boolean(item.result.game));
+    const latestWithGame = [...recovered]
+      .reverse()
+      .find((item) => item.action.type !== 'taunt' && 'game' in item.result && Boolean(item.result.game));
     consumeRecoveredActions(recovered.map((item) => item.requestId));
     setUnresolvedRequestId(null);
 
@@ -673,9 +693,10 @@ export function RemoteGameScreen({
     }
 
     const interval = setInterval(() => {
-      void getGame(gameId)
-        .then((nextGame) => {
+      void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId)])
+        .then(([nextGame, latestTaunt]) => {
           setRemoteGame(nextGame);
+          setRemoteTaunt(latestTaunt);
           if (profileIdRef.current) {
             onGameChange(profileIdRef.current, nextGame);
           }
@@ -697,14 +718,15 @@ export function RemoteGameScreen({
     }
 
     let isCurrent = true;
-    void getGame(gameId)
-      .then((nextGame) => {
+    void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId)])
+      .then(([nextGame, latestTaunt]) => {
         if (!isCurrent) {
           return;
         }
 
         setError(null);
         setRemoteGame(nextGame);
+        setRemoteTaunt(latestTaunt);
         if (profileId) {
           onGameChange(profileId, nextGame);
           void syncRemoteBadgeCount(profileId);
@@ -760,7 +782,7 @@ export function RemoteGameScreen({
 
   async function runRemoteAction(
     action: () => Promise<{ game: RemoteGameRow }>,
-    options: { preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
+    options: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
   ) {
     const result = await runRemoteActionResult(action, options);
     return result?.game.state ?? null;
@@ -768,14 +790,20 @@ export function RemoteGameScreen({
 
   async function runRemoteActionResult<Result extends { game: RemoteGameRow }>(
     action: () => Promise<Result>,
-    { preserveNextTurns = false, showNextTurns = true }: { preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
+    {
+      applyGameResult = true,
+      preserveNextTurns = false,
+      showNextTurns = true,
+    }: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
   ) {
     setIsRemoteBusy(true);
     setError(null);
     try {
       const result = await action();
-      setRemoteGame(result.game);
-      if (profileId) {
+      if (applyGameResult) {
+        setRemoteGame(result.game);
+      }
+      if (profileId && applyGameResult) {
         onGameChange(profileId, result.game);
         if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
           void prepareNextTurnPrompt(profileId, result.game);
@@ -931,6 +959,7 @@ export function RemoteGameScreen({
     },
     onTaunt: (tauntId) =>
       runRemoteAction(() => sendRemoteTaunt(remoteGame.id, tauntId), {
+        applyGameResult: false,
         preserveNextTurns: true,
         showNextTurns: false,
       }),
@@ -1357,6 +1386,12 @@ export function LocalGameScreen({
     setVisibleIncomingTaunt(null);
     lastQueuedIncomingTauntId.current = null;
   }, [game.id]);
+
+  useEffect(() => {
+    if (!canTaunt) {
+      setIsTauntPickerOpen(false);
+    }
+  }, [canTaunt]);
 
   useEffect(() => {
     setIsNextTurnsDelayComplete(false);
@@ -1787,6 +1822,7 @@ export function LocalGameScreen({
   useEffect(() => {
     if (
       !isRemoteGame ||
+      !myProfileId ||
       !remoteTaunt ||
       remoteTaunt.actorId === myProfileId ||
       remoteStatus === 'complete' ||
@@ -1795,9 +1831,26 @@ export function LocalGameScreen({
       return;
     }
 
-    lastQueuedIncomingTauntId.current = remoteTaunt.id;
-    setPendingIncomingTaunt(remoteTaunt);
-  }, [isRemoteGame, myProfileId, remoteStatus, remoteTaunt]);
+    const incomingTaunt = remoteTaunt;
+    let isCurrent = true;
+    lastQueuedIncomingTauntId.current = incomingTaunt.id;
+    void hasSeenRemoteTaunt(game.id, myProfileId, incomingTaunt.id)
+      .then((hasSeenTaunt) => {
+        if (isCurrent && !hasSeenTaunt) {
+          setPendingIncomingTaunt(incomingTaunt);
+        }
+      })
+      .catch((seenTauntError) => {
+        console.warn('Unable to check whether the taunt was seen', seenTauntError);
+        if (isCurrent) {
+          setPendingIncomingTaunt(incomingTaunt);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [game.id, isRemoteGame, myProfileId, remoteStatus, remoteTaunt]);
 
   useEffect(() => {
     if (
@@ -1888,6 +1941,29 @@ export function LocalGameScreen({
     setVisibleRemoteGame(nextGame);
   }
 
+  function markIncomingTauntsSeen(...incomingTaunts: Array<RemoteTaunt | null>) {
+    if (!isRemoteGame || !myProfileId) {
+      return;
+    }
+
+    const latestIncomingTaunt = incomingTaunts.reduce<RemoteTaunt | null>((latest, incomingTaunt) => {
+      if (!incomingTaunt || (latest && latest.createdAt >= incomingTaunt.createdAt)) {
+        return latest;
+      }
+      return incomingTaunt;
+    }, null);
+    if (latestIncomingTaunt) {
+      void markRemoteTauntSeen(game.id, myProfileId, latestIncomingTaunt.id).catch((seenTauntError) =>
+        console.warn('Unable to remember the dismissed taunt', seenTauntError),
+      );
+    }
+  }
+
+  function dismissIncomingTaunt() {
+    markIncomingTauntsSeen(visibleIncomingTaunt);
+    setVisibleIncomingTaunt(null);
+  }
+
   function settleRemoteOptimisticAction(
     result: Promise<ReturnType<typeof createGame> | null>,
     rollbackGame: ReturnType<typeof createGame>,
@@ -1907,6 +1983,7 @@ export function LocalGameScreen({
       return;
     }
 
+    markIncomingTauntsSeen(pendingIncomingTaunt, visibleIncomingTaunt);
     setPendingIncomingTaunt(null);
     setVisibleIncomingTaunt(null);
     const sourceGame = liveGameRef.current;
@@ -3354,7 +3431,7 @@ export function LocalGameScreen({
                 accessibilityLabel="Dismiss taunt"
                 accessibilityRole="button"
                 hitSlop={gameLayout.unit(8)}
-                onPress={() => setVisibleIncomingTaunt(null)}
+                onPress={dismissIncomingTaunt}
                 style={({ pressed }) => [
                   styles.receivedTauntClose,
                   {

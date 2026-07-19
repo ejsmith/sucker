@@ -1306,6 +1306,7 @@ async function sendTaunt(
     throw new Error('That taunt is not available for this play.');
   }
 
+  mutationState.mayHaveWritten = true;
   const { error } = await admin.from('turn_actions').insert({
     action_type: 'taunt',
     actor_id: actorId,
@@ -1321,7 +1322,6 @@ async function sendTaunt(
     throw error;
   }
 
-  mutationState.mayHaveWritten = true;
   return { game };
 }
 
