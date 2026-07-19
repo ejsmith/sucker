@@ -82,6 +82,7 @@ export function getActionKey(action: MultiplayerAction) {
     case 'remove_game':
     case 'rematch_game':
     case 'nudge_turn':
+    case 'taunt':
     case 'pass_response':
     case 'mulligan':
       return JSON.stringify([action.type, action.gameId]);
@@ -112,6 +113,8 @@ function hasMatchingActionPayload(existing: MultiplayerAction, incoming: Multipl
         existing.category === incoming.category &&
         heldDiceMatch(existing.held, incoming.held)
       );
+    case 'taunt':
+      return incoming.type === 'taunt' && existing.tauntId === incoming.tauntId;
     default:
       return true;
   }

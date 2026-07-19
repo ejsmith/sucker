@@ -1,4 +1,5 @@
 import type { Dice, DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from '../game';
+import type { TauntId } from '../../shared/taunts';
 
 export type RemoteGameStatus = 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
 
@@ -32,6 +33,14 @@ export type RemoteTurnRow = {
   turn_index: number;
 };
 
+export type RemoteTaunt = {
+  actorId: string;
+  createdAt: string;
+  id: string;
+  tauntId: TauntId;
+  turnId: string | null;
+};
+
 export type MultiplayerAction =
   | {
       type: 'create_game';
@@ -55,6 +64,11 @@ export type MultiplayerAction =
   | {
       type: 'nudge_turn';
       gameId: string;
+    }
+  | {
+      type: 'taunt';
+      gameId: string;
+      tauntId: TauntId;
     }
   | {
       type: 'extra_roll';

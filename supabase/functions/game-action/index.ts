@@ -33,6 +33,7 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
+import { isTauntId, type TauntId } from '../_shared/taunts.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -70,6 +71,7 @@ type ActionInput =
   | { type: 'remove_game'; gameId: string }
   | { type: 'rematch_game'; gameId: string }
   | { type: 'nudge_turn'; gameId: string }
+  | { type: 'taunt'; gameId: string; tauntId: TauntId }
   | { type: 'extra_roll'; gameId: string; held?: GameState['held'] }
   | { type: 'roll'; gameId: string; held?: GameState['held'] }
   | {
@@ -201,6 +203,8 @@ async function applyAction(
       return createRematchGame(admin, actorId, action.gameId, mutationState);
     case 'nudge_turn':
       return nudgeTurn(admin, actorId, action.gameId, mutationState);
+    case 'taunt':
+      return sendTaunt(admin, actorId, action.gameId, action.tauntId, mutationState);
     case 'roll':
       return mutateGame(
         admin,
@@ -789,6 +793,13 @@ function toAction(value: unknown): Action {
         requestId,
         type,
       };
+    case 'taunt':
+      return {
+        gameId: readString(action, 'gameId'),
+        requestId,
+        tauntId: readTauntId(action),
+        type,
+      };
     case 'extra_roll':
     case 'roll':
       return {
@@ -853,6 +864,14 @@ function readUuid(record: Record<string, unknown>, key: string): string {
 
 function readHeld(record: Record<string, unknown>): GameState['held'] | undefined {
   return record.held === undefined ? undefined : toHeldDice(record.held);
+}
+
+function readTauntId(record: Record<string, unknown>): TauntId {
+  const tauntId = readString(record, 'tauntId');
+  if (!isTauntId(tauntId)) {
+    throw new Error('Choose one of the available taunts.');
+  }
+  return tauntId;
 }
 
 async function createRemoteGame(
@@ -1251,6 +1270,37 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
     targetPlayerId: game.current_player_id,
   });
   return { game, notificationProfileIds: [game.current_player_id] };
+}
+
+async function sendTaunt(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  tauntId: TauntId,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status === 'inviting' || game.status === 'complete') {
+    throw new Error('Taunting is only available during a game.');
+  }
+
+  const { error } = await admin.from('turn_actions').insert({
+    action_type: 'taunt',
+    actor_id: actorId,
+    game_id: gameId,
+    payload: { tauntId },
+    turn_id: game.last_turn_id,
+  });
+
+  if (error) {
+    if (error.code === '23505') {
+      throw new Error('Save some trash talk for the next turn.');
+    }
+    throw error;
+  }
+
+  mutationState.mayHaveWritten = true;
+  return { game };
 }
 
 async function mutateGame(

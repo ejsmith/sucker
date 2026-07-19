@@ -16,6 +16,7 @@
     "src/multiplayer/realtimeTopics.ts",
     "src/ui/bonusVisuals.ts",
     "src/ui/gameLayout.ts",
-    "src/ui/phoneStage.ts"
+    "src/ui/phoneStage.ts",
+    "shared/taunts.ts"
   ]
 }

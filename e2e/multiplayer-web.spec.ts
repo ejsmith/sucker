@@ -204,6 +204,48 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('taunt picker stays connected to the avatar without moving the scorecard', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`taunt-alice-${runId}`, 'Taunt Alice E2E');
+  const bob = await createUser(`taunt-bob-${runId}`, 'Taunt Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  const gameId = await createAcceptedGame(alicePage, bobPage);
+
+  await openGameFromLobby(alicePage, gameId);
+  const board = alicePage.getByTestId('scorecard-board');
+  const menuButton = alicePage.getByTestId('taunt-menu-button');
+  const boardBefore = await board.boundingBox();
+  const menuButtonBox = await menuButton.boundingBox();
+  expect(boardBefore).not.toBeNull();
+  expect(menuButtonBox).not.toBeNull();
+  expect(menuButtonBox!.y + menuButtonBox!.height).toBeLessThanOrEqual(boardBefore!.y + 1);
+
+  await menuButton.click();
+  await expect(menuButton).toHaveCount(0);
+  await expect(alicePage.getByTestId('taunt-picker')).toBeVisible();
+  const [boardAfter, avatarBox, panelBox, pointerBox] = await Promise.all([
+    board.boundingBox(),
+    alicePage.getByTestId('home-player-avatar').boundingBox(),
+    alicePage.getByTestId('taunt-picker-panel').boundingBox(),
+    alicePage.getByTestId('taunt-picker-pointer').boundingBox(),
+  ]);
+  expect(boardAfter).toEqual(boardBefore);
+  expect(avatarBox).not.toBeNull();
+  expect(panelBox).not.toBeNull();
+  expect(pointerBox).not.toBeNull();
+  expect(panelBox!.y).toBeLessThanOrEqual(boardBefore!.y + 1);
+  expect(Math.abs(pointerBox!.x + pointerBox!.width / 2 - (avatarBox!.x + avatarBox!.width / 2))).toBeLessThan(5);
+  expect(pointerBox!.y).toBeLessThanOrEqual(avatarBox!.y + avatarBox!.height);
+
+  await alicePage.getByTestId('taunt-option-punch-me').click();
+  await expect(alicePage.getByTestId('taunt-picker')).toHaveCount(0);
+  await openGameFromLobby(bobPage, gameId);
+  await expect(bobPage.getByTestId('received-taunt')).toContainText('Punch me. I dare you.');
+  await bobPage.getByTestId('dismiss-taunt').click();
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
+});
+
 test('awarding the section bonus stays legible and keeps the game usable', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`bonus-alice-${runId}`, 'Bonus Alice E2E');

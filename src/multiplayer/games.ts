@@ -3,7 +3,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { randomUUID } from 'expo-crypto';
 import { supabase } from './supabase';
 import type { Database } from './database.types';
-import type { MultiplayerAction, MultiplayerActionResult, RemoteTurnRow } from './types';
+import type { MultiplayerAction, MultiplayerActionResult, RemoteTaunt, RemoteTurnRow } from './types';
 import {
   scoreCategories,
   type DieValue,
@@ -23,6 +23,7 @@ import {
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
 import { createGameListRealtimeTopic } from './realtimeTopics';
+import { isTauntId, type TauntId } from '../../shared/taunts';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -453,6 +454,57 @@ export async function nudgeRemoteGame(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'nudge_turn' });
 }
 
+export async function sendRemoteTaunt(gameId: string, tauntId: TauntId) {
+  return applyMultiplayerAction({ gameId, tauntId, type: 'taunt' });
+}
+
+export async function getLatestRemoteTaunt(gameId: string) {
+  const { data, error } = await supabase
+    .from('turn_actions')
+    .select('id, actor_id, created_at, payload, turn_id')
+    .eq('game_id', gameId)
+    .eq('action_type', 'taunt')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? toRemoteTaunt(data) : null;
+}
+
+export function subscribeToGameTaunts(gameId: string, onTaunt: (taunt: RemoteTaunt) => void) {
+  const channel = supabase
+    .channel(`game-taunts:${gameId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        filter: `game_id=eq.${gameId}`,
+        schema: 'public',
+        table: 'turn_actions',
+      },
+      (payload) => {
+        const action = payload.new as TurnActionRow;
+        if (action.action_type !== 'taunt') {
+          return;
+        }
+
+        const taunt = toRemoteTaunt(action);
+        if (taunt) {
+          onTaunt(taunt);
+        }
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
 export function subscribeToGame(
   gameId: string,
   onChange: (game: ReturnType<typeof toRemoteGameRow>) => void,
@@ -615,6 +667,27 @@ function toRemoteTurnRow(row: TurnRow): RemoteTurnRow {
     score: row.score,
     status: row.status,
     turn_index: row.turn_index,
+  };
+}
+
+function toRemoteTaunt(
+  row: Pick<TurnActionRow, 'actor_id' | 'created_at' | 'id' | 'payload' | 'turn_id'>,
+): RemoteTaunt | null {
+  if (!row.payload || typeof row.payload !== 'object' || Array.isArray(row.payload)) {
+    return null;
+  }
+
+  const tauntId = (row.payload as Record<string, unknown>).tauntId;
+  if (!isTauntId(tauntId)) {
+    return null;
+  }
+
+  return {
+    actorId: row.actor_id,
+    createdAt: row.created_at,
+    id: row.id,
+    tauntId,
+    turnId: row.turn_id,
   };
 }
 

@@ -49,6 +49,38 @@ test('roll retries keep the original request but flag changed held dice as a con
   assert.equal(retried.pending.length, 1);
 });
 
+test('taunt retries reuse exact payloads and reject a changed taunt while pending', () => {
+  const first = createOrReuseActionRequest(
+    [],
+    'alice',
+    { gameId: 'game-1', tauntId: 'sucker', type: 'taunt' },
+    now,
+    () => 'request-1',
+    maxAgeMs,
+  );
+  const exactRetry = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    { gameId: 'game-1', tauntId: 'sucker', type: 'taunt' },
+    now + 1_000,
+    () => 'request-2',
+    maxAgeMs,
+  );
+  const changedRetry = createOrReuseActionRequest(
+    first.pending,
+    'alice',
+    { gameId: 'game-1', tauntId: 'beat-that', type: 'taunt' },
+    now + 2_000,
+    () => 'request-3',
+    maxAgeMs,
+  );
+
+  assert.equal(exactRetry.request.requestId, 'request-1');
+  assert.equal(exactRetry.hasPayloadConflict, false);
+  assert.equal(changedRetry.request.requestId, 'request-1');
+  assert.equal(changedRetry.hasPayloadConflict, true);
+});
+
 test('score retries keep the original request but flag changed held dice as a conflict', () => {
   const first = createOrReuseActionRequest(
     [],
