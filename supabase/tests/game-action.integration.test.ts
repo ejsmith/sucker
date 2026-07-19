@@ -245,6 +245,17 @@ Deno.test('taunts are available only after the sender finishes the latest turn',
   assertEquals(taunts[0]?.actor_id, alice.id);
 });
 
+Deno.test('post-turn taunts expire when the recipient starts rolling', async () => {
+  const [alice, bob] = await createUsers('expired-post-turn-taunts', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  await scratchAndPass(game.id, alice, bob, 'ones');
+  await invokeGameAction(bob, { gameId: game.id, held: falseHeld, type: 'roll' });
+
+  const lateTaunt = await invokeGameAction(alice, { gameId: game.id, tauntId: 'beat-that', type: 'taunt' }, 400);
+  assertEquals(lateTaunt.error, 'You can only taunt after finishing your own turn.');
+});
+
 Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {
   const [alice, bob] = await createUsers('action-abuse', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

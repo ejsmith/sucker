@@ -530,12 +530,13 @@ export async function sendRemoteTaunt(gameId: string, tauntId: TauntId) {
   return applyMultiplayerAction({ gameId, tauntId, type: 'taunt' });
 }
 
-export async function getLatestRemoteTaunt(gameId: string) {
+export async function getLatestRemoteTaunt(gameId: string, recipientId: string) {
   const { data, error } = await supabase
     .from('turn_actions')
     .select('id, actor_id, created_at, payload, turn_id')
     .eq('game_id', gameId)
     .eq('action_type', 'taunt')
+    .neq('actor_id', recipientId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();

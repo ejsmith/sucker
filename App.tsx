@@ -455,6 +455,7 @@ export function RemoteGameScreen({
   const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
   const [remoteTaunt, setRemoteTaunt] = useState<RemoteTaunt | null>(null);
   const [remoteTauntOpportunity, setRemoteTauntOpportunity] = useState<RemoteTauntOpportunity | null>(null);
+  const [tauntOpportunityRefreshKey, setTauntOpportunityRefreshKey] = useState(0);
   const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
   const [remoteLastTurnLoadFailedId, setRemoteLastTurnLoadFailedId] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
@@ -515,22 +516,22 @@ export function RemoteGameScreen({
       setIsLoading(true);
       setError(null);
       try {
-        const [{ data: userData, error: userError }, nextGame, latestTaunt] = await Promise.all([
-          supabase.auth.getUser(),
-          getGame(gameId),
-          getLatestRemoteTaunt(gameId),
-        ]);
+        const { data: userData, error: userError } = await supabase.auth.getUser();
         if (userError) {
           throw userError;
         }
         if (!userData.user) {
           throw new Error('Sign in again to open this game.');
         }
+        profileIdRef.current = userData.user.id;
+        const [nextGame, latestTaunt] = await Promise.all([
+          getGame(gameId),
+          getLatestRemoteTaunt(gameId, userData.user.id),
+        ]);
         if (!isMounted) {
           return;
         }
 
-        profileIdRef.current = userData.user.id;
         setProfileId(userData.user.id);
         setRemoteGame(nextGame);
         setRemoteTaunt(latestTaunt);
@@ -566,7 +567,13 @@ export function RemoteGameScreen({
     const unsubscribeTaunts = subscribeToGameTaunts(
       gameId,
       (taunt) => {
-        if (isMounted) {
+        if (!isMounted) {
+          return;
+        }
+
+        if (taunt.actorId === profileIdRef.current) {
+          setTauntOpportunityRefreshKey((current) => current + 1);
+        } else {
           setRemoteTaunt(taunt);
         }
       },
@@ -575,7 +582,12 @@ export function RemoteGameScreen({
           return;
         }
 
-        void getLatestRemoteTaunt(gameId)
+        const currentProfileId = profileIdRef.current;
+        if (!currentProfileId) {
+          return;
+        }
+
+        void getLatestRemoteTaunt(gameId, currentProfileId)
           .then((latestTaunt) => {
             if (isMounted) {
               setRemoteTaunt(latestTaunt);
@@ -619,6 +631,9 @@ export function RemoteGameScreen({
     const latestWithGame = [...recovered]
       .reverse()
       .find((item) => item.action.type !== 'taunt' && 'game' in item.result && Boolean(item.result.game));
+    if (recovered.some((item) => item.action.type === 'taunt')) {
+      setTauntOpportunityRefreshKey((current) => current + 1);
+    }
     consumeRecoveredActions(recovered.map((item) => item.requestId));
     setUnresolvedRequestId(null);
 
@@ -685,15 +700,15 @@ export function RemoteGameScreen({
     return () => {
       isMounted = false;
     };
-  }, [profileId, remoteGame, remoteLastTurn]);
+  }, [profileId, remoteGame, remoteLastTurn, tauntOpportunityRefreshKey]);
 
   useEffect(() => {
-    if (!remoteGame || isRealtimeConnected || !isAppActive) {
+    if (!remoteGame || !profileId || isRealtimeConnected || !isAppActive) {
       return;
     }
 
     const interval = setInterval(() => {
-      void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId)])
+      void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId, profileId)])
         .then(([nextGame, latestTaunt]) => {
           setRemoteGame(nextGame);
           setRemoteTaunt(latestTaunt);
@@ -707,18 +722,18 @@ export function RemoteGameScreen({
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [gameId, isAppActive, isRealtimeConnected, onGameChange, remoteGame]);
+  }, [gameId, isAppActive, isRealtimeConnected, onGameChange, profileId, remoteGame]);
 
   useEffect(() => {
     const wasActive = wasAppActive.current;
     wasAppActive.current = isAppActive;
 
-    if (!remoteGame || !isAppActive || wasActive) {
+    if (!remoteGame || !profileId || !isAppActive || wasActive) {
       return;
     }
 
     let isCurrent = true;
-    void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId)])
+    void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId, profileId)])
       .then(([nextGame, latestTaunt]) => {
         if (!isCurrent) {
           return;
@@ -1194,7 +1209,8 @@ export function LocalGameScreen({
   const isPostTurnTauntOpportunity = Boolean(
     remoteTauntOpportunity?.source === 'turn' &&
     remoteLastTurn?.player_id === myProfileId &&
-    currentPlayer.id !== myProfileId,
+    currentPlayer.id !== myProfileId &&
+    game.rollNumber === 0,
   );
   const isPostPunchTauntOpportunity = Boolean(
     remoteTauntOpportunity?.source === 'punch' && remoteStatus === 'active' && game.rollNumber === 0,

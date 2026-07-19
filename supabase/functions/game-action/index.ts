@@ -1295,10 +1295,14 @@ async function sendTaunt(
 
   const turn = await loadTurn(admin, game.last_turn_id);
   const opportunity = await loadTauntOpportunity(admin, gameId, actorId, turn);
+  const gameState = toGameState(game.state);
   const isPostTurnOpportunity =
-    opportunity?.source === 'turn' && turn.player_id === actorId && game.current_player_id !== actorId;
+    opportunity?.source === 'turn' &&
+    turn.player_id === actorId &&
+    game.current_player_id !== actorId &&
+    gameState.rollNumber === 0;
   const isPostPunchOpportunity =
-    opportunity?.source === 'punch' && game.status === 'active' && toGameState(game.state).rollNumber === 0;
+    opportunity?.source === 'punch' && game.status === 'active' && gameState.rollNumber === 0;
   if (turn.game_id !== gameId || !opportunity || (!isPostTurnOpportunity && !isPostPunchOpportunity)) {
     throw new Error('You can only taunt after finishing your own turn.');
   }
