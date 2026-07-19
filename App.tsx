@@ -1192,6 +1192,7 @@ export function LocalGameScreen({
     }),
   ).current;
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
+  const incomingTauntRollNumber = remoteGame?.rollNumber ?? game.rollNumber;
   const avatarProfileIdsKey = [
     ...new Set([
       ...game.players.map((player) => player.id),
@@ -1873,7 +1874,7 @@ export function LocalGameScreen({
       !remoteTaunt ||
       remoteTaunt.actorId === myProfileId ||
       remoteStatus === 'complete' ||
-      game.rollNumber > 0 ||
+      incomingTauntRollNumber > 0 ||
       remoteTaunt.turnId !== remoteLastTurnId ||
       lastQueuedIncomingTauntId.current === remoteTaunt.id
     ) {
@@ -1899,7 +1900,7 @@ export function LocalGameScreen({
     return () => {
       isCurrent = false;
     };
-  }, [game.id, game.rollNumber, isRemoteGame, myProfileId, remoteLastTurnId, remoteStatus, remoteTaunt]);
+  }, [game.id, incomingTauntRollNumber, isRemoteGame, myProfileId, remoteLastTurnId, remoteStatus, remoteTaunt]);
 
   useEffect(() => {
     const incomingTaunts = [pendingIncomingTaunt, visibleIncomingTaunt].filter(
@@ -1909,7 +1910,8 @@ export function LocalGameScreen({
       !isRemoteGame ||
       !myProfileId ||
       incomingTaunts.length === 0 ||
-      (game.rollNumber === 0 && incomingTaunts.every((incomingTaunt) => incomingTaunt.turnId === remoteLastTurnId))
+      (incomingTauntRollNumber === 0 &&
+        incomingTaunts.every((incomingTaunt) => incomingTaunt.turnId === remoteLastTurnId))
     ) {
       return;
     }
@@ -1922,7 +1924,15 @@ export function LocalGameScreen({
     );
     setPendingIncomingTaunt(null);
     setVisibleIncomingTaunt(null);
-  }, [game.id, game.rollNumber, isRemoteGame, myProfileId, pendingIncomingTaunt, remoteLastTurnId, visibleIncomingTaunt]);
+  }, [
+    game.id,
+    incomingTauntRollNumber,
+    isRemoteGame,
+    myProfileId,
+    pendingIncomingTaunt,
+    remoteLastTurnId,
+    visibleIncomingTaunt,
+  ]);
 
   useEffect(() => {
     if (
