@@ -238,12 +238,31 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   expect(Math.abs(pointerBox!.x + pointerBox!.width / 2 - (avatarBox!.x + avatarBox!.width / 2))).toBeLessThan(5);
   expect(pointerBox!.y).toBeLessThanOrEqual(avatarBox!.y + avatarBox!.height);
 
+  await alicePage.getByTestId('taunt-picker-close-button').click();
+  await alicePage.getByTestId('roll-button').click();
+  await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+  await alicePage.getByTestId('home-score-box-ones').click();
+  await expect(alicePage.getByTestId('play-score-button')).toBeEnabled();
+  await alicePage.getByTestId('play-score-button').click();
+  await expect.poll(() => loadGameStatus(gameId)).toBe('response_window');
+  await expect(alicePage.getByTestId('next-turns-dialog')).toBeVisible({ timeout: 15_000 });
+  await alicePage.getByTestId('next-turns-close-button').click();
+
+  await menuButton.click();
   await alicePage.getByTestId('taunt-option-punch-me').click();
   await expect(alicePage.getByTestId('taunt-picker')).toHaveCount(0);
   await openGameFromLobby(bobPage, gameId);
-  await expect(bobPage.getByTestId('received-taunt')).toContainText('Punch me. I dare you.');
-  await bobPage.getByTestId('dismiss-taunt').click();
+
+  await expect(bobPage.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 15_000 });
   await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
+  await expect(bobPage.getByTestId('opponent-turn-reveal')).toHaveCount(0, { timeout: 15_000 });
+  await expect(bobPage.getByTestId('score-dice-overlay')).toBeVisible();
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0);
+  await expect(bobPage.getByTestId('score-dice-overlay')).toHaveCount(0, { timeout: 5_000 });
+  await expect(bobPage.getByTestId('received-taunt')).toContainText('Punch me. I dare you.');
+  await bobPage.waitForTimeout(1_000);
+  await expect(bobPage.getByTestId('received-taunt')).toBeVisible();
+  await expect(bobPage.getByTestId('received-taunt')).toHaveCount(0, { timeout: 1_500 });
 });
 
 test('awarding the section bonus stays legible and keeps the game usable', async ({ browser }) => {
