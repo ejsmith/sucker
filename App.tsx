@@ -1902,6 +1902,29 @@ export function LocalGameScreen({
   }, [game.id, game.rollNumber, isRemoteGame, myProfileId, remoteLastTurnId, remoteStatus, remoteTaunt]);
 
   useEffect(() => {
+    const incomingTaunts = [pendingIncomingTaunt, visibleIncomingTaunt].filter(
+      (incomingTaunt): incomingTaunt is RemoteTaunt => Boolean(incomingTaunt),
+    );
+    if (
+      !isRemoteGame ||
+      !myProfileId ||
+      incomingTaunts.length === 0 ||
+      (game.rollNumber === 0 && incomingTaunts.every((incomingTaunt) => incomingTaunt.turnId === remoteLastTurnId))
+    ) {
+      return;
+    }
+
+    const latestIncomingTaunt = incomingTaunts.reduce((latest, incomingTaunt) =>
+      latest.createdAt >= incomingTaunt.createdAt ? latest : incomingTaunt,
+    );
+    void markRemoteTauntSeen(game.id, myProfileId, latestIncomingTaunt.id).catch((seenTauntError) =>
+      console.warn('Unable to remember the dismissed taunt', seenTauntError),
+    );
+    setPendingIncomingTaunt(null);
+    setVisibleIncomingTaunt(null);
+  }, [game.id, game.rollNumber, isRemoteGame, myProfileId, pendingIncomingTaunt, remoteLastTurnId, visibleIncomingTaunt]);
+
+  useEffect(() => {
     if (
       !pendingIncomingTaunt ||
       visibleIncomingTaunt ||
