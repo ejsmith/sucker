@@ -1,0 +1,149 @@
+name: Native UI Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Native platform to test
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - android
+          - ios
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-ui-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+  EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS: '1'
+
+jobs:
+  android:
+    name: Android Maestro
+    if: ${{ inputs.platform == 'both' || inputs.platform == 'android' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build app and run Maestro
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            npx expo run:android --variant release --no-bundler
+            npm run test:e2e:native
+
+      - name: Upload Maestro results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maestro-android-${{ github.run_id }}
+          path: ~/.maestro/tests
+          if-no-files-found: ignore
+
+  ios:
+    name: iOS Maestro
+    if: ${{ inputs.platform == 'both' || inputs.platform == 'ios' }}
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
+
+      - name: Boot iOS Simulator
+        run: |
+          simulator="$(xcrun simctl list devices available -j | node -e '
+            const input = require("fs").readFileSync(0, "utf8");
+            const devices = Object.values(JSON.parse(input).devices).flat();
+            const device = devices.find((candidate) => candidate.name.startsWith("iPhone"));
+            if (!device) throw new Error("No available iPhone Simulator found");
+            process.stdout.write(device.udid + "|" + device.state);
+          ')"
+          simulator_udid="${simulator%%|*}"
+          simulator_state="${simulator##*|}"
+          if [[ "$simulator_state" != "Booted" ]]; then
+            xcrun simctl boot "$simulator_udid"
+          fi
+          xcrun simctl bootstatus "$simulator_udid" -b
+          echo "IOS_SIMULATOR_UDID=$simulator_udid" >> "$GITHUB_ENV"
+
+      - name: Build app and run Maestro
+        run: |
+          npx expo run:ios --configuration Release --device "$IOS_SIMULATOR_UDID" --no-bundler
+          maestro --device "$IOS_SIMULATOR_UDID" test --include-tags smoke .maestro
+
+      - name: Upload Maestro results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maestro-ios-${{ github.run_id }}
+          path: ~/.maestro/tests
+          if-no-files-found: ignore

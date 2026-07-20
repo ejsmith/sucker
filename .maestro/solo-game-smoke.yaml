@@ -1,0 +1,37 @@
+appId: com.ejsmith.sucker
+name: Solo game roll, hold, and score
+tags:
+  - smoke
+  - offline
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: deny
+- openLink: sucker://local
+- assertVisible:
+    id: game-screen
+- assertVisible:
+    id: roll-button
+    enabled: true
+- tapOn:
+    id: roll-button
+- assertVisible:
+    text: 'Die 1: [1-6], not held'
+- tapOn:
+    id: die-slot-0
+- assertVisible:
+    text: 'Die 1: [1-6], held'
+- tapOn:
+    id: roll-button
+- tapOn:
+    id: category-button-chance
+    enabled: true
+- assertVisible:
+    id: play-score-button
+    enabled: true
+- tapOn:
+    id: play-score-button
+- assertVisible:
+    id: category-button-chance
+    enabled: false

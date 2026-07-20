@@ -1,0 +1,54 @@
+appId: com.ejsmith.sucker
+name: Solo game token actions
+tags:
+  - smoke
+  - offline
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: deny
+- openLink: sucker://local
+- assertVisible:
+    id: game-screen
+- assertVisible:
+    id: token-count
+    text: '10'
+- tapOn:
+    id: token-menu-button
+- tapOn:
+    id: token-option-extra-roll
+    enabled: true
+- assertVisible:
+    id: token-count
+    text: '9'
+- assertVisible:
+    id: rolls-left-count
+    text: '5'
+- tapOn:
+    id: roll-button
+- tapOn:
+    id: token-menu-button
+- tapOn:
+    id: token-option-mulligan
+    enabled: true
+- assertVisible:
+    id: token-count
+    text: '6'
+- assertVisible:
+    id: rolls-left-count
+    text: '4'
+- tapOn:
+    id: token-menu-button
+- tapOn:
+    id: token-option-sucker-deal
+    enabled: true
+- tapOn:
+    id: category-button-ones
+    enabled: true
+- assertVisible:
+    id: category-button-ones
+    enabled: false
+- assertVisible:
+    id: token-count
+    text: '7'
