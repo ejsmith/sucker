@@ -60,6 +60,12 @@ export async function verifyEmailCode(email: string, token: string) {
   return data.session;
 }
 
+export async function signInWithPassword(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data.session;
+}
+
 export async function signInAsLocalTestPlayer(player: LocalTestPlayer) {
   if (!isLocalMultiplayerDevelopment()) {
     throw new Error('Test player login is only available with a local development backend.');
@@ -103,7 +109,7 @@ export function getAuthRedirectUrl() {
     return window.location.origin;
   }
 
-  return __DEV__ ? 'sucker://auth/callback' : 'https://sucker.games/auth/callback';
+  return __DEV__ ? 'sucker://auth/callback' : 'https://play.sucker.games/auth/callback';
 }
 
 export function hasAuthCallbackParams(url: string | null) {

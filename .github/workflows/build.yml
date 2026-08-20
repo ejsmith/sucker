@@ -295,7 +295,9 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Add custom domain
-        run: echo "sucker.games" > dist/CNAME
+        run: |
+          touch dist/.nojekyll
+          echo "play.sucker.games" > dist/CNAME
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

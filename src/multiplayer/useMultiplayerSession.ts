@@ -7,6 +7,7 @@ import {
   hasAuthCallbackParams,
   signInAsLocalTestPlayer,
   signInWithEmail,
+  signInWithPassword as signInWithPasswordCredentials,
   signOut,
   upsertProfile,
   verifyEmailCode,
@@ -204,6 +205,23 @@ export function useMultiplayerSession() {
     }
   }
 
+  async function signInWithPassword(email: string, password: string) {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const nextSession = await signInWithPasswordCredentials(email, password);
+      setSession(nextSession);
+      if (nextSession) await refreshProfile();
+      return nextSession;
+    } catch (signInError) {
+      const message = toErrorMessage(signInError);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function saveProfile(input: ProfileInput) {
     setError(null);
     setIsLoading(true);
@@ -236,6 +254,7 @@ export function useMultiplayerSession() {
     saveProfile,
     sendSignInCode,
     signInAsLocalTestUser,
+    signInWithPassword,
     session,
     verifySignInCode,
   };

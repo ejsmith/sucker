@@ -29,6 +29,7 @@ import {
 } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import { recoverPendingAvatar, removeAvatar, selectAvatar, uploadAvatar, type AvatarSource } from './avatars';
+import { deleteCurrentAccount } from './account';
 import {
   canRegisterWebPush,
   countGamesAwaitingTurn,
@@ -56,9 +57,8 @@ type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
 type LobbyPage = 'games' | 'profile' | 'startFriend' | 'completedGames' | 'completedGameDetail' | 'completedGameStats';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
-const publicInviteBaseUrl = 'https://sucker.games/invite';
-const privacyPolicyUrl = 'https://sucker.games/privacy.html';
-const accountDeletionUrl = 'https://sucker.games/account-deletion.html';
+const publicInviteBaseUrl = 'https://play.sucker.games/invite';
+const privacyPolicyUrl = 'https://play.sucker.games/privacy.html';
 const webPushPromptDismissedAtKey = 'sucker.webPushPromptDismissedAt';
 const webPushPromptSnoozeMs = 7 * 24 * 60 * 60 * 1_000;
 const nudgeTurnWaitMs = 60 * 60 * 1_000;
@@ -102,12 +102,15 @@ export function MultiplayerLobby({
     saveProfile,
     sendSignInCode,
     signInAsLocalTestUser,
+    signInWithPassword,
     session,
     verifySignInCode,
   } = useMultiplayerSession();
   const { consumeRecoveredActions, recoveredActions } = useNetworkStatus();
   const [email, setEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [usePasswordLogin, setUsePasswordLogin] = useState(false);
   const [sentCodeEmail, setSentCodeEmail] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
@@ -129,6 +132,7 @@ export function MultiplayerLobby({
   const [now, setNow] = useState(() => Date.now());
   const [page, setPage] = useState<LobbyPage>('games');
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
+  const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
   const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
@@ -560,6 +564,14 @@ export function MultiplayerLobby({
     });
   }
 
+  async function handlePasswordLogin() {
+    await runAction(async () => {
+      await signInWithPassword(email.trim(), password);
+      setPassword('');
+      setMessage(null);
+    });
+  }
+
   async function shareInviteLink() {
     if (!generatedInviteCode) {
       return;
@@ -605,25 +617,35 @@ export function MultiplayerLobby({
     const isCodeSent = sentCodeEmail !== null;
     const isLoginBusy = isBusy || isLoading;
     const loginMessage = message ?? error;
-    const isLoginActionDisabled = isLoginBusy || (isCodeSent ? loginCode.trim().length < 6 : email.trim().length === 0);
+    const isLoginActionDisabled =
+      isLoginBusy ||
+      (usePasswordLogin
+        ? email.trim().length === 0 || password.length === 0
+        : isCodeSent
+          ? loginCode.trim().length < 6
+          : email.trim().length === 0);
     const loginButtonLabel = isLoginBusy
-      ? isCodeSent
-        ? 'Verifying...'
-        : 'Sending...'
-      : isCodeSent
-        ? 'Verify Code'
-        : 'Send Code';
+      ? usePasswordLogin
+        ? 'Signing In...'
+        : isCodeSent
+          ? 'Verifying...'
+          : 'Sending...'
+      : usePasswordLogin
+        ? 'Sign In'
+        : isCodeSent
+          ? 'Verify Code'
+          : 'Send Code';
 
     return renderShell(
       <>
         <SuckerLobbyTitle />
         <View style={lobbyStyles.loginActionGroup}>
           <Text style={lobbyStyles.loginSectionTitle}>Play Friends</Text>
-          {isCodeSent && <Text style={lobbyStyles.subtleText}>Code sent to {sentCodeEmail}</Text>}
+          {!usePasswordLogin && isCodeSent && <Text style={lobbyStyles.subtleText}>Code sent to {sentCodeEmail}</Text>}
           <TextInput
             autoCapitalize="none"
             autoComplete="email"
-            editable={!isCodeSent}
+            editable={usePasswordLogin || !isCodeSent}
             keyboardType="email-address"
             onChangeText={setEmail}
             placeholder="Email"
@@ -632,7 +654,22 @@ export function MultiplayerLobby({
             testID="login-email-input"
             value={email}
           />
-          {isCodeSent && (
+          {usePasswordLogin && (
+            <TextInput
+              autoCapitalize="none"
+              autoComplete="current-password"
+              editable={!isLoginBusy}
+              onChangeText={setPassword}
+              placeholder="Password"
+              placeholderTextColor="#8A4B12"
+              secureTextEntry
+              style={lobbyStyles.input}
+              testID="login-password-input"
+              textContentType="password"
+              value={password}
+            />
+          )}
+          {!usePasswordLogin && isCodeSent && (
             <TextInput
               autoCapitalize="none"
               editable={!isLoginBusy}
@@ -650,20 +687,24 @@ export function MultiplayerLobby({
           )}
           <Pressable
             disabled={isLoginActionDisabled}
-            onPress={() => void (isCodeSent ? handleVerifyCode() : handleSendCode())}
+            onPress={() =>
+              void (usePasswordLogin ? handlePasswordLogin() : isCodeSent ? handleVerifyCode() : handleSendCode())
+            }
             style={({ pressed }) => [
               lobbyStyles.primaryButton,
               isLoginActionDisabled && lobbyStyles.primaryButtonDisabled,
               pressed && lobbyStyles.pressed,
             ]}
-            testID={isCodeSent ? 'verify-code-button' : 'send-code-button'}
+            testID={
+              usePasswordLogin ? 'password-sign-in-button' : isCodeSent ? 'verify-code-button' : 'send-code-button'
+            }
           >
             <View style={lobbyStyles.primaryButtonContent}>
               {isLoginBusy && <ActivityIndicator color="#210505" size="small" />}
               <Text style={lobbyStyles.primaryButtonText}>{loginButtonLabel}</Text>
             </View>
           </Pressable>
-          {isCodeSent && (
+          {!usePasswordLogin && isCodeSent && (
             <View style={lobbyStyles.loginLinksRow}>
               <Pressable
                 disabled={isLoginBusy}
@@ -684,6 +725,22 @@ export function MultiplayerLobby({
                 <Text style={lobbyStyles.localLinkText}>Different email</Text>
               </Pressable>
             </View>
+          )}
+          {!isCodeSent && (
+            <Pressable
+              disabled={isLoginBusy}
+              onPress={() => {
+                setUsePasswordLogin((current) => !current);
+                setPassword('');
+                setMessage(null);
+              }}
+              style={({ pressed }) => [lobbyStyles.localLink, pressed && lobbyStyles.pressed]}
+              testID="toggle-password-login"
+            >
+              <Text style={lobbyStyles.localLinkText}>
+                {usePasswordLogin ? 'Use an email code' : 'Sign in with a password'}
+              </Text>
+            </Pressable>
           )}
           {loginMessage && <Text style={lobbyStyles.message}>{loginMessage}</Text>}
         </View>
@@ -1203,8 +1260,9 @@ export function MultiplayerLobby({
             <Text style={lobbyStyles.signOutText}>Privacy Policy</Text>
           </Pressable>
           <Pressable
-            accessibilityRole="link"
-            onPress={() => void Linking.openURL(accountDeletionUrl)}
+            accessibilityRole="button"
+            disabled={isBusy}
+            onPress={() => setDeleteAccountVisible(true)}
             style={({ pressed }) => [
               lobbyStyles.signOutButton,
               lobbyStyles.deleteAccountButton,
@@ -1268,6 +1326,52 @@ export function MultiplayerLobby({
               >
                 <Text style={lobbyStyles.avatarPickerCancelText}>Cancel</Text>
               </Pressable>
+            </View>
+          </SafeAreaView>
+        </Modal>
+        <Modal
+          animationType="fade"
+          onRequestClose={() => {
+            if (!isBusy) setDeleteAccountVisible(false);
+          }}
+          transparent
+          visible={deleteAccountVisible}
+        >
+          <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={lobbyStyles.modalBackdrop}>
+            <View accessibilityViewIsModal role="dialog" style={lobbyStyles.deleteAccountPanel}>
+              <Text style={lobbyStyles.avatarPickerTitle}>Delete Account?</Text>
+              <Text style={lobbyStyles.deleteAccountBody}>
+                This permanently deletes your profile, photo, invites, notifications, and games. Shared games will also
+                disappear from your opponents&apos; history. This cannot be undone.
+              </Text>
+              <Pressable
+                accessibilityLabel="Permanently delete my account"
+                disabled={isBusy}
+                onPress={() =>
+                  void runAction(async () => {
+                    await deleteCurrentAccount();
+                    setDeleteAccountVisible(false);
+                    onGamesChange(null, []);
+                  })
+                }
+                style={({ pressed }) => [
+                  lobbyStyles.avatarPickerAction,
+                  lobbyStyles.deleteAccountConfirm,
+                  pressed && lobbyStyles.pressed,
+                ]}
+                testID="confirm-delete-account-button"
+              >
+                <Text style={lobbyStyles.deleteAccountConfirmText}>Permanently Delete Account</Text>
+              </Pressable>
+              <Pressable
+                disabled={isBusy}
+                onPress={() => setDeleteAccountVisible(false)}
+                style={({ pressed }) => [lobbyStyles.avatarPickerCancel, pressed && lobbyStyles.pressed]}
+                testID="cancel-delete-account-button"
+              >
+                <Text style={lobbyStyles.avatarPickerCancelText}>Cancel</Text>
+              </Pressable>
+              {isBusy && <ActivityIndicator color="#FFD329" />}
             </View>
           </SafeAreaView>
         </Modal>
@@ -2190,7 +2294,7 @@ function getInviteCodeFromUrl(url: string | null) {
       return parsedUrl.pathname.replace(/^\//, '').trim().toUpperCase() || null;
     }
 
-    if (parsedUrl.hostname === 'sucker.games') {
+    if (parsedUrl.hostname === 'play.sucker.games') {
       const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
       if (pathParts[0] === 'invite' && pathParts[1]) {
         return pathParts[1].trim().toUpperCase();
@@ -2360,6 +2464,34 @@ const lobbyStyles = StyleSheet.create({
   },
   deleteAccountText: {
     color: '#FFF3C2',
+  },
+  deleteAccountBody: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  deleteAccountConfirm: {
+    backgroundColor: '#B61C14',
+    borderColor: '#FFD329',
+  },
+  deleteAccountConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  deleteAccountPanel: {
+    alignItems: 'center',
+    backgroundColor: '#5A1308',
+    borderColor: '#FFD329',
+    borderRadius: 12,
+    borderWidth: 3,
+    gap: 12,
+    margin: 20,
+    maxWidth: 420,
+    padding: 18,
+    width: '90%',
   },
   divider: {
     backgroundColor: '#8F3B10',

@@ -1,0 +1,53 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "version": "1.1.0",
+    "copyright": "2026 Eric Smith",
+    "categories": ["GAMES"],
+    "release": {
+      "automaticRelease": true
+    },
+    "info": {
+      "en-US": {
+        "title": "Sucker! Battle Dice",
+        "subtitle": "Dice Duels With a Twist",
+        "description": "Roll, strategize, and outplay your opponent in Sucker! Battle Dice — a turn-based dice game where every scorecard decision matters.\n\nPLAY YOUR WAY\n• Challenge a friend in asynchronous multiplayer\n• Play solo against the computer\n• Roll five dice and build the strongest scorecard\n• Spend Sucker Tokens on Extra Rolls, Mulligans, and Sucker Punches\n• Send canned taunts at just the right moment\n• Track completed games and head-to-head stats\n\nGames are turn-based, so you can play whenever you have time. Push notifications let you know when your opponent is waiting.\n\nNo ads. No in-app purchases. Account deletion is available directly from Profile.",
+        "keywords": ["board,strategy,multiplayer,turn-based,scorecard,casual,friends,offline,tactics"],
+        "releaseNotes": "The first official App Store release of Sucker! Battle Dice. Play solo or challenge a friend, use Sucker Tokens, and track your stats.",
+        "promoText": "Roll the dice, spend your Sucker Tokens wisely, and outplay a friend in an asynchronous duel.",
+        "privacyPolicyUrl": "https://play.sucker.games/privacy.html",
+        "supportUrl": "https://play.sucker.games/support.html",
+        "marketingUrl": "https://play.sucker.games"
+      }
+    },
+    "advisory": {
+      "ageRatingOverride": "NONE",
+      "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+      "contests": "NONE",
+      "gambling": false,
+      "gamblingSimulated": "NONE",
+      "horrorOrFearThemes": "NONE",
+      "kidsAgeBand": null,
+      "koreaAgeRatingOverride": "NONE",
+      "lootBox": false,
+      "matureOrSuggestiveThemes": "NONE",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "NONE",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "NONE",
+      "unrestrictedWebAccess": false,
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+      "advertising": false,
+      "ageAssurance": false,
+      "ageRatingOverrideV2": "NONE",
+      "developerAgeRatingInfoUrl": null,
+      "gunsOrOtherWeapons": "NONE",
+      "healthOrWellnessTopics": false,
+      "messagingAndChat": true,
+      "parentalControls": false,
+      "userGeneratedContent": false
+    }
+  }
+}

@@ -13,7 +13,7 @@
       "icon": "./assets/ios-icon.png",
       "supportsTablet": true,
       "requireFullScreen": true,
-      "associatedDomains": ["applinks:sucker.games"],
+      "associatedDomains": ["applinks:play.sucker.games"],
       "config": {
         "usesNonExemptEncryption": false
       }
@@ -30,8 +30,8 @@
           "autoVerify": true,
           "category": ["BROWSABLE", "DEFAULT"],
           "data": [
-            { "scheme": "https", "host": "sucker.games", "pathPrefix": "/invite/" },
-            { "scheme": "https", "host": "sucker.games", "pathPrefix": "/auth/callback" }
+            { "scheme": "https", "host": "play.sucker.games", "pathPrefix": "/invite/" },
+            { "scheme": "https", "host": "play.sucker.games", "pathPrefix": "/auth/callback" }
           ]
         }
       ],
