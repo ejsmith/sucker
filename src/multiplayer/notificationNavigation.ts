@@ -39,7 +39,7 @@ export function getGameIdFromUrl(url: string | null) {
   }
 
   try {
-    const parsedUrl = new URL(url, getWebLocation()?.origin ?? 'https://sucker.games');
+    const parsedUrl = new URL(url, getWebLocation()?.origin ?? 'https://play.sucker.games');
     const queryGameId = parsedUrl.searchParams.get('game') ?? parsedUrl.searchParams.get('gameId');
     if (queryGameId?.trim()) {
       return queryGameId.trim();

@@ -12,7 +12,7 @@ Build and App Store Connect.
 - Android package: `com.ejsmith.sucker`
 - Android version code starts at `1`; EAS remote versioning auto-increments
   store builds.
-- Invite universal link entitlement: `applinks:sucker.games`
+- Invite universal link entitlement: `applinks:play.sucker.games`
 - Export compliance plist flag: `ios.config.usesNonExemptEncryption = false`
   for standard platform/TLS encryption only. Confirm this answer in App Store
   Connect before submitting.
@@ -48,10 +48,10 @@ Build and App Store Connect.
 ## App Store Connect Metadata
 
 - Category: Games.
-- Privacy policy URL: `https://sucker.games/privacy.html`. The app uses Supabase
+- Privacy policy URL: `https://play.sucker.games/privacy.html`. The app uses Supabase
   auth/profile data, gameplay records, friend/profile search, invite codes, and
   Expo push tokens.
-- Account deletion: the app profile screen links to `https://sucker.games/account-deletion.html`. This currently starts a manual email-confirmed deletion request; replace it with a fully automated deletion flow before App Review if Apple flags the manual process.
+- Account deletion: the app profile screen provides a confirmed in-app deletion flow that removes the account and associated data. `https://play.sucker.games/account-deletion.html` explains the same flow publicly.
 - Privacy labels: declare collected data based on actual behavior. At minimum,
   review email address, user ID/profile name, gameplay content/records, device
   push token/device name, Exceptionless diagnostics, and whether each item is
@@ -63,13 +63,12 @@ Build and App Store Connect.
 
 ## Domain And Native QA Gates
 
-- Set the GitHub repository variable `APPLE_TEAM_ID` before deploying Pages. The Pages workflow generates `https://sucker.games/.well-known/apple-app-site-association` for `applinks:sucker.games`.
-- Confirm `sucker.games` invite pages either open the installed app or show a
+- Set the GitHub repository variable `APPLE_TEAM_ID` before deploying Pages. The Pages workflow generates `https://play.sucker.games/.well-known/apple-app-site-association` for `applinks:play.sucker.games`.
+- Confirm `play.sucker.games` invite pages either open the installed app or show a
   clear install/open fallback.
 - Confirm Supabase redirect allow-list includes:
-  - `https://sucker.games/auth/callback` in production
+  - `https://play.sucker.games/auth/callback` in production
   - `sucker://auth/callback` in development builds only
-  - `https://sucker.games/auth/callback`
   - `https://play.sucker.games/auth/callback`
 - Run one TestFlight smoke against staging or production Supabase:
   - Sign in with an email code.
@@ -77,7 +76,7 @@ Build and App Store Connect.
   - Play at least one turn per player.
   - Verify foreground, background, and terminated-state push delivery.
   - Verify cold-start handling for `sucker://invite/<CODE>` and
-    `https://sucker.games/invite/<CODE>`.
+    `https://play.sucker.games/invite/<CODE>`.
 
 ## Build And Submit
 
