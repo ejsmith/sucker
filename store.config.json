@@ -1,7 +1,7 @@
 {
   "configVersion": 0,
   "apple": {
-    "version": "1.1",
+    "version": "1.1.0",
     "copyright": "2026 Eric Smith",
     "categories": ["GAMES"],
     "release": {
@@ -45,7 +45,7 @@
       "developerAgeRatingInfoUrl": null,
       "gunsOrOtherWeapons": "NONE",
       "healthOrWellnessTopics": false,
-      "messagingAndChat": false,
+      "messagingAndChat": true,
       "parentalControls": false,
       "userGeneratedContent": false
     }
