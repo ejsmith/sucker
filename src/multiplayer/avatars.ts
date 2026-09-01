@@ -19,7 +19,10 @@ export async function selectAvatar(source: AvatarSource) {
   }
 
   const options: ImagePicker.ImagePickerOptions = {
-    allowsEditing: Platform.OS !== 'web',
+    // On iOS, disabling the built-in editor for library picks lets Expo use
+    // PHPicker, which allows choosing a photo without broad library access.
+    // processAvatar still applies the square crop and resize after selection.
+    allowsEditing: source === 'camera' && Platform.OS !== 'web',
     aspect: [1, 1],
     cameraType: ImagePicker.CameraType.front,
     mediaTypes: ['images'],
