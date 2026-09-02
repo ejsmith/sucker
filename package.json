@@ -82,6 +82,7 @@
     "test:edge": "deno test supabase/functions",
     "prepare:e2e-env": "node scripts/supabase-test-env.cjs",
     "test:integration:supabase": "node scripts/test-supabase-integration.cjs",
+    "test:e2e:native": "maestro test --include-tags smoke .maestro",
     "test:e2e:web": "node scripts/test-web-e2e.cjs",
     "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs",
     "ai-counterfactual": "tsc --project tsconfig.rules.json && node scripts/ai-counterfactual.cjs",

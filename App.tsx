@@ -4866,7 +4866,7 @@ function ScoreCell({
   const opponentLockedScore = opponentPlayer.scorecard[category];
   const activeLockedScore = activePlayer.scorecard[category];
   const locked = activeLockedScore !== null;
-  const selectable = canChoose && openCategories.includes(category);
+  const selectable = (canChoose || isChoosingSuckerDeal) && openCategories.includes(category);
   const selected = selectedCategory === category;
   const highlighted = selected || highlightCategory === category || (isChoosingSuckerDeal && selectable);
   const previewHasSuckerBonus = selected && !locked && hasPreviewSuckerBonus(dice, category, activePlayer.scorecard);
