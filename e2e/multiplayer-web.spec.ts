@@ -227,6 +227,44 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('long player names stay inside the game summary dialog', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const longName = 'AlexandertheGreatWithoutAnyBreaks'.repeat(3);
+  const alice = await createUser(`summary-alice-${runId}`, 'Alice E2E');
+  const bob = await createUser(`summary-bob-${runId}`, longName);
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await completeGameForScreenshot(gameId, bob.id);
+
+    const panel = alicePage.getByTestId('game-over-panel');
+    await expect(panel).toBeVisible();
+    await expect(alicePage.getByTestId('game-over-title')).toContainText(longName);
+    await expect(alicePage.getByTestId('game-over-opponent-name')).toHaveText(longName);
+
+    const overflow = await panel.evaluate((node) => ({
+      height: node.scrollHeight - node.clientHeight,
+      width: node.scrollWidth - node.clientWidth,
+    }));
+    expect(overflow).toEqual({ height: 0, width: 0 });
+
+    const panelBox = await panel.boundingBox();
+    expect(panelBox).not.toBeNull();
+    for (const testId of ['game-over-title', 'game-over-home-name', 'game-over-opponent-name']) {
+      const box = await alicePage.getByTestId(testId).boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(panelBox!.x);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width);
+    }
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('taunt picker stays connected to the avatar without moving the scorecard', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`taunt-alice-${runId}`, 'Taunt Alice E2E');
@@ -491,6 +529,33 @@ test('local computer token menu enables turn-start actions after computer scores
       }),
     )
     .toBe('none');
+  const chanceDieContainment = suckerPunchDieTrack.evaluate(
+    (dieTrack) =>
+      new Promise<{ bottom: number; left: number; right: number; top: number }>((resolve) => {
+        const panel = dieTrack.closest('[data-testid="sucker-punch-chance-panel"]');
+        if (!panel) {
+          throw new Error('Sucker Punch chance panel was not found.');
+        }
+
+        const overflow = { bottom: 0, left: 0, right: 0, top: 0 };
+        const startedAt = performance.now();
+        const sample = () => {
+          const dieRect = dieTrack.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          overflow.bottom = Math.max(overflow.bottom, dieRect.bottom - panelRect.bottom);
+          overflow.left = Math.max(overflow.left, panelRect.left - dieRect.left);
+          overflow.right = Math.max(overflow.right, dieRect.right - panelRect.right);
+          overflow.top = Math.max(overflow.top, panelRect.top - dieRect.top);
+
+          if (performance.now() - startedAt >= 1_400) {
+            resolve(overflow);
+            return;
+          }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }),
+  );
   await page.getByTestId('sucker-punch-chance-roll-button').click();
   await expect
     .poll(async () => suckerPunchDieTrack.evaluate((node) => getComputedStyle(node).transform), {
@@ -498,6 +563,7 @@ test('local computer token menu enables turn-start actions after computer scores
       timeout: 800,
     })
     .not.toBe('none');
+  expect(await chanceDieContainment).toEqual({ bottom: 0, left: 0, right: 0, top: 0 });
   await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Rolled [1-6]/, {
     timeout: 3_000,
   });

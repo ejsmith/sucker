@@ -2666,7 +2666,6 @@ export function LocalGameScreen({
     const chanceDie = rollDisplayDie();
     setSuckerPunchChanceFace(chanceDie);
     await wait(rollFinalFaceHoldMs);
-    suckerPunchDieAnimation.setValue(0);
     setSuckerPunchDialog({ ...dialog, phase: 'rolled' });
   }
 
@@ -4216,7 +4215,15 @@ export function LocalGameScreen({
                 <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
                   Game Over
                 </Text>
-                <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverTitle, gameLayout.styles.gameOverTitle]}>
+                <Text
+                  adjustsFontSizeToFit
+                  ellipsizeMode="tail"
+                  maxFontSizeMultiplier={1.2}
+                  minimumFontScale={0.7}
+                  numberOfLines={1}
+                  style={[styles.gameOverTitle, gameLayout.styles.gameOverTitle]}
+                  testID="game-over-title"
+                >
                   {gameOverTitle}
                 </Text>
                 <View style={[styles.gameOverScores, gameLayout.styles.gameOverScores]}>
@@ -4225,8 +4232,13 @@ export function LocalGameScreen({
                     testID="game-over-home-score"
                   >
                     <Text
+                      adjustsFontSizeToFit
+                      ellipsizeMode="tail"
                       maxFontSizeMultiplier={1.2}
+                      minimumFontScale={0.7}
+                      numberOfLines={1}
                       style={[styles.gameOverScoreName, gameLayout.styles.gameOverScoreName]}
+                      testID="game-over-home-name"
                     >
                       {homePlayer.name}
                     </Text>
@@ -4242,8 +4254,13 @@ export function LocalGameScreen({
                     testID="game-over-opponent-score"
                   >
                     <Text
+                      adjustsFontSizeToFit
+                      ellipsizeMode="tail"
                       maxFontSizeMultiplier={1.2}
+                      minimumFontScale={0.7}
+                      numberOfLines={1}
                       style={[styles.gameOverScoreName, gameLayout.styles.gameOverScoreName]}
+                      testID="game-over-opponent-name"
                     >
                       {opponentPlayer.name}
                     </Text>
@@ -4642,15 +4659,15 @@ function SuckerPunchChanceDialog({
             : 'ROLL';
   const flyY = rollProgress.interpolate({
     inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
-    outputRange: [22, 12, -24, -12, -3, 0],
+    outputRange: [22, 12, -24, -12, -3, 0].map(layout.unit),
   });
   const flyX = rollProgress.interpolate({
     inputRange: [0, 0.22, 0.5, 0.74, 0.9, 1],
-    outputRange: [-102, -58, 42, -12, -4, 0],
+    outputRange: [-30, -18, 24, -10, -3, 0].map(layout.unit),
   });
   const flyScale = rollProgress.interpolate({
     inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
-    outputRange: [0.86, 1.18, 1.36, 1.02, 0.9, 1],
+    outputRange: [0.86, 1.12, 1.2, 1.02, 0.9, 1],
   });
   const flyRotate = rollProgress.interpolate({
     inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
@@ -4662,7 +4679,10 @@ function SuckerPunchChanceDialog({
       style={[styles.suckerPunchChanceOverlay, layout.styles.suckerPunchChanceOverlay]}
       testID="sucker-punch-chance-dialog"
     >
-      <View style={[styles.suckerPunchChancePanel, layout.styles.suckerPunchChancePanel]}>
+      <View
+        style={[styles.suckerPunchChancePanel, layout.styles.suckerPunchChancePanel]}
+        testID="sucker-punch-chance-panel"
+      >
         <Text
           adjustsFontSizeToFit
           maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
@@ -6805,6 +6825,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   gameOverTitle: {
+    alignSelf: 'stretch',
     color: '#FFD329',
     fontSize: 30,
     fontFamily: gameFontBlack,
@@ -6827,6 +6848,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     borderWidth: 2,
     flex: 1,
+    minWidth: 0,
     paddingVertical: 8,
   },
   gameOverScoreName: {
@@ -6835,6 +6857,9 @@ const styles = StyleSheet.create({
     fontFamily: gameFontBlack,
     fontWeight: '900',
     maxWidth: '100%',
+    paddingHorizontal: 4,
+    textAlign: 'center',
+    width: '100%',
   },
   gameOverScoreValue: {
     color: '#210505',
