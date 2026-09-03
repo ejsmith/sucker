@@ -669,7 +669,7 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
 
   await expect(page.getByText('Profile photo updated.')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('profile-avatar-image')).toBeVisible();
-  await expect(page.getByTestId('profile-player-info')).toHaveScreenshot('profile-avatar.png');
+  await expect(page.getByTestId('profile-avatar-section')).toHaveScreenshot('profile-avatar.png');
   await expect
     .poll(async () => {
       const { data, error } = await admin.from('profiles').select('avatar_url').eq('id', player.id).single();

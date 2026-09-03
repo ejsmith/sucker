@@ -1201,9 +1201,9 @@ export function MultiplayerLobby({
         <SuckerLobbyTitle />
         <ScreenHeader title="Profile" onBack={() => setPage('games')} />
 
-        <View style={lobbyStyles.panel} testID="profile-player-info">
+        <View style={lobbyStyles.panel}>
           <Text style={lobbyStyles.sectionTitle}>Player Info</Text>
-          <View style={lobbyStyles.profileAvatarSection}>
+          <View style={lobbyStyles.profileAvatarSection} testID="profile-avatar-section">
             <Pressable
               accessibilityLabel="Change profile photo"
               disabled={isBusy}
