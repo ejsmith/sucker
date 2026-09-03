@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import {
+  getHeadToHeadStats,
   getProfileRecentGames,
   getProfileStats,
-  type getHeadToHeadStats,
   type ProfileRecentGame,
   type ProfileRecentGamePlayer,
   type ProfileStats,
 } from '../multiplayer/stats';
 import { categoryLabels, scoreCategories, upperBonus } from '../game';
+import { getProfilesByIds } from '../multiplayer/profiles';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -79,6 +80,8 @@ export function StatsPage({
           currentUserProfileId={currentPlayerProfileId}
           initialProfile={{
             avatarUrl: isMe ? currentPlayerAvatarUrl : currentOpponentAvatarUrl,
+            currentUserHeadToHeadStats: isMe ? null : (stats as HeadToHeadStatsRow | null),
+            headToHeadStats: isMe ? null : opponentStats,
             id: profileId,
             name: isMe ? currentPlayerName : currentOpponentName,
             stats: isMe ? currentPlayerOverallStats : opponentOverallStats,
@@ -140,79 +143,22 @@ export function StatsPage({
         )}
 
         {hasStats && stats ? (
-          <>
-            <View style={styles.statsGrid}>
-              <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
-              <StatBox label="Games" value={String(stats.games_played)} />
-              <StatBox label="Your Avg" value={String(stats.average_score)} />
-              <StatBox
-                label="Their Avg"
-                value={formatStatNumber(getOpponentAverage(stats, statsKind, opponentStats))}
-              />
-              <StatBox label="Your High" value={String(stats.highest_score)} />
-              <StatBox label="Their High" value={String(getOpponentHigh(stats, statsKind, opponentStats))} />
-            </View>
-            <View style={styles.statsDetailCard}>
-              {statsKind === 'headToHead' ? (
-                <>
-                  <StatsComparisonHeader title="Sucker Skills" />
-                  <StatsComparisonLine
-                    label="Blowout wins"
-                    opponentValue={formatSkillStat(opponentStats, 'blowout_wins')}
-                    value={formatSkillStat(stats, 'blowout_wins')}
-                  />
-                  <StatsComparisonLine
-                    label="Comeback wins"
-                    opponentValue={formatSkillStat(opponentStats, 'comeback_wins')}
-                    value={formatSkillStat(stats, 'comeback_wins')}
-                  />
-                  <StatsComparisonLine
-                    label="Buzzer beaters"
-                    opponentValue={formatSkillStat(opponentStats, 'buzzer_beater_wins')}
-                    value={formatSkillStat(stats, 'buzzer_beater_wins')}
-                  />
-                  <StatsComparisonLine
-                    label="Extra rolls"
-                    opponentValue={formatSkillStat(opponentStats, 'extra_rolls_used')}
-                    value={formatSkillStat(stats, 'extra_rolls_used')}
-                  />
-                  <StatsComparisonLine
-                    label="Mulligans"
-                    opponentValue={formatSkillStat(opponentStats, 'mulligans_used')}
-                    value={formatSkillStat(stats, 'mulligans_used')}
-                  />
-                  <StatsComparisonLine
-                    label="Sucker punches thrown"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_punches_used')}
-                    value={formatSkillStat(stats, 'sucker_punches_used')}
-                  />
-                  <StatsComparisonLine
-                    label="Sucker punches landed"
-                    opponentValue={formatSkillPct(opponentStats, 'sucker_punch_landed_pct')}
-                    value={formatSkillPct(stats, 'sucker_punch_landed_pct')}
-                  />
-                  <StatsComparisonLine
-                    label="Sucker hunts"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_hunts')}
-                    value={formatSkillStat(stats, 'sucker_hunts')}
-                  />
-                  <StatsComparisonLine
-                    label="Hunt misses"
-                    opponentValue={formatSkillStat(opponentStats, 'sucker_hunt_misses')}
-                    value={formatSkillStat(stats, 'sucker_hunt_misses')}
-                  />
-                  <StatsComparisonLine
-                    label="Avg tokens used"
-                    opponentValue={formatSkillStat(opponentStats, 'average_sucker_tokens_spent')}
-                    value={formatSkillStat(stats, 'average_sucker_tokens_spent')}
-                  />
-                  <StatsComparisonLine
-                    label="Avg tokens left"
-                    opponentValue={formatSkillStat(opponentStats, 'average_sucker_tokens_leftover')}
-                    value={formatSkillStat(stats, 'average_sucker_tokens_leftover')}
-                  />
-                </>
-              ) : (
+          statsKind === 'headToHead' ? (
+            <HeadToHeadStatsComparison mine={stats as HeadToHeadStatsRow} opponent={opponentStats} />
+          ) : (
+            <>
+              <View style={styles.statsGrid}>
+                <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
+                <StatBox label="Games" value={String(stats.games_played)} />
+                <StatBox label="Your Avg" value={String(stats.average_score)} />
+                <StatBox
+                  label="Their Avg"
+                  value={formatStatNumber(getOpponentAverage(stats, statsKind, opponentStats))}
+                />
+                <StatBox label="Your High" value={String(stats.highest_score)} />
+                <StatBox label="Their High" value={String(getOpponentHigh(stats, statsKind, opponentStats))} />
+              </View>
+              <View style={styles.statsDetailCard}>
                 <>
                   <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
                     Sucker Skills
@@ -238,47 +184,47 @@ export function StatsPage({
                     value={formatStatNumber(stats.average_sucker_tokens_leftover ?? 0)}
                   />
                 </>
-              )}
-            </View>
-            <View style={styles.statsDetailCard}>
-              <StatsComparisonHeader title="Category Rates" />
-              <StatsComparisonLine
-                label="Upper bonus"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'upper_bonus')}
-                value={formatCategoryRate(stats, statsKind, null, 'upper_bonus')}
-              />
-              <StatsComparisonLine
-                label="Sucker"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'sucker')}
-                value={formatCategoryRate(stats, statsKind, null, 'sucker')}
-              />
-              <StatsComparisonLine
-                label="3 of a kind"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'three_of_a_kind')}
-                value={formatCategoryRate(stats, statsKind, null, 'three_of_a_kind')}
-              />
-              <StatsComparisonLine
-                label="4 of a kind"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'four_of_a_kind')}
-                value={formatCategoryRate(stats, statsKind, null, 'four_of_a_kind')}
-              />
-              <StatsComparisonLine
-                label="Full house"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'full_house')}
-                value={formatCategoryRate(stats, statsKind, null, 'full_house')}
-              />
-              <StatsComparisonLine
-                label="Small straight"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'small_straight')}
-                value={formatCategoryRate(stats, statsKind, null, 'small_straight')}
-              />
-              <StatsComparisonLine
-                label="Large straight"
-                opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'large_straight')}
-                value={formatCategoryRate(stats, statsKind, null, 'large_straight')}
-              />
-            </View>
-          </>
+              </View>
+              <View style={styles.statsDetailCard}>
+                <StatsComparisonHeader title="Category Rates" />
+                <StatsComparisonLine
+                  label="Upper bonus"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'upper_bonus')}
+                  value={formatCategoryRate(stats, statsKind, null, 'upper_bonus')}
+                />
+                <StatsComparisonLine
+                  label="Sucker"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'sucker')}
+                  value={formatCategoryRate(stats, statsKind, null, 'sucker')}
+                />
+                <StatsComparisonLine
+                  label="3 of a kind"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'three_of_a_kind')}
+                  value={formatCategoryRate(stats, statsKind, null, 'three_of_a_kind')}
+                />
+                <StatsComparisonLine
+                  label="4 of a kind"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'four_of_a_kind')}
+                  value={formatCategoryRate(stats, statsKind, null, 'four_of_a_kind')}
+                />
+                <StatsComparisonLine
+                  label="Full house"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'full_house')}
+                  value={formatCategoryRate(stats, statsKind, null, 'full_house')}
+                />
+                <StatsComparisonLine
+                  label="Small straight"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'small_straight')}
+                  value={formatCategoryRate(stats, statsKind, null, 'small_straight')}
+                />
+                <StatsComparisonLine
+                  label="Large straight"
+                  opponentValue={formatCategoryRate(stats, statsKind, opponentStats, 'large_straight')}
+                  value={formatCategoryRate(stats, statsKind, null, 'large_straight')}
+                />
+              </View>
+            </>
+          )
         ) : (
           <View style={styles.statsEmptyCard}>
             <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
@@ -296,18 +242,23 @@ export function StatsPage({
 
 type PlayerStatsProfile = {
   avatarUrl?: string | null;
+  currentUserHeadToHeadStats?: HeadToHeadStatsRow | null;
+  headToHeadStats?: HeadToHeadStatsRow | null;
   id: string;
   name: string;
   stats?: ProfileStats | null;
+  username?: string | null;
 };
 
 type PlayerStatsPageName = 'detail' | 'games' | 'stats';
+type PlayerStatsView = 'headToHead' | 'overall';
 
 type PlayerStatsRoute = {
   games: ProfileRecentGame[];
   page: PlayerStatsPageName;
   profile: PlayerStatsProfile;
   selectedGame: ProfileRecentGame | null;
+  statsView: PlayerStatsView;
 };
 
 function PlayerStatsPage({
@@ -330,6 +281,7 @@ function PlayerStatsPage({
   const [page, setPage] = useState<PlayerStatsPageName>('stats');
   const [routeStack, setRouteStack] = useState<PlayerStatsRoute[]>([]);
   const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
+  const [statsView, setStatsView] = useState<PlayerStatsView>('overall');
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
   const playerNavigationPendingRef = useRef(false);
   const visibleProfile =
@@ -339,6 +291,30 @@ function PlayerStatsPage({
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(backButtonRef.current));
     return () => cancelAnimationFrame(frame);
   }, [page, visibleProfile.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+    void getProfilesByIds([visibleProfile.id])
+      .then(([profile]) => {
+        if (!isMounted || !profile) return;
+        setActiveProfile((currentProfile) =>
+          currentProfile.id === profile.id
+            ? {
+                ...currentProfile,
+                avatarUrl: profile.avatar_url ?? currentProfile.avatarUrl,
+                name: profile.display_name,
+                username: profile.username,
+              }
+            : currentProfile,
+        );
+      })
+      .catch(() => {
+        // The game snapshot still provides a display name and avatar if profile metadata cannot be refreshed.
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [visibleProfile.id]);
 
   async function openGames() {
     setIsLoading(true);
@@ -360,20 +336,28 @@ function PlayerStatsPage({
     setIsLoading(true);
     setMessage(null);
     try {
-      const nextProfile =
-        player.id === visibleProfile.id
-          ? visibleProfile
-          : {
-              avatarUrl: player.avatarUrl,
-              id: player.id,
-              name: player.name,
-              stats: await getProfileStats(player.id),
-            };
-      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, selectedGame }]);
+      const canLoadHeadToHead = Boolean(currentUserProfileId && player.id !== currentUserProfileId);
+      const [profiles, matchup, overallStats] = await Promise.all([
+        getProfilesByIds([player.id]),
+        canLoadHeadToHead ? getHeadToHeadStats(player.id) : Promise.resolve(null),
+        canLoadHeadToHead ? Promise.resolve(null) : getProfileStats(player.id),
+      ]);
+      const profile = profiles[0];
+      const nextProfile = {
+        avatarUrl: profile?.avatar_url ?? player.avatarUrl,
+        currentUserHeadToHeadStats: matchup?.mine ?? null,
+        headToHeadStats: matchup?.opponent ?? null,
+        id: player.id,
+        name: profile?.display_name ?? player.name,
+        stats: matchup?.opponentOverall ?? overallStats,
+        username: profile?.username ?? null,
+      };
+      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, selectedGame, statsView }]);
       setActiveProfile(nextProfile);
       setGames([]);
       setSelectedGame(null);
       setPage('stats');
+      setStatsView('overall');
     } catch (profileError) {
       setMessage(profileError instanceof Error ? profileError.message : 'Unable to load player stats.');
     } finally {
@@ -401,6 +385,7 @@ function PlayerStatsPage({
       setGames(previousRoute.games);
       setPage(previousRoute.page);
       setSelectedGame(previousRoute.selectedGame);
+      setStatsView(previousRoute.statsView);
       return;
     }
     onClose();
@@ -428,6 +413,7 @@ function PlayerStatsPage({
   }
 
   const title = page === 'detail' ? 'Game Card' : page === 'games' ? 'Recent Games' : 'Player Stats';
+  const showStatsToggle = Boolean(currentUserProfileId && visibleProfile.id !== currentUserProfileId);
 
   return (
     <View
@@ -449,13 +435,17 @@ function PlayerStatsPage({
         >
           <BackChevronIcon size={28} strokeWidth={4.5} />
         </Pressable>
-        <Text
-          maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-          numberOfLines={1}
-          style={styles.playerStatsHeaderTitle}
-        >
-          {title}
-        </Text>
+        {page === 'stats' && showStatsToggle ? (
+          <PlayerStatsViewToggle onChange={setStatsView} value={statsView} />
+        ) : (
+          <Text
+            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+            numberOfLines={1}
+            style={styles.playerStatsHeaderTitle}
+          >
+            {title}
+          </Text>
+        )}
         <Pressable
           accessibilityLabel="Close player stats"
           accessibilityRole="button"
@@ -475,6 +465,7 @@ function PlayerStatsPage({
           onStartGame={() => void startGame()}
           profile={visibleProfile}
           showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
+          statsView={statsView}
         />
       )}
       {page === 'games' && (
@@ -497,6 +488,46 @@ function PlayerStatsPage({
   );
 }
 
+function PlayerStatsViewToggle({
+  onChange,
+  value,
+}: {
+  onChange: (view: PlayerStatsView) => void;
+  value: PlayerStatsView;
+}) {
+  return (
+    <View accessibilityLabel="Player stats view" style={styles.playerStatsHeaderToggle} testID="player-stats-toggle">
+      {(['overall', 'headToHead'] as const).map((view) => {
+        const selected = value === view;
+        const label = view === 'overall' ? 'Overall' : 'Vs You';
+        return (
+          <Pressable
+            accessibilityLabel={`${label} stats`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            aria-selected={selected}
+            key={view}
+            onPress={() => onChange(view)}
+            style={({ pressed }) => [
+              styles.playerStatsToggleButton,
+              selected && styles.playerStatsToggleButtonSelected,
+              pressed && styles.pressed,
+            ]}
+            testID={`player-stats-toggle-${view}`}
+          >
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              style={[styles.playerStatsToggleText, selected && styles.playerStatsToggleTextSelected]}
+            >
+              {label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 function PlayerStatsSummary({
   isLoading,
   message,
@@ -504,6 +535,7 @@ function PlayerStatsSummary({
   onStartGame,
   profile,
   showStartGame,
+  statsView,
 }: {
   isLoading: boolean;
   message: string | null;
@@ -511,8 +543,9 @@ function PlayerStatsSummary({
   onStartGame: () => void;
   profile: PlayerStatsProfile;
   showStartGame: boolean;
+  statsView: PlayerStatsView;
 }) {
-  const stats = profile.stats;
+  const stats = statsView === 'headToHead' ? profile.currentUserHeadToHeadStats : profile.stats;
   const hasStats = Boolean(stats && stats.games_played > 0);
 
   return (
@@ -524,9 +557,6 @@ function PlayerStatsSummary({
       <View style={styles.playerIdentityCard}>
         <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={76} testID="player-stats-avatar" />
         <View style={styles.playerIdentityText}>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEyebrow}>
-            Overall Multiplayer
-          </Text>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
             numberOfLines={2}
@@ -535,6 +565,16 @@ function PlayerStatsSummary({
           >
             {profile.name}
           </Text>
+          {profile.username && (
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={styles.playerIdentityUsername}
+              testID="player-stats-username"
+            >
+              @{profile.username}
+            </Text>
+          )}
         </View>
       </View>
 
@@ -579,53 +619,181 @@ function PlayerStatsSummary({
       )}
 
       {hasStats && stats ? (
-        <>
-          <View style={styles.statsGrid}>
-            <StatBox label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
-            <StatBox label="Games" value={String(stats.games_played)} />
-            <StatBox label="Avg Score" value={formatStatNumber(stats.average_score)} />
-            <StatBox label="High Score" value={String(stats.highest_score)} />
-          </View>
-          <View style={styles.statsDetailCard}>
-            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-              Sucker Skills
-            </Text>
-            <StatsValueLine label="Blowout wins" value={formatSkillStat(stats, 'blowout_wins')} />
-            <StatsValueLine label="Comeback wins" value={formatSkillStat(stats, 'comeback_wins')} />
-            <StatsValueLine label="Buzzer beaters" value={formatSkillStat(stats, 'buzzer_beater_wins')} />
-            <StatsValueLine label="Extra rolls" value={formatSkillStat(stats, 'extra_rolls_used')} />
-            <StatsValueLine label="Mulligans" value={formatSkillStat(stats, 'mulligans_used')} />
-            <StatsValueLine label="Sucker punches thrown" value={formatSkillStat(stats, 'sucker_punches_used')} />
-            <StatsValueLine label="Sucker punches landed" value={formatSkillPct(stats, 'sucker_punch_landed_pct')} />
-            <StatsValueLine label="Sucker hunts" value={formatSkillStat(stats, 'sucker_hunts')} />
-            <StatsValueLine label="Hunt misses" value={formatSkillStat(stats, 'sucker_hunt_misses')} />
-            <StatsValueLine label="Avg tokens used" value={formatSkillStat(stats, 'average_sucker_tokens_spent')} />
-            <StatsValueLine label="Avg tokens left" value={formatSkillStat(stats, 'average_sucker_tokens_leftover')} />
-          </View>
-          <View style={styles.statsDetailCard}>
-            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-              Category Rates
-            </Text>
-            <StatsValueLine label="Upper bonus" value={formatProfileCategoryRate(stats, 'upper_bonus')} />
-            <StatsValueLine label="Sucker" value={formatProfileCategoryRate(stats, 'sucker')} />
-            <StatsValueLine label="3 of a kind" value={formatProfileCategoryRate(stats, 'three_of_a_kind')} />
-            <StatsValueLine label="4 of a kind" value={formatProfileCategoryRate(stats, 'four_of_a_kind')} />
-            <StatsValueLine label="Full house" value={formatProfileCategoryRate(stats, 'full_house')} />
-            <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
-            <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
-          </View>
-        </>
+        statsView === 'headToHead' ? (
+          <HeadToHeadStatsComparison
+            formatNumber={formatPlayerStatNumber}
+            mine={stats as HeadToHeadStatsRow}
+            opponent={profile.headToHeadStats}
+          />
+        ) : (
+          <>
+            <View style={styles.playerStatsMetrics}>
+              <View style={styles.playerStatsMetricRow}>
+                <StatBox compact label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
+                <StatBox compact label="Win %" value={formatPlayerWinningPct(stats.wins, stats.games_played)} />
+              </View>
+              <View style={styles.playerStatsMetricRow}>
+                <StatBox compact label="Avg Score" value={formatPlayerStatNumber(stats.average_score)} />
+                <StatBox compact label="High Score" value={String(stats.highest_score)} />
+              </View>
+            </View>
+            <View style={styles.statsDetailCard}>
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+                Sucker Skills
+              </Text>
+              <StatsValueLine label="Blowout wins" value={formatPlayerSkillStat(stats, 'blowout_wins')} />
+              <StatsValueLine label="Comeback wins" value={formatPlayerSkillStat(stats, 'comeback_wins')} />
+              <StatsValueLine label="Buzzer beaters" value={formatPlayerSkillStat(stats, 'buzzer_beater_wins')} />
+              <StatsValueLine label="Extra rolls" value={formatPlayerSkillStat(stats, 'extra_rolls_used')} />
+              <StatsValueLine label="Mulligans" value={formatPlayerSkillStat(stats, 'mulligans_used')} />
+              <StatsValueLine
+                label="Sucker punches thrown"
+                value={formatPlayerSkillStat(stats, 'sucker_punches_used')}
+              />
+              <StatsValueLine
+                label="Sucker punches landed"
+                value={formatPlayerSkillPct(stats, 'sucker_punch_landed_pct')}
+              />
+              <StatsValueLine label="Sucker hunts" value={formatPlayerSkillStat(stats, 'sucker_hunts')} />
+              <StatsValueLine label="Hunt misses" value={formatPlayerSkillStat(stats, 'sucker_hunt_misses')} />
+              <StatsValueLine
+                label="Avg tokens used"
+                value={formatPlayerSkillStat(stats, 'average_sucker_tokens_spent')}
+              />
+              <StatsValueLine
+                label="Avg tokens left"
+                value={formatPlayerSkillStat(stats, 'average_sucker_tokens_leftover')}
+              />
+            </View>
+            <View style={styles.statsDetailCard}>
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+                Category Rates
+              </Text>
+              <StatsValueLine label="Upper bonus" value={formatProfileCategoryRate(stats, 'upper_bonus')} />
+              <StatsValueLine label="Sucker" value={formatProfileCategoryRate(stats, 'sucker')} />
+              <StatsValueLine label="3 of a kind" value={formatProfileCategoryRate(stats, 'three_of_a_kind')} />
+              <StatsValueLine label="4 of a kind" value={formatProfileCategoryRate(stats, 'four_of_a_kind')} />
+              <StatsValueLine label="Full house" value={formatProfileCategoryRate(stats, 'full_house')} />
+              <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
+              <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
+            </View>
+          </>
+        )
       ) : (
         <View style={styles.statsEmptyCard}>
           <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
             No saved stats yet
           </Text>
           <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
-            {profile.name} has not finished a signed-in multiplayer game yet.
+            {statsView === 'headToHead'
+              ? `${profile.name} has not finished a game against you yet.`
+              : `${profile.name} has not finished a signed-in multiplayer game yet.`}
           </Text>
         </View>
       )}
     </ScrollView>
+  );
+}
+
+function HeadToHeadStatsComparison({
+  formatNumber = formatStatNumber,
+  mine,
+  opponent,
+}: {
+  formatNumber?: (value: number) => string;
+  mine: HeadToHeadStatsRow;
+  opponent?: HeadToHeadStatsRow | null;
+}) {
+  return (
+    <View style={styles.headToHeadComparison} testID="head-to-head-stats-comparison">
+      <View style={styles.statsGrid}>
+        <StatBox label="Your Record" value={`${mine.wins}-${mine.losses}`} />
+        <StatBox label="Your Win %" value={formatWinningPct(mine.wins, mine.games_played, formatNumber)} />
+        <StatBox label="Your Avg" value={formatNumber(mine.average_score)} />
+        <StatBox label="Their Avg" value={formatNumber(opponent?.average_score ?? 0)} />
+        <StatBox label="Your High" value={String(mine.highest_score)} />
+        <StatBox label="Their High" value={String(opponent?.highest_score ?? 0)} />
+      </View>
+      <View style={styles.statsDetailCard}>
+        <StatsComparisonHeader title="Sucker Skills" />
+        <StatsComparisonLine
+          label="Blowout wins"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'blowout_wins', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'blowout_wins', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Comeback wins"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'comeback_wins', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'comeback_wins', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Buzzer beaters"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'buzzer_beater_wins', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'buzzer_beater_wins', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Extra rolls"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'extra_rolls_used', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'extra_rolls_used', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Mulligans"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'mulligans_used', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'mulligans_used', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Sucker punches thrown"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'sucker_punches_used', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'sucker_punches_used', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Sucker punches landed"
+          opponentValue={formatHeadToHeadSkillPct(opponent, 'sucker_punch_landed_pct', formatNumber)}
+          value={formatHeadToHeadSkillPct(mine, 'sucker_punch_landed_pct', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Sucker hunts"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'sucker_hunts', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'sucker_hunts', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Hunt misses"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'sucker_hunt_misses', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'sucker_hunt_misses', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Avg tokens used"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'average_sucker_tokens_spent', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'average_sucker_tokens_spent', formatNumber)}
+        />
+        <StatsComparisonLine
+          label="Avg tokens left"
+          opponentValue={formatHeadToHeadSkillStat(opponent, 'average_sucker_tokens_leftover', formatNumber)}
+          value={formatHeadToHeadSkillStat(mine, 'average_sucker_tokens_leftover', formatNumber)}
+        />
+      </View>
+      <View style={styles.statsDetailCard}>
+        <StatsComparisonHeader title="Category Rates" />
+        {(
+          [
+            ['Upper bonus', 'upper_bonus'],
+            ['Sucker', 'sucker'],
+            ['3 of a kind', 'three_of_a_kind'],
+            ['4 of a kind', 'four_of_a_kind'],
+            ['Full house', 'full_house'],
+            ['Small straight', 'small_straight'],
+            ['Large straight', 'large_straight'],
+          ] as const
+        ).map(([label, key]) => (
+          <StatsComparisonLine
+            key={key}
+            label={label}
+            opponentValue={formatHeadToHeadCategoryRate(opponent, key, formatNumber)}
+            value={formatHeadToHeadCategoryRate(mine, key, formatNumber)}
+          />
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -1007,13 +1175,13 @@ function formatCategoryRate(
   return formatStatsPct(count, computerStats.games_played);
 }
 
-function formatProfileCategoryRate(stats: ProfileStats, key: CategoryRateKey) {
-  return `${formatStatNumber(stats[`${key}_pct`])}%`;
+function formatProfileCategoryRate(stats: ProfileStats | HeadToHeadStatsRow, key: CategoryRateKey) {
+  return `${formatPlayerStatNumber(stats[`${key}_pct`])}%`;
 }
 
-function StatBox({ label, value }: { label: string; value: string }) {
+function StatBox({ compact = false, label, value }: { compact?: boolean; label: string; value: string }) {
   return (
-    <View style={styles.statBox}>
+    <View style={[styles.statBox, compact && styles.playerStatBox]}>
       <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statBoxValue}>
         {value}
       </Text>
@@ -1094,12 +1262,48 @@ function formatStatsPct(count: number, gamesPlayed: number) {
   return `${Math.round((count / gamesPlayed) * 100)}%`;
 }
 
-function formatSkillStat(row: HeadToHeadStatsRow | ProfileStats | null | undefined, key: SkillStatKey) {
-  return formatStatNumber(Number(row?.[key] ?? 0));
+function formatHeadToHeadSkillStat(
+  row: HeadToHeadStatsRow | null | undefined,
+  key: SkillStatKey,
+  formatNumber: (value: number) => string,
+) {
+  return formatNumber(Number(row?.[key] ?? 0));
 }
 
-function formatSkillPct(row: HeadToHeadStatsRow | ProfileStats | null | undefined, key: SkillPctKey) {
-  return `${formatStatNumber(Number(row?.[key] ?? 0))}%`;
+function formatHeadToHeadSkillPct(
+  row: HeadToHeadStatsRow | null | undefined,
+  key: SkillPctKey,
+  formatNumber: (value: number) => string,
+) {
+  return `${formatNumber(Number(row?.[key] ?? 0))}%`;
+}
+
+function formatHeadToHeadCategoryRate(
+  row: HeadToHeadStatsRow | null | undefined,
+  key: CategoryRateKey,
+  formatNumber: (value: number) => string,
+) {
+  return `${formatNumber(Number(row?.[`${key}_pct`] ?? 0))}%`;
+}
+
+function formatWinningPct(wins: number, gamesPlayed: number, formatNumber: (value: number) => string) {
+  return gamesPlayed === 0 ? '0%' : `${formatNumber((wins / gamesPlayed) * 100)}%`;
+}
+
+function formatPlayerSkillStat(row: HeadToHeadStatsRow | ProfileStats, key: SkillStatKey) {
+  return formatPlayerStatNumber(Number(row[key] ?? 0));
+}
+
+function formatPlayerSkillPct(row: HeadToHeadStatsRow | ProfileStats, key: SkillPctKey) {
+  return `${formatPlayerStatNumber(Number(row[key] ?? 0))}%`;
+}
+
+function formatPlayerWinningPct(wins: number, gamesPlayed: number) {
+  return formatWinningPct(wins, gamesPlayed, formatPlayerStatNumber);
+}
+
+function formatPlayerStatNumber(value: number) {
+  return Number(value).toFixed(1).replace(/\.0$/, '');
 }
 
 function formatStatNumber(value: number) {
@@ -1301,6 +1505,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 3,
   },
+  headToHeadComparison: {
+    gap: 8,
+    width: '100%',
+  },
   historyResultLoss: {
     backgroundColor: '#C62B22',
     borderColor: '#7A1208',
@@ -1372,6 +1580,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  playerIdentityUsername: {
+    color: '#FFD329',
+    fontSize: 14,
+    fontWeight: '900',
+  },
   playerPrimaryButton: {
     alignItems: 'center',
     backgroundColor: '#FFD329',
@@ -1426,8 +1639,49 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
+  playerStatsHeaderToggle: {
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flex: 1,
+    flexDirection: 'row',
+    maxWidth: 190,
+    padding: 2,
+  },
+  playerStatsMetricRow: {
+    flexDirection: 'row',
+    gap: 6,
+    width: '100%',
+  },
+  playerStatsMetrics: {
+    gap: 6,
+    width: '100%',
+  },
+  playerStatsToggleButton: {
+    alignItems: 'center',
+    borderRadius: 4,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 36,
+    paddingHorizontal: 6,
+  },
+  playerStatsToggleButtonSelected: {
+    backgroundColor: '#FFD329',
+  },
+  playerStatsToggleText: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  playerStatsToggleTextSelected: {
+    color: '#210505',
+  },
   pressed: {
     opacity: 0.72,
+  },
+  playerStatBox: {
+    minWidth: 0,
   },
   statBox: {
     alignItems: 'center',

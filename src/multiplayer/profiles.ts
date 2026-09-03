@@ -62,7 +62,10 @@ export async function getProfilesByIds(profileIds: string[]) {
     return [];
   }
 
-  const { data, error } = await supabase.from('profiles').select('id, display_name, avatar_url').in('id', uniqueIds);
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, username, display_name, avatar_url')
+    .in('id', uniqueIds);
 
   if (error) {
     throw error;
