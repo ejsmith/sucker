@@ -496,7 +496,12 @@ function PlayerStatsViewToggle({
   value: PlayerStatsView;
 }) {
   return (
-    <View accessibilityLabel="Player stats view" style={styles.playerStatsHeaderToggle} testID="player-stats-toggle">
+    <View
+      accessibilityLabel="Player stats view"
+      accessibilityRole="tablist"
+      style={styles.playerStatsHeaderToggle}
+      testID="player-stats-toggle"
+    >
       {(['overall', 'headToHead'] as const).map((view) => {
         const selected = value === view;
         const label = view === 'overall' ? 'Overall' : 'Vs You';

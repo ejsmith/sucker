@@ -163,6 +163,11 @@ jobs:
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline
 
+      - name: Prepare Supabase Edge Runtime image
+        run: |
+          docker pull docker.io/supabase/edge-runtime:v1.74.2
+          docker tag docker.io/supabase/edge-runtime:v1.74.2 public.ecr.aws/supabase/edge-runtime:v1.74.2
+
       - name: Test Supabase integration
         run: npm run test:integration:supabase
 
@@ -206,6 +211,11 @@ jobs:
       - name: Install Playwright browser
         if: steps.cache-playwright.outputs.cache-hit != 'true'
         run: npx playwright install chromium webkit
+
+      - name: Prepare Supabase Edge Runtime image
+        run: |
+          docker pull docker.io/supabase/edge-runtime:v1.74.2
+          docker tag docker.io/supabase/edge-runtime:v1.74.2 public.ecr.aws/supabase/edge-runtime:v1.74.2
 
       - name: Test web E2E
         run: npm run test:e2e:web
