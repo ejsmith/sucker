@@ -73,6 +73,7 @@ const gameCardPadding = 6;
 const gameCardActionGap = 3;
 const gameCardActionWidth = 108;
 const gameCardActionHeight = 36;
+const minimumPasswordLength = 8;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
 export function MultiplayerLobby({
@@ -104,6 +105,7 @@ export function MultiplayerLobby({
     signInAsLocalTestUser,
     signInWithPassword,
     session,
+    updatePassword,
     verifySignInCode,
   } = useMultiplayerSession();
   const { consumeRecoveredActions, recoveredActions } = useNetworkStatus();
@@ -114,6 +116,8 @@ export function MultiplayerLobby({
   const [sentCodeEmail, setSentCodeEmail] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
@@ -130,12 +134,19 @@ export function MultiplayerLobby({
   const [removeGameToConfirm, setRemoveGameToConfirm] = useState<RemoteGameRow | null>(null);
   const [selectedCompletedGameId, setSelectedCompletedGameId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [page, setPage] = useState<LobbyPage>('games');
+  const [page, setCurrentPage] = useState<LobbyPage>('games');
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
   const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
+  const setPage = useCallback((nextPage: LobbyPage) => {
+    if (nextPage !== 'profile') {
+      setNewPassword('');
+      setConfirmPassword('');
+    }
+    setCurrentPage(nextPage);
+  }, []);
   const pendingAvatarRecoveryProfileId = useRef<string | null>(null);
   const completedGameStatsBackHandler = useRef<(() => void) | null>(null);
   const refreshGamesInFlight = useRef<Promise<void> | null>(null);
@@ -156,6 +167,10 @@ export function MultiplayerLobby({
     Platform.OS === 'web' && !needsScrollableStage
       ? { minHeight: shellStyle.height, minWidth: shellStyle.width }
       : null;
+
+  const passwordIsLongEnough = newPassword.length >= minimumPasswordLength;
+  const passwordsMatch = newPassword === confirmPassword;
+  const canUpdatePassword = passwordIsLongEnough && confirmPassword.length > 0 && passwordsMatch;
 
   function renderShell(children: ReactNode) {
     const shell = (
@@ -246,7 +261,7 @@ export function MultiplayerLobby({
       void refreshGames({ surfaceError: false });
     }, 0);
     return () => clearTimeout(timer);
-  }, [consumeRecoveredActions, profile, recoveredActions, refreshGames]);
+  }, [consumeRecoveredActions, profile, recoveredActions, refreshGames, setPage]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -270,7 +285,7 @@ export function MultiplayerLobby({
       return false;
     });
     return () => subscription.remove();
-  }, [avatarPickerVisible, page, removeGameToConfirm]);
+  }, [avatarPickerVisible, page, removeGameToConfirm, setPage]);
 
   useEffect(() => {
     if (!isLoading && !session) {
@@ -397,7 +412,7 @@ export function MultiplayerLobby({
       isMounted = false;
       subscription.remove();
     };
-  }, []);
+  }, [setPage]);
 
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
@@ -569,6 +584,15 @@ export function MultiplayerLobby({
       await signInWithPassword(email.trim(), password);
       setPassword('');
       setMessage(null);
+    });
+  }
+
+  async function handleUpdatePassword() {
+    await runAction(async () => {
+      await updatePassword(newPassword);
+      setNewPassword('');
+      setConfirmPassword('');
+      setMessage('Password updated. You can now sign in with your email and password.');
     });
   }
 
@@ -1251,6 +1275,75 @@ export function MultiplayerLobby({
 
         <View style={lobbyStyles.panel}>
           <Text style={lobbyStyles.sectionTitle}>Account</Text>
+          <View style={lobbyStyles.accountPasswordSection} testID="account-password-section">
+            <Text style={lobbyStyles.accountHelpText}>
+              Set a password to sign in with your email instead of a code. You can also use this form to change it.
+            </Text>
+            {session.user.email && (
+              <Text
+                ellipsizeMode="middle"
+                numberOfLines={1}
+                selectable
+                style={lobbyStyles.accountEmail}
+                testID="account-email"
+              >
+                {session.user.email}
+              </Text>
+            )}
+            <View style={lobbyStyles.profileField}>
+              <Text style={lobbyStyles.profileFieldLabel}>New password</Text>
+              <TextInput
+                accessibilityLabel="New password"
+                autoCapitalize="none"
+                autoComplete="new-password"
+                editable={!isBusy}
+                onChangeText={setNewPassword}
+                placeholder="At least 8 characters"
+                placeholderTextColor="#8A4B12"
+                secureTextEntry
+                style={lobbyStyles.input}
+                testID="new-password-input"
+                textContentType="newPassword"
+                value={newPassword}
+              />
+            </View>
+            <View style={lobbyStyles.profileField}>
+              <Text style={lobbyStyles.profileFieldLabel}>Confirm password</Text>
+              <TextInput
+                accessibilityLabel="Confirm password"
+                autoCapitalize="none"
+                autoComplete="new-password"
+                editable={!isBusy}
+                onChangeText={setConfirmPassword}
+                placeholder="Enter it again"
+                placeholderTextColor="#8A4B12"
+                secureTextEntry
+                style={lobbyStyles.input}
+                testID="confirm-password-input"
+                textContentType="newPassword"
+                value={confirmPassword}
+              />
+            </View>
+            {newPassword.length > 0 && !passwordIsLongEnough && (
+              <Text style={lobbyStyles.passwordHint}>Password must be at least 8 characters.</Text>
+            )}
+            {confirmPassword.length > 0 && !passwordsMatch && (
+              <Text style={lobbyStyles.passwordHint}>Passwords do not match.</Text>
+            )}
+            <Pressable
+              disabled={isBusy || !canUpdatePassword}
+              onPress={() => void handleUpdatePassword()}
+              style={({ pressed }) => [
+                lobbyStyles.primaryButton,
+                (isBusy || !canUpdatePassword) && lobbyStyles.primaryButtonDisabled,
+                pressed && lobbyStyles.pressed,
+              ]}
+              testID="set-password-button"
+            >
+              <Text style={lobbyStyles.primaryButtonText}>Set or Change Password</Text>
+            </Pressable>
+          </View>
+          <View style={lobbyStyles.accountDivider} />
           <Pressable
             accessibilityRole="link"
             onPress={() => void Linking.openURL(privacyPolicyUrl)}
@@ -1424,6 +1517,9 @@ export function MultiplayerLobby({
             onPress={() => {
               setDisplayName(profile?.display_name ?? '');
               setUsername(profile?.username ?? '');
+              setNewPassword('');
+              setConfirmPassword('');
+              setMessage(null);
               setPage('profile');
             }}
             style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
@@ -2316,6 +2412,30 @@ function SuckerLobbyTitle() {
 }
 
 const lobbyStyles = StyleSheet.create({
+  accountDivider: {
+    backgroundColor: '#8F3B10',
+    height: 1,
+    marginVertical: 4,
+    opacity: 0.8,
+    width: '100%',
+  },
+  accountEmail: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontWeight: '800',
+    minWidth: 0,
+    width: '100%',
+  },
+  accountHelpText: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    lineHeight: 18,
+    opacity: 0.88,
+  },
+  accountPasswordSection: {
+    gap: 8,
+    width: '100%',
+  },
   actionButton: {
     flex: 1,
     height: 60,
@@ -2971,6 +3091,11 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     textTransform: 'uppercase',
+  },
+  passwordHint: {
+    color: '#FFD329',
+    fontSize: 12,
+    fontWeight: '800',
   },
   pullRefreshIndicator: {
     alignItems: 'center',

@@ -66,6 +66,15 @@ export async function signInWithPassword(email: string, password: string) {
   return data.session;
 }
 
+export async function updateAccountPassword(password: string) {
+  const { data, error } = await supabase.auth.updateUser({ password });
+  if (error) {
+    throw error;
+  }
+
+  return data.user;
+}
+
 export async function signInAsLocalTestPlayer(player: LocalTestPlayer) {
   if (!isLocalMultiplayerDevelopment()) {
     throw new Error('Test player login is only available with a local development backend.');

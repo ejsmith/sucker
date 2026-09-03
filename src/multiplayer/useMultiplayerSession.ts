@@ -9,6 +9,7 @@ import {
   signInWithEmail,
   signInWithPassword as signInWithPasswordCredentials,
   signOut,
+  updateAccountPassword,
   upsertProfile,
   verifyEmailCode,
   type LocalTestPlayer,
@@ -237,6 +238,20 @@ export function useMultiplayerSession() {
     }
   }
 
+  async function updatePassword(password: string) {
+    setError(null);
+    setIsLoading(true);
+    try {
+      return await updateAccountPassword(password);
+    } catch (passwordError) {
+      const message = toErrorMessage(passwordError);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function endSession() {
     setError(null);
     await signOut();
@@ -256,6 +271,7 @@ export function useMultiplayerSession() {
     signInAsLocalTestUser,
     signInWithPassword,
     session,
+    updatePassword,
     verifySignInCode,
   };
 }

@@ -715,6 +715,47 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
     .toBe(0);
 });
 
+test('an email-code account can set a password and use it to sign in', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const player = await createUser(`password-${runId}`, 'Password E2E');
+  const password = 'SuckerTest9!';
+  const page = await openAuthedPage(browser, player);
+
+  await page.getByTestId('profile-button').click();
+  const passwordSection = page.getByTestId('account-password-section');
+  await passwordSection.scrollIntoViewIfNeeded();
+  const [shellBox, passwordSectionBox] = await Promise.all([
+    page.getByTestId('multiplayer-lobby-shell').boundingBox(),
+    passwordSection.boundingBox(),
+  ]);
+  expect(shellBox).not.toBeNull();
+  expect(passwordSectionBox).not.toBeNull();
+  expect(passwordSectionBox!.x).toBeGreaterThanOrEqual(shellBox!.x);
+  expect(passwordSectionBox!.x + passwordSectionBox!.width).toBeLessThanOrEqual(shellBox!.x + shellBox!.width);
+  await expect(passwordSection).toHaveScreenshot('profile-password-section.png', {
+    mask: [page.getByTestId('account-email')],
+    maskColor: '#FFF3C2',
+  });
+  await page.getByTestId('new-password-input').fill(password);
+  await page.getByTestId('confirm-password-input').fill(password);
+  await expect(page.getByTestId('set-password-button')).toBeEnabled();
+  await page.getByTestId('set-password-button').click();
+  await expect(page.getByText('Password updated. You can now sign in with your email and password.')).toBeVisible();
+  await expect(page.getByTestId('new-password-input')).toHaveValue('');
+  await expect(page.getByTestId('confirm-password-input')).toHaveValue('');
+  await page.context().close();
+
+  const signInContext = await browser.newContext({ viewport: { height: 852, width: 393 } });
+  const signInPage = await signInContext.newPage();
+  await signInPage.goto('/');
+  await signInPage.getByTestId('toggle-password-login').click();
+  await signInPage.getByTestId('login-email-input').fill(player.email);
+  await signInPage.getByTestId('login-password-input').fill(password);
+  await signInPage.getByTestId('password-sign-in-button').click();
+  await expect(signInPage.getByText(`Hi, ${player.displayName}`)).toBeVisible({ timeout: 30_000 });
+  await signInContext.close();
+});
+
 test('player avatars open separate overall stats pages', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`stats-alice-${runId}`, 'Alice Stats E2E');
