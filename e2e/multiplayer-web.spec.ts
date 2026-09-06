@@ -956,6 +956,29 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
     .toBe(0);
 });
 
+test('password editor resets after signing out and back in', async ({ browser }) => {
+  const player = await createUser(`editor-${crypto.randomUUID()}`, 'Editor E2E');
+  const password = 'SuckerTest9!';
+  await admin.auth.admin.updateUserById(player.id, { password });
+  const page = await openAuthedPage(browser, player);
+  await page.getByTestId('profile-button').click();
+  await page.getByTestId('toggle-password-editor').click();
+  await page.getByTestId('new-password-input').fill('abandoned-password');
+  await page.getByTestId('sign-out-button').click();
+  await page.getByTestId('toggle-password-login').click();
+  await page.getByTestId('login-email-input').fill(player.email);
+  await page.getByTestId('login-password-input').fill(password);
+  await page.getByTestId('password-sign-in-button').click();
+  await expect(page.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+  await expect.poll(async () => await page.getByTestId('profile-button').count() + await page.getByTestId('toggle-password-editor').count()).toBeGreaterThan(0);
+  if (await page.getByTestId('profile-button').isVisible()) await page.getByTestId('profile-button').click();
+  await page.screenshot({ path: test.info().outputPath('session-editor.png') });
+  await expect(page.getByTestId('toggle-password-editor')).toHaveAttribute('aria-expanded', 'false');
+  await page.getByTestId('toggle-password-editor').click();
+  await expect(page.getByTestId('new-password-input')).toHaveValue('');
+  await page.context().close();
+});
+
 test('an email-code account can set a password and use it to sign in', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const player = await createUser(`password-${runId}`, 'Password E2E');

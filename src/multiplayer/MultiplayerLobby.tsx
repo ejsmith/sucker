@@ -121,6 +121,7 @@ export function MultiplayerLobby({
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordEditorOpen, setPasswordEditorOpen] = useState(false);
+  const [passwordEditorOwner, setPasswordEditorOwner] = useState(session?.user.id ?? null);
   const [inviteCode, setInviteCode] = useState('');
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
@@ -172,6 +173,11 @@ export function MultiplayerLobby({
       };
     }, [profileId]),
   );
+  const sessionOwner = session?.user.id ?? null;
+  if (passwordEditorOwner !== sessionOwner) {
+    setPasswordEditorOwner(sessionOwner);
+    setPage('games');
+  }
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
