@@ -404,6 +404,85 @@ Deno.test('game-action nudges the current player only after the wait window and 
   );
 });
 
+Deno.test('game-action allows repeated active-turn mulligans before and after rolling', async () => {
+  const [alice, bob] = await createUsers('active-mulligan', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  const wrongTurn = await invokeGameAction(bob, { gameId: game.id, type: 'mulligan' }, 400);
+  assertEquals(wrongTurn.error, 'It is not your turn.');
+
+  for (let usage = 1; usage <= 3; usage += 1) {
+    if (usage === 2) {
+      await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+      await invokeGameAction(alice, {
+        gameId: game.id,
+        held: [true, false, true, false, true],
+        type: 'extra_roll',
+      });
+    }
+    if (usage === 3) {
+      for (let roll = 0; roll < 4; roll += 1) {
+        await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+      }
+    }
+    const request = { gameId: game.id, requestId: crypto.randomUUID(), type: 'mulligan' };
+    const reset = (await invokeGameAction(alice, request)).game as GameRow;
+    const retried = (await invokeGameAction(alice, request)).game as GameRow;
+    assertEquals(retried.state, reset.state);
+    assertEquals(retried.updated_at, reset.updated_at);
+    assertEquals(reset.status, 'active');
+    assertEquals(reset.current_player_id, alice.id);
+    assertEquals(reset.state.rollNumber, 0);
+    assertEquals(reset.state.phase, 'rolling');
+    assertEquals(reset.state.extraRollsAvailable, 0);
+    assertEquals(reset.state.dice, [1, 1, 1, 1, 1]);
+    assertEquals(reset.state.held, falseHeld);
+    assertEquals(reset.state.players[0].scorecard, game.state.players[0].scorecard);
+    assertPlayerTokens(
+      reset,
+      alice.id,
+      startingSuckerTokens - usage * suckerTokenCosts.mulligan - (usage >= 2 ? 1 : 0),
+    );
+    assertPlayerTokens(reset, bob.id, startingSuckerTokens);
+  }
+
+  const tooPoor = await invokeGameAction(alice, { gameId: game.id, type: 'mulligan' }, 400);
+  assertEquals(tooPoor.error, 'You need 3 Sucker Tokens to Mulligan.');
+  const events = await loadTokenEvents(game.id);
+  assertEquals(
+    events.map((event) => [event.token_delta, event.target_turn_id]),
+    [
+      [-3, null],
+      [-3, null],
+      [-3, null],
+    ],
+  );
+  assertEquals((await loadActions(game.id)).filter((action) => action.action_type === 'mulligan').length, 3);
+});
+
+Deno.test(
+  'game-action mulligan at turn start preserves the opponent score and closes the response window',
+  async () => {
+    const [alice, bob] = await createUsers('response-mulligan', ['Alice', 'Bob']);
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+    const scored = (await invokeGameAction(alice, { gameId: game.id, category: 'sucker', type: 'score_category' }))
+      .game as GameRow;
+    assertEquals(scored.status, 'response_window');
+    assertString(scored.last_turn_id);
+
+    const reset = (await invokeGameAction(bob, { gameId: game.id, type: 'mulligan' })).game as GameRow;
+    assertEquals(reset.status, 'active');
+    assertEquals(reset.current_player_id, bob.id);
+    assertEquals(reset.state.rollNumber, 0);
+    assertEquals(reset.state.players[0], scored.state.players[0]);
+    assertPlayerTokens(reset, bob.id, startingSuckerTokens - suckerTokenCosts.mulligan);
+    assertEquals((await loadTurn(scored.last_turn_id)).status, 'submitted');
+    const tooLate = await invokeGameAction(alice, { gameId: game.id, type: 'mulligan' }, 400);
+    assertEquals(tooLate.error, 'It is not your turn.');
+  },
+);
+
 Deno.test('game-action persists extra roll, mulligan, and sucker punch chance state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

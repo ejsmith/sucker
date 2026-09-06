@@ -9,6 +9,7 @@ import {
   type GameState,
   isSuckerRoll,
   maxRollsPerTurn,
+  mulliganCurrentTurn,
   type Player,
   resolveSuckerPunchOutcome,
   rollDie,
@@ -1594,22 +1595,34 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
 
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
-  if (game.status !== 'response_window' || !game.last_turn_id) {
-    throw new Error('Mulligan is only available immediately after a submitted turn.');
-  }
-
-  const turn = await loadTurn(admin, game.last_turn_id);
-  if (turn.player_id !== actorId) {
-    throw new Error('You can only Mulligan your own latest turn.');
+  if ((game.status !== 'active' && game.status !== 'response_window') || game.state.phase === 'complete') {
+    throw new Error('Mulligan is only available during a game.');
   }
 
   const state = game.state;
+  let turn: TurnRow | null = null;
+  if (game.current_player_id === actorId) {
+    assertCurrentPlayer(state, actorId);
+  } else {
+    // Preserve the existing ability to undo your submitted turn while its
+    // response window is still open.
+    if (game.status !== 'response_window' || !game.last_turn_id) {
+      throw new Error('It is not your turn.');
+    }
+    turn = await loadTurn(admin, game.last_turn_id);
+    if (turn.player_id !== actorId || turn.status !== 'submitted') {
+      throw new Error('You can only Mulligan your own latest turn.');
+    }
+  }
+
   const player = findPlayer(state, actorId);
   if (player.suckerTokens < suckerTokenCosts.mulligan) {
     throw new Error(`You need ${suckerTokenCosts.mulligan} Sucker Tokens to Mulligan.`);
   }
 
-  const nextState = removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan);
+  const nextState = turn
+    ? removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan)
+    : mulliganCurrentTurn(state);
   mutationState.mayHaveWritten = true;
   const { data: updatedGame, error } = await admin
     .from('games')
@@ -1627,16 +1640,16 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   }
 
   await Promise.all([
-    updateTurnStatus(admin, turn.id, 'mulliganed'),
+    ...(turn ? [updateTurnStatus(admin, turn.id, 'mulliganed')] : []),
     insertTokenEvent(admin, {
       event_type: 'mulligan',
       game_id: gameId,
       player_id: actorId,
-      target_turn_id: turn.id,
+      target_turn_id: turn?.id ?? null,
       token_delta: -suckerTokenCosts.mulligan,
     }),
     syncGamePlayers(admin, gameId, nextState, false),
-    insertAction(admin, gameId, actorId, 'mulligan', { turnId: turn.id }),
+    insertAction(admin, gameId, actorId, 'mulligan', turn ? { turnId: turn.id } : {}),
   ]);
 
   return { game: updatedGame };
