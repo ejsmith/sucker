@@ -404,6 +404,49 @@ Deno.test('game-action nudges the current player only after the wait window and 
   );
 });
 
+Deno.test('Sucker Punch displays one authoritative chance across preparation, retries, and throwing', async () => {
+  const [alice, bob, outsider] = await createUsers('punch-prepare', ['Alice', 'Bob', 'Outsider']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+  const scored = (
+    await invokeGameAction(alice, {
+      gameId: game.id,
+      held: falseHeld,
+      category: 'sucker',
+      type: 'score_category',
+    })
+  ).game as GameRow;
+  const prepare = { gameId: game.id, turnId: scored.last_turn_id, type: 'prepare_sucker_punch' };
+  await invokeGameAction(alice, prepare, 400);
+  await invokeGameAction(outsider, prepare, 400);
+  const requestId = crypto.randomUUID();
+  const first = await invokeGameAction(bob, { ...prepare, requestId });
+  assertEquals(first.suckerPunchChanceDie, 6);
+  assertPlayerTokens(first.game as GameRow, bob.id, startingSuckerTokens);
+  const repeat = await invokeGameAction(bob, { ...prepare, requestId });
+  assertEquals(repeat.suckerPunchChanceDie, first.suckerPunchChanceDie);
+  const concurrent = await Promise.all([invokeGameAction(bob, prepare), invokeGameAction(bob, prepare)]);
+  for (const result of concurrent) assertEquals(result.suckerPunchChanceDie, first.suckerPunchChanceDie);
+  const attempts = await admin.from('sucker_punch_attempts').select('chance_die').eq('game_id', game.id);
+  assertNoError(attempts.error);
+  assertEquals(attempts.data, [{ chance_die: 6 }]);
+  const direct = await bob.client.from('sucker_punch_attempts').select('chance_die').eq('game_id', game.id);
+  if (!direct.error) throw new Error('Authenticated clients must not access chance storage directly.');
+  const throwRequest = { ...prepare, type: 'sucker_punch', chanceDie: 1, requestId: crypto.randomUUID() };
+  const thrown = await invokeGameAction(bob, throwRequest);
+  assertEquals((thrown.suckerPunchOutcome as { chanceDie: number }).chanceDie, first.suckerPunchChanceDie);
+  assertPlayerTokens(thrown.game as GameRow, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
+  const replay = await invokeGameAction(bob, throwRequest);
+  for (const key of ['chanceDie', 'chancePercent', 'rollPercent', 'landed']) {
+    assertEquals(
+      (replay.suckerPunchOutcome as Record<string, unknown>)[key],
+      (thrown.suckerPunchOutcome as Record<string, unknown>)[key],
+    );
+  }
+  assertEquals((await loadTokenEvents(game.id)).filter((event) => event.event_type === 'sucker_punch').length, 1);
+  await invokeGameAction(bob, prepare, 400);
+});
+
 Deno.test('game-action persists extra roll, mulligan, and sucker punch chance state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

@@ -161,6 +161,19 @@ $$;
 revoke all on function public.insert_taunt_if_open(uuid, uuid, uuid, jsonb, text) from public, anon, authenticated;
 grant execute on function public.insert_taunt_if_open(uuid, uuid, uuid, jsonb, text) to service_role;
 
+create table public.sucker_punch_attempts (
+  game_id uuid not null references public.games(id) on delete cascade,
+  actor_id uuid not null references public.profiles(id) on delete cascade,
+  turn_id uuid not null references public.turns(id) on delete cascade,
+  chance_die integer not null check (chance_die between 1 and 6),
+  created_at timestamptz not null default now(),
+  primary key (game_id, actor_id, turn_id)
+);
+
+alter table public.sucker_punch_attempts enable row level security;
+revoke all on public.sucker_punch_attempts from anon, authenticated;
+grant all on public.sucker_punch_attempts to service_role;
+
 create table public.game_action_requests (
   actor_id uuid not null references public.profiles(id) on delete cascade,
   request_id uuid not null,

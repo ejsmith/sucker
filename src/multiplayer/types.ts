@@ -49,6 +49,7 @@ export type RemoteTauntOpportunity = {
 };
 
 export type MultiplayerAction =
+  | { type: 'prepare_sucker_punch'; gameId: string; turnId: string }
   | {
       type: 'create_game';
       opponentProfileId: string;
@@ -120,6 +121,7 @@ export type MultiplayerActionResult = {
   inviteCode?: string;
   notificationProfileIds?: string[];
   suckerPunchOutcome?: SuckerPunchOutcome;
+  suckerPunchChanceDie?: DieValue;
 };
 
 export type RemoveGameActionResult = {
