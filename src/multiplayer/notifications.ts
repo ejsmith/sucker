@@ -296,9 +296,8 @@ async function removeDevicePushRegistration(profileId: string) {
   let token = await authStorage.getItem(nativePushTokenStorageKey);
   // Older installs have no saved identifier. Discover it without prompting for permission.
   if (!token && Device.isDevice && (Platform.OS === 'ios' || Platform.OS === 'android')) {
-    const permission = await Notifications.getPermissionsAsync();
     const projectId = getExpoProjectId();
-    if (permission.status === 'granted' && projectId) {
+    if (projectId) {
       token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     }
   }
