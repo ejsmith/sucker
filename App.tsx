@@ -2686,7 +2686,7 @@ export function LocalGameScreen({
     }
 
     if (chanceDie === null) {
-      setSuckerPunchDialog({ ...dialog, phase: 'ready' });
+      setSuckerPunchDialog(null);
       return;
     }
     setSuckerPunchChanceFace(chanceDie);
