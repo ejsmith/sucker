@@ -444,6 +444,11 @@ test('completed history can reach games older than the first 25', async ({ brows
   const alicePage = await openAuthedPage(browser, alice);
   const bobPage = await openAuthedPage(browser, bob);
   // The notification prompt can arrive after reload while the history button is being clicked.
+  let avatarLookups = 0;
+  alicePage.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/profiles') && url.searchParams.get('id')?.startsWith('in.')) avatarLookups += 1;
+  });
   await alicePage.addLocatorHandler(alicePage.getByTestId('turn-notification-prompt'), async () => {
     await alicePage.getByTestId('turn-notification-not-now').click();
   });
@@ -489,6 +494,8 @@ test('completed history can reach games older than the first 25', async ({ brows
     await alicePage.reload();
     await alicePage.getByTestId('completed-games-button').click();
     await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(25);
+    await alicePage.waitForLoadState('networkidle');
+    const lookupsAtFirstPage = avatarLookups;
     await alicePage.screenshot({ path: test.info().outputPath('history-before.png') });
     const newestLegacyId = rows
       .slice(0, 2)
@@ -528,6 +535,21 @@ test('completed history can reach games older than the first 25', async ({ brows
     expect(shownIds.sort()).toEqual(rows.map((row) => row.id).sort());
     await alicePage.getByTestId('refresh-completed-games-button').scrollIntoViewIfNeeded();
     await alicePage.screenshot({ path: test.info().outputPath('history-after.png') });
+    await alicePage.waitForLoadState('networkidle');
+    console.log(
+      `Avatar lookups after first page: ${lookupsAtFirstPage}; after the same opponents across three pages: ${avatarLookups}.`,
+    );
+    expect(avatarLookups).toBe(lookupsAtFirstPage);
+    const lookupsBeforeRefresh = avatarLookups;
+    await alicePage.getByTestId('refresh-completed-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(25);
+    await alicePage.waitForLoadState('networkidle');
+    console.log(`Avatar lookups before refresh: ${lookupsBeforeRefresh}; after refresh: ${avatarLookups}.`);
+    expect(avatarLookups).toBe(lookupsBeforeRefresh);
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(50);
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(51);
     const oldest = [...rows].sort((left, right) => {
       const byDate = (left.completed_at ?? left.updated_at).localeCompare(right.completed_at ?? right.updated_at);
       return byDate || left.id.localeCompare(right.id);
