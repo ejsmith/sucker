@@ -15,3 +15,15 @@ zero-score turns in the database. Ordinary scoring still requires a roll.
 
 Regression coverage checks the browser flow, persisted roll count, token award,
 request replay, and database rejection of negative rolls or positive zero-roll scores.
+
+## Review follow-up
+
+The reviewer identified that placeholder dice could trigger a false Sucker
+notification and appear in the opponent reveal. `notification-before.png`
+shows the extracted existing notification logic failing the new regression;
+`notification-after.png` shows the corrected behavior. Actual Sucker rolls
+still produce their existing notification. The browser regression also verifies
+that a zero-roll turn reveals the score without displaying unrolled dice.
+
+This follow-up includes an Edge Function change that must accompany the migration
+and client update when released. It has not been deployed to production.
