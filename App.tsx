@@ -2734,6 +2734,19 @@ export function LocalGameScreen({
         buildSuckerPunchActionPayload(scorer.id, punched.outcome, { id: targetTurn.id }),
       );
 
+      if (punched.outcome.landed) updateLocalScoreTurnStatus(targetTurn.id, 'punched');
+      // The result is committed now; dismissal only controls its presentation.
+      // Save the resolved turn before exposing the dialog so closing/reloading
+      // cannot refund the cost or reroll an already resolved punch.
+      onLocalSessionChange?.({
+        version: 1,
+        game: punched.game,
+        pendingTurn: punched.pendingTurn,
+        actions: localSuckerStatActions.current,
+        turns: localSuckerStatTurns.current,
+        recordedGameIds: [...recordedComputerGameIds.current],
+      });
+
       completeAfterResult = () => {
         if (!punched.outcome?.landed) {
           setLocalGame(punched.game);
@@ -2746,7 +2759,6 @@ export function LocalGameScreen({
             scorer.scorecard[targetTurn.category],
             (scorer.suckerBonusCategories ?? []).includes(targetTurn.category),
           ) ?? targetTurn.score;
-        updateLocalScoreTurnStatus(targetTurn.id, 'punched');
         const replayed = playComputerTurn(punched.game, null);
         setLocalGame(punched.game);
         setLocalPendingTurn(punched.pendingTurn);

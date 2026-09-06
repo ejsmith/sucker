@@ -1,5 +1,67 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createGame, scoreCategories } from '../shared/game';
+import { scoreLocalTurn } from '../src/game/computer';
+
+for (const landed of [false, true]) {
+  test(`resolved computer punch survives reload before dismissal (${landed ? 'landed' : 'missed'})`, async ({
+    page,
+  }) => {
+    const game = createGame(['Player', 'Computer']);
+    game.currentPlayerIndex = 1;
+    game.dice = [6, 6, 6, 6, 6];
+    game.phase = 'scoring';
+    game.rollNumber = 1;
+    const scored = scoreLocalTurn(game, 'sucker');
+    const saved = {
+      version: 1,
+      game: scored.game,
+      pendingTurn: scored.pendingTurn,
+      actions: [],
+      recordedGameIds: [],
+      turns: [
+        {
+          player_id: game.players[1].id,
+          category: 'sucker',
+          score: 50,
+          status: 'submitted',
+          turn_index: 1,
+          turn_id: scored.pendingTurn!.id,
+        },
+      ],
+    };
+    await page.addInitScript(
+      ({ session, hit }) => {
+        if (!localStorage.getItem('sucker.computer-session.v1.guest')) {
+          localStorage.setItem('sucker.computer-session.v1.guest', JSON.stringify(session));
+        }
+        const original = Math.random;
+        Math.random = () => (hit ? original() * 0.001 : 0.99 + original() * 0.001);
+      },
+      { session: saved, hit: landed },
+    );
+    await page.goto('/local');
+    await page.getByTestId('token-menu-button').click();
+    await page.getByTestId('token-option-sucker-punch').click();
+    await page.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
+    await page.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(
+      landed ? 'Punch landed!' : 'Punch blocked!',
+    );
+    await page.screenshot({ path: test.info().outputPath('punch-result.png') });
+    await page.reload();
+    await expect(page.getByTestId('roll-button')).toBeEnabled({ timeout: 25_000 });
+    await page.screenshot({ path: test.info().outputPath('punch-reloaded.png') });
+    await expect(page.getByTestId('token-menu-button')).toHaveText('7');
+    const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.computer-session.v1.guest')!));
+    expect(
+      restored.actions.filter((action: { action_type: string }) => action.action_type === 'sucker_punch'),
+    ).toHaveLength(1);
+    expect(restored.turns[0].status).toBe(landed ? 'punched' : 'submitted');
+    if (landed) expect(restored.pendingTurn?.id).not.toBe(scored.pendingTurn!.id);
+    else expect(restored.pendingTurn).toBeNull();
+  });
+}
 
 test('Play Computer starts a fresh game after a saved completed game', async ({ page }) => {
   const game = createGame(['Player', 'Computer']);

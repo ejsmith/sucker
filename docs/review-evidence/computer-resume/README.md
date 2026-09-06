@@ -26,3 +26,9 @@ the implementation uses the existing cross-platform AsyncStorage dependency.
 # Review follow-up: completed games
 
 Reviewer feedback identified that the lobby said Play Computer while the route reopened a completed save. The new browser regression failed on the original PR with a disabled Roll button and the previous game-over overlay (`completed-before.png`). The route now treats completed sessions as absent; the same entry starts a fresh board (`completed-after.png`). All four save/resume browser scenarios pass, including reload of the new game.
+
+# Review follow-up: resolved punches
+
+Reloading while a local punch result was visible restored ten tokens and the pre-punch response window, for both a hit and a miss. The landed case is shown in `punch-result-before.png` and `punch-reload-before.png`. Save the resolved state and action history immediately when the throw completes; dismissal still controls the score-wipe presentation. After reload, the cost remains paid (seven tokens), the action appears exactly once, and a landed punch resumes the computer's required replay. See `punch-result-after.png` and `punch-reload-after.png`. Both browser regressions passed; the deterministic replay can score another Sucker, so the opponent may again show 50 after replay.
+
+The latest Linux CI confirmed all geometry/dice checks pass. Its remaining three failures were header-menu baselines lacking the new explicit New Game command. Inspected the SE, iPhone 16, and Max artifacts and updated those three intentional menu snapshots from CI's canonical rendering environment.
