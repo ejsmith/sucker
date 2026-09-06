@@ -49,6 +49,8 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 ## Visual And UX Rules
 
 - The game screen should be fullscreen mobile with no vertical scrolling.
+- The app is portrait-only. Keep native orientation locked and block landscape in mobile browsers and installed PWAs; keyboard-induced viewport changes are not device rotation.
+- Software keyboards must overlay the full-size app on every text-entry screen, not shrink or rescale it. Use the shared keyboard-stable sizing policy; Android uses pan instead of resize.
 - Use the integrated browser or a local browser screenshot for visual UI/animation work.
 - Verify visual changes at the iPhone viewport before saying they are done.
 - Preserve the current scorecard layout unless the user asks to redesign it.

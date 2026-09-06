@@ -367,41 +367,47 @@ test('unequal horizontal safe-area insets size and position the game stage', asy
   await expectNoOverflow(page, screen);
 });
 
-test('a short desktop viewport keeps the full game reachable in a vertical stage scroller', async ({ page }) => {
-  await page.setViewportSize({ height: 450, width: 720 });
-  await installDeterministicNonSuckerRandom(page);
-  await openLocalGame(page, '/');
+test.describe('desktop window sizing', () => {
+  // This case exercises desktop scrolling, not a landscape phone. The mobile
+  // WebKit project's inherited iPhone identity correctly triggers the guard.
+  test.use({ isMobile: false, hasTouch: false, userAgent: devices['Desktop Chrome'].userAgent });
 
-  const stageScroll = page.getByTestId('game-stage-scroll');
-  await expect(stageScroll).toBeVisible();
-  const scrollMetrics = await stageScroll.evaluate((node) => ({
-    clientHeight: node.clientHeight,
-    clientWidth: node.clientWidth,
-    scrollHeight: node.scrollHeight,
-    scrollWidth: node.scrollWidth,
-  }));
-  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
-  expect(scrollMetrics.scrollWidth).toBeLessThanOrEqual(scrollMetrics.clientWidth + 1);
-  await expectNoHorizontalPageOverflow(page);
+  test('a short desktop viewport keeps the full game reachable in a vertical stage scroller', async ({ page }) => {
+    await page.setViewportSize({ height: 450, width: 720 });
+    await installDeterministicNonSuckerRandom(page);
+    await openLocalGame(page, '/');
 
-  const controls = page.getByTestId('game-controls-row');
-  await controls.scrollIntoViewIfNeeded();
-  await expect(controls).toBeInViewport({ ratio: 1 });
-  expect(await stageScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    const stageScroll = page.getByTestId('game-stage-scroll');
+    await expect(stageScroll).toBeVisible();
+    const scrollMetrics = await stageScroll.evaluate((node) => ({
+      clientHeight: node.clientHeight,
+      clientWidth: node.clientWidth,
+      scrollHeight: node.scrollHeight,
+      scrollWidth: node.scrollWidth,
+    }));
+    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+    expect(scrollMetrics.scrollWidth).toBeLessThanOrEqual(scrollMetrics.clientWidth + 1);
+    await expectNoHorizontalPageOverflow(page);
 
-  const screenBox = await visibleBox(page.getByTestId('game-screen'));
-  expectProportionalWebStage(screenBox);
-  for (const testId of ['roll-button', 'token-menu-button', 'play-score-button']) {
-    const control = page.getByTestId(testId);
-    await expect(control).toBeInViewport({ ratio: 1 });
-    await expectContainedBy(control, screenBox);
-    await expectMinimumTouchTarget(control);
-  }
+    const controls = page.getByTestId('game-controls-row');
+    await controls.scrollIntoViewIfNeeded();
+    await expect(controls).toBeInViewport({ ratio: 1 });
+    expect(await stageScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
 
-  const rollButton = page.getByTestId('roll-button');
-  await waitForPressableEnabled(rollButton);
-  await rollButton.click();
-  await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
+    const screenBox = await visibleBox(page.getByTestId('game-screen'));
+    expectProportionalWebStage(screenBox);
+    for (const testId of ['roll-button', 'token-menu-button', 'play-score-button']) {
+      const control = page.getByTestId(testId);
+      await expect(control).toBeInViewport({ ratio: 1 });
+      await expectContainedBy(control, screenBox);
+      await expectMinimumTouchTarget(control);
+    }
+
+    const rollButton = page.getByTestId('roll-button');
+    await waitForPressableEnabled(rollButton);
+    await rollButton.click();
+    await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
+  });
 });
 
 test('an installed PWA follows the settled visible viewport instead of clipping its controls', async ({ browser }) => {
