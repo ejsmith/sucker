@@ -2666,6 +2666,7 @@ export function LocalGameScreen({
 
     const sourceGame = liveGameRef.current;
     setIsChoosingSuckerDeal(false);
+    setSelectedCategory(null);
 
     if (isRemoteGame && remoteHandlers) {
       const optimisticGame = scratchScoreBox(sourceGame, category);
