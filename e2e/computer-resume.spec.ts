@@ -2,6 +2,41 @@ import { expect, test, type Page } from '@playwright/test';
 import { createGame, scoreCategories } from '../shared/game';
 import { scoreLocalTurn } from '../src/game/computer';
 
+test('prepared computer Punch chance survives reload without a free reroll', async ({ page }) => {
+  const game = createGame(['Player', 'Computer']);
+  game.currentPlayerIndex = 1;
+  game.dice = [6, 6, 6, 6, 6];
+  game.phase = 'scoring';
+  game.rollNumber = 1;
+  const scored = scoreLocalTurn(game, 'sucker');
+  await page.addInitScript((session) => {
+    const key = 'sucker.computer-session.v1.guest';
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(session));
+    Math.random = () => localStorage.getItem('review.chance-reloaded') ? 0.999 : 0;
+  }, { version: 1, game: scored.game, pendingTurn: scored.pendingTurn, actions: [], turns: [], recordedGameIds: [] });
+  await page.goto('/local');
+  await page.getByTestId('token-menu-button').click();
+  await page.getByTestId('token-option-sucker-punch').click();
+  await page.getByTestId('sucker-punch-chance-roll-button').click();
+  await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('10%');
+  await page.evaluate(() => localStorage.setItem('review.chance-reloaded', '1'));
+  await page.reload();
+  if (!await page.getByTestId('sucker-punch-chance-dialog').isVisible()) {
+    await page.getByTestId('token-menu-button').click();
+    await page.getByTestId('token-option-sucker-punch').click();
+  }
+  const button = page.getByTestId('sucker-punch-chance-roll-button');
+  if (!(await button.textContent())?.includes('THROW PUNCH')) await button.click();
+  await expect(button).toContainText('THROW PUNCH');
+  await page.screenshot({ path: test.info().outputPath('prepared-chance.png') });
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('10%');
+  await button.click();
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('Punch blocked!');
+  await page.reload();
+  await expect(page.getByTestId('token-menu-button')).toHaveText('7');
+});
+
 for (const landed of [false, true]) {
   test(`resolved computer punch survives reload before dismissal (${landed ? 'landed' : 'missed'})`, async ({
     page,

@@ -44,3 +44,6 @@ The local reproduction showed the computer revealing a 50-point Sucker, then cha
 # Review follow-up: interrupted score submissions
 
 Reloading during the submitted dice flight erased the player's 24-point Chance score (`score-interruption-before.png`). Score resolution and its history now save before measuring or animating the dice, with the input locked immediately. Presentation consumes the already resolved result instead of resolving it again. The passing regression retains its rolled Chance score (16 in the captured run) through reload (`score-interruption-after.png`). All nine save/resume browser cases, typecheck, and lint passed.
+# Prepared chance resume follow-up
+
+Review reproduced a free chance reroll: a prepared 1 (10%) became 6 (75%) after reload before Throw Punch. The saved session now retains the target turn and face before animation and restores the rolled dialog. Resolving the Punch clears the preparation while persisting its token charge. Ten interruption browser cases pass, including a reload before and after throwing; legacy saves remain readable. See `chance-before.png` and `chance-after.png`.

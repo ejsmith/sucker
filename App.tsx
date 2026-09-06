@@ -1105,8 +1105,13 @@ export function LocalGameScreen({
     null,
   );
   const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
-  const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(null);
-  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(1);
+  const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(() =>
+    initialLocalSession?.preparedPunch
+      ? { phase: 'rolled', scope: 'local', targetTurnId: initialLocalSession.preparedPunch.targetTurnId }
+      : null,
+  );
+  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(initialLocalSession?.preparedPunch?.chanceDie ?? 1);
+  const preparedLocalPunch = useRef(initialLocalSession?.preparedPunch ?? null);
   const isRemoteGame = Boolean(remoteGame && remoteHandlers && myProfileId);
   const [visibleRemoteGame, setVisibleRemoteGame] = useState(
     remoteGame ? concealActiveOpponentDice(remoteGame, myProfileId) : null,
@@ -1790,11 +1795,25 @@ export function LocalGameScreen({
       version: 1,
       game: resolved?.game ?? localGame,
       pendingTurn: resolved ? resolved.pendingTurn : localPendingTurn,
+      preparedPunch: savedLocalPunch(resolved ? resolved.pendingTurn : localPendingTurn),
       actions: localSuckerStatActions.current,
       turns: localSuckerStatTurns.current,
       recordedGameIds: [...recordedComputerGameIds.current],
     });
   }, [isRemoteGame, localGame, localPendingTurn, onLocalSessionChange]);
+
+  function savedLocalPunch(nextPendingTurn: ComputerSession['pendingTurn']) {
+    return nextPendingTurn?.status === 'submitted' && preparedLocalPunch.current?.targetTurnId === nextPendingTurn.id
+      ? preparedLocalPunch.current : null;
+  }
+
+  function prepareLocalPunchChance(targetTurnId: string): DieValue {
+    if (preparedLocalPunch.current?.targetTurnId !== targetTurnId) {
+      preparedLocalPunch.current = { targetTurnId, chanceDie: rollDisplayDie() };
+      persistResolvedLocalGame(localGame, localPendingTurn);
+    }
+    return preparedLocalPunch.current.chanceDie;
+  }
 
   function persistResolvedLocalGame(nextGame: GameState, nextPendingTurn: ComputerSession['pendingTurn']) {
     resolvedLocalSave.current = { game: nextGame, pendingTurn: nextPendingTurn };
@@ -1802,6 +1821,7 @@ export function LocalGameScreen({
       version: 1,
       game: nextGame,
       pendingTurn: nextPendingTurn,
+      preparedPunch: savedLocalPunch(nextPendingTurn),
       actions: localSuckerStatActions.current,
       turns: localSuckerStatTurns.current,
       recordedGameIds: [...recordedComputerGameIds.current],
@@ -2724,7 +2744,7 @@ export function LocalGameScreen({
       const chanceRequest =
         dialog.scope === 'remote'
           ? (remoteHandlers?.onPrepareSuckerPunch(dialog.targetTurnId) ?? Promise.resolve(null))
-          : Promise.resolve(rollDisplayDie());
+          : Promise.resolve(prepareLocalPunchChance(dialog.targetTurnId));
       [chanceDie] = await Promise.all([chanceRequest, runAnimation(chanceRollAnimation)]);
     } finally {
       clearInterval(scrambleTimer);
@@ -2787,6 +2807,7 @@ export function LocalGameScreen({
       // The result is committed now; dismissal only controls its presentation.
       // Save the resolved turn before exposing the dialog so closing/reloading
       // cannot refund the cost or reroll an already resolved punch.
+      preparedLocalPunch.current = null;
       persistResolvedLocalGame(punched.game, punched.pendingTurn);
 
       completeAfterResult = () => {

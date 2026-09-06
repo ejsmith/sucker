@@ -10,6 +10,7 @@ function snapshot() {
     version: 1,
     game,
     pendingTurn: null,
+    preparedPunch: null,
     actions: [{ action_type: 'extra_roll', actor_id: game.players[0].id }],
     turns: [],
     recordedGameIds: [],
@@ -38,6 +39,20 @@ test('computer saves preserve the pending punch opportunity', () => {
 
 test('computer save keys separate guest play and each account', () => {
   assert.equal(new Set([computerSessionKey(null), computerSessionKey('alice'), computerSessionKey('bob')]).size, 3);
+});
+
+test('prepared chances belong to the saved pending turn and preserve old saves', () => {
+  const old = snapshot();
+  delete old.preparedPunch;
+  assert.equal(parseComputerSession(JSON.stringify(old)).preparedPunch, null);
+  const prepared = snapshot();
+  prepared.pendingTurn = { id: 'turn-1', category: 'sucker', dice: [6, 6, 6, 6, 6], score: 50,
+    hadSuckerBonus: false, scorerIndex: 1, responderIndex: 0, status: 'submitted' };
+  prepared.preparedPunch = { targetTurnId: 'turn-1', chanceDie: 1 };
+  assert.deepEqual(parseComputerSession(JSON.stringify(prepared)), prepared);
+  for (const chance of [{ targetTurnId: 'other', chanceDie: 1 }, { targetTurnId: 'turn-1', chanceDie: 7 }]) {
+    assert.throws(() => parseComputerSession(JSON.stringify({ ...prepared, preparedPunch: chance })));
+  }
 });
 
 test('corrupt and incompatible computer saves fail before gameplay starts', () => {

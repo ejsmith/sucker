@@ -9,6 +9,7 @@ export type ComputerSession = {
   actions: SuckerStatAction[];
   turns: SuckerStatTurn[];
   recordedGameIds: string[];
+  preparedPunch?: { targetTurnId: string; chanceDie: 1 | 2 | 3 | 4 | 5 | 6 } | null;
 };
 
 export function computerSessionKey(profileId: string | null) {
@@ -70,6 +71,12 @@ export function parseComputerSession(serialized: string): ComputerSession {
   if (!Array.isArray(value.recordedGameIds) || !value.recordedGameIds.every((id: unknown) => typeof id === 'string')) {
     throw new Error('Invalid saved result history.');
   }
+  const preparedPunch = value.preparedPunch ?? null;
+  if (preparedPunch && (
+    !pendingTurn || pendingTurn.status !== 'submitted' ||
+    preparedPunch.targetTurnId !== pendingTurn.id ||
+    ![1, 2, 3, 4, 5, 6].includes(preparedPunch.chanceDie)
+  )) throw new Error('Invalid saved Punch chance.');
   return {
     version: 1,
     game,
@@ -77,5 +84,6 @@ export function parseComputerSession(serialized: string): ComputerSession {
     actions: value.actions,
     turns: value.turns,
     recordedGameIds: value.recordedGameIds,
+    preparedPunch,
   };
 }
