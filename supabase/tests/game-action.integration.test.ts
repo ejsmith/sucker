@@ -100,6 +100,36 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
 });
 
+Deno.test('open invite codes stay private while deliberate code redemption works', async () => {
+  const [alice, bob, charlie] = await createUsers('private-invite', ['Alice', 'Bob', 'Charlie']);
+  const invite = await invokeGameAction(alice, { type: 'create_invite' });
+  const game = invite.game as GameRow;
+
+  const readInvite = (user: TestUser) =>
+    selectMany<{ invite_code: string }>(user.client.from('game_invites').select('invite_code').eq('game_id', game.id));
+
+  assertEquals(await readInvite(alice), [{ invite_code: invite.inviteCode }]);
+  assertEquals(await readInvite(charlie), []);
+  assertEquals(await readInvite(bob), []);
+
+  const accepted = await invokeGameAction(bob, { inviteCode: invite.inviteCode, type: 'accept_invite' });
+  assertEquals((accepted.game as GameRow).id, game.id);
+  assertEquals(await readInvite(bob), [{ invite_code: invite.inviteCode }]);
+  assertEquals(await readInvite(charlie), []);
+
+  const targeted = await invokeGameAction(alice, { type: 'create_invite' });
+  const targetedGame = targeted.game as GameRow;
+  assertNoError((await admin.from('game_invites').update({ invitee_id: bob.id }).eq('game_id', targetedGame.id)).error);
+  const recipientInvite = await selectMany<{ invite_code: string }>(
+    bob.client.from('game_invites').select('invite_code').eq('game_id', targetedGame.id),
+  );
+  assertEquals(recipientInvite, [{ invite_code: targeted.inviteCode }]);
+  const unrelatedInvite = await selectMany<{ invite_code: string }>(
+    charlie.client.from('game_invites').select('invite_code').eq('game_id', targetedGame.id),
+  );
+  assertEquals(unrelatedInvite, []);
+});
+
 Deno.test('profile stats aggregate every matchup and are visible to signed-in players', async () => {
   const [alice, bob, charlie] = await createUsers('profile-stats', ['Alice', 'Bob', 'Charlie']);
   await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
