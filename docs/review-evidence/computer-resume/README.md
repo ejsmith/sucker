@@ -1,5 +1,9 @@
 # Computer-game resume
 
+CI follow-up: save hydration delayed the board mount and exposed a lost development viewport query during navigation. The asymmetric fixture reproduced 0 px left inset instead of 12 (`geometry-before.png`). The lobby route now carries the existing development viewport/preset parameters explicitly. Chromium and mobile WebKit geometry checks pass, and the same fixture measures x=12, y=59, width=377, height=759 (`geometry-after.png`).
+
+The deterministic screenshot RNG now resets at the Roll click to retain the existing 5/1/2/3/4 dice fixture regardless of startup calls. The iPhone 16 dice snapshot passes. The local Mac still differs slightly from some stored pixel baselines; the iPhone Mini difference also reproduces on the branch without computer resume. Those snapshots were not regenerated to conceal the environment difference; CI validates the canonical rendering environment.
+
 The local app was inspected at 393 × 852 with guest computer play.
 
 Before: scored 16 in Chance (`progress-before.png`), returned to the lobby,
