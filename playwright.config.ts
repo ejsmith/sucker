@@ -37,7 +37,7 @@ export default defineConfig({
     },
     {
       name: 'webkit-mobile',
-      testMatch: /responsive-layout\.spec\.ts/,
+      testMatch: /(?:responsive-layout|login-focus)\.spec\.ts/,
       use: { ...devices['iPhone 13'] },
     },
   ],

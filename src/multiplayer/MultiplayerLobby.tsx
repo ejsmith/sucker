@@ -179,17 +179,18 @@ export function MultiplayerLobby({
       </View>
     );
 
-    if (needsScrollableStage) {
-      return (
-        <View style={[lobbyStyles.stageHost, lobbyStyles.scrollableStageHost]} testID="lobby-stage-scroll">
-          <View style={[lobbyStyles.stageScrollContent, { minHeight: shellStyle.height, minWidth: shellStyle.width }]}>
-            {shell}
-          </View>
+    // Keep the same ancestors when the keyboard makes the stage scrollable.
+    // Reparenting the shell remounts its inputs and dismisses the keyboard.
+    return (
+      <View
+        style={[lobbyStyles.stageHost, stageHostStableStyle, needsScrollableStage && lobbyStyles.scrollableStageHost]}
+        testID={needsScrollableStage ? 'lobby-stage-scroll' : undefined}
+      >
+        <View style={[lobbyStyles.stageScrollContent, { minHeight: shellStyle.height, minWidth: shellStyle.width }]}>
+          {shell}
         </View>
-      );
-    }
-
-    return <View style={[lobbyStyles.stageHost, stageHostStableStyle]}>{shell}</View>;
+      </View>
+    );
   }
 
   const refreshGames = useCallback(

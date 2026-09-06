@@ -26,7 +26,16 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       (window.navigator as StandaloneNavigator).standalone === true;
     const updateGuard = () => {
       const installed = isInstalledPwa();
-      setShowLandscapeGuard(installed && landscapeQuery.matches);
+      // The software keyboard can make the viewport wider than it is tall
+      // without rotating the phone. Never unmount the form for that resize.
+      const orientation = window.screen.orientation?.type;
+      const legacyOrientation = (window as Window & { orientation?: number }).orientation;
+      const isLandscape = orientation
+        ? orientation.startsWith('landscape')
+        : typeof legacyOrientation === 'number'
+          ? Math.abs(legacyOrientation) === 90
+          : landscapeQuery.matches;
+      setShowLandscapeGuard(installed && isLandscape);
       if (installed) {
         void lockPortraitOrientation();
       }
@@ -37,6 +46,8 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
     fullscreenQuery.addEventListener('change', updateGuard);
     landscapeQuery.addEventListener('change', updateGuard);
     window.addEventListener('resize', updateGuard);
+    window.addEventListener('orientationchange', updateGuard);
+    window.screen.orientation?.addEventListener('change', updateGuard);
     document.addEventListener('visibilitychange', updateGuard);
 
     return () => {
@@ -44,6 +55,8 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       fullscreenQuery.removeEventListener('change', updateGuard);
       landscapeQuery.removeEventListener('change', updateGuard);
       window.removeEventListener('resize', updateGuard);
+      window.removeEventListener('orientationchange', updateGuard);
+      window.screen.orientation?.removeEventListener('change', updateGuard);
       document.removeEventListener('visibilitychange', updateGuard);
     };
   }, []);
