@@ -32,9 +32,10 @@ export default function LocalGameRoute() {
       })
       .then((session) => {
         if (!active.current) return;
-        latestSession.current = session;
+        const resumable = session?.game.phase === 'complete' ? null : session;
+        latestSession.current = resumable;
         setOwnerKnown(true);
-        setLoaded({ profileId: ownerId.current, session });
+        setLoaded({ profileId: ownerId.current, session: resumable });
         setError(null);
       })
       .catch(() => {

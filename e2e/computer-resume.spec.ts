@@ -1,4 +1,29 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createGame, scoreCategories } from '../shared/game';
+
+test('Play Computer starts a fresh game after a saved completed game', async ({ page }) => {
+  const game = createGame(['Player', 'Computer']);
+  game.phase = 'complete';
+  for (const player of game.players) {
+    for (const category of scoreCategories) player.scorecard[category] = 0;
+  }
+  const saved = { version: 1, game, pendingTurn: null, actions: [], turns: [], recordedGameIds: [game.id] };
+  await page.addInitScript((session) => {
+    if (!localStorage.getItem('sucker.computer-session.v1.guest')) {
+      localStorage.setItem('sucker.computer-session.v1.guest', JSON.stringify(session));
+    }
+  }, saved);
+  await page.goto('/');
+  await expect(page.getByTestId('play-computer-button')).toHaveText('Play Computer');
+  await page.getByTestId('play-computer-button').click();
+  await page.screenshot({ path: test.info().outputPath('completed-game-entry.png') });
+  await expect(page.getByTestId('roll-button')).toBeEnabled();
+  await expect(page.getByTestId('game-over-overlay')).toHaveCount(0);
+  await expect(page.getByTestId('category-button-chance')).toBeDisabled();
+  await page.reload();
+  await expect(page.getByTestId('roll-button')).toBeEnabled();
+  await expect(page.getByTestId('game-over-overlay')).toHaveCount(0);
+});
 
 async function diceLabels(page: Page) {
   return page

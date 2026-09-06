@@ -19,3 +19,6 @@ Validation: four save-format unit regressions and three browser regressions
 cover corruption, tokens/dice/holds/rolls, navigation, refresh, scorecards,
 and cancel/confirm New Game. Native process termination has not been tested;
 the implementation uses the existing cross-platform AsyncStorage dependency.
+# Review follow-up: completed games
+
+Reviewer feedback identified that the lobby said Play Computer while the route reopened a completed save. The new browser regression failed on the original PR with a disabled Roll button and the previous game-over overlay (`completed-before.png`). The route now treats completed sessions as absent; the same entry starts a fresh board (`completed-after.png`). All four save/resume browser scenarios pass, including reload of the new game.
