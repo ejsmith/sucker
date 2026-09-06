@@ -68,6 +68,7 @@ import {
   subscribeToGame,
   subscribeToGameListChanges,
   subscribeToGameTaunts,
+  subscribeToTurn,
   useRemoteMulligan,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
@@ -466,6 +467,7 @@ export function RemoteGameScreen({
   const [remoteTauntOpportunity, setRemoteTauntOpportunity] = useState<RemoteTauntOpportunity | null>(null);
   const [tauntOpportunityRefreshKey, setTauntOpportunityRefreshKey] = useState(0);
   const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
+  const [remoteTurnRefreshKey, setRemoteTurnRefreshKey] = useState(0);
   const [remoteLastTurnLoadFailedId, setRemoteLastTurnLoadFailedId] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -667,27 +669,37 @@ export function RemoteGameScreen({
       return;
     }
 
-    void getTurn(turnId)
-      .then((turn) => {
-        if (isMounted) {
-          setRemoteLastTurnLoadFailedId(null);
-          setRemoteLastTurn(turn);
-        }
-      })
-      .catch((turnError) => {
-        if (isMounted) {
-          setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
-          setRemoteLastTurnLoadFailedId(turnId);
-          setRemoteLastTurn(null);
-        }
-      });
+    let requestVersion = 0;
+    function refreshTurn() {
+      const version = ++requestVersion;
+      void getTurn(turnId!)
+        .then((turn) => {
+          if (isMounted && version === requestVersion) {
+            setRemoteLastTurnLoadFailedId(null);
+            setRemoteLastTurn(turn);
+          }
+        })
+        .catch((turnError) => {
+          if (isMounted && version === requestVersion) {
+            setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
+            setRemoteLastTurnLoadFailedId(turnId ?? null);
+            setRemoteLastTurn(null);
+          }
+        });
+    }
+    refreshTurn();
 
     return () => {
       isMounted = false;
     };
-    // Punch and Mulligan update the existing row while retaining its ID.
-    // Re-read it when the response window changes so summaries show removals.
-  }, [remoteGame?.last_turn_id, remoteGame?.status]);
+    // Action events refresh scratch metadata; turn events catch later status writes.
+  }, [remoteGame?.last_turn_id, remoteGame?.status, tauntOpportunityRefreshKey, remoteTurnRefreshKey]);
+
+  useEffect(() => {
+    const turnId = remoteGame?.last_turn_id;
+    if (!turnId) return;
+    return subscribeToTurn(turnId, () => setRemoteTurnRefreshKey((current) => current + 1));
+  }, [remoteGame?.last_turn_id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -724,6 +736,7 @@ export function RemoteGameScreen({
         .then(([nextGame, latestTaunt]) => {
           setRemoteGame(nextGame);
           setRemoteTaunt(latestTaunt);
+          setRemoteTurnRefreshKey((current) => current + 1);
           if (profileIdRef.current) {
             onGameChange(profileIdRef.current, nextGame);
           }
@@ -754,6 +767,7 @@ export function RemoteGameScreen({
         setError(null);
         setRemoteGame(nextGame);
         setRemoteTaunt(latestTaunt);
+        setRemoteTurnRefreshKey((current) => current + 1);
         if (profileId) {
           onGameChange(profileId, nextGame);
           void syncRemoteBadgeCount(profileId);
@@ -2082,6 +2096,7 @@ export function LocalGameScreen({
 
     localSuckerStatTurns.current.push({
       category: animation.category,
+      scratched: animation.scratched,
       player_id: scorer.id,
       score: animation.score,
       status: result.game.phase === 'complete' ? 'finalized' : (result.pendingTurn?.status ?? 'submitted'),
@@ -2680,6 +2695,7 @@ export function LocalGameScreen({
     setLocalGame(nextGame);
     localSuckerStatTurns.current.push({
       category,
+      scratched: true,
       player_id: currentPlayer.id,
       score: 0,
       status: 'submitted',
@@ -3183,7 +3199,7 @@ export function LocalGameScreen({
       : localSuckerStatTurns.current.at(-1);
     const lastTurnPlayer = game.players.find((player) => player.id === latestTurn?.player_id);
     const lastTurnSummary = latestTurn
-      ? `${lastTurnPlayer?.name ?? 'Player'} played ${categoryLabels[latestTurn.category as ScoreCategory] ?? latestTurn.category} for ${latestTurn.score} points.${latestTurn.status === 'punched' ? ' That score was removed by a Sucker Punch.' : latestTurn.status === 'mulliganed' ? ' That score was removed by a Mulligan.' : ''}`
+      ? `${lastTurnPlayer?.name ?? 'Player'} ${latestTurn.scratched ? 'scratched' : 'played'} ${categoryLabels[latestTurn.category as ScoreCategory] ?? latestTurn.category} for ${latestTurn.score} points.${latestTurn.status === 'punched' ? ' That score was removed by a Sucker Punch.' : latestTurn.status === 'mulliganed' ? ' That score was removed by a Mulligan.' : ''}`
       : isRemoteGame && remoteLastTurnId
         ? 'Last-turn details are unavailable. Reopen this game to retry.'
         : 'No turn has been completed yet.';

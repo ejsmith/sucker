@@ -1,5 +1,19 @@
 import { expect, test } from '@playwright/test';
 
+test('last turn identifies a scratched category', async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.goto('/local');
+  await page.getByTestId('roll-button').click();
+  await expect(page.getByTestId('home-score-box-ones')).toBeEnabled();
+  await page.getByTestId('token-menu-button').click();
+  await page.getByTestId('token-option-sucker-deal').click();
+  await page.getByTestId('home-score-box-ones').click();
+  await page.getByTestId('game-menu-button').click();
+  await page.getByTestId('game-last-turn-menu-item').click();
+  await expect(page.getByTestId('last-turn-summary')).toContainText('You scratched Ones for 0 points');
+  await page.screenshot({ path: test.info().outputPath('scratch-summary.png') });
+});
+
 for (const viewport of [
   { width: 393, height: 852 },
   { width: 375, height: 667 },

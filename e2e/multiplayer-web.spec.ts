@@ -480,6 +480,79 @@ test('last-turn details refresh when the same turn is punched', async ({ browser
   }
 });
 
+test('remote last-turn summary identifies a scratch from its action record', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`scratch-summary-alice-${runId}`, 'Scratch Alice');
+  const bob = await createUser(`scratch-summary-bob-${runId}`, 'Scratch Bob');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+    await alicePage.getByTestId('token-menu-button').click();
+    await alicePage.getByTestId('token-option-sucker-deal').click();
+    await alicePage.getByTestId('home-score-box-ones').click();
+    await expect(alicePage.getByTestId('player-strip')).toContainText('11 Tokens');
+    await openGameFromLobby(bobPage, gameId);
+    await waitForPressableEnabled(bobPage.getByTestId('token-menu-button'));
+    await bobPage.getByTestId('game-menu-button').click();
+    await bobPage.getByTestId('game-last-turn-menu-item').click();
+    await expect(bobPage.getByTestId('last-turn-summary')).toContainText('Scratch Alice scratched Ones for 0 points.');
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
+test('last-turn details follow a delayed turn-row removal', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`delayed-alice-${runId}`, 'Delayed Alice');
+  const bob = await createUser(`delayed-bob-${runId}`, 'Delayed Bob');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+    await alicePage.getByTestId('home-score-box-ones').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await openGameFromLobby(bobPage, gameId);
+    await waitForPressableEnabled(bobPage.getByTestId('token-menu-button'));
+    await bobPage.getByTestId('game-menu-button').click();
+    await bobPage.getByTestId('game-last-turn-menu-item').click();
+    await expect(bobPage.getByTestId('last-turn-summary')).toContainText('Delayed Alice played Ones');
+    const game = await loadGame(gameId);
+    // Reproduce the legacy backend's separate writes, including action-before-turn ordering.
+    const state = game.state;
+    state.currentPlayerIndex = state.players.findIndex((player: { id: string }) => player.id === alice.id);
+    state.players[state.currentPlayerIndex].scorecard.ones = null;
+    const updateGame = await admin
+      .from('games')
+      .update({ state, status: 'active', current_player_id: alice.id })
+      .eq('id', gameId);
+    expect(updateGame.error).toBeNull();
+    await expect(bobPage.getByTestId('current-turn-summary')).toContainText('Waiting for Delayed Alice');
+    const action = await admin
+      .from('turn_actions')
+      .insert({ game_id: gameId, actor_id: alice.id, action_type: 'mulligan', payload: { turnId: game.last_turn_id } });
+    expect(action.error).toBeNull();
+    await expect(bobPage.getByTestId('last-turn-summary')).toContainText('played Ones');
+    const updateTurn = await admin.from('turns').update({ status: 'mulliganed' }).eq('id', game.last_turn_id);
+    expect(updateTurn.error).toBeNull();
+    try {
+      await expect(bobPage.getByTestId('last-turn-summary')).toContainText('removed by a Mulligan');
+    } finally {
+      await bobPage.screenshot({ path: test.info().outputPath('delayed-turn-summary.png') });
+    }
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('long player names stay inside the game summary dialog', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const longName = 'AlexandertheGreatWithoutAnyBreaks'.repeat(3);

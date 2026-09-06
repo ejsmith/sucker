@@ -102,7 +102,27 @@ export async function getTurn(turnId: string) {
     throw error;
   }
 
-  return toRemoteTurnRow(data);
+  const { data: scratchActions, error: scratchError } = await supabase
+    .from('turn_actions')
+    .select('id')
+    .eq('game_id', data.game_id)
+    .eq('action_type', 'scratch_category')
+    .contains('payload', { turnId })
+    .limit(1);
+  if (scratchError) throw scratchError;
+  return { ...toRemoteTurnRow(data), scratched: Boolean(scratchActions?.length) };
+}
+
+export function subscribeToTurn(turnId: string, onChange: () => void) {
+  const channel = supabase
+    .channel(`turn:${turnId}`)
+    .on('postgres_changes', { event: '*', filter: `id=eq.${turnId}`, schema: 'public', table: 'turns' }, onChange)
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
 
 export async function getRemoteTauntOpportunity(
@@ -579,7 +599,7 @@ export function subscribeToGameTaunts(
       (payload) => {
         const action = payload.new as TurnActionRow;
         if (action.action_type !== 'taunt') {
-          if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
+          if (['score_category', 'scratch_category', 'sucker_punch', 'mulligan'].includes(action.action_type)) {
             onOpportunityAction?.();
           }
           return;

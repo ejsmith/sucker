@@ -19,6 +19,7 @@ export type RemoteGameRow = {
 };
 
 export type RemoteTurnRow = {
+  scratched?: boolean;
   category: ScoreCategory;
   created_at: string;
   dice: Dice;
