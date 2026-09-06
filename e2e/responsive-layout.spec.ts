@@ -295,7 +295,8 @@ test.describe('Chromium pixel baselines', () => {
         await expect(categoryAction).toHaveAttribute('aria-pressed', 'true');
         await expect(page.getByTestId('play-score-button')).toBeEnabled();
         const screen = page.getByTestId('game-screen');
-        await expect(screen).toHaveScreenshot(`game-${viewport.key}-scoring.png`);
+        // Collect each visual difference while keeping every mismatch a test failure.
+        await expect.soft(screen).toHaveScreenshot(`game-${viewport.key}-scoring.png`);
 
         const tokenButton = page.getByTestId('token-menu-button');
         await waitForPressableEnabled(tokenButton);
@@ -312,7 +313,7 @@ test.describe('Chromium pixel baselines', () => {
         await expectMinimumTouchTarget(tokenButton);
         await expectMinimumTouchTarget(page.getByTestId('play-score-button'));
         await expectNoOverflow(page, screen);
-        await expect(screen).toHaveScreenshot(`game-${viewport.key}-dynamic.png`);
+        await expect.soft(screen).toHaveScreenshot(`game-${viewport.key}-dynamic.png`);
 
         await page.getByTestId('token-menu-close-button').click();
         await page.getByTestId('game-menu-button').click();
@@ -322,7 +323,7 @@ test.describe('Chromium pixel baselines', () => {
         await expectContainedBy(headerMenu, screenBox);
         await expectMinimumTouchTarget(statsMenuItem);
         await expectContainedBy(statsMenuItem, screenBox);
-        await expect(screen).toHaveScreenshot(`game-${viewport.key}-header-menu.png`);
+        await expect.soft(screen).toHaveScreenshot(`game-${viewport.key}-header-menu.png`);
         await statsMenuItem.click();
 
         const statsOverlay = page.getByTestId('stats-page-overlay');
@@ -340,7 +341,7 @@ test.describe('Chromium pixel baselines', () => {
         expect(statsCloseButtonBox.y).toBeGreaterThanOrEqual(viewport.insets.top);
         expect(bottom(statsCloseButtonBox)).toBeLessThanOrEqual(viewport.height - viewport.insets.bottom);
         await expectNoOverflow(page, screen);
-        await expect(screen).toHaveScreenshot(`game-${viewport.key}-stats-overlay.png`);
+        await expect.soft(screen).toHaveScreenshot(`game-${viewport.key}-stats-overlay.png`);
         if (viewport.key === 'iphone16') {
           await page.keyboard.press('Escape');
         } else {

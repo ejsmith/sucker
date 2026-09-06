@@ -443,6 +443,43 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('last-turn details refresh when the same turn is punched', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`last-punch-alice-${runId}`, 'Last Turn Alice');
+  const bob = await createUser(`last-punch-bob-${runId}`, 'Last Turn Bob');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await waitForPressableEnabled(alicePage.getByTestId('home-score-box-ones'));
+    await alicePage.getByTestId('home-score-box-ones').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await openGameFromLobby(bobPage, gameId);
+    await waitForPressableEnabled(bobPage.getByTestId('token-menu-button'));
+    await bobPage.getByTestId('game-menu-button').click();
+    await bobPage.getByTestId('game-last-turn-menu-item').click();
+    await expect(bobPage.getByTestId('last-turn-summary')).toContainText('Last Turn Alice played Ones');
+    const game = await loadGame(gameId);
+    const session = await createSession(bob.email);
+    const response = await fetch(`${supabaseUrl}/functions/v1/game-action`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'sucker_punch', gameId, turnId: game.last_turn_id, requestId: crypto.randomUUID() }),
+    });
+    const result = await response.json();
+    expect(response.ok).toBe(true);
+    expect(result.suckerPunchOutcome.landed).toBe(true);
+    await expect(bobPage.getByTestId('current-turn-summary')).toContainText('Waiting for Last Turn Alice');
+    await expect(bobPage.getByTestId('last-turn-summary')).toContainText('removed by a Sucker Punch');
+    await bobPage.screenshot({ path: test.info().outputPath('punched-turn-summary.png') });
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('long player names stay inside the game summary dialog', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const longName = 'AlexandertheGreatWithoutAnyBreaks'.repeat(3);

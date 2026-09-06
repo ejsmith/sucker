@@ -685,7 +685,9 @@ export function RemoteGameScreen({
     return () => {
       isMounted = false;
     };
-  }, [remoteGame?.last_turn_id]);
+    // Punch and Mulligan update the existing row while retaining its ID.
+    // Re-read it when the response window changes so summaries show removals.
+  }, [remoteGame?.last_turn_id, remoteGame?.status]);
 
   useEffect(() => {
     let isMounted = true;
