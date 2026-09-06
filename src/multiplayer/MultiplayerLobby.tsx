@@ -176,7 +176,9 @@ export function MultiplayerLobby({
   const sessionOwner = session?.user.id ?? null;
   if (passwordEditorOwner !== sessionOwner) {
     setPasswordEditorOwner(sessionOwner);
-    setPage('games');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordEditorOpen(false);
   }
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);

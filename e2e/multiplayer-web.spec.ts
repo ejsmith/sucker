@@ -956,6 +956,23 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
     .toBe(0);
 });
 
+test('sign-in preserves a pending invitation destination', async ({ browser }) => {
+  const player = await createUser(`invite-login-${crypto.randomUUID()}`, 'Invite Login');
+  const password = 'SuckerTest9!';
+  await admin.auth.admin.updateUserById(player.id, { password });
+  const context = await browser.newContext({ viewport: { width: 393, height: 852 } });
+  const page = await context.newPage();
+  await page.goto('/?invite=ABC123');
+  await page.getByTestId('toggle-password-login').click();
+  await page.getByTestId('login-email-input').fill(player.email);
+  await page.getByTestId('login-password-input').fill(password);
+  await page.getByTestId('password-sign-in-button').click();
+  await expect(page.getByTestId('password-sign-in-button')).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('invite-after-login.png') });
+  await expect(page.getByTestId('invite-code-input')).toHaveValue('ABC123');
+  await context.close();
+});
+
 test('password editor resets after signing out and back in', async ({ browser }) => {
   const player = await createUser(`editor-${crypto.randomUUID()}`, 'Editor E2E');
   const password = 'SuckerTest9!';
