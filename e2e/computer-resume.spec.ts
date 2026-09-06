@@ -93,6 +93,18 @@ async function diceLabels(page: Page) {
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
 }
 
+test('a resolved roll survives reloading during the dice animation', async ({ page }) => {
+  await page.goto('/local');
+  await page.getByTestId('roll-button').click();
+  await page.reload();
+  await expect(page.getByTestId('roll-button')).toBeEnabled();
+  await page.screenshot({ path: test.info().outputPath('interrupted-roll.png') });
+  await expect(page.getByTestId('roll-button')).toContainText('3');
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.computer-session.v1.guest')!));
+  expect(saved.game.rollNumber).toBe(1);
+  expect(saved.actions.filter((action: { action_type: string }) => action.action_type === 'roll')).toHaveLength(1);
+});
+
 test('an unreadable computer save requires explicit replacement', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('sucker.computer-session.v1.guest', '{invalid'));
   await page.goto('/local');

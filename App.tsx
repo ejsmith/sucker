@@ -1144,6 +1144,7 @@ export function LocalGameScreen({
   const recordedComputerGameIds = useRef<Set<string>>(new Set(initialLocalSession?.recordedGameIds));
   const localSuckerStatActions = useRef<SuckerStatAction[]>(initialLocalSession?.actions ?? []);
   const localSuckerStatTurns = useRef<SuckerStatTurn[]>(initialLocalSession?.turns ?? []);
+  const resolvedLocalSave = useRef<Pick<ComputerSession, 'game' | 'pendingTurn'> | null>(null);
   const lastRemotePunchNoticeId = useRef<string | null>(null);
   const lastRemoteBlockedPunchNoticeId = useRef<string | null>(null);
   const remoteBlockedPunchRevealCheckTurnId = useRef<string | null>(null);
@@ -1768,15 +1769,31 @@ export function LocalGameScreen({
 
   useEffect(() => {
     if (isRemoteGame || !onLocalSessionChange) return;
+    const resolved = resolvedLocalSave.current;
+    if (resolved?.game === localGame && resolved.pendingTurn === localPendingTurn) {
+      resolvedLocalSave.current = null;
+    }
     onLocalSessionChange({
       version: 1,
-      game: localGame,
-      pendingTurn: localPendingTurn,
+      game: resolved?.game ?? localGame,
+      pendingTurn: resolved ? resolved.pendingTurn : localPendingTurn,
       actions: localSuckerStatActions.current,
       turns: localSuckerStatTurns.current,
       recordedGameIds: [...recordedComputerGameIds.current],
     });
   }, [isRemoteGame, localGame, localPendingTurn, onLocalSessionChange]);
+
+  function persistResolvedLocalGame(nextGame: GameState, nextPendingTurn: ComputerSession['pendingTurn']) {
+    resolvedLocalSave.current = { game: nextGame, pendingTurn: nextPendingTurn };
+    onLocalSessionChange?.({
+      version: 1,
+      game: nextGame,
+      pendingTurn: nextPendingTurn,
+      actions: localSuckerStatActions.current,
+      turns: localSuckerStatTurns.current,
+      recordedGameIds: [...recordedComputerGameIds.current],
+    });
+  }
 
   useEffect(() => {
     if (!isRemoteGame || !opponentPlayer.id) {
@@ -2112,6 +2129,7 @@ export function LocalGameScreen({
 
     const nextGame = rollCurrentDice(sourceGame);
     recordLocalAction('roll', homePlayer.id, buildRollActionPayload(nextGame.dice));
+    persistResolvedLocalGame(nextGame, null);
     await animateRollTo(nextGame, sourceGame);
   }
 
@@ -2738,14 +2756,7 @@ export function LocalGameScreen({
       // The result is committed now; dismissal only controls its presentation.
       // Save the resolved turn before exposing the dialog so closing/reloading
       // cannot refund the cost or reroll an already resolved punch.
-      onLocalSessionChange?.({
-        version: 1,
-        game: punched.game,
-        pendingTurn: punched.pendingTurn,
-        actions: localSuckerStatActions.current,
-        turns: localSuckerStatTurns.current,
-        recordedGameIds: [...recordedComputerGameIds.current],
-      });
+      persistResolvedLocalGame(punched.game, punched.pendingTurn);
 
       completeAfterResult = () => {
         if (!punched.outcome?.landed) {
@@ -2837,6 +2848,7 @@ export function LocalGameScreen({
 
     setLocalPendingTurn(null);
     recordedComputerGameIds.current.clear();
+    resolvedLocalSave.current = null;
     localSuckerStatActions.current = [];
     localSuckerStatTurns.current = [];
     setLocalGame(createGame(localPlayerNames));
