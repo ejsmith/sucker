@@ -244,7 +244,7 @@ async function applyAction(
     case 'mulligan':
       return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
     case 'prepare_sucker_punch':
       return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId, mutationState);
     case 'sucker_blocker':
@@ -836,7 +836,19 @@ function toAction(value: unknown): Action {
         requestId,
         type,
       };
-    case 'sucker_punch':
+    case 'sucker_punch': {
+      const chanceDie = action.chanceDie;
+      if (chanceDie !== undefined && (!Number.isInteger(chanceDie) || Number(chanceDie) < 1 || Number(chanceDie) > 6)) {
+        throw new Error('Invalid Sucker Punch chance die.');
+      }
+      return {
+        gameId: readString(action, 'gameId'),
+        requestId,
+        turnId: readString(action, 'turnId'),
+        type,
+        chanceDie: chanceDie as DieValue | undefined,
+      };
+    }
     case 'prepare_sucker_punch':
     case 'sucker_blocker':
       return {
@@ -1697,8 +1709,21 @@ async function suckerPunchTurn(
   gameId: string,
   turnId: string,
   mutationState: ActionMutationState,
+  displayedChanceDie?: DieValue,
 ) {
-  // Legacy clients can still throw directly; new clients prepare first and display this saved die.
+  // A throw must use a chance that was prepared and shown before committing.
+  const { data: existingChance, error: chanceError } = await admin
+    .from('sucker_punch_attempts')
+    .select('chance_die')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .eq('turn_id', turnId)
+    .maybeSingle();
+  if (chanceError) throw chanceError;
+  if (!existingChance) throw new Error('Update Sucker and roll the Sucker Punch chance before throwing.');
+  if (displayedChanceDie !== undefined && displayedChanceDie !== existingChance.chance_die) {
+    throw new Error('The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
+  }
   const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, mutationState);
   const game = prepared.game;
   const state = game.state;
