@@ -15,3 +15,9 @@ Validation against isolated local Supabase on port 55421:
 - 92 app tests, 11 Edge tests, both typechecks, and lint passed.
 
 No hosted deployment or native build was performed. This PR builds on the computer-game resume PR.
+
+## Review follow-up: game identity collisions
+
+Two independent browser sessions with the same fixed clock produced the identical `local-1788674400000` game ID. That receipt key could incorrectly deduplicate two games for one account. New computer games and rematches now use 128 cryptographically random bits from the app's existing Expo Crypto dependency. The platform-neutral rules remain independent of Expo. Existing saved identities are retained so retries do not double-count previously delivered games.
+
+The same browser regression now produces distinct IDs and verifies both remain stable through reload. Both failed-delivery regressions still pass, alongside typecheck and lint. [Before](identity-before.png) and [after](identity-after.png) are screenshots of the actual regression output, since this identifier is not rendered in the game UI.

@@ -47,6 +47,7 @@ import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './s
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
 import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
+import { createComputerGame } from './src/game/createComputerGame';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -1097,7 +1098,7 @@ export function LocalGameScreen({
   const [devViewportPresetKey, setDevViewportPresetKey] =
     useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
   const localPlayerNames = [localPlayerName?.trim() || playerNames[0], playerNames[1]];
-  const [localGame, setLocalGame] = useState(() => initialLocalSession?.game ?? createGame(localPlayerNames));
+  const [localGame, setLocalGame] = useState(() => initialLocalSession?.game ?? createComputerGame(localPlayerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(
     initialLocalSession?.pendingTurn ?? null,
   );
@@ -2912,7 +2913,7 @@ export function LocalGameScreen({
     resolvedLocalSave.current = null;
     localSuckerStatActions.current = [];
     localSuckerStatTurns.current = [];
-    setLocalGame(createGame(localPlayerNames));
+    setLocalGame(createComputerGame(localPlayerNames));
   }
 
   function handleCloseGameOver() {
