@@ -1644,6 +1644,13 @@ export function LocalGameScreen({
       clearTimeout(suckerPunchWipeStartTimer.current);
     }
 
+    if (prefersReducedMotion) {
+      suckerPunchWipeStartTimer.current = null;
+      wipe.progress.setValue(1);
+      setSuckerPunchWipe(null);
+      return;
+    }
+
     suckerPunchWipeStartTimer.current = setTimeout(() => {
       suckerPunchWipeStartTimer.current = null;
       requestAnimationFrame(() => {
@@ -2253,7 +2260,7 @@ export function LocalGameScreen({
     setRollingFaces(sourceGame.dice);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
-    if (rollingIndexes.length === 0) {
+    if (rollingIndexes.length === 0 || prefersReducedMotion) {
       const nextGame = await nextGamePromise;
       if (!nextGame) {
         setIsRolling(false);
@@ -2455,7 +2462,7 @@ export function LocalGameScreen({
       { x: 6, y: 4 },
       { x: 12, y: -4 },
     ];
-    const revealProgress = new Animated.Value(0);
+    const revealProgress = new Animated.Value(prefersReducedMotion ? 1 : 0);
 
     setIsScoring(true);
     setOpponentTurnReveal({
@@ -2470,16 +2477,23 @@ export function LocalGameScreen({
       top: revealTop,
     });
 
-    await runAnimation(
-      Animated.timing(revealProgress, {
-        toValue: 1,
-        duration: computerScoreRevealDurationMs,
-        easing: Easing.out(Easing.back(1.12)),
-        useNativeDriver: true,
-      }),
-    );
+    if (!prefersReducedMotion) {
+      await runAnimation(
+        Animated.timing(revealProgress, {
+          toValue: 1,
+          duration: computerScoreRevealDurationMs,
+          easing: Easing.out(Easing.back(1.12)),
+          useNativeDriver: true,
+        }),
+      );
+    }
     await wait(computerScoreRevealPauseMs);
     setOpponentTurnReveal(null);
+
+    if (prefersReducedMotion) {
+      setIsScoring(false);
+      return true;
+    }
 
     const flyingDice = dice.map((face, index) => {
       const offset = targetOffsets[index] ?? { x: 0, y: 0 };
@@ -2545,6 +2559,10 @@ export function LocalGameScreen({
     }
 
     const { category, dice, hadSuckerBonus, score, scorerIndex } = result.scoreAnimation;
+    if (prefersReducedMotion && scorerIndex === myPlayerIndex) {
+      finishComputerTurnResult(result);
+      return;
+    }
     setLocalPendingTurn(null);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
@@ -2773,11 +2791,13 @@ export function LocalGameScreen({
     }
 
     setSuckerPunchDialog({ ...dialog, phase: 'rolling' });
-    suckerPunchDieAnimation.setValue(0);
+    suckerPunchDieAnimation.setValue(prefersReducedMotion ? 1 : 0);
 
-    const scrambleTimer = setInterval(() => {
-      setSuckerPunchChanceFace(rollDisplayDie());
-    }, 70);
+    const scrambleTimer = prefersReducedMotion
+      ? null
+      : setInterval(() => {
+          setSuckerPunchChanceFace(rollDisplayDie());
+        }, 70);
     const chanceRollAnimation = Animated.timing(suckerPunchDieAnimation, {
       toValue: 1,
       duration: defaultRollingLaunch.duration,
@@ -2791,9 +2811,9 @@ export function LocalGameScreen({
         dialog.scope === 'remote'
           ? (remoteHandlers?.onPrepareSuckerPunch(dialog.targetTurnId) ?? Promise.resolve(null))
           : Promise.resolve(prepareLocalPunchChance(dialog.targetTurnId));
-      [chanceDie] = await Promise.all([chanceRequest, runAnimation(chanceRollAnimation)]);
+      [chanceDie] = await Promise.all([chanceRequest, prefersReducedMotion ? Promise.resolve() : runAnimation(chanceRollAnimation)]);
     } finally {
-      clearInterval(scrambleTimer);
+      if (scrambleTimer) clearInterval(scrambleTimer);
     }
 
     if (chanceDie === null) {
@@ -2801,7 +2821,7 @@ export function LocalGameScreen({
       return;
     }
     setSuckerPunchChanceFace(chanceDie);
-    await wait(rollFinalFaceHoldMs);
+    if (!prefersReducedMotion) await wait(rollFinalFaceHoldMs);
     setSuckerPunchDialog({ ...dialog, phase: 'rolled' });
   }
 
@@ -3101,7 +3121,7 @@ export function LocalGameScreen({
       Promise.all(dieSlotRefs.current.map((ref) => measureInWindow(ref))),
     ]);
 
-    if (!screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
+    if (prefersReducedMotion || !screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
       if (isRemoteGame && remoteHandlers) {
         const optimisticGame = scoreTurn(scoringGame, category);
         const shouldAnimateSectionBonus = didAwardUpperBonusForPlayer(scoringGame, optimisticGame, homePlayer.id);
