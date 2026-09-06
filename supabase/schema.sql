@@ -918,7 +918,7 @@ using (public.is_game_participant(game_id, (select auth.uid())));
 create policy "Relevant users can read invites"
 on public.game_invites for select
 to authenticated
-using ((select auth.uid()) in (inviter_id, invitee_id) or invitee_id is null);
+using ((select auth.uid()) in (inviter_id, invitee_id));
 
 create policy "Participants can read turns"
 on public.turns for select
