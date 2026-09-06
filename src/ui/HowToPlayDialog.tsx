@@ -80,7 +80,7 @@ export function HowToPlayDialog({ onClose }: { onClose: () => void }) {
             {!reference && (
               <Image
                 accessible={false}
-                source={require('../../assets/sucker-wordmark-red.png')}
+                source={require('../../assets/sucker-lobby-header.png')}
                 style={styles.logo}
                 resizeMode="contain"
               />
