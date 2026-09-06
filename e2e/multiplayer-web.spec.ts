@@ -183,6 +183,40 @@ test('notification cleanup failure keeps the account signed in and supports retr
   }
 });
 
+test('enabling Reduce Motion removes active roll flights while the result is stalled', async ({ browser }) => {
+  const alice = await createUser(`flight-a-${crypto.randomUUID()}`, 'Alice Flight');
+  const bob = await createUser(`flight-b-${crypto.randomUUID()}`, 'Bob Flight');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  let releaseRequest = () => {};
+  const stalled = new Promise<void>((resolve) => { releaseRequest = resolve; });
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.emulateMedia({ reducedMotion: 'no-preference' });
+    await alicePage.route('**/functions/v1/game-action', async (route) => {
+      if (route.request().postDataJSON()?.type === 'roll') await stalled;
+      await route.continue();
+    });
+    await alicePage.getByTestId('roll-button').click();
+    await expect(alicePage.getByTestId('flying-die-0')).toBeVisible();
+    await alicePage.emulateMedia({ reducedMotion: 'reduce' });
+    await alicePage.waitForTimeout(200);
+    const flights = await alicePage.locator('[data-testid^="flying-die-"]').count();
+    console.log(`Reduce Motion enabled during a stalled ordinary roll; flying overlays after 200 ms: ${flights}`);
+    await alicePage.screenshot({ path: test.info().outputPath('stalled-roll.png') });
+    expect(flights).toBe(0);
+    await expect(alicePage.getByTestId('roll-button')).toBeDisabled();
+    releaseRequest();
+    await expect(alicePage.getByTestId('rolls-left-count')).toHaveText('3');
+    await expect(alicePage.getByTestId('roll-button')).toBeEnabled();
+  } finally {
+    releaseRequest();
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('enabling Reduce Motion stops a stalled remote Punch scramble', async ({ browser }) => {
   const alice = await createUser(`motion-a-${crypto.randomUUID()}`, 'Alice Motion');
   const bob = await createUser(`motion-b-${crypto.randomUUID()}`, 'Bob Motion');

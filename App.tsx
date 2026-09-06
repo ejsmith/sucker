@@ -1147,8 +1147,12 @@ export function LocalGameScreen({
   const isAppActive = useAppActivity();
   const prefersReducedMotion = useReducedMotion();
   const reducedMotionRef = useRef(prefersReducedMotion);
+  const activeMotionStops = useRef(new Set<() => void>());
   useEffect(() => {
     reducedMotionRef.current = prefersReducedMotion;
+    if (prefersReducedMotion) {
+      [...activeMotionStops.current].forEach((stop) => stop());
+    }
   }, [prefersReducedMotion]);
   const shouldReduceMotion = disableE2EAnimations || prefersReducedMotion;
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
@@ -1574,6 +1578,29 @@ export function LocalGameScreen({
     };
   }, []);
 
+  function runAnimation(animation: Animated.CompositeAnimation, settleReducedMotion?: () => void) {
+    return new Promise<void>((resolve) => {
+      let finished = false;
+      const complete = () => {
+        if (finished) return;
+        finished = true;
+        activeMotionStops.current.delete(stop);
+        resolve();
+      };
+      const stop = () => {
+        animation.stop();
+        settleReducedMotion?.();
+        complete();
+      };
+      if (reducedMotionRef.current) {
+        stop();
+      } else {
+        activeMotionStops.current.add(stop);
+        animation.start(complete);
+      }
+    });
+  }
+
   function showSuckerRollBanner(title: string) {
     if (suckerRollNoticeTimer.current) {
       clearTimeout(suckerRollNoticeTimer.current);
@@ -1623,6 +1650,7 @@ export function LocalGameScreen({
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
+          () => wipe.progress.setValue(1),
         ).then(() => {
           setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
         });
@@ -2285,12 +2313,26 @@ export function LocalGameScreen({
       }),
     );
 
+    let motionCancelled = false;
+    const stopRollMotion = () => {
+      motionCancelled = true;
+      clearInterval(scrambleTimer);
+      rollAnimation.stop();
+      rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
+      setRollingDieIndexes([]);
+      setRollingLaunches({});
+    };
+    // Keep this cancellation registered after the finite animation ends, since a
+    // remote result can still be pending while its flying overlays are mounted.
+    activeMotionStops.current.add(stopRollMotion);
+    if (reducedMotionRef.current) stopRollMotion();
     let nextGame: ReturnType<typeof createGame> | null = null;
     try {
       await runAnimation(rollAnimation);
       nextGame = resolvedNextGame === undefined ? await trackedNextGamePromise : resolvedNextGame;
     } finally {
       clearInterval(scrambleTimer);
+      activeMotionStops.current.delete(stopRollMotion);
     }
 
     if (!nextGame) {
@@ -2303,7 +2345,7 @@ export function LocalGameScreen({
     const finalDice = nextGame.dice;
 
     setRollingFaces(finalDice);
-    await wait(rollFinalFaceHoldMs);
+    if (!motionCancelled && !reducedMotionRef.current) await wait(rollFinalFaceHoldMs);
 
     if (isRemoteGame) {
       setLiveRemoteGame(nextGame);
@@ -2450,6 +2492,7 @@ export function LocalGameScreen({
           easing: Easing.out(Easing.back(1.12)),
           useNativeDriver: true,
         }),
+        () => revealProgress.setValue(1),
       );
     }
     await wait(computerScoreRevealPauseMs);
@@ -2786,7 +2829,7 @@ export function LocalGameScreen({
           : Promise.resolve(prepareLocalPunchChance(dialog.targetTurnId));
       [chanceDie] = await Promise.all([
         chanceRequest,
-        reducedMotionRef.current ? Promise.resolve() : runAnimation(chanceRollAnimation),
+        runAnimation(chanceRollAnimation, () => suckerPunchDieAnimation.setValue(1)),
       ]);
     } finally {
       if (scrambleTimer) clearInterval(scrambleTimer);
@@ -3049,6 +3092,7 @@ export function LocalGameScreen({
         easing: Easing.out(Easing.cubic),
         useNativeDriver: false,
       }),
+      () => sectionBonusPulse.setValue(1),
     );
   }
 
@@ -5297,12 +5341,6 @@ function SuckerPunchScoreWipe({ home, progress, score }: { home: boolean; progre
       </Animated.Text>
     </Animated.View>
   );
-}
-
-function runAnimation(animation: Animated.CompositeAnimation) {
-  return new Promise<void>((resolve) => {
-    animation.start(() => resolve());
-  });
 }
 
 function formatScoreRevealCategory(category: ScoreCategory) {

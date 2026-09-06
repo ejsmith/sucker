@@ -55,6 +55,20 @@ test('enabling reduced motion during an opponent reveal prevents new score fligh
   await expect(page.getByTestId('opponent-score-box-sucker')).toContainText('50');
 });
 
+test('enabling reduced motion cancels an active score flight and commits the score', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.addInitScript(() => { Math.random = () => 0; });
+  await page.goto('/local');
+  await page.getByTestId('roll-button').click();
+  await page.getByTestId('home-score-box-ones').click();
+  await page.getByTestId('play-score-button').click();
+  await expect(page.getByTestId('score-dice-overlay')).toBeVisible();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForTimeout(200);
+  expect(await page.getByTestId('score-dice-overlay').count()).toBe(0);
+  await expect(page.getByTestId('home-score-box-ones')).toContainText('5');
+});
+
 test('reduced motion keeps rolling dice in their slots', async ({ page }) => {
   await page.setViewportSize({ width: 393, height: 852 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
