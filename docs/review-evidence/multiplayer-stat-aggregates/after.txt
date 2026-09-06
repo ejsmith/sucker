@@ -1,0 +1,7 @@
+Two prepared game completions
+Both workers read games = 0.
+Database commit responses: 200, 200
+Saved game results: 2
+Expected games / score: 2 / 30
+Actual games / score: 2 / 30
+1 passed (both games counted exactly once).

@@ -1,0 +1,18 @@
+Two prepared game completions
+Both workers read games = 0.
+Database commit responses: 200, 200
+Saved game results: 2
+Expected games / score: 2 / 30
+Actual games / score: 1 / 15
+FAIL: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   games_played: 1,
++   total_score: 15,
++   wins: 1
+-   games_played: 2,
+-   total_score: 30,
+-   wins: 2
+  }
+
