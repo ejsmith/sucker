@@ -142,7 +142,7 @@ type ScoreFlyNumber = {
   value: number;
 };
 type OpponentTurnReveal = {
-  dice: ReturnType<typeof createGame>['dice'];
+  dice: ReturnType<typeof createGame>['dice'] | [];
   dieSize: number;
   gap: number;
   id: string;
@@ -2376,7 +2376,7 @@ export function LocalGameScreen({
     targetRef,
   }: {
     category: ScoreCategory;
-    dice: GameState['dice'];
+    dice: GameState['dice'] | [];
     displayScore: number;
     playerName: string;
     scoreId: string;
@@ -2394,7 +2394,7 @@ export function LocalGameScreen({
 
     const dieSize = Math.min(54, Math.max(46, (screenRect.width - 56) / 5.6));
     const gap = Math.max(4, Math.min(7, dieSize * 0.12));
-    const rowWidth = dieSize * dice.length + gap * (dice.length - 1);
+    const rowWidth = dieSize * dice.length + gap * Math.max(0, dice.length - 1);
     const revealLeft = Math.max(12, (screenRect.width - rowWidth) / 2);
     const boardTop = boardRect ? boardRect.y - screenRect.y : screenRect.height * 0.22;
     const revealTop = Math.max(96, Math.min(screenRect.height - 170, boardTop));
@@ -2575,7 +2575,8 @@ export function LocalGameScreen({
     const scorerIndex = previousGame.players.findIndex((player) => player.id === turn.player_id);
     const scorer =
       previousGame.players[scorerIndex] ?? nextRemoteGame.players.find((player) => player.id === turn.player_id);
-    const hadSuckerBonus = scorer ? hasPreviewSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
+    const hadSuckerBonus =
+      turn.roll_count > 0 && scorer ? hasPreviewSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
 
     setLocalPendingTurn(null);
     setSelectedCategory(null);
@@ -2585,7 +2586,7 @@ export function LocalGameScreen({
     const displayScore = displayScoreWithoutSuckerBonus(turn.score, hadSuckerBonus) ?? turn.score;
     const didAnimateReveal = await animateOpponentScoreReveal({
       category: turn.category,
-      dice: turn.dice,
+      dice: turn.roll_count > 0 ? turn.dice : [],
       displayScore,
       playerName: scorer?.name ?? 'Opponent',
       scoreId: `remote-score-${turn.id}`,
@@ -3973,43 +3974,48 @@ export function LocalGameScreen({
               testID="opponent-turn-reveal"
             >
               <View style={[styles.opponentTurnRevealPanel, gameLayout.styles.opponentTurnRevealPanel]}>
-                <View style={[styles.opponentTurnRevealDiceRow, { gap: opponentTurnReveal.gap }]}>
-                  {opponentTurnReveal.dice.map((face, index) => {
-                    const opacity = opponentTurnReveal.progress.interpolate({
-                      inputRange: [0, Math.min(0.76, 0.16 + index * 0.08), 1],
-                      outputRange: [0, 0, 1],
-                    });
-                    const translateY = opponentTurnReveal.progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [gameLayout.unit(-26 - index * 2), 0],
-                    });
-                    const scale = opponentTurnReveal.progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.74, 1],
-                    });
-                    const rotate = opponentTurnReveal.progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [index % 2 === 0 ? '-16deg' : '16deg', '0deg'],
-                    });
+                {opponentTurnReveal.dice.length > 0 && (
+                  <View
+                    style={[styles.opponentTurnRevealDiceRow, { gap: opponentTurnReveal.gap }]}
+                    testID="opponent-turn-reveal-dice"
+                  >
+                    {opponentTurnReveal.dice.map((face, index) => {
+                      const opacity = opponentTurnReveal.progress.interpolate({
+                        inputRange: [0, Math.min(0.76, 0.16 + index * 0.08), 1],
+                        outputRange: [0, 0, 1],
+                      });
+                      const translateY = opponentTurnReveal.progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [gameLayout.unit(-26 - index * 2), 0],
+                      });
+                      const scale = opponentTurnReveal.progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.74, 1],
+                      });
+                      const rotate = opponentTurnReveal.progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [index % 2 === 0 ? '-16deg' : '16deg', '0deg'],
+                      });
 
-                    return (
-                      <Animated.View
-                        key={`${opponentTurnReveal.id}-reveal-${index}`}
-                        style={[
-                          styles.opponentTurnRevealDie,
-                          {
-                            height: opponentTurnReveal.dieSize,
-                            opacity,
-                            transform: [{ translateY }, { rotate }, { scale }],
-                            width: opponentTurnReveal.dieSize,
-                          },
-                        ]}
-                      >
-                        <DieFace face={face} style={styles.opponentTurnRevealDieImage} />
-                      </Animated.View>
-                    );
-                  })}
-                </View>
+                      return (
+                        <Animated.View
+                          key={`${opponentTurnReveal.id}-reveal-${index}`}
+                          style={[
+                            styles.opponentTurnRevealDie,
+                            {
+                              height: opponentTurnReveal.dieSize,
+                              opacity,
+                              transform: [{ translateY }, { rotate }, { scale }],
+                              width: opponentTurnReveal.dieSize,
+                            },
+                          ]}
+                        >
+                          <DieFace face={face} style={styles.opponentTurnRevealDieImage} />
+                        </Animated.View>
+                      );
+                    })}
+                  </View>
+                )}
                 <Animated.View
                   style={[
                     styles.opponentTurnRevealMessage,

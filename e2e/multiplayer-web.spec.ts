@@ -291,6 +291,10 @@ test('Sucker Deal can sacrifice a category before the first roll', async ({ brow
     const turns = await admin.from('turns').select('roll_count').eq('game_id', gameId);
     expect(turns.error).toBeNull();
     expect(turns.data).toEqual([{ roll_count: 0 }]);
+    await openGameFromLobby(bobPage, gameId);
+    await expect(bobPage.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 15_000 });
+    await expect(bobPage.getByTestId('opponent-turn-reveal-dice')).toHaveCount(0);
+    await expect(bobPage.getByTestId('opponent-turn-reveal')).toContainText('played 0 on');
     await alicePage.reload();
     await expect(
       alicePage.getByRole('img', { name: 'Alice Deal, Ones score: 0 points, scored', exact: true }),
