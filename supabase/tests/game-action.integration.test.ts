@@ -404,6 +404,92 @@ Deno.test('game-action nudges the current player only after the wait window and 
   );
 });
 
+Deno.test('game-action preserves token accounting when mulligan races other turn actions', async () => {
+  const [alice, bob] = await createUsers('mixed-mulligan', ['Alice', 'Bob']);
+  for (const type of ['roll', 'extra_roll', 'score_category', 'scratch_category']) {
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+    const results = await Promise.all(
+      ['mulligan', type].map(async (actionType) => {
+        const response = await fetch(functionUrl, {
+          body: JSON.stringify({ gameId: game.id, requestId: crypto.randomUUID(), type: actionType, category: 'ones' }),
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${alice.session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          method: 'POST',
+        });
+        return { type: actionType, status: response.status, body: await response.json() };
+      }),
+    );
+    const accepted = results.filter((result) => result.status === 200).map((result) => result.type);
+    if (accepted.length === 0) throw new Error('Expected at least one racing action to succeed.');
+    for (const result of results.filter((result) => result.status !== 200)) {
+      assertEquals(result.status, 400);
+      assertIncludes(
+        ['The game changed before your action. Refresh and try again.', 'Roll before playing a score.'],
+        result.body.error,
+      );
+    }
+    const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+    const expectedTokens =
+      startingSuckerTokens -
+      (accepted.includes('mulligan') ? suckerTokenCosts.mulligan : 0) -
+      (accepted.includes('extra_roll') ? suckerTokenCosts.extraRoll : 0) +
+      (accepted.includes('scratch_category') ? 1 : 0);
+    assertPlayerTokens(saved, alice.id, expectedTokens);
+    const player = await selectSingle<GamePlayerTokenRow>(
+      admin
+        .from('game_players')
+        .select('player_id, sucker_tokens')
+        .eq('game_id', game.id)
+        .eq('player_id', alice.id)
+        .single(),
+    );
+    assertEquals(player.sucker_tokens, expectedTokens);
+    const actions = await loadActions(game.id);
+    for (const actionType of ['mulligan', type]) {
+      assertEquals(
+        actions.filter((action) => action.action_type === actionType).length,
+        (accepted.includes(actionType) ? 1 : 0) + (actionType === 'roll' ? 1 : 0),
+      );
+    }
+    const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id));
+    assertEquals(
+      turns.length,
+      accepted.some((action) => action === 'score_category' || action === 'scratch_category') ? 1 : 0,
+    );
+    assertEquals((await loadTokenEvents(game.id)).length, accepted.includes('mulligan') ? 1 : 0);
+  }
+});
+
+Deno.test('game state transaction rejects stale writes and cannot be called by players', async () => {
+  const [alice, bob] = await createUsers('game-transaction', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const args = {
+    target_game_id: game.id,
+    expected_updated_at: game.updated_at,
+    next_game: game as unknown as Database['public']['Functions']['commit_game_mutation']['Args']['next_game'],
+    player_updates: [],
+  };
+  const denied = await alice.client.rpc('commit_game_mutation', args);
+  if (!denied.error) throw new Error('Players must not be able to commit arbitrary game states.');
+  const attempts = await Promise.all([
+    admin.rpc('commit_game_mutation', args),
+    admin.rpc('commit_game_mutation', args),
+  ]);
+  for (const attempt of attempts) assertNoError(attempt.error);
+  assertEquals(attempts.filter((attempt) => attempt.data !== null).length, 1);
+  const stale = await admin.rpc('commit_game_mutation', {
+    ...args,
+    submitted_turn: { id: crypto.randomUUID() },
+  });
+  assertNoError(stale.error);
+  assertEquals(stale.data, null);
+  assertEquals((await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id))).length, 0);
+});
+
 Deno.test('game-action charges every accepted concurrent mulligan exactly once', async () => {
   const [alice, bob] = await createUsers('concurrent-mulligan', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
@@ -430,7 +516,7 @@ Deno.test('game-action charges every accepted concurrent mulligan exactly once',
   if (accepted === 0) throw new Error('Expected at least one concurrent Mulligan to succeed.');
   for (const result of results.filter((result) => result.status !== 200)) {
     assertEquals(result.status, 400);
-    assertEquals(result.body.error, 'The game changed before your Mulligan. Refresh and try again.');
+    assertEquals(result.body.error, 'The game changed before your action. Refresh and try again.');
   }
   const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
   const expectedTokens = startingSuckerTokens - accepted * suckerTokenCosts.mulligan;
