@@ -3,6 +3,11 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      sucker_punch_attempts: {
+        Row: { game_id: string; actor_id: string; turn_id: string; chance_die: number; created_at: string };
+        Insert: { game_id: string; actor_id: string; turn_id: string; chance_die: number; created_at?: string };
+        Update: { chance_die?: number };
+      };
       profiles: {
         Row: {
           avatar_url: string | null;
@@ -503,6 +508,16 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      commit_game_mutation: {
+        Args: {
+          target_game_id: string;
+          expected_updated_at: string;
+          next_game: Json;
+          player_updates: Json;
+          submitted_turn?: Json;
+        };
+        Returns: Json;
+      };
       insert_taunt_if_open: {
         Args: {
           target_actor_id: string;
