@@ -7,3 +7,5 @@ After the fix, the Roll action asks the server to prepare a chance. The dialog s
 The integration regression covers unauthorized preparation, repeated and concurrent preparation, request replay, token balances, spoofed client chance, and rejection after the response window ends. Existing direct-throw clients remain supported. Deploy the migration and updated Edge Function before distributing the new client; no hosted deployment was performed in this review.
 
 This change preserves the current set of punchable turns. The broader rule/spec discrepancy is tracked separately.
+
+Review follow-up: the schema's later bulk authenticated-table grant overrode the early attempt-table revoke. A local probe applied the exact schema grant statements in a rolled-back transaction and confirmed SELECT privilege was restored. Moving the revoke after the bulk grant makes that same probe pass. The migration already had the correct final privileges. Permission-probe screenshots document both results.

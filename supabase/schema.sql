@@ -171,7 +171,6 @@ create table public.sucker_punch_attempts (
 );
 
 alter table public.sucker_punch_attempts enable row level security;
-revoke all on public.sucker_punch_attempts from anon, authenticated;
 grant all on public.sucker_punch_attempts to service_role;
 
 create table public.game_action_requests (
@@ -1019,5 +1018,6 @@ grant all on all sequences in schema public to service_role;
 
 grant all on all tables in schema public to authenticated;
 revoke all on table public.game_action_requests from anon, authenticated;
+revoke all on public.sucker_punch_attempts from anon, authenticated;
 grant all on all routines in schema public to authenticated;
 grant all on all sequences in schema public to authenticated;
