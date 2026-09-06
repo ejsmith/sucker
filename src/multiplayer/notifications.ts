@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { authStorage } from './authStorage';
 import { supabase } from './supabase';
 import type { RemoteGameRow } from './types';
 
@@ -34,9 +35,24 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export async function registerPushToken(profileId: string) {
+const nativePushTokenStorageKey = 'sucker.current-push-token';
+let notificationWork: Promise<unknown> = Promise.resolve();
+let isSigningOut = false;
+
+function serializeNotificationWork<T>(work: () => Promise<T>): Promise<T> {
+  const result = notificationWork.then(work, work);
+  notificationWork = result.catch(() => undefined);
+  return result;
+}
+
+export function registerPushToken(profileId: string) {
+  if (isSigningOut) return Promise.resolve(null);
+  return serializeNotificationWork(() => registerDevicePushToken(profileId));
+}
+
+async function registerDevicePushToken(profileId: string) {
   if (Platform.OS === 'web') {
-    return registerWebPushSubscription(profileId);
+    return registerBrowserPushSubscription(profileId);
   }
 
   if (!Device.isDevice || (Platform.OS !== 'ios' && Platform.OS !== 'android')) {
@@ -65,6 +81,7 @@ export async function registerPushToken(profileId: string) {
   }
 
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+  await authStorage.setItem(nativePushTokenStorageKey, token);
   const { data, error } = await supabase
     .from('push_tokens')
     .upsert(
@@ -168,7 +185,12 @@ async function setBadgeTargetCount(target: BadgeTarget, count: number) {
   }
 }
 
-export async function registerWebPushSubscription(profileId: string) {
+export function registerWebPushSubscription(profileId: string) {
+  if (isSigningOut) return Promise.resolve(null);
+  return serializeNotificationWork(() => registerBrowserPushSubscription(profileId));
+}
+
+async function registerBrowserPushSubscription(profileId: string) {
   if (!canRegisterWebPush()) {
     return null;
   }
@@ -228,6 +250,58 @@ export async function registerWebPushSubscription(profileId: string) {
   }
 
   return data;
+}
+
+export async function signOutWithNotificationCleanup(signOut: () => Promise<void>) {
+  isSigningOut = true;
+  try {
+    await serializeNotificationWork(async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      if (data.session) await removeDevicePushRegistration(data.session.user.id);
+      await signOut();
+      await syncAppBadgeCount(0);
+    });
+  } finally {
+    isSigningOut = false;
+  }
+}
+
+async function removeDevicePushRegistration(profileId: string) {
+  if (Platform.OS === 'web') {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker?.getRegistration) return;
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = await registration?.pushManager?.getSubscription();
+    if (!subscription) return;
+    const { error } = await supabase
+      .from('web_push_subscriptions')
+      .delete()
+      .eq('profile_id', profileId)
+      .eq('endpoint', subscription.endpoint);
+    if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
+    if (!(await subscription.unsubscribe())) {
+      throw new Error('Could not disconnect browser notifications. Try signing out again.');
+    }
+    return;
+  }
+
+  let token = await authStorage.getItem(nativePushTokenStorageKey);
+  // Older installs have no saved identifier. Discover it without prompting for permission.
+  if (!token && Device.isDevice && (Platform.OS === 'ios' || Platform.OS === 'android')) {
+    const permission = await Notifications.getPermissionsAsync();
+    const projectId = getExpoProjectId();
+    if (permission.status === 'granted' && projectId) {
+      token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    }
+  }
+  if (!token) return;
+  const { error } = await supabase
+    .from('push_tokens')
+    .delete()
+    .eq('profile_id', profileId)
+    .eq('expo_push_token', token);
+  if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
+  await authStorage.removeItem(nativePushTokenStorageKey);
 }
 
 function getExpoProjectId() {

@@ -254,9 +254,17 @@ export function useMultiplayerSession() {
 
   async function endSession() {
     setError(null);
-    await signOut();
-    setSession(null);
-    setProfile(null);
+    setIsLoading(true);
+    try {
+      await signOut();
+      pushRegisteredProfileId.current = null;
+      setSession(null);
+      setProfile(null);
+    } catch (signOutError) {
+      setError(toErrorMessage(signOutError));
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return {

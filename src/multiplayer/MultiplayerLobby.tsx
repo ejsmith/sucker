@@ -1369,6 +1369,7 @@ export function MultiplayerLobby({
 
         <Pressable
           onPress={() => void endSession()}
+          disabled={isLoading}
           style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
           testID="sign-out-button"
         >
