@@ -30,6 +30,7 @@ import {
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
 import { createGameListRealtimeTopic } from './realtimeTopics';
+import { completedGamesPageSize } from './completedGameHistory';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -62,7 +63,8 @@ export async function listMyGames() {
         .eq('status', 'complete')
         .order('completed_at', { ascending: false, nullsFirst: false })
         .order('updated_at', { ascending: false })
-        .limit(25),
+        .order('id', { ascending: false })
+        .limit(completedGamesPageSize),
     ]);
 
   if (activeError) {
@@ -83,6 +85,45 @@ export async function listMyGames() {
   return data.map((game) =>
     toRemoteGameRow(game, lastNudges.get(game.id) ?? null, suckerTokensSpent.get(game.id) ?? {}),
   );
+}
+
+export async function listOlderCompletedGames(cursor: { completed_at: string | null; updated_at: string; id: string }) {
+  // Keep PostgreSQL microseconds: converting through Date would truncate them
+  // and skip rows. Validate server cursors before building the compound filter.
+  const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+  const updatedAt = cursor.updated_at;
+  if (
+    !timestampPattern.test(updatedAt) ||
+    (cursor.completed_at !== null && !timestampPattern.test(cursor.completed_at))
+  ) {
+    throw new Error('Unable to load older games. Refresh and try again.');
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.id)) {
+    throw new Error('Unable to load older games. Refresh and try again.');
+  }
+  let query = supabase.from('games').select('*').eq('status', 'complete');
+  if (cursor.completed_at === null) {
+    query = query
+      .is('completed_at', null)
+      .or(`updated_at.lt.${updatedAt},and(updated_at.eq.${updatedAt},id.lt.${cursor.id})`);
+  } else {
+    const completedAt = cursor.completed_at;
+    query = query.or(
+      `completed_at.lt.${completedAt},completed_at.is.null,and(completed_at.eq.${completedAt},updated_at.lt.${updatedAt}),and(completed_at.eq.${completedAt},updated_at.eq.${updatedAt},id.lt.${cursor.id})`,
+    );
+  }
+  const { data, error } = await query
+    .order('completed_at', { ascending: false, nullsFirst: false })
+    .order('updated_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(completedGamesPageSize + 1);
+  if (error) throw error;
+  const rows = (data ?? []).slice(0, completedGamesPageSize);
+  const spent = await loadSuckerTokensSpent(rows.map((row) => row.id));
+  return {
+    games: rows.map((row) => toRemoteGameRow(row, null, spent.get(row.id) ?? {})),
+    hasMore: (data?.length ?? 0) > completedGamesPageSize,
+  };
 }
 
 export async function getGame(gameId: string) {

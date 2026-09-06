@@ -42,6 +42,7 @@ import {
 import { getProfilesByIds, searchProfiles } from './profiles';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
+import { useCompletedGameHistory } from './useCompletedGameHistory';
 import { isLocalMultiplayerDevelopment } from './env';
 import type { LocalTestPlayer } from './auth';
 import type { RemoteGameRow } from './types';
@@ -172,6 +173,8 @@ export function MultiplayerLobby({
   );
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
+  const history = useCompletedGameHistory(visibleGames, profileId);
+  const avatarGames = useMemo(() => [...visibleGames, ...history.games], [visibleGames, history.games]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
     fillNarrowViewport: Platform.OS !== 'web' || shouldFillWebViewport(windowWidth),
   });
@@ -355,7 +358,7 @@ export function MultiplayerLobby({
   }, [profile, refreshProfile]);
 
   useEffect(() => {
-    const ids = visibleGames.flatMap((game) => game.state.players.map((player) => player.id));
+    const ids = avatarGames.flatMap((game) => game.state.players.map((player) => player.id));
     if (profile?.id) ids.push(profile.id);
     let active = true;
     void getProfilesByIds(ids)
@@ -370,7 +373,7 @@ export function MultiplayerLobby({
     return () => {
       active = false;
     };
-  }, [profile?.avatar_url, profile?.id, visibleGames]);
+  }, [profile?.avatar_url, profile?.id, avatarGames]);
 
   useEffect(() => {
     void syncAppBadgeCount(profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0);
@@ -464,6 +467,7 @@ export function MultiplayerLobby({
     }
     setIsRefreshing(true);
     try {
+      history.reset();
       await Promise.all([refreshGames(), waitForVisibleRefresh()]);
     } finally {
       setIsRefreshing(false);
@@ -839,7 +843,7 @@ export function MultiplayerLobby({
     visibleGames.filter((game) => game.status !== 'complete'),
     activeProfileId,
   );
-  const completedGames = sortCompletedGames(visibleGames.filter((game) => game.status === 'complete')).slice(0, 25);
+  const completedGames = history.games;
   const webPushPromptVisible = Boolean(
     profile &&
     activeGames.length > 0 &&
@@ -848,7 +852,7 @@ export function MultiplayerLobby({
     getWebNotificationPermission() === 'default',
   );
   const selectedCompletedGame = selectedCompletedGameId
-    ? visibleGames.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
+    ? completedGames.find((game) => game.id === selectedCompletedGameId)
     : null;
   async function handleOpenCompletedGameStats(game: RemoteGameRow, playerStatsTarget: 'opponent' | null) {
     const { opponent } = getGamePlayers(game, activeProfileId);
@@ -923,7 +927,7 @@ export function MultiplayerLobby({
 
         <View style={lobbyStyles.panel}>
           <View style={lobbyStyles.panelHeader}>
-            <Text style={lobbyStyles.sectionTitle}>Last 25</Text>
+            <Text style={lobbyStyles.sectionTitle}>Showing {completedGames.length}</Text>
             <Pressable
               disabled={isRefreshing}
               onPress={() => void handleVisibleRefreshGames()}
@@ -969,6 +973,27 @@ export function MultiplayerLobby({
                 profileId={activeProfileId}
               />
             ))
+          )}
+          {history.error && (
+            <Text accessibilityRole="alert" style={lobbyStyles.message}>
+              {history.error}
+            </Text>
+          )}
+          {history.hasMore && (
+            <Pressable
+              accessibilityLabel="Load older completed games"
+              accessibilityRole="button"
+              accessibilityState={{ busy: history.isLoading, disabled: history.isLoading || isRefreshing }}
+              disabled={history.isLoading || isRefreshing}
+              onPress={() => void history.loadMore()}
+              style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
+              testID="load-older-games-button"
+            >
+              <Text style={lobbyStyles.secondaryButtonText}>{history.isLoading ? 'Loading…' : 'Load older games'}</Text>
+            </Pressable>
+          )}
+          {!history.hasMore && completedGames.length > 0 && (
+            <Text style={lobbyStyles.emptyBody}>All completed games loaded</Text>
           )}
         </View>
 
@@ -2269,14 +2294,6 @@ function sortActiveGames(games: RemoteGameRow[], profileId: string) {
 
     return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
   });
-}
-
-function sortCompletedGames(games: RemoteGameRow[]) {
-  return [...games].sort((left, right) => getCompletedGameTime(right) - getCompletedGameTime(left));
-}
-
-function getCompletedGameTime(game: RemoteGameRow) {
-  return new Date(game.completed_at ?? game.updated_at).getTime();
 }
 
 function getPlayerNameFromGames(games: RemoteGameRow[], profileId: string) {
