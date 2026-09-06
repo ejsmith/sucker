@@ -105,6 +105,7 @@ import {
   wait,
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
+import { LastTurnDialog } from './src/ui/LastTurnDialog';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
@@ -1121,6 +1122,7 @@ export function LocalGameScreen({
   const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showLastTurn, setShowLastTurn] = useState(false);
   const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
   const [isSendingTaunt, setIsSendingTaunt] = useState(false);
   const [sentTauntTurnId, setSentTauntTurnId] = useState<string | null>(null);
@@ -3172,14 +3174,33 @@ export function LocalGameScreen({
   }
 
   function renderGameScreen() {
+    const latestTurn = isRemoteGame
+      ? remoteLastTurn?.id === remoteLastTurnId
+        ? remoteLastTurn
+        : null
+      : localSuckerStatTurns.current.at(-1);
+    const lastTurnPlayer = game.players.find((player) => player.id === latestTurn?.player_id);
+    const lastTurnSummary = latestTurn
+      ? `${lastTurnPlayer?.name ?? 'Player'} played ${categoryLabels[latestTurn.category as ScoreCategory] ?? latestTurn.category} for ${latestTurn.score} points.${latestTurn.status === 'punched' ? ' That score was removed by a Sucker Punch.' : latestTurn.status === 'mulliganed' ? ' That score was removed by a Mulligan.' : ''}`
+      : isRemoteGame && remoteLastTurnId
+        ? 'Last-turn details are unavailable. Reopen this game to retry.'
+        : 'No turn has been completed yet.';
+    const currentTurnSummary =
+      game.phase === 'complete'
+        ? 'Game complete'
+        : isMyRemoteTurn && !isComputerTurn
+          ? game.rollNumber === 0
+            ? 'Your turn · Ready to roll'
+            : `Your turn · Roll ${game.rollNumber} of ${maxAvailableRolls(game)}`
+          : `Waiting for ${opponentPlayer.name}`;
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
+          aria-hidden={Platform.OS === 'web' ? showStatsPage || showLastTurn : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
-          {...(showStatsPage ? {} : backSwipeResponder.panHandlers)}
+          {...(showStatsPage || showLastTurn ? {} : backSwipeResponder.panHandlers)}
         >
           <BackgroundDicePattern floatValue={bgFloat} />
           <View style={[styles.topBar, gameLayout.styles.topBar]} testID="game-top-bar">
@@ -3226,6 +3247,18 @@ export function LocalGameScreen({
                 style={StyleSheet.absoluteFill}
               />
               <View style={[styles.topMenu, gameLayout.styles.topMenu]} testID="game-top-menu">
+                <Pressable
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setShowLastTurn(true);
+                  }}
+                  style={[styles.topMenuItem, gameLayout.styles.topMenuItem]}
+                  testID="game-last-turn-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    LAST TURN
+                  </Text>
+                </Pressable>
                 <Pressable
                   accessibilityLabel="View stats"
                   accessibilityRole="button"
@@ -3324,6 +3357,11 @@ export function LocalGameScreen({
                     style={[styles.tokenText, gameLayout.styles.tokenText]}
                   >
                     {player.suckerTokens} Tokens
+                    {game.phase !== 'complete' && player.id === currentPlayer.id
+                      ? isHomePlayer
+                        ? ' · Your turn'
+                        : ' · Their turn'
+                      : ''}
                   </Text>
                 </View>
               );
@@ -4432,6 +4470,16 @@ export function LocalGameScreen({
                 </View>
               </View>
             </View>
+          )}
+          {showLastTurn && (
+            <LastTurnDialog
+              currentTurn={currentTurnSummary}
+              summary={lastTurnSummary}
+              onClose={() => {
+                setShowLastTurn(false);
+                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
+              }}
+            />
           )}
           {showStatsPage && (
             <Modal

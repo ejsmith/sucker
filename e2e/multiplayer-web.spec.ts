@@ -402,6 +402,12 @@ test('two players can create an invite and play turns through the web UI', async
   const bobRollButton = bobPage.getByTestId('roll-button');
   await waitForPressableEnabled(bobRollButton);
   await expect(bobPage.getByTestId('game-screen')).toHaveScreenshot('response-window.png');
+  await expect(bobPage.getByTestId('player-strip')).toContainText('Your turn');
+  await bobPage.getByTestId('game-menu-button').click();
+  await bobPage.getByTestId('game-last-turn-menu-item').click();
+  await expect(bobPage.getByTestId('last-turn-summary')).toContainText('Alice E2E played Ones for');
+  await expect(bobPage.getByTestId('current-turn-summary')).toContainText('Your turn');
+  await bobPage.getByTestId('last-turn-close').click();
   await bobRollButton.click();
   const bobTwosScoreBox = bobPage.getByTestId('home-score-box-twos');
   await waitForPressableEnabled(bobTwosScoreBox);
