@@ -1022,6 +1022,113 @@ revoke all on public.sucker_punch_attempts from anon, authenticated;
 grant all on all routines in schema public to authenticated;
 grant all on all sequences in schema public to authenticated;
 
+-- Rebuild cached matchup totals from uniquely keyed game results.
+-- Callers hold the pair lock while writing results and refreshing both directions.
+create or replace function public.refresh_matchup_stats(p_player_id uuid, p_opponent_id uuid)
+returns void language sql security definer set search_path=public,pg_temp as $$
+  insert into public.head_to_head_stats (
+    player_id, opponent_id,
+    games_played,
+    wins,
+    losses,
+    highest_score,
+    total_score,
+    average_score,
+    upper_bonus_games,
+    sucker_games,
+    three_of_a_kind_games,
+    four_of_a_kind_games,
+    full_house_games,
+    small_straight_games,
+    large_straight_games,
+    blowout_wins,
+    blowout_losses,
+    buzzer_beater_wins,
+    comeback_wins,
+    extra_rolls_used,
+    mulligans_used,
+    sucker_hunts,
+    sucker_hunt_misses,
+    sucker_punches_landed,
+    sucker_punches_used,
+    sucker_punches_received,
+    sucker_blockers_used,
+    forced_rerolls,
+    sucker_tokens_spent,
+    sucker_tokens_leftover,
+    average_sucker_tokens_spent,
+    average_sucker_tokens_leftover
+  ) select p_player_id,p_opponent_id,
+    count(*),
+    count(*) filter (where r.won),
+    count(*) filter (where not r.won and opponent.won),
+    coalesce(max(r.final_score),0),
+    coalesce(sum(r.final_score),0),
+    coalesce(round(avg(r.final_score),2),0),
+    count(*) filter (where r.upper_bonus_awarded),
+    count(*) filter (where r.sucker_count > 0),
+    count(*) filter (where r.three_of_a_kind_count > 0),
+    count(*) filter (where r.four_of_a_kind_count > 0),
+    count(*) filter (where r.full_house_count > 0),
+    count(*) filter (where r.small_straight_count > 0),
+    count(*) filter (where r.large_straight_count > 0),
+    coalesce(sum(r.blowout_win),0),
+    coalesce(sum(r.blowout_loss),0),
+    coalesce(sum(r.buzzer_beater_win),0),
+    coalesce(sum(r.comeback_win),0),
+    coalesce(sum(r.extra_rolls_used),0),
+    coalesce(sum(r.mulligans_used),0),
+    coalesce(sum(r.sucker_hunts),0),
+    coalesce(sum(r.sucker_hunt_misses),0),
+    coalesce(sum(r.sucker_punches_landed),0),
+    coalesce(sum(r.sucker_punches_used),0),
+    coalesce(sum(r.sucker_punches_received),0),
+    coalesce(sum(r.sucker_blockers_used),0),
+    coalesce(sum(r.forced_rerolls),0),
+    coalesce(sum(r.sucker_tokens_spent),0),
+    coalesce(sum(r.sucker_tokens_leftover),0),
+    coalesce(round(avg(r.sucker_tokens_spent),2),0),
+    coalesce(round(avg(r.sucker_tokens_leftover),2),0)
+  from public.game_player_results r
+  left join public.game_player_results opponent
+    on opponent.game_id=r.game_id and opponent.player_id=r.opponent_id
+  where r.player_id=p_player_id and r.opponent_id=p_opponent_id
+  on conflict (player_id,opponent_id) do update set
+    games_played=excluded.games_played,
+    wins=excluded.wins,
+    losses=excluded.losses,
+    highest_score=excluded.highest_score,
+    total_score=excluded.total_score,
+    average_score=excluded.average_score,
+    upper_bonus_games=excluded.upper_bonus_games,
+    sucker_games=excluded.sucker_games,
+    three_of_a_kind_games=excluded.three_of_a_kind_games,
+    four_of_a_kind_games=excluded.four_of_a_kind_games,
+    full_house_games=excluded.full_house_games,
+    small_straight_games=excluded.small_straight_games,
+    large_straight_games=excluded.large_straight_games,
+    blowout_wins=excluded.blowout_wins,
+    blowout_losses=excluded.blowout_losses,
+    buzzer_beater_wins=excluded.buzzer_beater_wins,
+    comeback_wins=excluded.comeback_wins,
+    extra_rolls_used=excluded.extra_rolls_used,
+    mulligans_used=excluded.mulligans_used,
+    sucker_hunts=excluded.sucker_hunts,
+    sucker_hunt_misses=excluded.sucker_hunt_misses,
+    sucker_punches_landed=excluded.sucker_punches_landed,
+    sucker_punches_used=excluded.sucker_punches_used,
+    sucker_punches_received=excluded.sucker_punches_received,
+    sucker_blockers_used=excluded.sucker_blockers_used,
+    forced_rerolls=excluded.forced_rerolls,
+    sucker_tokens_spent=excluded.sucker_tokens_spent,
+    sucker_tokens_leftover=excluded.sucker_tokens_leftover,
+    average_sucker_tokens_spent=excluded.average_sucker_tokens_spent,
+    average_sucker_tokens_leftover=excluded.average_sucker_tokens_leftover,
+    updated_at=now();
+$$;
+revoke all on function public.refresh_matchup_stats(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.refresh_matchup_stats(uuid,uuid) to service_role;
+
 -- A move is prepared by the trusted Edge Function and committed with its replay
 -- response in one transaction. A stale preparation cannot overwrite a newer move.
 create or replace function public.commit_game_move(
@@ -1047,6 +1154,8 @@ declare
   conflict_fields text;
   move_response jsonb;
   affected_rows integer;
+  has_results boolean;
+  matchup_players uuid[];
 begin
   select * into strict action_request from public.game_action_requests
     where actor_id = p_actor_id and request_id = p_request_id for update;
@@ -1066,6 +1175,17 @@ begin
     raise exception 'Invalid game move fields';
   end if;
 
+  has_results := exists(select 1 from jsonb_array_elements(p_writes) item
+    where item->>'table'='game_player_results');
+  if has_results then
+    select array_agg(player_id order by player_id) into matchup_players
+      from public.game_players where game_id=p_game_id;
+    if cardinality(matchup_players) <> 2 then raise exception 'A completed game needs two players'; end if;
+    -- Different games between the same players must not refresh totals concurrently.
+    -- Acquire before inserting results so a waiting transaction sees the prior commit.
+    perform pg_advisory_xact_lock(hashtextextended(matchup_players[1]::text || ':' || matchup_players[2]::text,0));
+  end if;
+
   for change in select value from jsonb_array_elements(p_writes) loop
     table_name := change->>'table';
     operation := change->>'operation';
@@ -1079,6 +1199,12 @@ begin
       not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'player_id')::uuid)
       or not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'opponent_id')::uuid)
     ) then raise exception 'Stats write must belong to this game'; end if;
+    if table_name='head_to_head_stats' then
+      -- Older Edge workers still send absolute totals. Ignore those only when
+      -- this transaction supplies the source results; refresh them below instead.
+      if not has_results then raise exception 'Stats require completed game results'; end if;
+      continue;
+    end if;
     select string_agg(format('%I',key),',') into fields from jsonb_object_keys(change->'data') key;
     if fields is null then raise exception 'Empty game move write'; end if;
 
@@ -1105,6 +1231,11 @@ begin
         on conflict (%3$s) do update set %4$s',table_name,fields,conflict_fields,assignments) using change->'data';
     end if;
   end loop;
+
+  if has_results then
+    perform public.refresh_matchup_stats(matchup_players[1],matchup_players[2]);
+    perform public.refresh_matchup_stats(matchup_players[2],matchup_players[1]);
+  end if;
 
   next_game := jsonb_populate_record(current_game,p_game_patch);
   update public.games set state=next_game.state,status=next_game.status,current_player_id=next_game.current_player_id,
