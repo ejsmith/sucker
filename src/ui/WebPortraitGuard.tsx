@@ -26,8 +26,24 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       (window.navigator as StandaloneNavigator).standalone === true;
     const updateGuard = () => {
       const installed = isInstalledPwa();
-      setShowLandscapeGuard(installed && landscapeQuery.matches);
-      if (installed) {
+      const { userAgent, maxTouchPoints } = window.navigator;
+      // Touch alone includes Windows laptops. iPadOS can identify as a Mac.
+      const useDeviceOrientation =
+        /Android|iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
+      // The software keyboard can make the viewport wider than it is tall
+      // without rotating the phone. Never unmount the form for that resize.
+      const orientation = window.screen.orientation?.type;
+      const legacyOrientation = (window as Window & { orientation?: number }).orientation;
+      // Desktop installations follow their resizable window, not the monitor.
+      const isLandscape = !useDeviceOrientation
+        ? landscapeQuery.matches
+        : orientation
+          ? orientation.startsWith('landscape')
+          : typeof legacyOrientation === 'number'
+            ? Math.abs(legacyOrientation) === 90
+            : landscapeQuery.matches;
+      setShowLandscapeGuard(installed && isLandscape);
+      if (installed && useDeviceOrientation) {
         void lockPortraitOrientation();
       }
     };
@@ -37,6 +53,8 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
     fullscreenQuery.addEventListener('change', updateGuard);
     landscapeQuery.addEventListener('change', updateGuard);
     window.addEventListener('resize', updateGuard);
+    window.addEventListener('orientationchange', updateGuard);
+    window.screen.orientation?.addEventListener('change', updateGuard);
     document.addEventListener('visibilitychange', updateGuard);
 
     return () => {
@@ -44,6 +62,8 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       fullscreenQuery.removeEventListener('change', updateGuard);
       landscapeQuery.removeEventListener('change', updateGuard);
       window.removeEventListener('resize', updateGuard);
+      window.removeEventListener('orientationchange', updateGuard);
+      window.screen.orientation?.removeEventListener('change', updateGuard);
       document.removeEventListener('visibilitychange', updateGuard);
     };
   }, []);
