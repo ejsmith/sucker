@@ -1,0 +1,12 @@
+Observed excerpt from the integrated browser's macOS accessibility tree at http://localhost:8792/:
+
+6 text FIND BY USERNAME
+7 container
+  8 text field (settable) Find a player by username or name
+  9 button (disabled) Find
+    10 text Find
+11 text JOIN BY INVITE CODE
+12 container
+  13 text field (settable) Invite code
+  14 button (disabled) Join
+    15 text Join
