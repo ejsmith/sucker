@@ -2855,7 +2855,7 @@ export function LocalGameScreen({
         setIsComputerThinking(true);
         setTimeout(() => {
           void animateComputerTurnResult(replayed);
-        }, computerThinkingDelayMs);
+        }, computerThinkingDelay);
       };
     } else {
       if (!remoteHandlers || remoteStatus !== 'response_window' || remoteLastTurnId !== dialog.targetTurnId) {

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('Fast pace shortens waiting with the same result and survives reopening', async ({ browser }) => {
   const elapsed: number[] = [];
+  const replayElapsed: number[] = [];
   const results: string[][] = [];
   for (const fast of [false, true]) {
     const context = await browser.newContext({ viewport: { width: 393, height: 852 } });
@@ -31,6 +32,18 @@ test('Fast pace shortens waiting with the same result and survives reopening', a
           ),
         ),
       );
+      await page.getByTestId('token-menu-button').click();
+      await page.getByTestId('token-option-sucker-punch').click();
+      await page.getByTestId('sucker-punch-chance-roll-button').click();
+      await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
+      await page.getByTestId('sucker-punch-chance-roll-button').click();
+      await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('Punch landed!');
+      const replayStarted = Date.now();
+      await page.getByTestId('sucker-punch-chance-roll-button').click();
+      await expect(page.getByTestId('opponent-turn-reveal')).toBeVisible();
+      replayElapsed.push(Date.now() - replayStarted);
+      await expect(page.getByTestId('roll-button')).toBeEnabled({ timeout: 20_000 });
+      await expect(page.getByTestId('token-menu-button')).toContainText('7');
       await page.getByTestId('game-menu-button').click();
       await page.reload();
       await expect(page.getByTestId('opponent-score-box-sucker')).toContainText('50');
@@ -46,6 +59,8 @@ test('Fast pace shortens waiting with the same result and survives reopening', a
   );
   expect(results[1]).toEqual(results[0]);
   expect(elapsed[0] - elapsed[1]).toBeGreaterThan(2000);
+  console.log(`Replay reveal after landed Punch: Normal ${replayElapsed[0]} ms; Fast ${replayElapsed[1]} ms.`);
+  expect(replayElapsed[0] - replayElapsed[1]).toBeGreaterThan(1500);
 });
 
 test('failed preference storage retains the active pace and explains the failure', async ({ page }) => {
