@@ -26,8 +26,10 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       (window.navigator as StandaloneNavigator).standalone === true;
     const updateGuard = () => {
       const installed = isInstalledPwa();
+      const { userAgent, maxTouchPoints } = window.navigator;
+      // Touch alone includes Windows laptops. iPadOS can identify as a Mac.
       const useDeviceOrientation =
-        window.navigator.maxTouchPoints > 0 || window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        /Android|iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
       // The software keyboard can make the viewport wider than it is tall
       // without rotating the phone. Never unmount the form for that resize.
       const orientation = window.screen.orientation?.type;

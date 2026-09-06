@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { devices, expect, test, type Locator, type Page } from '@playwright/test';
 
 const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const minimumTouchTarget = 44;
@@ -409,6 +409,7 @@ test('an installed PWA follows the settled visible viewport instead of clipping 
     hasTouch: true,
     // Emulate a phone's screen orientation, not just touch on a desktop monitor.
     isMobile: true,
+    userAgent: devices['iPhone 13'].userAgent,
     viewport: { height: 852, width: 393 },
   });
   const page = await context.newPage();
