@@ -41,8 +41,12 @@ create table public.games (
   last_turn_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  completed_at timestamptz
+  completed_at timestamptz,
+  completed_sort_at timestamptz generated always as (coalesce(completed_at, updated_at)) stored
 );
+
+create index games_completed_sort_idx
+on public.games (completed_sort_at desc, id desc) where status = 'complete';
 
 create table public.game_players (
   game_id uuid not null references public.games(id) on delete cascade,
