@@ -2916,9 +2916,7 @@ export function LocalGameScreen({
     });
   }
 
-  function commitLocalScore(category: ScoreCategory, sourceGame = liveGameRef.current) {
-    const result = scoreLocalTurn(sourceGame, category);
-    recordLocalScoreTurn(result);
+  function commitLocalScore(result: ComputerTurnResult) {
     liveGameRef.current = result.game;
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
@@ -2926,16 +2924,16 @@ export function LocalGameScreen({
   }
 
   function applyScoreSubmission(
-    category: ScoreCategory,
     scoringGame: GameState,
     remoteScorePromise: Promise<GameState | null> | null,
     optimisticScoredGame: GameState | null,
+    localScoreResult: ComputerTurnResult | null,
   ) {
     if (remoteScorePromise && optimisticScoredGame) {
       setLiveRemoteGame(optimisticScoredGame);
       settleRemoteOptimisticAction(remoteScorePromise, scoringGame);
-    } else {
-      commitLocalScore(category, scoringGame);
+    } else if (localScoreResult) {
+      commitLocalScore(localScoreResult);
     }
 
     setSelectedCategory(null);
@@ -2996,6 +2994,12 @@ export function LocalGameScreen({
 
     const category = selectedCategory;
     const scoringGame = liveGameRef.current;
+    setIsScoring(true);
+    const localScoreResult = isRemoteGame && remoteHandlers ? null : scoreLocalTurn(scoringGame, category);
+    if (localScoreResult) {
+      recordLocalScoreTurn(localScoreResult);
+      persistResolvedLocalGame(localScoreResult.game, localScoreResult.pendingTurn);
+    }
     const targetRef =
       activePlayerViewIndex === 0 ? scoreBoxRefs.current[category] : opponentScoreRefs.current[category];
     const [screenRect, targetRect, sourceRects] = await Promise.all([
@@ -3009,16 +3013,17 @@ export function LocalGameScreen({
         const optimisticGame = scoreTurn(scoringGame, category);
         const shouldAnimateSectionBonus = didAwardUpperBonusForPlayer(scoringGame, optimisticGame, homePlayer.id);
         const remoteScorePromise = remoteHandlers.onScore(category, scoringGame.held);
-        applyScoreSubmission(category, scoringGame, remoteScorePromise, optimisticGame);
+        applyScoreSubmission(scoringGame, remoteScorePromise, optimisticGame, null);
         await playSectionBonusAwardAnimationAfterScore(shouldAnimateSectionBonus);
       } else {
-        const result = commitLocalScore(category, scoringGame);
+        const result = commitLocalScore(localScoreResult!);
         setSelectedCategory(null);
         setIsChoosingSuckerDeal(false);
         await playSectionBonusAwardAnimationAfterScore(
           didAwardUpperBonusForPlayer(scoringGame, result.game, homePlayer.id),
         );
       }
+      setIsScoring(false);
       return;
     }
 
@@ -3052,7 +3057,7 @@ export function LocalGameScreen({
     const remoteScorePromise =
       isRemoteGame && remoteHandlers ? remoteHandlers.onScore(category, scoringGame.held) : null;
     const optimisticScoredGame = remoteScorePromise ? scoreTurn(scoringGame, category) : null;
-    const expectedScoredGame = optimisticScoredGame ?? scoreTurn(scoringGame, category);
+    const expectedScoredGame = optimisticScoredGame ?? localScoreResult!.game;
     const shouldAnimateSectionBonus = didAwardUpperBonusForPlayer(scoringGame, expectedScoredGame, homePlayer.id);
     requestAnimationFrame(() => {
       void runAnimation(
@@ -3069,7 +3074,7 @@ export function LocalGameScreen({
         ),
       ).then(async () => {
         setScoreFlyDice([]);
-        applyScoreSubmission(category, scoringGame, remoteScorePromise, optimisticScoredGame);
+        applyScoreSubmission(scoringGame, remoteScorePromise, optimisticScoredGame, localScoreResult);
         await playSectionBonusAwardAnimationAfterScore(shouldAnimateSectionBonus);
         setIsScoring(false);
       });

@@ -40,3 +40,7 @@ Reloading immediately after Roll restored an empty tray and all four rolls (`rol
 # Review follow-up: interrupted computer reveals
 
 The local reproduction showed the computer revealing a 50-point Sucker, then changing to a 40-point straight when reloaded during the reveal (`computer-reveal-before.png`, `computer-reload-before.png`). Computer turn resolution now records the score/punch history and saves the resolved result before starting presentation. Reloading retains the original 50-point Sucker even when the test supplies different subsequent randomness (`computer-reveal-after.png`, `computer-reload-after.png`). State and both histories remain identical through reload. All eight save/resume browser cases passed.
+
+# Review follow-up: interrupted score submissions
+
+Reloading during the submitted dice flight erased the player's 24-point Chance score (`score-interruption-before.png`). Score resolution and its history now save before measuring or animating the dice, with the input locked immediately. Presentation consumes the already resolved result instead of resolving it again. The passing regression retains its rolled Chance score (16 in the captured run) through reload (`score-interruption-after.png`). All nine save/resume browser cases, typecheck, and lint passed.

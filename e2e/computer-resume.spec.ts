@@ -134,6 +134,19 @@ test('a resolved computer turn survives reloading during its score reveal', asyn
   expect(restored.actions).toEqual(resolvedSave.actions);
 });
 
+test('a submitted score survives reloading during its dice flight', async ({ page }) => {
+  await page.goto('/local');
+  await page.getByTestId('roll-button').click();
+  await expect(page.getByTestId('category-button-chance')).toBeEnabled();
+  await page.getByTestId('category-button-chance').click();
+  const preview = await page.getByRole('img', { name: /Chance score:.*preview$/ }).getAttribute('aria-label');
+  await page.getByTestId('play-score-button').click();
+  await page.reload();
+  await expect(page.getByTestId('roll-button')).toBeEnabled({ timeout: 25_000 });
+  await page.screenshot({ path: test.info().outputPath('score-reloaded.png') });
+  await expect(page.getByRole('img', { name: preview!.replace('preview', 'scored'), exact: true })).toBeVisible();
+});
+
 test('a resolved roll survives reloading during the dice animation', async ({ page }) => {
   await page.goto('/local');
   await page.getByTestId('roll-button').click();
