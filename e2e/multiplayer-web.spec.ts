@@ -439,6 +439,41 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('long opponent names keep the Punch action on screen', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`punch-name-alice-${runId}`, 'Punch Name Alice');
+  const bob = await createUser(`punch-name-bob-${runId}`, 'Punch Name Bob');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    await bobPage.setViewportSize({ width: 375, height: 667 });
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    const game = await loadGame(gameId);
+    const name = 'An exceptionally long opponent name '.repeat(35);
+    game.state.players.find((player: { id: string }) => player.id === alice.id)!.name = name;
+    assertNoError((await admin.from('profiles').update({ display_name: name }).eq('id', alice.id)).error);
+    assertNoError((await admin.from('games').update({ state: game.state }).eq('id', gameId)).error);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await waitForPressableEnabled(alicePage.getByTestId('home-score-box-chance'));
+    await alicePage.getByTestId('home-score-box-chance').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await openGameFromLobby(bobPage, gameId);
+    await waitForPressableEnabled(bobPage.getByTestId('token-menu-button'));
+    await bobPage.getByTestId('token-menu-button').click();
+    await bobPage.getByTestId('token-option-sucker-punch').click();
+    await bobPage.screenshot({ path: test.info().outputPath('long-punch-name.png') });
+    const panel = await bobPage.getByTestId('sucker-punch-chance-panel').boundingBox();
+    expect(panel!.y).toBeGreaterThanOrEqual(0);
+    expect(panel!.y + panel!.height).toBeLessThanOrEqual(667);
+    await expect(bobPage.getByTestId('sucker-punch-chance-roll-button')).toBeInViewport();
+    await expect(bobPage.getByTestId('sucker-punch-target')).toContainText('Chance');
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('long player names stay inside the game summary dialog', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const longName = 'AlexandertheGreatWithoutAnyBreaks'.repeat(3);

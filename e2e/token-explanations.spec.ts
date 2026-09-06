@@ -39,7 +39,8 @@ for (const viewport of [
     await expect(page.getByTestId('token-option-sucker-punch')).toContainText('before rolling');
     await page.getByTestId('token-option-sucker-punch').click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
-    await expect(dialog).toContainText('Computer · Sucker · 50 points');
+    await expect(dialog).toContainText('Sucker · 50 points');
+    await expect(page.getByTestId('sucker-punch-target')).toContainText('Computer');
     await expect(dialog).toContainText('Costs 3 tokens when you throw');
     for (const odds of ['1: 10%', '2: 20%', '3: 30%', '4: 45%', '5: 60%', '6: 75%'])
       await expect(dialog).toContainText(odds);
@@ -49,7 +50,7 @@ for (const viewport of [
     await page.screenshot({ path: test.info().outputPath('punch-after.png') });
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);
-    await expect(page.getByTestId('sucker-punch-target')).toContainText('Computer · Sucker · 50 points');
+    await expect(page.getByTestId('sucker-punch-target')).toContainText('Sucker · 50 points');
     await expect(page.getByTestId('token-menu-button')).toContainText('10');
   });
 }

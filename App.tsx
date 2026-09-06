@@ -231,7 +231,7 @@ type LocalPlayerProfile = {
   displayName: string;
 };
 type SuckerPunchDialogState = {
-  targetLabel?: string;
+  target?: { playerName: string; category: ScoreCategory; score: number };
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
   scope: 'local' | 'remote';
@@ -2704,7 +2704,7 @@ export function LocalGameScreen({
         phase: 'ready',
         scope: 'local',
         targetTurnId: pendingTurn.id,
-        targetLabel: `${opponentPlayer.name} · ${categoryLabels[pendingTurn.category]} · ${pendingTurn.score} points`,
+        target: { playerName: opponentPlayer.name, category: pendingTurn.category, score: pendingTurn.score },
       });
       return;
     }
@@ -2723,9 +2723,10 @@ export function LocalGameScreen({
       phase: 'ready',
       scope: 'remote',
       targetTurnId: remoteLastTurnId,
-      targetLabel: remoteLastTurn
-        ? `${opponentPlayer.name} · ${categoryLabels[remoteLastTurn.category]} · ${remoteLastTurn.score} points`
-        : undefined,
+      target:
+        remoteLastTurn?.id === remoteLastTurnId
+          ? { playerName: opponentPlayer.name, category: remoteLastTurn.category, score: remoteLastTurn.score }
+          : undefined,
     });
   }
 
@@ -3978,7 +3979,7 @@ export function LocalGameScreen({
               onThrowPunch={() => void handleThrowSuckerPunch()}
               outcome={suckerPunchDialog.outcome}
               phase={suckerPunchDialog.phase}
-              targetLabel={suckerPunchDialog.targetLabel}
+              target={suckerPunchDialog.target}
               rollProgress={suckerPunchDieAnimation}
             />
           )}
@@ -4753,7 +4754,7 @@ function SuckerPunchChanceDialog({
   outcome,
   phase,
   rollProgress,
-  targetLabel,
+  target,
 }: {
   face: DieValue;
   onDismissResult: () => void;
@@ -4762,7 +4763,7 @@ function SuckerPunchChanceDialog({
   outcome?: SuckerPunchOutcome;
   phase: SuckerPunchDialogState['phase'];
   rollProgress: Animated.Value;
-  targetLabel?: string;
+  target?: SuckerPunchDialogState['target'];
 }) {
   const layout = useGameLayout();
   const isResult = phase === 'result';
@@ -4826,14 +4827,24 @@ function SuckerPunchChanceDialog({
         >
           {title}
         </Text>
-        {!isResult && targetLabel && (
-          <Text
-            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-            style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
-            testID="sucker-punch-target"
-          >
-            {targetLabel}
-          </Text>
+        {!isResult && target && (
+          <View style={{ width: '100%', gap: layout.unit(8) }} testID="sucker-punch-target">
+            <Text
+              numberOfLines={2}
+              ellipsizeMode="tail"
+              accessibilityLabel={target.playerName}
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+            >
+              {target.playerName}
+            </Text>
+            <Text
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+            >
+              {categoryLabels[target.category]} · {target.score} points
+            </Text>
+          </View>
         )}
         {phase === 'ready' && (
           <Text
