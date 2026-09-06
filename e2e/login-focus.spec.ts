@@ -20,8 +20,15 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
       await mockKeyboardTestAccount(page);
       await page.setViewportSize({ width: 393, height: 852 });
       await page.goto('/');
-      await expect(page.getByTestId('login-email-input')).toBeVisible({ timeout: 20_000 });
-      await page.getByTestId('login-email-input').fill('keyboard@example.com');
+      const email = page.getByTestId('login-email-input');
+      await expect(email).toBeVisible({ timeout: 20_000 });
+      // Match actual keyboard entry. WebKit's bulk fill can race the initial
+      // focus render and return with this controlled email field still empty.
+      await email.click();
+      await expect(email).toBeFocused();
+      await email.pressSequentially('keyboard@example.com');
+      await expect(email).toHaveValue('keyboard@example.com');
+      await expect(page.getByTestId('send-code-button')).toBeEnabled();
       await page.getByTestId('send-code-button').click();
       await expect(page.getByTestId('login-code-input')).toBeVisible();
       await expectFieldOverlay(page, 'login-code-input', '123456');
