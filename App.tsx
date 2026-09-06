@@ -1146,6 +1146,10 @@ export function LocalGameScreen({
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
   const isAppActive = useAppActivity();
   const prefersReducedMotion = useReducedMotion();
+  const reducedMotionRef = useRef(prefersReducedMotion);
+  useEffect(() => {
+    reducedMotionRef.current = prefersReducedMotion;
+  }, [prefersReducedMotion]);
   const shouldReduceMotion = disableE2EAnimations || prefersReducedMotion;
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
@@ -1597,7 +1601,7 @@ export function LocalGameScreen({
       clearTimeout(suckerPunchWipeStartTimer.current);
     }
 
-    if (prefersReducedMotion) {
+    if (reducedMotionRef.current) {
       suckerPunchWipeStartTimer.current = null;
       wipe.progress.setValue(1);
       setSuckerPunchWipe(null);
@@ -1607,6 +1611,11 @@ export function LocalGameScreen({
     suckerPunchWipeStartTimer.current = setTimeout(() => {
       suckerPunchWipeStartTimer.current = null;
       requestAnimationFrame(() => {
+        if (reducedMotionRef.current) {
+          wipe.progress.setValue(1);
+          setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
+          return;
+        }
         void runAnimation(
           Animated.timing(wipe.progress, {
             toValue: 1,

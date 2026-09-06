@@ -1,4 +1,36 @@
 import { expect, test } from '@playwright/test';
+import { createGame } from '../shared/game';
+import { scoreLocalTurn } from '../src/game/computer';
+
+test('enabling reduced motion during a Punch notice prevents its delayed wipe', async ({ page }) => {
+  const game = createGame(['Player', 'Computer']);
+  game.dice = [6, 6, 6, 6, 6];
+  game.phase = 'scoring';
+  game.rollNumber = 1;
+  const scored = scoreLocalTurn(game, 'sucker');
+  await page.addInitScript((session) => {
+    localStorage.setItem('sucker.computer-session.v1.guest', JSON.stringify(session));
+    Math.random = () => 0;
+  }, { version: 1, game: scored.game, pendingTurn: scored.pendingTurn, actions: [], turns: [], recordedGameIds: [] });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/local');
+  await expect(page.getByTestId('sucker-punch-notice')).toBeVisible({ timeout: 20_000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => {
+    const state = window as typeof window & { impactOpacity?: number };
+    state.impactOpacity = 0;
+    new MutationObserver(() => {
+      for (const node of document.querySelectorAll('[data-testid="sucker-punch-impact"]')) {
+        state.impactOpacity = Math.max(state.impactOpacity ?? 0, Number(getComputedStyle(node).opacity));
+      }
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] });
+  });
+  await expect(page.getByTestId('sucker-punch-notice')).toHaveCount(0);
+  await expect(page.getByTestId('sucker-punch-score-wipe')).toHaveCount(0);
+  const opacity = await page.evaluate(() => (window as typeof window & { impactOpacity?: number }).impactOpacity);
+  console.log(`Reduce Motion enabled during notice; delayed impact maximum opacity: ${opacity}`);
+  expect(opacity).toBe(0);
+});
 
 test('reduced motion keeps rolling dice in their slots', async ({ page }) => {
   await page.setViewportSize({ width: 393, height: 852 });
