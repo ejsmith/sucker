@@ -215,6 +215,84 @@ Deno.test('game-action request ids prevent replayed mutations and remain private
   assertEquals(terminalRequest, { http_status: 400, status: 'completed' });
 });
 
+Deno.test('atomic move commits reject stale writes and roll back failed child records', async () => {
+  const [alice, bob] = await createUsers('atomic-moves', ['Alice', 'Bob']);
+  const original = (await invokeGameAction(alice, { type: 'create_game', opponentProfileId: bob.id })).game as GameRow;
+  const claim = async () => {
+    const requestId = crypto.randomUUID();
+    const inserted = await admin
+      .from('game_action_requests')
+      .insert({
+        actor_id: alice.id,
+        request_id: requestId,
+        action_type: 'roll',
+        game_id: original.id,
+        status: 'processing',
+      });
+    assertNoError(inserted.error);
+    return requestId;
+  };
+  const requestId = await claim();
+  const nextState = { ...original.state, rollNumber: 1, phase: 'scoring' as const };
+  const args = {
+    p_actor_id: alice.id,
+    p_request_id: requestId,
+    p_game_id: original.id,
+    p_expected_updated_at: original.updated_at,
+    p_game_patch: { state: nextState },
+    p_writes: [
+      {
+        table: 'turn_actions',
+        operation: 'insert',
+        data: {
+          actor_id: alice.id,
+          game_id: original.id,
+          action_type: 'roll',
+          payload: {},
+        },
+      },
+    ],
+    p_result: { game: original },
+  } as unknown as Database['public']['Functions']['commit_game_move']['Args'];
+  const denied = await alice.client.rpc('commit_game_move', args);
+  if (!denied.error) throw new Error('Authenticated clients must not commit prepared moves directly.');
+  const invalid = await admin.rpc('commit_game_move', {
+    ...args,
+    p_writes: [
+      ...(args.p_writes as Array<Record<string, unknown>>),
+      {
+        table: 'token_events',
+        operation: 'insert',
+        data: { game_id: original.id, player_id: alice.id, event_type: 'invalid-test-event', token_delta: -3 },
+      },
+    ] as never,
+  });
+  if (!invalid.error) throw new Error('Invalid child record must fail the transaction.');
+  const afterFailure = await admin.from('games').select('*').eq('id', original.id).single();
+  assertEquals(afterFailure.data?.state, original.state);
+  assertEquals((await loadActions(original.id)).filter((action) => action.action_type === 'roll').length, 0);
+  const request = await admin
+    .from('game_action_requests')
+    .select('status')
+    .eq('actor_id', alice.id)
+    .eq('request_id', requestId)
+    .single();
+  assertEquals(request.data?.status, 'processing');
+  const otherId = await claim();
+  const commits = await Promise.all([
+    admin.rpc('commit_game_move', args),
+    admin.rpc('commit_game_move', { ...args, p_request_id: otherId }),
+  ]);
+  assertEquals(commits.filter((result) => !result.error).length, 1);
+  assertEquals(commits.find((result) => result.error)?.error?.code, 'PT409');
+  assertEquals((await loadActions(original.id)).filter((action) => action.action_type === 'roll').length, 1);
+  const winnerId = commits[0].error ? otherId : requestId;
+  const replay = await admin.rpc('commit_game_move', { ...args, p_request_id: winnerId });
+  assertNoError(replay.error);
+  assertEquals(replay.data, commits.find((result) => !result.error)?.data);
+  assertEquals((await loadActions(original.id)).filter((action) => action.action_type === 'roll').length, 1);
+});
+
 Deno.test('taunts are available only after the sender finishes the latest turn', async () => {
   const [alice, bob] = await createUsers('post-turn-taunts', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
@@ -1029,7 +1107,13 @@ function actionPayloadValue(payload: unknown, key: string) {
 }
 
 function assertEquals(actual: unknown, expected: unknown) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  const canonical = (value: unknown) =>
+    JSON.stringify(value, (_key, item) =>
+      item && typeof item === 'object' && !Array.isArray(item)
+        ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)))
+        : item,
+    );
+  if (canonical(actual) !== canonical(expected)) {
     throw new Error(`Expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}.`);
   }
 }
