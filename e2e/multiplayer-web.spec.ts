@@ -443,6 +443,10 @@ test('completed history can reach games older than the first 25', async ({ brows
   const bob = await createUser(`history-bob-${runId}`, 'History Bob');
   const alicePage = await openAuthedPage(browser, alice);
   const bobPage = await openAuthedPage(browser, bob);
+  // The notification prompt can arrive after reload while the history button is being clicked.
+  await alicePage.addLocatorHandler(alicePage.getByTestId('turn-notification-prompt'), async () => {
+    await alicePage.getByTestId('turn-notification-not-now').click();
+  });
   try {
     const templateId = await createAcceptedGame(alicePage, bobPage);
     const template = await loadGame(templateId);
@@ -524,7 +528,11 @@ test('completed history can reach games older than the first 25', async ({ brows
     expect(shownIds.sort()).toEqual(rows.map((row) => row.id).sort());
     await alicePage.getByTestId('refresh-completed-games-button').scrollIntoViewIfNeeded();
     await alicePage.screenshot({ path: test.info().outputPath('history-after.png') });
-    await alicePage.getByTestId(`completed-game-${rows[0].id}`).click();
+    const oldest = [...rows].sort((left, right) => {
+      const byDate = (left.completed_at ?? left.updated_at).localeCompare(right.completed_at ?? right.updated_at);
+      return byDate || left.id.localeCompare(right.id);
+    })[0];
+    await alicePage.getByTestId(`completed-game-${oldest.id}`).click();
     await expect(alicePage.getByText('Score Card', { exact: true })).toBeVisible();
     await expect(alicePage.getByText('History Bob', { exact: true }).first()).toBeVisible();
   } finally {
