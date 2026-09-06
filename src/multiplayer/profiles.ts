@@ -62,14 +62,17 @@ export async function getProfilesByIds(profileIds: string[]) {
     return [];
   }
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, username, display_name, avatar_url')
-    .in('id', uniqueIds);
-
-  if (error) {
-    throw error;
+  const profiles: { id: string; username: string; display_name: string; avatar_url: string | null }[] = [];
+  // Keep query URLs bounded even when a long history introduces many opponents.
+  for (let offset = 0; offset < uniqueIds.length; offset += 50) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, avatar_url')
+      .in('id', uniqueIds.slice(offset, offset + 50));
+    if (error) throw error;
+    profiles.push(
+      ...data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url, profile.id) })),
+    );
   }
-
-  return data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url, profile.id) }));
+  return profiles;
 }
