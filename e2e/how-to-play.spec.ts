@@ -29,6 +29,7 @@ test('the optional first-turn guide is available before signing in', async ({ pa
   await expect(page.getByTestId('how-to-play-close')).toBeFocused();
   for (let step = 1; step <= 5; step += 1) {
     await expect(dialog).toContainText(`Step ${step} of 5`);
+    if (step === 5) await expect(dialog).toContainText('it is currently unavailable in multiplayer');
     await page.getByTestId('how-to-play-next').click();
   }
   await expect(dialog).toHaveCount(0);
@@ -55,6 +56,7 @@ test('in-game help preserves rolls and held dice and exposes the scoring referen
   await page.getByTestId('how-to-play-reference').click();
   await expect(dialog).toContainText('Three of one number plus two of another: 25 points.');
   await expect(dialog).toContainText('Four consecutive numbers: 30. Five consecutive numbers: 40.');
+  await expect(dialog).toContainText('even with zero or a scratch');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId('game-menu-button')).toBeFocused();

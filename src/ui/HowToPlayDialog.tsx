@@ -24,7 +24,7 @@ const steps = [
   },
   {
     title: 'Spend tokens when they help',
-    body: `You start with 10 tokens. Extra Roll costs ${suckerTokenCosts.extraRoll} and adds one roll. Mulligan costs ${suckerTokenCosts.mulligan} and restarts your turn. Sucker Punch costs ${suckerTokenCosts.suckerPunch} for a chance to make the opponent replay an eligible turn. Open the token menu to see available actions. Suckers do not award tokens.`,
+    body: `You start with 10 tokens. Extra Roll costs ${suckerTokenCosts.extraRoll} and adds one roll. In computer games, Mulligan costs ${suckerTokenCosts.mulligan} and restarts your turn; it is currently unavailable in multiplayer. Sucker Punch costs ${suckerTokenCosts.suckerPunch} for a chance to make the opponent replay an eligible turn. Open the token menu to see available actions. Suckers do not award tokens.`,
   },
 ] as const;
 
@@ -41,7 +41,7 @@ const scoring = [
   ['Chance', 'Add all five dice, with no required pattern.'],
   [
     'Extra Sucker bonus',
-    'After your Sucker box is filled, another five-of-a-kind scored in a different category adds 50 to that category’s normal score.',
+    'Once your Sucker box is filled, even with zero or a scratch, a five-of-a-kind scored in a different category adds 50 to that category’s normal score.',
   ],
 ] as const;
 
