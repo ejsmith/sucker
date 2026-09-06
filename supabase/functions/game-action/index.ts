@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
+import type { Json } from '../../../shared/database.types.ts';
 import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
 import {
   createEmptyScorecard,
@@ -9,6 +10,7 @@ import {
   type GameState,
   isSuckerRoll,
   maxRollsPerTurn,
+  mulliganCurrentTurn,
   type Player,
   resolveSuckerPunchOutcome,
   rollDie,
@@ -1392,6 +1394,33 @@ async function loadTauntOpportunity(
   return null;
 }
 
+async function commitGameMutation(
+  admin: DbClient,
+  game: GameRow,
+  changes: Database['public']['Tables']['games']['Update'],
+  mutationState: ActionMutationState,
+  turn?: Database['public']['Tables']['turns']['Insert'],
+): Promise<GameRow> {
+  const nextGame = { ...game, ...changes };
+  const complete = nextGame.state.phase === 'complete';
+  mutationState.mayHaveWritten = true;
+  const { data, error } = await admin.rpc('commit_game_mutation', {
+    target_game_id: game.id,
+    expected_updated_at: game.updated_at,
+    next_game: nextGame as unknown as Json,
+    player_updates: nextGame.state.players.map((player) => ({
+      player_id: player.id,
+      final_score: complete ? totalScore(player.scorecard) : null,
+      sucker_tokens: player.suckerTokens,
+      upper_bonus_awarded: upperBonus(player.scorecard) > 0,
+    })),
+    submitted_turn: (turn ?? null) as unknown as Json,
+  });
+  if (error) throw error;
+  if (!data) throw new Error('The game changed before your action. Refresh and try again.');
+  return data as unknown as GameRow;
+}
+
 async function mutateGame(
   admin: DbClient,
   actorId: string,
@@ -1404,27 +1433,19 @@ async function mutateGame(
   const game = await loadGameForActor(admin, gameId, actorId);
   const nextState = mutate(game.state);
   const nextPlayer = nextState.players[nextState.currentPlayerIndex];
-  mutationState.mayHaveWritten = true;
-  const { data, error } = await admin
-    .from('games')
-    .update({
+  const updatedGame = await commitGameMutation(
+    admin,
+    game,
+    {
       current_player_id: nextState.phase === 'complete' ? null : nextPlayer.id,
       state: nextState,
       status: nextState.phase === 'complete' ? 'complete' : 'active',
-    })
-    .eq('id', gameId)
-    .select()
-    .single();
+    },
+    mutationState,
+  );
 
-  if (error) {
-    throw error;
-  }
-
-  await Promise.all([
-    syncGamePlayers(admin, gameId, nextState, nextState.phase === 'complete'),
-    insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState)),
-  ]);
-  return { game: data };
+  await insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState));
+  return { game: updatedGame };
 }
 
 async function scoreRemoteTurn(
@@ -1490,57 +1511,40 @@ async function scoreRemoteTurn(
       ? rankedPlayers[0]
       : null;
 
-  mutationState.mayHaveWritten = true;
-  const { data: insertedTurn, error: turnError } = await admin
-    .from('turns')
-    .insert({
-      category,
-      dice: state.dice,
-      game_id: gameId,
-      held: turnHeld,
-      player_id: actorId,
-      roll_count: state.rollNumber,
-      score: turnScore,
-      status: complete ? 'finalized' : 'submitted',
-      turn_index: turnIndex,
-    })
-    .select()
-    .single();
+  const turn = {
+    id: crypto.randomUUID(),
+    category,
+    dice: state.dice,
+    game_id: gameId,
+    held: turnHeld,
+    player_id: actorId,
+    roll_count: state.rollNumber,
+    score: turnScore,
+    status: complete ? ('finalized' as const) : ('submitted' as const),
+    turn_index: turnIndex,
+  };
 
-  const turn = isDuplicateTurnIndexError(turnError)
-    ? await loadDuplicateScoreTurn(admin, gameId, actorId, state, category, turnScore, complete)
-    : insertedTurn;
-  if (!turn) {
-    throw turnError;
-  }
-
-  const { data: updatedGame, error: gameError } = await admin
-    .from('games')
-    .update({
+  const updatedGame = await commitGameMutation(
+    admin,
+    game,
+    {
       completed_at: complete ? new Date().toISOString() : null,
       current_player_id: complete ? null : players[nextState.currentPlayerIndex].id,
       last_turn_id: turn.id,
       state: nextState,
       status: complete ? 'complete' : 'response_window',
       winner_id: winner?.id ?? null,
-    })
-    .eq('id', gameId)
-    .select()
-    .single();
+    },
+    mutationState,
+    turn,
+  );
 
-  if (gameError) {
-    throw gameError;
-  }
-
-  await Promise.all([
-    syncGamePlayers(admin, gameId, nextState, complete),
-    insertAction(admin, gameId, actorId, scratch ? 'scratch_category' : 'score_category', {
-      category,
-      scratched: scratch,
-      score: turnScore,
-      turnId: turn.id,
-    }),
-  ]);
+  await insertAction(admin, gameId, actorId, scratch ? 'scratch_category' : 'score_category', {
+    category,
+    scratched: scratch,
+    score: turnScore,
+    turnId: turn.id,
+  });
 
   if (complete) {
     await writeCompletedGameStats(admin, gameId, players, winner?.id ?? null);
@@ -1572,19 +1576,7 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
     throw new Error('Only the responding player can pass.');
   }
 
-  mutationState.mayHaveWritten = true;
-  const { data: updatedGame, error } = await admin
-    .from('games')
-    .update({
-      status: 'active',
-    })
-    .eq('id', gameId)
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
+  const updatedGame = await commitGameMutation(admin, game, { status: 'active' }, mutationState);
 
   await insertAction(admin, gameId, actorId, 'pass_response', {
     turnId: game.last_turn_id,
@@ -1594,49 +1586,55 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
 
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
-  if (game.status !== 'response_window' || !game.last_turn_id) {
-    throw new Error('Mulligan is only available immediately after a submitted turn.');
-  }
-
-  const turn = await loadTurn(admin, game.last_turn_id);
-  if (turn.player_id !== actorId) {
-    throw new Error('You can only Mulligan your own latest turn.');
+  if ((game.status !== 'active' && game.status !== 'response_window') || game.state.phase === 'complete') {
+    throw new Error('Mulligan is only available during a game.');
   }
 
   const state = game.state;
+  let turn: TurnRow | null = null;
+  if (game.current_player_id === actorId) {
+    assertCurrentPlayer(state, actorId);
+  } else {
+    // Preserve the existing ability to undo your submitted turn while its
+    // response window is still open.
+    if (game.status !== 'response_window' || !game.last_turn_id) {
+      throw new Error('It is not your turn.');
+    }
+    turn = await loadTurn(admin, game.last_turn_id);
+    if (turn.player_id !== actorId || turn.status !== 'submitted') {
+      throw new Error('You can only Mulligan your own latest turn.');
+    }
+  }
+
   const player = findPlayer(state, actorId);
   if (player.suckerTokens < suckerTokenCosts.mulligan) {
     throw new Error(`You need ${suckerTokenCosts.mulligan} Sucker Tokens to Mulligan.`);
   }
 
-  const nextState = removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan);
-  mutationState.mayHaveWritten = true;
-  const { data: updatedGame, error } = await admin
-    .from('games')
-    .update({
+  const nextState = turn
+    ? removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan)
+    : mulliganCurrentTurn(state);
+  const updatedGame = await commitGameMutation(
+    admin,
+    game,
+    {
       current_player_id: actorId,
       state: nextState,
       status: 'active',
-    })
-    .eq('id', gameId)
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
+    },
+    mutationState,
+  );
 
   await Promise.all([
-    updateTurnStatus(admin, turn.id, 'mulliganed'),
+    ...(turn ? [updateTurnStatus(admin, turn.id, 'mulliganed')] : []),
     insertTokenEvent(admin, {
       event_type: 'mulligan',
       game_id: gameId,
       player_id: actorId,
-      target_turn_id: turn.id,
+      target_turn_id: turn?.id ?? null,
       token_delta: -suckerTokenCosts.mulligan,
     }),
-    syncGamePlayers(admin, gameId, nextState, false),
-    insertAction(admin, gameId, actorId, 'mulligan', { turnId: turn.id }),
+    insertAction(admin, gameId, actorId, 'mulligan', turn ? { turnId: turn.id } : {}),
   ]);
 
   return { game: updatedGame };
@@ -1681,21 +1679,16 @@ async function suckerPunchTurn(
   }
   const nextPlayerId = outcome.landed ? turn.player_id : actorId;
 
-  mutationState.mayHaveWritten = true;
-  const { data: updatedGame, error } = await admin
-    .from('games')
-    .update({
+  const updatedGame = await commitGameMutation(
+    admin,
+    game,
+    {
       current_player_id: nextPlayerId,
       state: nextState,
       status: 'active',
-    })
-    .eq('id', gameId)
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
+    },
+    mutationState,
+  );
 
   await Promise.all([
     outcome.landed ? updateTurnStatus(admin, turn.id, 'punched') : Promise.resolve(),
@@ -1706,7 +1699,6 @@ async function suckerPunchTurn(
       target_turn_id: turn.id,
       token_delta: -suckerTokenCosts.suckerPunch,
     }),
-    syncGamePlayers(admin, gameId, nextState, false),
     insertAction(admin, gameId, actorId, 'sucker_punch', {
       ...buildSuckerPunchActionPayload(turn.player_id, outcome, {
         id: turn.id,
@@ -1795,62 +1787,6 @@ async function loadNextTurnIndex(admin: DbClient, gameId: string, lastTurnId: st
   }
 
   return Math.max(latestTurn?.turn_index ?? 0, lastTurn?.turn_index ?? 0) + 1;
-}
-
-async function loadDuplicateScoreTurn(
-  admin: DbClient,
-  gameId: string,
-  actorId: string,
-  state: GameState,
-  category: ScoreCategory,
-  score: number,
-  complete: boolean,
-): Promise<TurnRow | null> {
-  const { data: latestTurn, error } = await admin
-    .from('turns')
-    .select('*')
-    .eq('game_id', gameId)
-    .order('turn_index', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-  if (
-    !latestTurn ||
-    latestTurn.player_id !== actorId ||
-    latestTurn.category !== category ||
-    latestTurn.score !== score ||
-    latestTurn.roll_count !== state.rollNumber ||
-    latestTurn.status !== (complete ? 'finalized' : 'submitted') ||
-    !arraysEqual(toDice(latestTurn.dice), state.dice)
-  ) {
-    return null;
-  }
-
-  return latestTurn;
-}
-
-async function syncGamePlayers(admin: DbClient, gameId: string, state: GameState, complete: boolean) {
-  const results = await Promise.all(
-    state.players.map((player) =>
-      admin
-        .from('game_players')
-        .update({
-          final_score: complete ? totalScore(player.scorecard) : null,
-          sucker_tokens: player.suckerTokens,
-          upper_bonus_awarded: upperBonus(player.scorecard) > 0,
-        })
-        .eq('game_id', gameId)
-        .eq('player_id', player.id),
-    ),
-  );
-
-  const error = results.find((result) => result.error)?.error;
-  if (error) {
-    throw error;
-  }
 }
 
 function findPlayer(state: GameState, playerId: string): Player {
@@ -2043,19 +1979,6 @@ function edgeSuckerPunchOutcomeRandom(): number {
   return cryptoRandom();
 }
 
-function isDuplicateTurnIndexError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-
-  const postgrestError = error as { code?: unknown; details?: unknown; message?: unknown };
-  return (
-    postgrestError.code === '23505' &&
-    ((typeof postgrestError.details === 'string' && postgrestError.details.includes('(game_id, turn_index)')) ||
-      (typeof postgrestError.message === 'string' && postgrestError.message.includes('turns_game_id_turn_index_key')))
-  );
-}
-
 function isDuplicateRematchError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
@@ -2067,10 +1990,6 @@ function isDuplicateRematchError(error: unknown): boolean {
     ((typeof postgrestError.details === 'string' && postgrestError.details.includes('(rematch_of_game_id)')) ||
       (typeof postgrestError.message === 'string' && postgrestError.message.includes('games_rematch_of_game_id_key')))
   );
-}
-
-function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function assertCurrentPlayer(state: GameState, actorId: string) {

@@ -404,6 +404,233 @@ Deno.test('game-action nudges the current player only after the wait window and 
   );
 });
 
+Deno.test('game-action preserves token accounting when mulligan races other turn actions', async () => {
+  const [alice, bob] = await createUsers('mixed-mulligan', ['Alice', 'Bob']);
+  for (const type of ['roll', 'extra_roll', 'score_category', 'scratch_category']) {
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+    const results = await Promise.all(
+      ['mulligan', type].map(async (actionType) => {
+        const response = await fetch(functionUrl, {
+          body: JSON.stringify({ gameId: game.id, requestId: crypto.randomUUID(), type: actionType, category: 'ones' }),
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${alice.session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          method: 'POST',
+        });
+        return { type: actionType, status: response.status, body: await response.json() };
+      }),
+    );
+    const accepted = results.filter((result) => result.status === 200).map((result) => result.type);
+    if (accepted.length === 0) throw new Error('Expected at least one racing action to succeed.');
+    for (const result of results.filter((result) => result.status !== 200)) {
+      assertEquals(result.status, 400);
+      assertIncludes(
+        ['The game changed before your action. Refresh and try again.', 'Roll before playing a score.'],
+        result.body.error,
+      );
+    }
+    const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+    const expectedTokens =
+      startingSuckerTokens -
+      (accepted.includes('mulligan') ? suckerTokenCosts.mulligan : 0) -
+      (accepted.includes('extra_roll') ? suckerTokenCosts.extraRoll : 0) +
+      (accepted.includes('scratch_category') ? 1 : 0);
+    assertPlayerTokens(saved, alice.id, expectedTokens);
+    const player = await selectSingle<GamePlayerTokenRow>(
+      admin
+        .from('game_players')
+        .select('player_id, sucker_tokens')
+        .eq('game_id', game.id)
+        .eq('player_id', alice.id)
+        .single(),
+    );
+    assertEquals(player.sucker_tokens, expectedTokens);
+    const actions = await loadActions(game.id);
+    for (const actionType of ['mulligan', type]) {
+      assertEquals(
+        actions.filter((action) => action.action_type === actionType).length,
+        (accepted.includes(actionType) ? 1 : 0) + (actionType === 'roll' ? 1 : 0),
+      );
+    }
+    const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id));
+    assertEquals(
+      turns.length,
+      accepted.some((action) => action === 'score_category' || action === 'scratch_category') ? 1 : 0,
+    );
+    assertEquals((await loadTokenEvents(game.id)).length, accepted.includes('mulligan') ? 1 : 0);
+  }
+});
+
+Deno.test('game state transaction rejects stale writes and cannot be called by players', async () => {
+  const [alice, bob] = await createUsers('game-transaction', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const args = {
+    target_game_id: game.id,
+    expected_updated_at: game.updated_at,
+    next_game: game as unknown as Database['public']['Functions']['commit_game_mutation']['Args']['next_game'],
+    player_updates: [],
+  };
+  const denied = await alice.client.rpc('commit_game_mutation', args);
+  if (!denied.error) throw new Error('Players must not be able to commit arbitrary game states.');
+  const attempts = await Promise.all([
+    admin.rpc('commit_game_mutation', args),
+    admin.rpc('commit_game_mutation', args),
+  ]);
+  for (const attempt of attempts) assertNoError(attempt.error);
+  assertEquals(attempts.filter((attempt) => attempt.data !== null).length, 1);
+  const stale = await admin.rpc('commit_game_mutation', {
+    ...args,
+    submitted_turn: { id: crypto.randomUUID() },
+  });
+  assertNoError(stale.error);
+  assertEquals(stale.data, null);
+  assertEquals((await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id))).length, 0);
+});
+
+Deno.test('game-action charges every accepted concurrent mulligan exactly once', async () => {
+  const [alice, bob] = await createUsers('concurrent-mulligan', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const requests = Array.from({ length: 3 }, () => ({
+    gameId: game.id,
+    requestId: crypto.randomUUID(),
+    type: 'mulligan',
+  }));
+  const results = await Promise.all(
+    requests.map(async (body) => {
+      const response = await fetch(functionUrl, {
+        body: JSON.stringify(body),
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${alice.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+      return { status: response.status, body: await response.json() };
+    }),
+  );
+  const accepted = results.filter((result) => result.status === 200).length;
+  if (accepted === 0) throw new Error('Expected at least one concurrent Mulligan to succeed.');
+  for (const result of results.filter((result) => result.status !== 200)) {
+    assertEquals(result.status, 400);
+    assertEquals(result.body.error, 'The game changed before your action. Refresh and try again.');
+  }
+  const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+  const expectedTokens = startingSuckerTokens - accepted * suckerTokenCosts.mulligan;
+  assertPlayerTokens(saved, alice.id, expectedTokens);
+  const player = await selectSingle<GamePlayerTokenRow>(
+    admin
+      .from('game_players')
+      .select('player_id, sucker_tokens')
+      .eq('game_id', game.id)
+      .eq('player_id', alice.id)
+      .single(),
+  );
+  assertEquals(player.sucker_tokens, expectedTokens);
+  assertEquals((await loadActions(game.id)).filter((action) => action.action_type === 'mulligan').length, accepted);
+  const events = await loadTokenEvents(game.id);
+  assertEquals(events.length, accepted);
+  assertEquals(
+    events.reduce((total, event) => total + event.token_delta, 0),
+    -accepted * suckerTokenCosts.mulligan,
+  );
+
+  // Both successes and conflicts must be terminal, replayable outcomes.
+  for (const [index, request] of requests.entries()) {
+    const replay = await invokeGameAction(alice, request, results[index].status);
+    if (results[index].status === 200) {
+      const replayedGame = replay.game as GameRow;
+      assertEquals(replayedGame.state, results[index].body.game.state);
+      assertEquals(replayedGame.updated_at, results[index].body.game.updated_at);
+    } else {
+      assertEquals(replay.error, results[index].body.error);
+    }
+  }
+  assertEquals((await loadTokenEvents(game.id)).length, accepted);
+});
+
+Deno.test('game-action allows repeated active-turn mulligans before and after rolling', async () => {
+  const [alice, bob] = await createUsers('active-mulligan', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+
+  const wrongTurn = await invokeGameAction(bob, { gameId: game.id, type: 'mulligan' }, 400);
+  assertEquals(wrongTurn.error, 'It is not your turn.');
+
+  for (let usage = 1; usage <= 3; usage += 1) {
+    if (usage === 2) {
+      await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+      await invokeGameAction(alice, {
+        gameId: game.id,
+        held: [true, false, true, false, true],
+        type: 'extra_roll',
+      });
+    }
+    if (usage === 3) {
+      for (let roll = 0; roll < 4; roll += 1) {
+        await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+      }
+    }
+    const request = { gameId: game.id, requestId: crypto.randomUUID(), type: 'mulligan' };
+    const reset = (await invokeGameAction(alice, request)).game as GameRow;
+    const retried = (await invokeGameAction(alice, request)).game as GameRow;
+    assertEquals(retried.state, reset.state);
+    assertEquals(retried.updated_at, reset.updated_at);
+    assertEquals(reset.status, 'active');
+    assertEquals(reset.current_player_id, alice.id);
+    assertEquals(reset.state.rollNumber, 0);
+    assertEquals(reset.state.phase, 'rolling');
+    assertEquals(reset.state.extraRollsAvailable, 0);
+    assertEquals(reset.state.dice, [1, 1, 1, 1, 1]);
+    assertEquals(reset.state.held, falseHeld);
+    assertEquals(reset.state.players[0].scorecard, game.state.players[0].scorecard);
+    assertPlayerTokens(
+      reset,
+      alice.id,
+      startingSuckerTokens - usage * suckerTokenCosts.mulligan - (usage >= 2 ? 1 : 0),
+    );
+    assertPlayerTokens(reset, bob.id, startingSuckerTokens);
+  }
+
+  const tooPoor = await invokeGameAction(alice, { gameId: game.id, type: 'mulligan' }, 400);
+  assertEquals(tooPoor.error, 'You need 3 Sucker Tokens to Mulligan.');
+  const events = await loadTokenEvents(game.id);
+  assertEquals(
+    events.map((event) => [event.token_delta, event.target_turn_id]),
+    [
+      [-3, null],
+      [-3, null],
+      [-3, null],
+    ],
+  );
+  assertEquals((await loadActions(game.id)).filter((action) => action.action_type === 'mulligan').length, 3);
+});
+
+Deno.test(
+  'game-action mulligan at turn start preserves the opponent score and closes the response window',
+  async () => {
+    const [alice, bob] = await createUsers('response-mulligan', ['Alice', 'Bob']);
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+    const scored = (await invokeGameAction(alice, { gameId: game.id, category: 'sucker', type: 'score_category' }))
+      .game as GameRow;
+    assertEquals(scored.status, 'response_window');
+    assertString(scored.last_turn_id);
+
+    const reset = (await invokeGameAction(bob, { gameId: game.id, type: 'mulligan' })).game as GameRow;
+    assertEquals(reset.status, 'active');
+    assertEquals(reset.current_player_id, bob.id);
+    assertEquals(reset.state.rollNumber, 0);
+    assertEquals(reset.state.players[0], scored.state.players[0]);
+    assertPlayerTokens(reset, bob.id, startingSuckerTokens - suckerTokenCosts.mulligan);
+    assertEquals((await loadTurn(scored.last_turn_id)).status, 'submitted');
+    const tooLate = await invokeGameAction(alice, { gameId: game.id, type: 'mulligan' }, 400);
+    assertEquals(tooLate.error, 'It is not your turn.');
+  },
+);
+
 Deno.test('game-action persists extra roll, mulligan, and sucker punch chance state', async () => {
   const [alice, bob] = await createUsers('token-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
