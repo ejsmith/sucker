@@ -448,7 +448,7 @@ test('completed history can reach games older than the first 25', async ({ brows
     const template = await loadGame(templateId);
     const rows = Array.from({ length: 51 }, (_, index) => {
       const id = crypto.randomUUID();
-      const timestamp = `2026-01-01T12:00:00.${String(Math.floor(index / 2)).padStart(6, '0')}Z`;
+      const timestamp = `${index < 2 ? '2027' : '2026'}-01-01T12:00:00.${String(Math.floor(index / 2)).padStart(6, '0')}Z`;
       const completedAt = index < 2 ? null : timestamp;
       const state = {
         ...template.state,
@@ -486,6 +486,15 @@ test('completed history can reach games older than the first 25', async ({ brows
     await alicePage.getByTestId('completed-games-button').click();
     await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(25);
     await alicePage.screenshot({ path: test.info().outputPath('history-before.png') });
+    const newestLegacyId = rows
+      .slice(0, 2)
+      .map((row) => row.id)
+      .sort()
+      .reverse()[0];
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/).first()).toHaveAttribute(
+      'data-testid',
+      `completed-game-${newestLegacyId}`,
+    );
     await expect(alicePage.getByTestId('load-older-games-button')).toBeVisible();
     await alicePage.getByTestId('load-older-games-button').scrollIntoViewIfNeeded();
     await alicePage.screenshot({ path: test.info().outputPath('history-load-more.png') });

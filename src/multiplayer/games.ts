@@ -61,8 +61,7 @@ export async function listMyGames() {
         .from('games')
         .select('*')
         .eq('status', 'complete')
-        .order('completed_at', { ascending: false, nullsFirst: false })
-        .order('updated_at', { ascending: false })
+        .order('completed_sort_at', { ascending: false })
         .order('id', { ascending: false })
         .limit(completedGamesPageSize),
     ]);
@@ -101,20 +100,13 @@ export async function listOlderCompletedGames(cursor: { completed_at: string | n
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.id)) {
     throw new Error('Unable to load older games. Refresh and try again.');
   }
-  let query = supabase.from('games').select('*').eq('status', 'complete');
-  if (cursor.completed_at === null) {
-    query = query
-      .is('completed_at', null)
-      .or(`updated_at.lt.${updatedAt},and(updated_at.eq.${updatedAt},id.lt.${cursor.id})`);
-  } else {
-    const completedAt = cursor.completed_at;
-    query = query.or(
-      `completed_at.lt.${completedAt},completed_at.is.null,and(completed_at.eq.${completedAt},updated_at.lt.${updatedAt}),and(completed_at.eq.${completedAt},updated_at.eq.${updatedAt},id.lt.${cursor.id})`,
-    );
-  }
-  const { data, error } = await query
-    .order('completed_at', { ascending: false, nullsFirst: false })
-    .order('updated_at', { ascending: false })
+  const effectiveDate = cursor.completed_at ?? updatedAt;
+  const { data, error } = await supabase
+    .from('games')
+    .select('*')
+    .eq('status', 'complete')
+    .or(`completed_sort_at.lt.${effectiveDate},and(completed_sort_at.eq.${effectiveDate},id.lt.${cursor.id})`)
+    .order('completed_sort_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(completedGamesPageSize + 1);
   if (error) throw error;

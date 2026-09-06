@@ -10,11 +10,8 @@ function compareTimestamps(left: string, right: string) {
 }
 
 export function compareCompletedGames(left: RemoteGameRow, right: RemoteGameRow) {
-  if (left.completed_at === null && right.completed_at !== null) return 1;
-  if (left.completed_at !== null && right.completed_at === null) return -1;
   return (
     compareTimestamps(right.completed_at ?? right.updated_at, left.completed_at ?? left.updated_at) ||
-    compareTimestamps(right.updated_at, left.updated_at) ||
     right.id.localeCompare(left.id)
   );
 }
