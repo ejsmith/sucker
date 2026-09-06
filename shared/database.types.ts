@@ -345,6 +345,11 @@ export type Database = {
         Insert: never;
         Update: never;
       };
+      computer_game_results: {
+        Row: { profile_id: string; game_id: string; result: Json; recorded_at: string };
+        Insert: { profile_id: string; game_id: string; result: Json; recorded_at?: string };
+        Update: { result?: Json };
+      };
       computer_stats: {
         Row: {
           average_score: number;
@@ -597,6 +602,10 @@ export type Database = {
           upper_bonus_pct: number;
           wins: number;
         }[];
+      };
+      record_computer_game_result_once: {
+        Args: { p_owner_id: string; p_game_id: string; p_result: Json };
+        Returns: Database['public']['Tables']['computer_stats']['Row'];
       };
       record_computer_game_result: {
         Args: {
