@@ -57,6 +57,132 @@ test('local development offers reusable Test 1 and Test 2 logins at the bottom',
   }
 });
 
+for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
+  test(`signing out releases this browser notification endpoint for the next account (${unsubscribeResult})`, async ({
+    browser,
+  }) => {
+    const runId = crypto.randomUUID();
+    const alice = await createUser(`push-alice-${runId}`, 'Alice Push');
+    const bob = await createUser(`push-bob-${runId}`, 'Bob Push');
+    const endpoint = `https://push.example.test/${runId}`;
+    const otherEndpoint = `${endpoint}/other-device`;
+    const otherDevice = await admin.from('web_push_subscriptions').insert({
+      endpoint: otherEndpoint,
+      auth_key: 'other-auth',
+      p256dh_key: 'other-key',
+      profile_id: alice.id,
+    });
+    expect(otherDevice.error).toBeNull();
+    const page = await openAuthedPage(browser, alice, endpoint, unsubscribeResult);
+    try {
+      await expect
+        .poll(
+          async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data,
+        )
+        .toEqual([{ profile_id: alice.id }]);
+      await page.getByTestId('profile-button').click();
+      await page.getByTestId('sign-out-button').click();
+      await expect(page.getByTestId('local-test-login')).toBeVisible();
+      await expect
+        .poll(
+          async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data,
+        )
+        .toEqual([]);
+      const retained = await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', otherEndpoint);
+      expect(retained.data).toEqual([{ profile_id: alice.id }]);
+      const session = await createSession(bob.email);
+      const bobClient = createClient(supabaseUrl, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: `Bearer ${session.access_token}` } },
+      });
+      const reassigned = await bobClient
+        .from('web_push_subscriptions')
+        .upsert(
+          {
+            endpoint,
+            auth_key: 'test-auth',
+            p256dh_key: 'test-key',
+            profile_id: bob.id,
+          },
+          { onConflict: 'endpoint' },
+        )
+        .select('profile_id');
+      expect(reassigned.error).toBeNull();
+      expect(reassigned.data).toEqual([{ profile_id: bob.id }]);
+    } finally {
+      await page.context().close();
+    }
+  });
+}
+
+test('auth sign-out failure restores notification ownership before reporting the error', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`push-auth-retry-${runId}`, 'Alice Auth Retry');
+  const endpoint = `https://push.example.test/auth-retry-${runId}`;
+  const page = await openAuthedPage(browser, alice, endpoint);
+  const owners = async () =>
+    (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data;
+  try {
+    await expect.poll(owners).toEqual([{ profile_id: alice.id }]);
+    await page.route('**/auth/v1/logout?*', (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Auth unavailable test' }),
+      }),
+    );
+    await page.getByTestId('profile-button').click();
+    await page.getByTestId('sign-out-button').click();
+    await expect(page.getByText('Unable to complete the login request. Please try again.')).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('auth-signout-failure.png') });
+    await expect.poll(owners).toEqual([{ profile_id: alice.id }]);
+    await expect(page.getByTestId('sign-out-button')).toBeEnabled();
+    await page.unroute('**/auth/v1/logout?*');
+    await page.getByTestId('sign-out-button').click();
+    await expect(page.getByTestId('local-test-login')).toBeVisible();
+    await expect.poll(owners).toEqual([]);
+  } finally {
+    await page.context().close();
+  }
+});
+
+test('notification cleanup failure keeps the account signed in and supports retry', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`push-retry-${runId}`, 'Alice Retry');
+  const endpoint = `https://push.example.test/retry-${runId}`;
+  const page = await openAuthedPage(browser, alice, endpoint);
+  try {
+    await expect
+      .poll(async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data)
+      .toEqual([{ profile_id: alice.id }]);
+    await page.route('**/rest/v1/web_push_subscriptions?*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'Offline test' }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+    await page.getByTestId('profile-button').click();
+    await page.getByTestId('sign-out-button').click();
+    await expect(
+      page.getByText('Could not disconnect notifications. Check your connection and try signing out again.'),
+    ).toBeVisible();
+    await expect(page.getByTestId('sign-out-button')).toBeEnabled();
+    await expect(page.getByTestId('local-test-login')).toHaveCount(0);
+    await page.unroute('**/rest/v1/web_push_subscriptions?*');
+    await page.getByTestId('sign-out-button').click();
+    await expect(page.getByTestId('local-test-login')).toBeVisible();
+    const removed = await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint);
+    expect(removed.data).toEqual([]);
+  } finally {
+    await page.context().close();
+  }
+});
+
 test('failed Punch preparation closes the dialog and keeps the board usable', async ({ browser }) => {
   const alice = await createUser(`prepare-a-${crypto.randomUUID()}`, 'Alice Prepare');
   const bob = await createUser(`prepare-b-${crypto.randomUUID()}`, 'Bob Prepare');
@@ -943,35 +1069,61 @@ test('player avatars open separate overall stats pages', async ({ browser }) => 
   await bobPage.context().close();
 });
 
-async function openAuthedPage(browser: Browser, user: TestUser) {
+async function openAuthedPage(
+  browser: Browser,
+  user: TestUser,
+  pushEndpoint?: string,
+  unsubscribeResult: 'success' | 'false' | 'error' = 'success',
+) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   const session = await createSession(user.email);
-  await context.addInitScript(() => {
-    const testWindow = window as Window & { PushManager?: unknown };
-    const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
+  await context.addInitScript(
+    ({ endpoint, unsubscribeResult }) => {
+      const testWindow = window as Window & { PushManager?: unknown };
+      const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
 
-    Object.defineProperty(testWindow, 'Notification', {
-      configurable: true,
-      value: {
-        permission: 'default',
-        requestPermission: async () => 'default',
-      },
-    });
-
-    if (!('PushManager' in testWindow)) {
-      Object.defineProperty(testWindow, 'PushManager', {
+      Object.defineProperty(testWindow, 'Notification', {
         configurable: true,
-        value: function PushManager() {},
+        value: {
+          permission: endpoint ? 'granted' : 'default',
+          requestPermission: async () => 'default',
+        },
       });
-    }
 
-    if (!('serviceWorker' in testNavigator)) {
-      Object.defineProperty(testNavigator, 'serviceWorker', {
-        configurable: true,
-        value: {},
-      });
-    }
-  });
+      if (!('PushManager' in testWindow)) {
+        Object.defineProperty(testWindow, 'PushManager', {
+          configurable: true,
+          value: function PushManager() {},
+        });
+      }
+
+      if (endpoint) {
+        const subscription = {
+          endpoint,
+          toJSON: () => ({ endpoint, keys: { auth: 'test-auth', p256dh: 'test-key' } }),
+          unsubscribe: async () => {
+            if (unsubscribeResult === 'error') throw new Error('Provider unavailable');
+            return unsubscribeResult !== 'false';
+          },
+        };
+        const registration = {
+          pushManager: { getSubscription: async () => subscription, subscribe: async () => subscription },
+        };
+        const serviceWorker = Object.assign(new EventTarget(), {
+          register: async () => registration,
+          getRegistration: async () => registration,
+          ready: Promise.resolve(registration),
+        });
+        Object.defineProperty(testNavigator, 'serviceWorker', { configurable: true, value: serviceWorker });
+      } else if (!('serviceWorker' in testNavigator)) {
+        Object.defineProperty(testNavigator, 'serviceWorker', {
+          configurable: true,
+          value: {},
+        });
+      }
+    },
+    { endpoint: pushEndpoint, unsubscribeResult },
+  );
   await context.addInitScript(
     ({ accessToken, refreshToken, supabaseAnonKey, supabaseUrl }) => {
       (
