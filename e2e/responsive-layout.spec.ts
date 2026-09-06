@@ -407,6 +407,8 @@ test('a short desktop viewport keeps the full game reachable in a vertical stage
 test('an installed PWA follows the settled visible viewport instead of clipping its controls', async ({ browser }) => {
   const context = await browser.newContext({
     hasTouch: true,
+    // Emulate a phone's screen orientation, not just touch on a desktop monitor.
+    isMobile: true,
     viewport: { height: 852, width: 393 },
   });
   const page = await context.newPage();
