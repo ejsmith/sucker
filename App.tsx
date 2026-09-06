@@ -2261,6 +2261,10 @@ export function LocalGameScreen({
       return gameResult;
     });
     const scrambleTimer = setInterval(() => {
+      if (reducedMotionRef.current) {
+        clearInterval(scrambleTimer);
+        return;
+      }
       setRollingFaces(
         (faces) => faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
       );
@@ -2761,6 +2765,10 @@ export function LocalGameScreen({
     const scrambleTimer = reducedMotionRef.current
       ? null
       : setInterval(() => {
+          if (reducedMotionRef.current) {
+            clearInterval(scrambleTimer!);
+            return;
+          }
           setSuckerPunchChanceFace(rollDisplayDie());
         }, 70);
     const chanceRollAnimation = Animated.timing(suckerPunchDieAnimation, {

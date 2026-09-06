@@ -183,6 +183,57 @@ test('notification cleanup failure keeps the account signed in and supports retr
   }
 });
 
+test('enabling Reduce Motion stops a stalled remote Punch scramble', async ({ browser }) => {
+  const alice = await createUser(`motion-a-${crypto.randomUUID()}`, 'Alice Motion');
+  const bob = await createUser(`motion-b-${crypto.randomUUID()}`, 'Bob Motion');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  let releaseRequest = () => {};
+  const stalled = new Promise<void>((resolve) => { releaseRequest = resolve; });
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await alicePage.getByTestId('category-button-sucker').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await expect.poll(async () => (await loadGame(gameId)).current_player_id).toBe(bob.id);
+    await openGameFromLobby(bobPage, gameId);
+    await bobPage.emulateMedia({ reducedMotion: 'no-preference' });
+    await bobPage.getByTestId('token-menu-button').click();
+    await bobPage.getByTestId('token-option-sucker-punch').click();
+    let requestStarted = false;
+    await bobPage.route('**/functions/v1/game-action', async (route) => {
+      if (route.request().postDataJSON()?.type === 'prepare_sucker_punch') {
+        requestStarted = true;
+        await stalled;
+      }
+      await route.continue();
+    });
+    await bobPage.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect.poll(() => requestStarted).toBe(true);
+    await bobPage.emulateMedia({ reducedMotion: 'reduce' });
+    // Let the preference event settle, then observe a full second of the stalled request.
+    await bobPage.waitForTimeout(200);
+    const changes = await bobPage.getByTestId('sucker-punch-chance-die-track').evaluate(async (node) => {
+      let mutations = 0;
+      const observer = new MutationObserver(() => { mutations += 1; });
+      observer.observe(node.querySelector('svg')!, { subtree: true, childList: true, attributes: true });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      observer.disconnect();
+      return mutations;
+    });
+    console.log(`Reduce Motion enabled with Punch request stalled; die changes in one second: ${changes}`);
+    await bobPage.screenshot({ path: test.info().outputPath('stalled-punch.png') });
+    expect(changes).toBe(0);
+    releaseRequest();
+    await expect(bobPage.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
+  } finally {
+    releaseRequest();
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('failed Punch preparation closes the dialog and keeps the board usable', async ({ browser }) => {
   const alice = await createUser(`prepare-a-${crypto.randomUUID()}`, 'Alice Prepare');
   const bob = await createUser(`prepare-b-${crypto.randomUUID()}`, 'Bob Prepare');
