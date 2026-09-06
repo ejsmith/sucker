@@ -5,6 +5,7 @@ for (const installed of [false, true]) {
     page,
   }) => {
     await page.addInitScript((isInstalled) => {
+      Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 1 });
       Object.defineProperty(navigator, 'standalone', { configurable: true, value: isInstalled });
       Object.defineProperty(screen, 'orientation', {
         configurable: true,
@@ -54,3 +55,28 @@ for (const installed of [false, true]) {
     }
   });
 }
+
+test('desktop PWA follows its window orientation on a landscape monitor', async ({ browser }) => {
+  const context = await browser.newContext({ isMobile: false, hasTouch: false, viewport: { width: 393, height: 852 } });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
+      Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 });
+      Object.defineProperty(screen, 'orientation', {
+        configurable: true,
+        value: Object.assign(new EventTarget(), { type: 'landscape-primary' }),
+      });
+    });
+    await page.goto('/');
+    await expect(page.getByTestId('login-email-input')).toBeVisible();
+    await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+    await page.setViewportSize({ width: 852, height: 393 });
+    await expect(page.getByTestId('pwa-landscape-guard')).toBeVisible();
+    await page.setViewportSize({ width: 393, height: 852 });
+    await expect(page.getByTestId('login-email-input')).toBeVisible();
+    await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});

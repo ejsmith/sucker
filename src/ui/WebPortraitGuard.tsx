@@ -26,17 +26,22 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       (window.navigator as StandaloneNavigator).standalone === true;
     const updateGuard = () => {
       const installed = isInstalledPwa();
+      const useDeviceOrientation =
+        window.navigator.maxTouchPoints > 0 || window.matchMedia('(hover: none) and (pointer: coarse)').matches;
       // The software keyboard can make the viewport wider than it is tall
       // without rotating the phone. Never unmount the form for that resize.
       const orientation = window.screen.orientation?.type;
       const legacyOrientation = (window as Window & { orientation?: number }).orientation;
-      const isLandscape = orientation
-        ? orientation.startsWith('landscape')
-        : typeof legacyOrientation === 'number'
-          ? Math.abs(legacyOrientation) === 90
-          : landscapeQuery.matches;
+      // Desktop installations follow their resizable window, not the monitor.
+      const isLandscape = !useDeviceOrientation
+        ? landscapeQuery.matches
+        : orientation
+          ? orientation.startsWith('landscape')
+          : typeof legacyOrientation === 'number'
+            ? Math.abs(legacyOrientation) === 90
+            : landscapeQuery.matches;
       setShowLandscapeGuard(installed && isLandscape);
-      if (installed) {
+      if (installed && useDeviceOrientation) {
         void lockPortraitOrientation();
       }
     };
