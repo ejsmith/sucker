@@ -57,6 +57,39 @@ test('local development offers reusable Test 1 and Test 2 logins at the bottom',
   }
 });
 
+test('failed Punch preparation closes the dialog and keeps the board usable', async ({ browser }) => {
+  const alice = await createUser(`prepare-a-${crypto.randomUUID()}`, 'Alice Prepare');
+  const bob = await createUser(`prepare-b-${crypto.randomUUID()}`, 'Bob Prepare');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await alicePage.getByTestId('category-button-sucker').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await expect.poll(async () => (await loadGame(gameId)).current_player_id).toBe(bob.id);
+    await openGameFromLobby(bobPage, gameId);
+    await bobPage.getByTestId('token-menu-button').click();
+    await bobPage.getByTestId('token-option-sucker-punch').click();
+    await bobPage.route('**/functions/v1/game-action', async (route) => {
+      if (route.request().postDataJSON()?.type === 'prepare_sucker_punch') {
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'The response opportunity has ended.' }) });
+      } else await route.continue();
+    });
+    await bobPage.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(bobPage.getByText('The response opportunity has ended.', { exact: true })).toBeVisible();
+    await expect(bobPage.getByTestId('sucker-punch-chance-dialog')).toHaveCount(0);
+    await bobPage.screenshot({ path: test.info().outputPath('preparation-failed.png') });
+    await bobPage.getByTestId('roll-button').click();
+    await expect(bobPage.getByTestId('rolls-left-count')).toHaveText('3');
+    await expect(bobPage.getByTestId('token-menu-button')).toHaveText('10');
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('the displayed multiplayer punch chance matches the server outcome', async ({ browser }) => {
   const runId = crypto.randomUUID();
   const alice = await createUser(`chance-alice-${runId}`, 'Alice Chance');
