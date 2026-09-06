@@ -1,3 +1,9 @@
+begin;
+
+-- Drain legacy writes before replacing the function and repairing cached totals.
+lock table public.game_player_results, public.head_to_head_stats in share row exclusive mode;
+create index game_player_results_matchup_idx on public.game_player_results(player_id,opponent_id);
+
 -- Rebuild cached matchup totals from uniquely keyed game results.
 -- Callers hold the pair lock while writing results and refreshing both directions.
 create or replace function public.refresh_matchup_stats(p_player_id uuid, p_opponent_id uuid)
@@ -226,6 +232,32 @@ $$;
 revoke all on function public.commit_game_move(uuid,uuid,uuid,timestamptz,jsonb,jsonb,jsonb) from public,anon,authenticated;
 grant execute on function public.commit_game_move(uuid,uuid,uuid,timestamptz,jsonb,jsonb,jsonb) to service_role;
 
+-- Verify the final row at commit, after any waiting legacy writer obtains its
+-- row lock. Old function invocations can resume after a migration table lock is
+-- released, so the barrier alone cannot prevent a stale absolute overwrite.
+create or replace function public.check_matchup_result_totals()
+returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  source_games bigint;
+  source_score bigint;
+  current_stats public.head_to_head_stats;
+begin
+  select count(*),coalesce(sum(final_score),0) into source_games,source_score
+    from public.game_player_results where player_id=new.player_id and opponent_id=new.opponent_id;
+  select * into current_stats from public.head_to_head_stats
+    where player_id=new.player_id and opponent_id=new.opponent_id;
+  if source_games > 0 and found and
+      (current_stats.games_played <> source_games or current_stats.total_score <> source_score) then
+    raise exception using errcode='PT409',message='Game results changed while statistics were prepared. Refresh and try again.';
+  end if;
+  return null;
+end;
+$$;
+revoke all on function public.check_matchup_result_totals() from public,anon,authenticated;
+create constraint trigger matchup_result_totals_consistent
+  after insert or update on public.head_to_head_stats
+  deferrable initially deferred for each row execute function public.check_matchup_result_totals();
+
 -- Repair existing totals using the same source of truth. The migration transaction
 -- holds each pair lock through commit, matching the normal completion path.
 do $$
@@ -241,3 +273,4 @@ begin
 end;
 $$;
 
+commit;
