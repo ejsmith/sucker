@@ -10,3 +10,5 @@ This verifies the browser preference and shared rendering logic. Native Reduce M
 # Preference changes during a notice
 
 Enabling Reduce Motion while the Punch notice was visible still allowed its delayed impact animation to reach full opacity. The delayed callbacks now consult the latest preference, including immediately before starting the animation. The same browser regression observes zero impact opacity; all three reduced-motion cases pass. `toggle-before.png` and `toggle-after.png` show the captured regression output.
+
+The same stale preference also affected the pause before an opponent's score flight. A second reproduction observed a new flight overlay after enabling Reduce Motion during that pause. All asynchronous animation entry points now read the latest preference. The regression observes zero new flight overlays, preserves the score, and all four reduced-motion cases pass. See `reveal-before.png` and `reveal-after.png`.

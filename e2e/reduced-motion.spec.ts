@@ -32,6 +32,29 @@ test('enabling reduced motion during a Punch notice prevents its delayed wipe', 
   expect(opacity).toBe(0);
 });
 
+test('enabling reduced motion during an opponent reveal prevents new score flights', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.addInitScript(() => { Math.random = () => 0; });
+  await page.goto('/local');
+  await page.getByTestId('roll-button').click();
+  await page.getByTestId('home-score-box-ones').click();
+  await page.getByTestId('play-score-button').click();
+  await expect(page.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 20_000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => {
+    const state = window as typeof window & { revealFlights?: number };
+    state.revealFlights = 0;
+    new MutationObserver(() => {
+      state.revealFlights = Math.max(state.revealFlights ?? 0, document.querySelectorAll('[data-testid="score-dice-overlay"]').length);
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await expect(page.getByTestId('roll-button')).toBeEnabled();
+  const flights = await page.evaluate(() => (window as typeof window & { revealFlights?: number }).revealFlights);
+  console.log(`Reduce Motion enabled during opponent reveal; new score-flight overlays: ${flights}`);
+  expect(flights).toBe(0);
+  await expect(page.getByTestId('opponent-score-box-sucker')).toContainText('50');
+});
+
 test('reduced motion keeps rolling dice in their slots', async ({ page }) => {
   await page.setViewportSize({ width: 393, height: 852 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
