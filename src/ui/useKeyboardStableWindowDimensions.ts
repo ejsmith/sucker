@@ -3,11 +3,64 @@ import { Platform, useWindowDimensions, type ScaledSize } from 'react-native';
 
 const mobileWebWidthBreakpoint = 700;
 const widthChangeTolerance = 2;
+const keyboardDismissalDelayMs = 500;
 
+// Shared sizing policy for every app screen, not just authentication. Native
+// iOS overlays by default; Android uses softwareKeyboardLayoutMode: pan in
+// app.json. Mobile web needs a stable frame for every focused text field.
 export function useKeyboardStableWindowDimensions() {
   const dimensions = useWindowDimensions();
   const shouldStabilizeHeight = useMemo(() => shouldUseStableWebHeight(dimensions.width), [dimensions.width]);
   const [stableDimensions, setStableDimensions] = useState<ScaledSize>(dimensions);
+  const [editingDimensions, setEditingDimensions] = useState<ScaledSize | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      return;
+    }
+
+    const navigator = getWebNavigator();
+    const userAgent = navigator?.userAgent ?? '';
+    const isMobileDevice =
+      /Android|iPhone|iPad|iPod/i.test(userAgent) ||
+      (/Macintosh/i.test(userAgent) && (navigator?.maxTouchPoints ?? 0) > 1);
+    if (!isMobileDevice) {
+      return;
+    }
+
+    const isTextInput = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+    const handleFocus = (event: FocusEvent) => {
+      if (isTextInput(event.target)) {
+        // Capture before the software keyboard changes the viewport. Keep the
+        // same frame when moving between fields with the keyboard still open.
+        setEditingDimensions((current) => current ?? dimensions);
+        setIsEditing(true);
+      }
+    };
+    const handleBlur = (event: FocusEvent) => {
+      if (!isTextInput(event.relatedTarget)) {
+        setIsEditing(false);
+      }
+    };
+    document.addEventListener('focusin', handleFocus);
+    document.addEventListener('focusout', handleBlur);
+    return () => {
+      document.removeEventListener('focusin', handleFocus);
+      document.removeEventListener('focusout', handleBlur);
+    };
+  }, [dimensions]);
+
+  useEffect(() => {
+    if (isEditing || !editingDimensions) return;
+    // Blur precedes the keyboard's closing animation. Releasing the frame
+    // immediately would briefly shrink every screen during dismissal. A new
+    // focus cancels this release, including transitions through a button.
+    const timeout = setTimeout(() => setEditingDimensions(null), keyboardDismissalDelayMs);
+    return () => clearTimeout(timeout);
+  }, [editingDimensions, isEditing]);
 
   useEffect(() => {
     if (!shouldStabilizeHeight) {
@@ -31,6 +84,14 @@ export function useKeyboardStableWindowDimensions() {
       return areSameDimensions(currentDimensions, nextDimensions) ? currentDimensions : nextDimensions;
     });
   }, [dimensions, shouldStabilizeHeight]);
+
+  // Safari ignores interactive-widget=overlays-content. Preserve the app's
+  // frame while editing so its keyboard covers the app instead of scaling it.
+  // Real width changes still update measurements; WebPortraitGuard separately
+  // blocks mobile landscape rather than allowing a landscape app layout.
+  if (editingDimensions && !didWidthChange(editingDimensions.width, dimensions.width)) {
+    return { ...dimensions, height: Math.max(editingDimensions.height, dimensions.height) };
+  }
 
   if (!shouldStabilizeHeight || didWidthChange(stableDimensions.width, dimensions.width)) {
     return dimensions;

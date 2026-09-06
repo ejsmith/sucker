@@ -42,8 +42,10 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
           : typeof legacyOrientation === 'number'
             ? Math.abs(legacyOrientation) === 90
             : landscapeQuery.matches;
-      setShowLandscapeGuard(installed && isLandscape);
-      if (installed && useDeviceOrientation) {
+      // Portrait-only also applies in a regular mobile browser, not just an
+      // installed PWA. Desktop browser previews retain their portrait stage.
+      setShowLandscapeGuard((installed || useDeviceOrientation) && isLandscape);
+      if (useDeviceOrientation) {
         void lockPortraitOrientation();
       }
     };
@@ -90,7 +92,7 @@ async function lockPortraitOrientation() {
   try {
     await orientation.lock('portrait');
   } catch {
-    // iOS and some browsers ignore the Screen Orientation API for installed PWAs.
+    // Some browsers cannot lock orientation; the guard still blocks landscape.
   }
 }
 
