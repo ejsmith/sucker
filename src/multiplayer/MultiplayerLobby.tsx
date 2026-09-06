@@ -44,7 +44,7 @@ import { isLocalMultiplayerDevelopment } from './env';
 import type { LocalTestPlayer } from './auth';
 import type { RemoteGameRow } from './types';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
-import { getPhoneStageStyle } from '../ui/phoneStage';
+import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
@@ -155,7 +155,7 @@ export function MultiplayerLobby({
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
-    fillNarrowViewport: Platform.OS !== 'web',
+    fillNarrowViewport: Platform.OS !== 'web' || shouldFillWebViewport(windowWidth),
   });
   const shellSafeAreaStyle: StyleProp<ViewStyle> = {
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
@@ -179,17 +179,18 @@ export function MultiplayerLobby({
       </View>
     );
 
-    if (needsScrollableStage) {
-      return (
-        <View style={[lobbyStyles.stageHost, lobbyStyles.scrollableStageHost]} testID="lobby-stage-scroll">
-          <View style={[lobbyStyles.stageScrollContent, { minHeight: shellStyle.height, minWidth: shellStyle.width }]}>
-            {shell}
-          </View>
+    // Keep the same ancestors when the keyboard makes the stage scrollable.
+    // Reparenting the shell remounts its inputs and dismisses the keyboard.
+    return (
+      <View
+        style={[lobbyStyles.stageHost, stageHostStableStyle, needsScrollableStage && lobbyStyles.scrollableStageHost]}
+        testID={needsScrollableStage ? 'lobby-stage-scroll' : undefined}
+      >
+        <View style={[lobbyStyles.stageScrollContent, { minHeight: shellStyle.height, minWidth: shellStyle.width }]}>
+          {shell}
         </View>
-      );
-    }
-
-    return <View style={[lobbyStyles.stageHost, stageHostStableStyle]}>{shell}</View>;
+      </View>
+    );
   }
 
   const refreshGames = useCallback(

@@ -25,6 +25,8 @@ assertIncludes('iOS translucent status bar', entryHtml, 'apple-mobile-web-app-st
 assertIncludes('PWA manifest', entryHtml, 'rel="manifest"');
 assertFileExists('PWA manifest', path.join(distDirectory, 'manifest.json'));
 assertFileExists('Apple touch icon', path.join(distDirectory, 'apple-touch-icon.png'));
+assertIncludes('page canvas stylesheet', entryHtml, '/app-shell.css');
+assertFileExists('page canvas stylesheet', path.join(distDirectory, 'app-shell.css'));
 
 assertWithinBudget('Web export', totalBytes, totalBudget);
 assertWithinBudget('JavaScript', javascriptBytes, javascriptBudget);

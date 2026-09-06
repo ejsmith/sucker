@@ -26,8 +26,26 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       (window.navigator as StandaloneNavigator).standalone === true;
     const updateGuard = () => {
       const installed = isInstalledPwa();
-      setShowLandscapeGuard(installed && landscapeQuery.matches);
-      if (installed) {
+      const { userAgent, maxTouchPoints } = window.navigator;
+      // Touch alone includes Windows laptops. iPadOS can identify as a Mac.
+      const useDeviceOrientation =
+        /Android|iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
+      // The software keyboard can make the viewport wider than it is tall
+      // without rotating the phone. Never unmount the form for that resize.
+      const orientation = window.screen.orientation?.type;
+      const legacyOrientation = (window as Window & { orientation?: number }).orientation;
+      // Desktop installations follow their resizable window, not the monitor.
+      const isLandscape = !useDeviceOrientation
+        ? landscapeQuery.matches
+        : orientation
+          ? orientation.startsWith('landscape')
+          : typeof legacyOrientation === 'number'
+            ? Math.abs(legacyOrientation) === 90
+            : landscapeQuery.matches;
+      // Portrait-only also applies in a regular mobile browser, not just an
+      // installed PWA. Desktop browser previews retain their portrait stage.
+      setShowLandscapeGuard((installed || useDeviceOrientation) && isLandscape);
+      if (useDeviceOrientation) {
         void lockPortraitOrientation();
       }
     };
@@ -37,6 +55,8 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
     fullscreenQuery.addEventListener('change', updateGuard);
     landscapeQuery.addEventListener('change', updateGuard);
     window.addEventListener('resize', updateGuard);
+    window.addEventListener('orientationchange', updateGuard);
+    window.screen.orientation?.addEventListener('change', updateGuard);
     document.addEventListener('visibilitychange', updateGuard);
 
     return () => {
@@ -44,21 +64,29 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       fullscreenQuery.removeEventListener('change', updateGuard);
       landscapeQuery.removeEventListener('change', updateGuard);
       window.removeEventListener('resize', updateGuard);
+      window.removeEventListener('orientationchange', updateGuard);
+      window.screen.orientation?.removeEventListener('change', updateGuard);
       document.removeEventListener('visibilitychange', updateGuard);
     };
   }, []);
 
-  if (showLandscapeGuard) {
-    return (
-      <View style={styles.guard} testID="pwa-landscape-guard">
-        <Text style={styles.icon}>↻</Text>
-        <Text style={styles.title}>Rotate to portrait</Text>
-        <Text style={styles.body}>Sucker! is designed to play upright.</Text>
-      </View>
-    );
-  }
+  if (Platform.OS !== 'web') return children;
 
-  return children;
+  // Keep the routed tree in a stable position. Replacing it with the guard
+  // destroys local games and unsaved forms. display:none blocks rendering,
+  // keyboard focus, and accessibility without unmounting the React subtree.
+  return (
+    <View style={styles.container}>
+      <View style={[styles.container, showLandscapeGuard && styles.hidden]}>{children}</View>
+      {showLandscapeGuard && (
+        <View style={styles.guard} testID="pwa-landscape-guard">
+          <Text style={styles.icon}>↻</Text>
+          <Text style={styles.title}>Rotate to portrait</Text>
+          <Text style={styles.body}>Sucker! is designed to play upright.</Text>
+        </View>
+      )}
+    </View>
+  );
 }
 
 async function lockPortraitOrientation() {
@@ -70,11 +98,18 @@ async function lockPortraitOrientation() {
   try {
     await orientation.lock('portrait');
   } catch {
-    // iOS and some browsers ignore the Screen Orientation API for installed PWAs.
+    // Some browsers cannot lock orientation; the guard still blocks landscape.
   }
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    minHeight: 0,
+  },
+  hidden: {
+    display: 'none',
+  },
   body: {
     color: '#FFF3C2',
     fontSize: 16,

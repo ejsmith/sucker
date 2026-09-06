@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { devices, expect, test, type Locator, type Page } from '@playwright/test';
 
 const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const minimumTouchTarget = 44;
@@ -367,68 +367,118 @@ test('unequal horizontal safe-area insets size and position the game stage', asy
   await expectNoOverflow(page, screen);
 });
 
-test('a short desktop viewport keeps the full game reachable in a vertical stage scroller', async ({ page }) => {
-  await page.setViewportSize({ height: 450, width: 720 });
-  await installDeterministicNonSuckerRandom(page);
-  await openLocalGame(page, '/');
+test.describe('desktop window sizing', () => {
+  // This case exercises desktop scrolling, not a landscape phone. The mobile
+  // WebKit project's inherited iPhone identity correctly triggers the guard.
+  test.use({ isMobile: false, hasTouch: false, userAgent: devices['Desktop Chrome'].userAgent });
 
-  const stageScroll = page.getByTestId('game-stage-scroll');
-  await expect(stageScroll).toBeVisible();
-  const scrollMetrics = await stageScroll.evaluate((node) => ({
-    clientHeight: node.clientHeight,
-    clientWidth: node.clientWidth,
-    scrollHeight: node.scrollHeight,
-    scrollWidth: node.scrollWidth,
-  }));
-  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
-  expect(scrollMetrics.scrollWidth).toBeLessThanOrEqual(scrollMetrics.clientWidth + 1);
-  await expectNoHorizontalPageOverflow(page);
+  test('a short desktop viewport keeps the full game reachable in a vertical stage scroller', async ({ page }) => {
+    await page.setViewportSize({ height: 450, width: 720 });
+    await installDeterministicNonSuckerRandom(page);
+    await openLocalGame(page, '/');
 
-  const controls = page.getByTestId('game-controls-row');
-  await controls.scrollIntoViewIfNeeded();
-  await expect(controls).toBeInViewport({ ratio: 1 });
-  expect(await stageScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    const stageScroll = page.getByTestId('game-stage-scroll');
+    await expect(stageScroll).toBeVisible();
+    const scrollMetrics = await stageScroll.evaluate((node) => ({
+      clientHeight: node.clientHeight,
+      clientWidth: node.clientWidth,
+      scrollHeight: node.scrollHeight,
+      scrollWidth: node.scrollWidth,
+    }));
+    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+    expect(scrollMetrics.scrollWidth).toBeLessThanOrEqual(scrollMetrics.clientWidth + 1);
+    await expectNoHorizontalPageOverflow(page);
 
-  const screenBox = await visibleBox(page.getByTestId('game-screen'));
-  expectProportionalWebStage(screenBox);
-  for (const testId of ['roll-button', 'token-menu-button', 'play-score-button']) {
-    const control = page.getByTestId(testId);
-    await expect(control).toBeInViewport({ ratio: 1 });
-    await expectContainedBy(control, screenBox);
-    await expectMinimumTouchTarget(control);
-  }
+    const controls = page.getByTestId('game-controls-row');
+    await controls.scrollIntoViewIfNeeded();
+    await expect(controls).toBeInViewport({ ratio: 1 });
+    expect(await stageScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
 
-  const rollButton = page.getByTestId('roll-button');
-  await waitForPressableEnabled(rollButton);
-  await rollButton.click();
-  await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
+    const screenBox = await visibleBox(page.getByTestId('game-screen'));
+    expectProportionalWebStage(screenBox);
+    for (const testId of ['roll-button', 'token-menu-button', 'play-score-button']) {
+      const control = page.getByTestId(testId);
+      await expect(control).toBeInViewport({ ratio: 1 });
+      await expectContainedBy(control, screenBox);
+      await expectMinimumTouchTarget(control);
+    }
+
+    const rollButton = page.getByTestId('roll-button');
+    await waitForPressableEnabled(rollButton);
+    await rollButton.click();
+    await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
+  });
 });
 
-test('an installed PWA follows the settled visible viewport instead of clipping its controls', async ({ browser }) => {
+test('an installed PWA follows the settled visible viewport instead of clipping its controls', async ({
+  browser,
+}, testInfo) => {
   const context = await browser.newContext({
-    hasTouch: true,
+    ...devices['iPhone 13'],
     viewport: { height: 852, width: 393 },
   });
   const page = await context.newPage();
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
   });
+  const insets = { top: 59, right: 0, bottom: 34, left: 0 };
+  await installSafeAreaInsets(page, insets);
 
   try {
     await openLocalGame(page, '/');
     await page.setViewportSize({ height: 797, width: 393 });
 
     const screen = page.getByTestId('game-screen');
-    await expect.poll(async () => (await screen.boundingBox())?.height ?? 0).toBeCloseTo(797, 0);
+    await expect.poll(async () => (await screen.boundingBox())?.height ?? 0).toBeCloseTo(797 - 59 - 34, 0);
     const screenBox = await visibleBox(screen);
-    expectProportionalWebStage(screenBox);
-    expect(bottom(screenBox)).toBeLessThanOrEqual(797);
+    expectSafeStageGeometry(screenBox, { key: 'settled', label: 'settled PWA', width: 393, height: 797, insets });
+    await page.screenshot({ path: testInfo.outputPath('settled-pwa-fullscreen.png') });
     await expect(page.getByTestId('game-stage-scroll')).toHaveCount(0);
     await expectLayoutStackToFit(page, screenBox);
     await expectNoOverflow(page, screen);
+    await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(166, 0, 0)');
+    const rootBox = await visibleBox(page.locator('#root'));
+    expect(rootBox.height).toBeCloseTo(797, 0);
+    await page.setViewportSize({ height: 852, width: 393 });
+    await expect.poll(async () => (await screen.boundingBox())?.height ?? 0).toBeCloseTo(852 - 59 - 34, 0);
   } finally {
     await context.close();
   }
+});
+
+test.describe('normal mobile web route', () => {
+  for (const viewport of acceptedViewports) {
+    test(`${viewport.label} fills the safe viewport without a diagnostic preset`, async ({ browser }, testInfo) => {
+      const context = await browser.newContext({
+        ...devices[viewport.key.startsWith('android') ? 'Pixel 7' : 'iPhone 13'],
+        viewport: { width: viewport.width, height: viewport.height },
+      });
+      const page = await context.newPage();
+      await installSafeAreaInsets(page, viewport.insets);
+      try {
+        await openLocalGame(page, '/');
+        const screen = page.getByTestId('game-screen');
+        const screenBox = await visibleBox(screen);
+        await page.screenshot({ path: testInfo.outputPath('mobile-fullscreen.png') });
+        expectSafeStageGeometry(screenBox, viewport);
+        await expect(page.getByTestId('game-stage-scroll')).toHaveCount(0);
+        await expectLayoutStackToFit(page, screenBox);
+        await expectNoOverflow(page, screen);
+        await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(166, 0, 0)');
+        await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(166, 0, 0)');
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  test('the page canvas is red even before JavaScript loads', async ({ page }) => {
+    await page.route(/\.bundle(?:\?|$)/, (route) => route.abort());
+    await page.goto(e2eBaseUrl);
+    await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(166, 0, 0)');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(166, 0, 0)');
+    await expect(page.locator('#root')).toHaveCSS('background-color', 'rgb(166, 0, 0)');
+  });
 });
 
 test.describe('mobile WebKit geometry', () => {
@@ -464,6 +514,18 @@ test.describe('mobile WebKit geometry', () => {
     });
   }
 });
+
+async function installSafeAreaInsets(page: Page, { top, right, bottom, left }: AcceptedViewport['insets']) {
+  // Browser engines do not emulate physical display cutouts. Supply only the
+  // CSS env() probe values, leaving the real SafeAreaProvider and the normal
+  // production route/layout policy in charge of the geometry.
+  await page.route(/\/$/, async (route) => {
+    if (!route.request().isNavigationRequest()) return route.continue();
+    const response = await route.fetch();
+    const css = `[style*="safe-area-inset-top"] { padding: ${top}px ${right}px ${bottom}px ${left}px !important; }`;
+    await route.fulfill({ response, body: (await response.text()).replace('</head>', `<style>${css}</style></head>`) });
+  });
+}
 
 async function openLocalGame(page: Page, path: string) {
   await page.goto(new URL(path, e2eBaseUrl).toString());
