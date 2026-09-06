@@ -79,8 +79,8 @@ test('failed Punch preparation closes the dialog and keeps the board usable', as
     });
     await bobPage.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(bobPage.getByText('The response opportunity has ended.', { exact: true })).toBeVisible();
-    await bobPage.screenshot({ path: test.info().outputPath('preparation-failed.png') });
     await expect(bobPage.getByTestId('sucker-punch-chance-dialog')).toHaveCount(0);
+    await bobPage.screenshot({ path: test.info().outputPath('preparation-failed.png') });
     await bobPage.getByTestId('roll-button').click();
     await expect(bobPage.getByTestId('rolls-left-count')).toHaveText('3');
     await expect(bobPage.getByTestId('token-menu-button')).toHaveText('10');
