@@ -107,6 +107,7 @@ import {
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
+import { HowToPlayDialog } from './src/ui/HowToPlayDialog';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
@@ -1137,6 +1138,7 @@ export function LocalGameScreen({
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
   const [selectedCategory, setSelectedCategory] = useState<ScoreCategory | null>(null);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [isChoosingSuckerDeal, setIsChoosingSuckerDeal] = useState(false);
   const [highlightCategory, setHighlightCategory] = useState<ScoreCategory | null>(null);
   const [isScoring, setIsScoring] = useState(false);
@@ -3175,7 +3177,7 @@ export function LocalGameScreen({
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
+          aria-hidden={Platform.OS === 'web' ? showStatsPage || showHowToPlay : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
@@ -3253,6 +3255,22 @@ export function LocalGameScreen({
                     </Text>
                   </Pressable>
                 )}
+                <Pressable
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setShowHowToPlay(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.topMenuItem,
+                    gameLayout.styles.topMenuItem,
+                    pressed && styles.pressed,
+                  ]}
+                  testID="game-help-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    HOW TO PLAY
+                  </Text>
+                </Pressable>
               </View>
             </View>
           )}
@@ -3881,6 +3899,14 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
+          {showHowToPlay && (
+            <HowToPlayDialog
+              onClose={() => {
+                setShowHowToPlay(false);
+                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
+              }}
+            />
+          )}
           {isTokenMenuOpen && (
             <View style={[styles.tokenMenuOverlay, gameLayout.styles.tokenMenuOverlay]} testID="token-menu-overlay">
               <Pressable
