@@ -56,6 +56,55 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
       }
     });
 
+    test(`focus preserves the displayed frame after a viewport settles (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
+      page,
+    }, testInfo) => {
+      await page.addInitScript(
+        ({ installed, userAgent }) => {
+          Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent });
+          Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+          Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
+          Object.defineProperty(screen, 'orientation', {
+            configurable: true,
+            value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
+          });
+        },
+        { installed, userAgent },
+      );
+      await page.setViewportSize({ width: 393, height: 852 });
+      await page.goto('/');
+      const email = page.getByTestId('login-email-input');
+      const shell = page.getByTestId('multiplayer-lobby-shell');
+      await expect(email).toBeVisible({ timeout: 20_000 });
+      await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(852, 0);
+
+      // Browser toolbars retain the full frame; an installed PWA must instead
+      // follow its genuinely settled viewport before any field is focused.
+      await page.setViewportSize({ width: 393, height: 797 });
+      await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(installed ? 797 : 852, 0);
+      const displayedShell = await shell.boundingBox();
+      const displayedEmail = await email.boundingBox();
+      await email.click();
+      await expect(email).toBeFocused();
+      await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
+      await expect.poll(() => email.boundingBox()).toEqual(displayedEmail);
+      await email.pressSequentially('toolbar@example.com');
+      for (const height of [500, 350]) {
+        await page.setViewportSize({ width: 393, height });
+        await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
+        await expect.poll(() => email.boundingBox()).toEqual(displayedEmail);
+        await expect(email).toBeFocused();
+        await expect(email).toHaveValue('toolbar@example.com');
+        await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+      }
+      await page.setViewportSize({ width: 393, height: 797 });
+      await email.evaluate((node: HTMLInputElement) => node.blur());
+      await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
+      if (userAgent === 'iPhone') {
+        await page.screenshot({ path: testInfo.outputPath('settled-frame-after-keyboard.png') });
+      }
+    });
+
     test(`login retains keyboard focus through viewport resizing (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
       page,
     }, testInfo) => {

@@ -14,6 +14,12 @@ export function useKeyboardStableWindowDimensions() {
   const [stableDimensions, setStableDimensions] = useState<ScaledSize>(dimensions);
   const [editingDimensions, setEditingDimensions] = useState<ScaledSize | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const nonEditingDimensions = useMemo(() => {
+    if (!shouldStabilizeHeight || didWidthChange(stableDimensions.width, dimensions.width)) {
+      return dimensions;
+    }
+    return { ...dimensions, height: Math.max(stableDimensions.height, dimensions.height) };
+  }, [dimensions, shouldStabilizeHeight, stableDimensions]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -34,9 +40,10 @@ export function useKeyboardStableWindowDimensions() {
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     const handleFocus = (event: FocusEvent) => {
       if (isTextInput(event.target)) {
-        // Capture before the software keyboard changes the viewport. Keep the
-        // same frame when moving between fields with the keyboard still open.
-        setEditingDimensions((current) => current ?? dimensions);
+        // Capture the displayed frame, which may already be taller than the
+        // raw viewport because a browser toolbar appeared before focus. Keep
+        // that frame when moving between fields with the keyboard still open.
+        setEditingDimensions((current) => current ?? nonEditingDimensions);
         setIsEditing(true);
       }
     };
@@ -51,7 +58,7 @@ export function useKeyboardStableWindowDimensions() {
       document.removeEventListener('focusin', handleFocus);
       document.removeEventListener('focusout', handleBlur);
     };
-  }, [dimensions]);
+  }, [nonEditingDimensions]);
 
   useEffect(() => {
     if (isEditing || !editingDimensions) return;
@@ -93,14 +100,7 @@ export function useKeyboardStableWindowDimensions() {
     return { ...dimensions, height: Math.max(editingDimensions.height, dimensions.height) };
   }
 
-  if (!shouldStabilizeHeight || didWidthChange(stableDimensions.width, dimensions.width)) {
-    return dimensions;
-  }
-
-  return {
-    ...dimensions,
-    height: Math.max(stableDimensions.height, dimensions.height),
-  };
+  return nonEditingDimensions;
 }
 
 function shouldUseStableWebHeight(width: number) {
