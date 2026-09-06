@@ -964,6 +964,15 @@ test('an email-code account can set a password and use it to sign in', async ({ 
 
   await page.getByTestId('profile-button').click();
   const passwordSection = page.getByTestId('account-password-section');
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await expect(page.getByTestId('toggle-password-editor')).toHaveAttribute('aria-expanded', 'false');
+  await page.screenshot({ path: test.info().outputPath('profile-collapsed.png') });
+  await page.getByTestId('toggle-password-editor').click();
+  await page.getByTestId('new-password-input').fill('discarded-draft');
+  await page.getByTestId('toggle-password-editor').click();
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await page.getByTestId('toggle-password-editor').click();
+  await expect(page.getByTestId('new-password-input')).toHaveValue('');
   await passwordSection.scrollIntoViewIfNeeded();
   const [shellBox, passwordSectionBox] = await Promise.all([
     page.getByTestId('multiplayer-lobby-shell').boundingBox(),
@@ -982,6 +991,8 @@ test('an email-code account can set a password and use it to sign in', async ({ 
   await expect(page.getByTestId('set-password-button')).toBeEnabled();
   await page.getByTestId('set-password-button').click();
   await expect(page.getByText('Password updated. You can now sign in with your email and password.')).toBeVisible();
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await page.getByTestId('toggle-password-editor').click();
   await expect(page.getByTestId('new-password-input')).toHaveValue('');
   await expect(page.getByTestId('confirm-password-input')).toHaveValue('');
   await page.context().close();

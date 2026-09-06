@@ -120,6 +120,7 @@ export function MultiplayerLobby({
   const [username, setUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordEditorOpen, setPasswordEditorOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
@@ -146,6 +147,7 @@ export function MultiplayerLobby({
     if (nextPage !== 'profile') {
       setNewPassword('');
       setConfirmPassword('');
+      setPasswordEditorOpen(false);
     }
     setCurrentPage(nextPage);
   }, []);
@@ -611,6 +613,7 @@ export function MultiplayerLobby({
       await updatePassword(newPassword);
       setNewPassword('');
       setConfirmPassword('');
+      setPasswordEditorOpen(false);
       setMessage('Password updated. You can now sign in with your email and password.');
     });
   }
@@ -1255,7 +1258,7 @@ export function MultiplayerLobby({
               onChangeText={setDisplayName}
               placeholder="Display name"
               placeholderTextColor="#8A4B12"
-              style={lobbyStyles.input}
+              style={[lobbyStyles.input, lobbyStyles.profileInput]}
               testID="display-name-input"
               value={displayName}
             />
@@ -1268,7 +1271,7 @@ export function MultiplayerLobby({
               onChangeText={setUsername}
               placeholder="Username"
               placeholderTextColor="#8A4B12"
-              style={lobbyStyles.input}
+              style={[lobbyStyles.input, lobbyStyles.profileInput]}
               testID="username-input"
               value={username}
             />
@@ -1295,9 +1298,6 @@ export function MultiplayerLobby({
         <View style={lobbyStyles.panel}>
           <Text style={lobbyStyles.sectionTitle}>Account</Text>
           <View style={lobbyStyles.accountPasswordSection} testID="account-password-section">
-            <Text style={lobbyStyles.accountHelpText}>
-              Set a password to sign in with your email instead of a code. You can also use this form to change it.
-            </Text>
             {session.user.email && (
               <Text
                 ellipsizeMode="middle"
@@ -1309,58 +1309,82 @@ export function MultiplayerLobby({
                 {session.user.email}
               </Text>
             )}
-            <View style={lobbyStyles.profileField}>
-              <Text style={lobbyStyles.profileFieldLabel}>New password</Text>
-              <TextInput
-                accessibilityLabel="New password"
-                autoCapitalize="none"
-                autoComplete="new-password"
-                editable={!isBusy}
-                onChangeText={setNewPassword}
-                placeholder="At least 8 characters"
-                placeholderTextColor="#8A4B12"
-                secureTextEntry
-                style={lobbyStyles.input}
-                testID="new-password-input"
-                textContentType="newPassword"
-                value={newPassword}
-              />
-            </View>
-            <View style={lobbyStyles.profileField}>
-              <Text style={lobbyStyles.profileFieldLabel}>Confirm password</Text>
-              <TextInput
-                accessibilityLabel="Confirm password"
-                autoCapitalize="none"
-                autoComplete="new-password"
-                editable={!isBusy}
-                onChangeText={setConfirmPassword}
-                placeholder="Enter it again"
-                placeholderTextColor="#8A4B12"
-                secureTextEntry
-                style={lobbyStyles.input}
-                testID="confirm-password-input"
-                textContentType="newPassword"
-                value={confirmPassword}
-              />
-            </View>
-            {newPassword.length > 0 && !passwordIsLongEnough && (
-              <Text style={lobbyStyles.passwordHint}>Password must be at least 8 characters.</Text>
-            )}
-            {confirmPassword.length > 0 && !passwordsMatch && (
-              <Text style={lobbyStyles.passwordHint}>Passwords do not match.</Text>
-            )}
             <Pressable
-              disabled={isBusy || !canUpdatePassword}
-              onPress={() => void handleUpdatePassword()}
-              style={({ pressed }) => [
-                lobbyStyles.primaryButton,
-                (isBusy || !canUpdatePassword) && lobbyStyles.primaryButtonDisabled,
-                pressed && lobbyStyles.pressed,
-              ]}
-              testID="set-password-button"
+              accessibilityRole="button"
+              accessibilityState={{ expanded: passwordEditorOpen }}
+              aria-expanded={passwordEditorOpen}
+              disabled={isBusy}
+              onPress={() => {
+                setPasswordEditorOpen((open) => !open);
+                setNewPassword('');
+                setConfirmPassword('');
+              }}
+              style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+              testID="toggle-password-editor"
             >
-              <Text style={lobbyStyles.primaryButtonText}>Set or Change Password</Text>
+              <Text style={lobbyStyles.signOutText}>
+                {passwordEditorOpen ? 'Cancel Password Change' : 'Set or Change Password'}
+              </Text>
             </Pressable>
+            {passwordEditorOpen && (
+              <>
+                <Text style={lobbyStyles.accountHelpText}>
+                  Use a password instead of an email code. Choose at least 8 characters.
+                </Text>
+                <View style={lobbyStyles.profileField}>
+                  <Text style={lobbyStyles.profileFieldLabel}>New password</Text>
+                  <TextInput
+                    accessibilityLabel="New password"
+                    autoCapitalize="none"
+                    autoComplete="new-password"
+                    editable={!isBusy}
+                    onChangeText={setNewPassword}
+                    placeholder="At least 8 characters"
+                    placeholderTextColor="#8A4B12"
+                    secureTextEntry
+                    style={[lobbyStyles.input, lobbyStyles.profileInput]}
+                    testID="new-password-input"
+                    textContentType="newPassword"
+                    value={newPassword}
+                  />
+                </View>
+                <View style={lobbyStyles.profileField}>
+                  <Text style={lobbyStyles.profileFieldLabel}>Confirm password</Text>
+                  <TextInput
+                    accessibilityLabel="Confirm password"
+                    autoCapitalize="none"
+                    autoComplete="new-password"
+                    editable={!isBusy}
+                    onChangeText={setConfirmPassword}
+                    placeholder="Enter it again"
+                    placeholderTextColor="#8A4B12"
+                    secureTextEntry
+                    style={[lobbyStyles.input, lobbyStyles.profileInput]}
+                    testID="confirm-password-input"
+                    textContentType="newPassword"
+                    value={confirmPassword}
+                  />
+                </View>
+                {newPassword.length > 0 && !passwordIsLongEnough && (
+                  <Text style={lobbyStyles.passwordHint}>Password must be at least 8 characters.</Text>
+                )}
+                {confirmPassword.length > 0 && !passwordsMatch && (
+                  <Text style={lobbyStyles.passwordHint}>Passwords do not match.</Text>
+                )}
+                <Pressable
+                  disabled={isBusy || !canUpdatePassword}
+                  onPress={() => void handleUpdatePassword()}
+                  style={({ pressed }) => [
+                    lobbyStyles.primaryButton,
+                    (isBusy || !canUpdatePassword) && lobbyStyles.primaryButtonDisabled,
+                    pressed && lobbyStyles.pressed,
+                  ]}
+                  testID="set-password-button"
+                >
+                  <Text style={lobbyStyles.primaryButtonText}>Save Password</Text>
+                </Pressable>
+              </>
+            )}
           </View>
           <View style={lobbyStyles.accountDivider} />
           <Pressable
@@ -2443,15 +2467,15 @@ const lobbyStyles = StyleSheet.create({
   },
   accountEmail: {
     color: '#FFD329',
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '500',
     minWidth: 0,
     width: '100%',
   },
   accountHelpText: {
     color: '#FFF3C2',
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 22,
     opacity: 0.88,
   },
   accountPasswordSection: {
@@ -3110,9 +3134,11 @@ const lobbyStyles = StyleSheet.create({
   },
   profileFieldLabel: {
     color: '#FFF3C2',
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  profileInput: {
+    fontWeight: '500',
   },
   passwordHint: {
     color: '#FFD329',
