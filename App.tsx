@@ -107,6 +107,7 @@ import {
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
+import { ZeroScoreDialog } from './src/ui/ZeroScoreDialog';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
@@ -1137,6 +1138,8 @@ export function LocalGameScreen({
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
   const [selectedCategory, setSelectedCategory] = useState<ScoreCategory | null>(null);
+  const [zeroScoreCategory, setZeroScoreCategory] = useState<ScoreCategory | null>(null);
+  const playScoreButtonRef = useRef<ViewRef | null>(null);
   const [isChoosingSuckerDeal, setIsChoosingSuckerDeal] = useState(false);
   const [highlightCategory, setHighlightCategory] = useState<ScoreCategory | null>(null);
   const [isScoring, setIsScoring] = useState(false);
@@ -3035,6 +3038,20 @@ export function LocalGameScreen({
     setHighlightCategory(null);
   }
 
+  function requestPlayScore() {
+    if (!canPlaySelected || !selectedCategory) return;
+    if (scoreCategoryForScorecard(game.dice, selectedCategory, currentPlayer.scorecard) === 0) {
+      setZeroScoreCategory(selectedCategory);
+      return;
+    }
+    void handlePlayScore();
+  }
+
+  function dismissZeroScoreChoice() {
+    setZeroScoreCategory(null);
+    requestAnimationFrame(() => focusAccessibilityTarget(playScoreButtonRef.current));
+  }
+
   async function handlePlayScore() {
     if (!selectedCategory || isScoring) {
       return;
@@ -3175,7 +3192,9 @@ export function LocalGameScreen({
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
+          aria-hidden={
+            Platform.OS === 'web' ? showStatsPage || Boolean(zeroScoreCategory && canPlaySelected) : undefined
+          }
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
@@ -3857,10 +3876,11 @@ export function LocalGameScreen({
                   accessibilityLabel={
                     selectedCategory ? `Play ${categoryLabels[selectedCategory]} score` : 'Play selected score'
                   }
+                  ref={playScoreButtonRef}
                   accessibilityRole="button"
                   accessibilityState={{ disabled: !canPlaySelected }}
                   disabled={!canPlaySelected}
-                  onPress={handlePlayScore}
+                  onPress={requestPlayScore}
                   style={({ pressed }) => [
                     styles.playButton,
                     gameLayout.styles.playButton,
@@ -3881,6 +3901,20 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
+          {zeroScoreCategory && canPlaySelected && (
+            <ZeroScoreDialog
+              category={categoryLabels[zeroScoreCategory]}
+              onCancel={dismissZeroScoreChoice}
+              onScore={() => {
+                setZeroScoreCategory(null);
+                if (selectedCategory === zeroScoreCategory) void handlePlayScore();
+              }}
+              onScratch={() => {
+                setZeroScoreCategory(null);
+                if (selectedCategory === zeroScoreCategory) void handleSuckerDealTarget(zeroScoreCategory);
+              }}
+            />
+          )}
           {isTokenMenuOpen && (
             <View style={[styles.tokenMenuOverlay, gameLayout.styles.tokenMenuOverlay]} testID="token-menu-overlay">
               <Pressable

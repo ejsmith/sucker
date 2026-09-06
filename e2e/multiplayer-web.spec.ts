@@ -408,6 +408,8 @@ test('two players can create an invite and play turns through the web UI', async
   await bobTwosScoreBox.click();
   await expect(bobPage.getByTestId('play-score-button')).toBeEnabled();
   await bobPage.getByTestId('play-score-button').click();
+  await expect(bobPage.getByTestId('zero-score-dialog')).toContainText('Twos: 0 points');
+  await bobPage.getByTestId('zero-score-confirm').click();
 
   await expect.poll(() => loadTurnCount(gameId)).toBe(2);
   await expect
