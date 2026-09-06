@@ -463,6 +463,17 @@ test('last-turn details refresh when the same turn is punched', async ({ browser
     await expect(bobPage.getByTestId('last-turn-summary')).toContainText('Last Turn Alice played Ones');
     const game = await loadGame(gameId);
     const session = await createSession(bob.email);
+    const prepared = await fetch(`${supabaseUrl}/functions/v1/game-action`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'prepare_sucker_punch',
+        gameId,
+        turnId: game.last_turn_id,
+        requestId: crypto.randomUUID(),
+      }),
+    });
+    expect(prepared.ok).toBe(true);
     const response = await fetch(`${supabaseUrl}/functions/v1/game-action`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}`, apikey: anonKey, 'Content-Type': 'application/json' },
