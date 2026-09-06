@@ -3341,7 +3341,7 @@ export function LocalGameScreen({
                 opponentPlayer={opponentPlayer}
                 dice={game.dice}
                 canChoose={
-                  game.rollNumber > 0 &&
+                  (game.rollNumber > 0 || isChoosingSuckerDeal) &&
                   !isRolling &&
                   !isScoring &&
                   !isComputerTurn &&
@@ -3396,7 +3396,7 @@ export function LocalGameScreen({
                 opponentPlayer={opponentPlayer}
                 dice={game.dice}
                 canChoose={
-                  game.rollNumber > 0 &&
+                  (game.rollNumber > 0 || isChoosingSuckerDeal) &&
                   !isRolling &&
                   !isScoring &&
                   !isComputerTurn &&

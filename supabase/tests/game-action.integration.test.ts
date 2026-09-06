@@ -130,6 +130,39 @@ Deno.test('open invite codes stay private while deliberate code redemption works
   assertEquals(unrelatedInvite, []);
 });
 
+Deno.test('pre-roll Sucker Deal saves a zero-roll turn and awards exactly one token', async () => {
+  const [alice, bob] = await createUsers('pre-roll-deal', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  await invokeGameAction(alice, { category: 'ones', gameId: game.id, type: 'score_category' }, 400);
+  const action = { category: 'ones', gameId: game.id, requestId: crypto.randomUUID(), type: 'scratch_category' };
+  const scored = (await invokeGameAction(alice, action)).game as GameRow;
+  assertEquals(scored.state.players[0].scorecard.ones, 0);
+  assertEquals(scored.state.players[0].suckerTokens, startingSuckerTokens + 1);
+  assertEquals(scored.current_player_id, bob.id);
+  const turn = await loadTurn(scored.last_turn_id);
+  assertEquals(turn.roll_count, 0);
+  assertEquals(turn.score, 0);
+  const replay = (await invokeGameAction(alice, action)).game as GameRow;
+  assertEquals(replay.last_turn_id, scored.last_turn_id);
+  assertEquals(replay.state.players[0].suckerTokens, startingSuckerTokens + 1);
+  const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id));
+  assertEquals(turns.length, 1);
+  const invalidTurn = {
+    category: 'twos',
+    dice: turn.dice,
+    game_id: game.id,
+    held: turn.held,
+    player_id: alice.id,
+    roll_count: 0,
+    score: 0,
+    turn_index: 2,
+  };
+  const invalidScore = await admin.from('turns').insert({ ...invalidTurn, score: 1 });
+  assertEquals(invalidScore.error?.code, '23514');
+  const invalidRolls = await admin.from('turns').insert({ ...invalidTurn, roll_count: -1 });
+  assertEquals(invalidRolls.error?.code, '23514');
+});
+
 Deno.test('profile stats aggregate every matchup and are visible to signed-in players', async () => {
   const [alice, bob, charlie] = await createUsers('profile-stats', ['Alice', 'Bob', 'Charlie']);
   await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });

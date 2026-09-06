@@ -267,6 +267,40 @@ test('the displayed multiplayer punch chance matches the server outcome', async 
   }
 });
 
+test('Sucker Deal can sacrifice a category before the first roll', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`deal-alice-${runId}`, 'Alice Deal');
+  const bob = await createUser(`deal-bob-${runId}`, 'Bob Deal');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    const ones = alicePage.getByTestId('category-button-ones');
+    await expect(ones).toBeDisabled();
+    await alicePage.getByTestId('token-menu-button').click();
+    await alicePage.getByTestId('token-option-sucker-deal').click();
+    await expect(ones).toBeEnabled();
+    await expect(alicePage.getByTestId('category-button-chance')).toBeEnabled();
+    await ones.click();
+    await expect(
+      alicePage.getByRole('img', { name: 'Alice Deal, Ones score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect.poll(async () => (await loadGame(gameId)).state.players[0].suckerTokens).toBe(11);
+    await expect.poll(() => loadTurnCount(gameId)).toBe(1);
+    const turns = await admin.from('turns').select('roll_count').eq('game_id', gameId);
+    expect(turns.error).toBeNull();
+    expect(turns.data).toEqual([{ roll_count: 0 }]);
+    await alicePage.reload();
+    await expect(
+      alicePage.getByRole('img', { name: 'Alice Deal, Ones score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('two players can create an invite and play turns through the web UI', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`alice-${runId}`, 'Alice E2E');
