@@ -24,3 +24,9 @@ The Edge worker now queues only result rows. The database ignores legacy absolut
 - 88 app tests and 11 Edge tests passed; app/Edge typechecks and lint passed.
 
 This PR builds on the atomic-move PR. It changes multiplayer aggregation only; durable computer-result delivery is a separate review item.
+
+## Review follow-up: legacy writers during migration
+
+The reviewer identified that an invocation of the old SQL function can resume after the migration's backfill. A local stale absolute write reproduced the effect: it changed two repaired games/30 points back to one game/15 points. The migration now drains result/aggregate writers with conflicting table locks. A deferred constraint trigger also verifies source result counts and scores at commit, because an invocation already waiting inside the old function can resume after those locks are released. The stale write now returns HTTP 409 and leaves two games/30 points intact. See [before](legacy-before.png) and [after](legacy-after.png).
+
+The same guard is covered by the integration regression. A matchup index supports result lookups. The migration explicitly keeps replacement, repair, and guard installation in one transaction.

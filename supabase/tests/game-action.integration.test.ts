@@ -413,6 +413,19 @@ Deno.test('completed games for one matchup retain every result under concurrent 
     admin.from('head_to_head_stats').select('*').eq('player_id', alice.id).eq('opponent_id', bob.id).single(),
   );
   assertEquals(replayStats, stats);
+
+  // An invocation of the old SQL function can be waiting during migration and
+  // resume with a stale absolute update after the migration commits.
+  const legacyWrite = await admin
+    .from('head_to_head_stats')
+    .update({ games_played: 1, total_score: 30 })
+    .eq('player_id', alice.id)
+    .eq('opponent_id', bob.id);
+  assertEquals(legacyWrite.error?.code, 'PT409');
+  const afterLegacyWrite = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', alice.id).eq('opponent_id', bob.id).single(),
+  );
+  assertEquals(afterLegacyWrite, stats);
 });
 
 Deno.test('taunts are available only after the sender finishes the latest turn', async () => {
