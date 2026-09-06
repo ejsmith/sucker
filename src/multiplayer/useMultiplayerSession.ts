@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Linking } from 'react-native';
+import { AppState, Linking } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import type { Session } from '@supabase/supabase-js';
 import {
   createSessionFromAuthUrl,
@@ -60,6 +61,25 @@ export function useMultiplayerSession() {
     }
     return nextProfile;
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const retryRegistration = () => {
+      if (pushRegisteredProfileId.current !== session.user.id) {
+        void refreshProfile().catch(() => undefined);
+      }
+    };
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) retryRegistration();
+    });
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') retryRegistration();
+    });
+    return () => {
+      unsubscribe();
+      subscription.remove();
+    };
+  }, [refreshProfile, session]);
 
   useEffect(() => {
     if (!isMultiplayerConfigured) {
@@ -261,6 +281,7 @@ export function useMultiplayerSession() {
       setSession(null);
       setProfile(null);
     } catch (signOutError) {
+      pushRegisteredProfileId.current = null;
       setError(toErrorMessage(signOutError));
     } finally {
       setIsLoading(false);

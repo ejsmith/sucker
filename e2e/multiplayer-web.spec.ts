@@ -115,6 +115,37 @@ for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
   });
 }
 
+test('auth sign-out failure restores notification ownership before reporting the error', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`push-auth-retry-${runId}`, 'Alice Auth Retry');
+  const endpoint = `https://push.example.test/auth-retry-${runId}`;
+  const page = await openAuthedPage(browser, alice, endpoint);
+  const owners = async () =>
+    (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data;
+  try {
+    await expect.poll(owners).toEqual([{ profile_id: alice.id }]);
+    await page.route('**/auth/v1/logout?*', (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Auth unavailable test' }),
+      }),
+    );
+    await page.getByTestId('profile-button').click();
+    await page.getByTestId('sign-out-button').click();
+    await expect(page.getByText('Unable to complete the login request. Please try again.')).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('auth-signout-failure.png') });
+    await expect.poll(owners).toEqual([{ profile_id: alice.id }]);
+    await expect(page.getByTestId('sign-out-button')).toBeEnabled();
+    await page.unroute('**/auth/v1/logout?*');
+    await page.getByTestId('sign-out-button').click();
+    await expect(page.getByTestId('local-test-login')).toBeVisible();
+    await expect.poll(owners).toEqual([]);
+  } finally {
+    await page.context().close();
+  }
+});
+
 test('notification cleanup failure keeps the account signed in and supports retry', async ({ browser }) => {
   const runId = crypto.randomUUID();
   const alice = await createUser(`push-retry-${runId}`, 'Alice Retry');
@@ -442,8 +473,7 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   expect(opponentAvatarBox).not.toBeNull();
   expect(
     Math.abs(
-      receivedPointerBox!.x + receivedPointerBox!.width / 2 -
-        (opponentAvatarBox!.x + opponentAvatarBox!.width / 2),
+      receivedPointerBox!.x + receivedPointerBox!.width / 2 - (opponentAvatarBox!.x + opponentAvatarBox!.width / 2),
     ),
   ).toBeLessThan(5);
   await bobPage.waitForTimeout(2_500);

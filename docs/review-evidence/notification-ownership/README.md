@@ -28,3 +28,6 @@ reproduced the stuck session (`unsubscribe-before.png`). Browser provider cleanu
 is now best-effort after the database deletion succeeds; all four browser cases
 pass (`unsubscribe-after.png`), including false/rejected unsubscribe and retry
 after a database deletion failure.
+# Review follow-up: failed auth sign-out
+
+A local browser test forces the auth logout endpoint to return 503 after the notification row is deleted. Before this follow-up, the account remained signed in but its endpoint had no database owner. The regression failed against the real local database. Provider unsubscription/token-cache removal is now deferred until auth succeeds, and a failed auth request restores ownership before reporting the error. Connectivity and foreground recovery retry registration if that restoration also fails. Five browser cases pass, including auth failure followed by a successful retry. `auth-before.png` and `auth-after.png` show the app state; the database assertions are documented by the test output because ownership is not visible in the profile UI.

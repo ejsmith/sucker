@@ -258,8 +258,16 @@ export async function signOutWithNotificationCleanup(signOut: () => Promise<void
     await serializeNotificationWork(async () => {
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
-      if (data.session) await removeDevicePushRegistration(data.session.user.id);
-      await signOut();
+      const finishCleanup = data.session ? await removeDevicePushRegistration(data.session.user.id) : undefined;
+      try {
+        await signOut();
+      } catch (signOutError) {
+        // Keep the provider destination so a failed auth request can restore it.
+        // The session hook retries registration after connectivity recovery too.
+        if (data.session) await registerDevicePushToken(data.session.user.id).catch(() => undefined);
+        throw signOutError;
+      }
+      await finishCleanup?.();
       await syncAppBadgeCount(0);
     });
   } finally {
@@ -279,10 +287,10 @@ async function removeDevicePushRegistration(profileId: string) {
       .eq('profile_id', profileId)
       .eq('endpoint', subscription.endpoint);
     if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
-    // Server ownership is already released. A stale/unavailable browser provider
-    // must not trap the user in a session after this point.
-    await subscription.unsubscribe().catch(() => undefined);
-    return;
+    // Defer provider cleanup until auth confirms sign-out.
+    return async () => {
+      await subscription.unsubscribe().catch(() => undefined);
+    };
   }
 
   let token = await authStorage.getItem(nativePushTokenStorageKey);
@@ -301,7 +309,9 @@ async function removeDevicePushRegistration(profileId: string) {
     .eq('profile_id', profileId)
     .eq('expo_push_token', token);
   if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
-  await authStorage.removeItem(nativePushTokenStorageKey).catch(() => undefined);
+  return async () => {
+    await authStorage.removeItem(nativePushTokenStorageKey).catch(() => undefined);
+  };
 }
 
 function getExpoProjectId() {
