@@ -1632,11 +1632,16 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
       status: 'active',
     })
     .eq('id', gameId)
+    // Reject stale requests before writing token events or action statistics.
+    .eq('updated_at', game.updated_at)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw error;
+  }
+  if (!updatedGame) {
+    throw new Error('The game changed before your Mulligan. Refresh and try again.');
   }
 
   await Promise.all([

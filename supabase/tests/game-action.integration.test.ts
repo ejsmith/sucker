@@ -404,6 +404,68 @@ Deno.test('game-action nudges the current player only after the wait window and 
   );
 });
 
+Deno.test('game-action charges every accepted concurrent mulligan exactly once', async () => {
+  const [alice, bob] = await createUsers('concurrent-mulligan', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const requests = Array.from({ length: 3 }, () => ({
+    gameId: game.id,
+    requestId: crypto.randomUUID(),
+    type: 'mulligan',
+  }));
+  const results = await Promise.all(
+    requests.map(async (body) => {
+      const response = await fetch(functionUrl, {
+        body: JSON.stringify(body),
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${alice.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+      return { status: response.status, body: await response.json() };
+    }),
+  );
+  const accepted = results.filter((result) => result.status === 200).length;
+  if (accepted === 0) throw new Error('Expected at least one concurrent Mulligan to succeed.');
+  for (const result of results.filter((result) => result.status !== 200)) {
+    assertEquals(result.status, 400);
+    assertEquals(result.body.error, 'The game changed before your Mulligan. Refresh and try again.');
+  }
+  const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+  const expectedTokens = startingSuckerTokens - accepted * suckerTokenCosts.mulligan;
+  assertPlayerTokens(saved, alice.id, expectedTokens);
+  const player = await selectSingle<GamePlayerTokenRow>(
+    admin
+      .from('game_players')
+      .select('player_id, sucker_tokens')
+      .eq('game_id', game.id)
+      .eq('player_id', alice.id)
+      .single(),
+  );
+  assertEquals(player.sucker_tokens, expectedTokens);
+  assertEquals((await loadActions(game.id)).filter((action) => action.action_type === 'mulligan').length, accepted);
+  const events = await loadTokenEvents(game.id);
+  assertEquals(events.length, accepted);
+  assertEquals(
+    events.reduce((total, event) => total + event.token_delta, 0),
+    -accepted * suckerTokenCosts.mulligan,
+  );
+
+  // Both successes and conflicts must be terminal, replayable outcomes.
+  for (const [index, request] of requests.entries()) {
+    const replay = await invokeGameAction(alice, request, results[index].status);
+    if (results[index].status === 200) {
+      const replayedGame = replay.game as GameRow;
+      assertEquals(replayedGame.state, results[index].body.game.state);
+      assertEquals(replayedGame.updated_at, results[index].body.game.updated_at);
+    } else {
+      assertEquals(replay.error, results[index].body.error);
+    }
+  }
+  assertEquals((await loadTokenEvents(game.id)).length, accepted);
+});
+
 Deno.test('game-action allows repeated active-turn mulligans before and after rolling', async () => {
   const [alice, bob] = await createUsers('active-mulligan', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
