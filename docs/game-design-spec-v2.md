@@ -162,6 +162,9 @@ Rules
 - All previous rolls are discarded
 - Player starts a fresh turn
 - Receives 4 standard rolls again
+- Available at any point during the player's active turn, including before the first roll
+- May be used repeatedly while the player can pay 3 tokens each time
+- Purchased Extra Rolls are discarded without refund
 
 ⸻
 

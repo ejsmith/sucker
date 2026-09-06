@@ -520,6 +520,16 @@ export type Database = {
         };
         Returns: Json;
       };
+      commit_game_mutation: {
+        Args: {
+          target_game_id: string;
+          expected_updated_at: string;
+          next_game: Json;
+          player_updates: Json;
+          submitted_turn?: Json;
+        };
+        Returns: Json;
+      };
       insert_taunt_if_open: {
         Args: {
           target_actor_id: string;

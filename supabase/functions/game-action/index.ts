@@ -10,6 +10,7 @@ import {
   type GameState,
   isSuckerRoll,
   maxRollsPerTurn,
+  mulliganCurrentTurn,
   type Player,
   resolveSuckerPunchOutcome,
   rollDie,
@@ -266,7 +267,7 @@ async function applyAction(
     case 'mulligan':
       return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
     case 'prepare_sucker_punch':
       return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId, mutationState);
     case 'sucker_blocker':
@@ -858,7 +859,19 @@ function toAction(value: unknown): Action {
         requestId,
         type,
       };
-    case 'sucker_punch':
+    case 'sucker_punch': {
+      const chanceDie = action.chanceDie;
+      if (chanceDie !== undefined && (!Number.isInteger(chanceDie) || Number(chanceDie) < 1 || Number(chanceDie) > 6)) {
+        throw new Error('Invalid Sucker Punch chance die.');
+      }
+      return {
+        gameId: readString(action, 'gameId'),
+        requestId,
+        turnId: readString(action, 'turnId'),
+        type,
+        chanceDie: chanceDie as DieValue | undefined,
+      };
+    }
     case 'prepare_sucker_punch':
     case 'sucker_blocker':
       return {
@@ -1600,22 +1613,34 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
 
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
-  if (game.status !== 'response_window' || !game.last_turn_id) {
-    throw new Error('Mulligan is only available immediately after a submitted turn.');
-  }
-
-  const turn = await loadTurn(admin, game.last_turn_id);
-  if (turn.player_id !== actorId) {
-    throw new Error('You can only Mulligan your own latest turn.');
+  if ((game.status !== 'active' && game.status !== 'response_window') || game.state.phase === 'complete') {
+    throw new Error('Mulligan is only available during a game.');
   }
 
   const state = game.state;
+  let turn: TurnRow | null = null;
+  if (game.current_player_id === actorId) {
+    assertCurrentPlayer(state, actorId);
+  } else {
+    // Preserve the existing ability to undo your submitted turn while its
+    // response window is still open.
+    if (game.status !== 'response_window' || !game.last_turn_id) {
+      throw new Error('It is not your turn.');
+    }
+    turn = await loadTurn(admin, game.last_turn_id);
+    if (turn.player_id !== actorId || turn.status !== 'submitted') {
+      throw new Error('You can only Mulligan your own latest turn.');
+    }
+  }
+
   const player = findPlayer(state, actorId);
   if (player.suckerTokens < suckerTokenCosts.mulligan) {
     throw new Error(`You need ${suckerTokenCosts.mulligan} Sucker Tokens to Mulligan.`);
   }
 
-  const nextState = removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan);
+  const nextState = turn
+    ? removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan)
+    : mulliganCurrentTurn(state);
   const updatedGame = stageGameMove(mutationState, game, {
     current_player_id: actorId,
     state: nextState,
@@ -1623,20 +1648,20 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   });
 
   await Promise.all([
-    updateTurnStatus(admin, turn.id, 'mulliganed', mutationState.plan),
+    ...(turn ? [updateTurnStatus(admin, turn.id, 'mulliganed', mutationState.plan)] : []),
     insertTokenEvent(
       admin,
       {
         event_type: 'mulligan',
         game_id: gameId,
         player_id: actorId,
-        target_turn_id: turn.id,
+        target_turn_id: turn?.id ?? null,
         token_delta: -suckerTokenCosts.mulligan,
       },
       mutationState.plan,
     ),
     syncGamePlayers(admin, gameId, nextState, false, mutationState.plan),
-    insertAction(admin, gameId, actorId, 'mulligan', { turnId: turn.id }, mutationState.plan),
+    insertAction(admin, gameId, actorId, 'mulligan', turn ? { turnId: turn.id } : {}, mutationState.plan),
   ]);
 
   return { game: updatedGame };
@@ -1694,8 +1719,21 @@ async function suckerPunchTurn(
   gameId: string,
   turnId: string,
   mutationState: ActionMutationState,
+  displayedChanceDie?: DieValue,
 ) {
-  // Legacy clients can still throw directly; new clients prepare first and display this saved die.
+  // A throw must use a chance that was prepared and shown before committing.
+  const { data: existingChance, error: chanceError } = await admin
+    .from('sucker_punch_attempts')
+    .select('chance_die')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .eq('turn_id', turnId)
+    .maybeSingle();
+  if (chanceError) throw chanceError;
+  if (!existingChance) throw new Error('Update Sucker and roll the Sucker Punch chance before throwing.');
+  if (displayedChanceDie !== undefined && displayedChanceDie !== existingChance.chance_die) {
+    throw new Error('The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
+  }
   const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, mutationState);
   const game = prepared.game;
   const state = game.state;
@@ -1866,7 +1904,6 @@ async function syncGamePlayers(
     throw error;
   }
 }
-
 function findPlayer(state: GameState, playerId: string): Player {
   const player = state.players.find((candidate) => candidate.id === playerId);
   if (!player) {

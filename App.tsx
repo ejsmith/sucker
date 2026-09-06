@@ -45,6 +45,7 @@ import {
 } from './src/game/computer';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
+import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -66,6 +67,7 @@ import {
   subscribeToGame,
   subscribeToGameListChanges,
   subscribeToGameTaunts,
+  useRemoteMulligan,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
 import { preserveLocalHeldDice } from './src/multiplayer/heldDice';
@@ -249,6 +251,7 @@ type RemoteBlockedPunchRevealGate = {
 type RemoteActionHandlers = {
   onPrepareSuckerPunch: (turnId: string) => Promise<DieValue | null>;
   onExtraRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
+  onMulligan: () => Promise<ReturnType<typeof createGame> | null>;
   onRematch: () => Promise<ReturnType<typeof createGame> | null>;
   onRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onScore: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
@@ -633,14 +636,13 @@ export function RemoteGameScreen({
       return;
     }
 
-    const latestWithGame = [...recovered]
-      .reverse()
-      .find((item) => item.action.type !== 'taunt' && 'game' in item.result && Boolean(item.result.game));
+    const latestWithGame = latestRecoveredGameAction(recovered);
     if (recovered.some((item) => item.action.type === 'taunt')) {
       setTauntOpportunityRefreshKey((current) => current + 1);
     }
     consumeRecoveredActions(recovered.map((item) => item.requestId));
     setUnresolvedRequestId(null);
+    setError(null);
 
     if (!latestWithGame || !('game' in latestWithGame.result)) {
       return;
@@ -985,6 +987,7 @@ export function RemoteGameScreen({
 
   const handlers: RemoteActionHandlers = {
     onExtraRoll: (held) => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id, held)),
+    onMulligan: () => runRemoteAction(() => useRemoteMulligan(remoteGame.id)),
     onRematch: async () => {
       return runRemoteAction(
         async () => {
@@ -1303,7 +1306,7 @@ export function LocalGameScreen({
   const canUseLocalExtraRoll = !isRemoteGame && canOpenTokenMenu && myTokenCount >= suckerTokenCosts.extraRoll;
   const canUseRemoteExtraRoll =
     isRemoteGame && canOpenTokenMenu && isRemoteActionPlayable && myTokenCount >= suckerTokenCosts.extraRoll;
-  const canUseLocalMulligan = !isRemoteGame && canOpenTokenMenu && myTokenCount >= suckerTokenCosts.mulligan;
+  const canUseMulligan = canOpenTokenMenu && isRemoteActionPlayable && myTokenCount >= suckerTokenCosts.mulligan;
   const canStartSuckerDeal = canOpenTokenMenu && openCategories.length > 0 && isRemoteActionPlayable;
   const isLocalPendingTurnPunchable = Boolean(pendingTurn);
   const isRemoteLastTurnPunchable = Boolean(remoteLastTurn);
@@ -2555,14 +2558,18 @@ export function LocalGameScreen({
     setLocalGame(purchaseExtraRoll(game));
   }
 
-  function handleUseMulligan() {
-    if (!canUseLocalMulligan) {
+  async function handleUseMulligan() {
+    if (!canUseMulligan) {
       return;
     }
 
     setIsTokenMenuOpen(false);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
+    if (isRemoteGame && remoteHandlers) {
+      await remoteHandlers.onMulligan();
+      return;
+    }
     if (pendingTurn) {
       clearLocalTurnResponseWindow();
     }
@@ -3828,9 +3835,9 @@ export function LocalGameScreen({
                 <TokenMenuOption
                   cost={suckerTokenCosts.mulligan}
                   description="Discard this turn and start it over."
-                  disabled={!canUseLocalMulligan}
+                  disabled={!canUseMulligan}
                   label="Mulligan"
-                  onPress={handleUseMulligan}
+                  onPress={() => void handleUseMulligan()}
                   testID="token-option-mulligan"
                 />
                 <TokenMenuOption
