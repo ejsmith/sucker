@@ -279,9 +279,9 @@ async function removeDevicePushRegistration(profileId: string) {
       .eq('profile_id', profileId)
       .eq('endpoint', subscription.endpoint);
     if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
-    if (!(await subscription.unsubscribe())) {
-      throw new Error('Could not disconnect browser notifications. Try signing out again.');
-    }
+    // Server ownership is already released. A stale/unavailable browser provider
+    // must not trap the user in a session after this point.
+    await subscription.unsubscribe().catch(() => undefined);
     return;
   }
 
@@ -301,7 +301,7 @@ async function removeDevicePushRegistration(profileId: string) {
     .eq('profile_id', profileId)
     .eq('expo_push_token', token);
   if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
-  await authStorage.removeItem(nativePushTokenStorageKey);
+  await authStorage.removeItem(nativePushTokenStorageKey).catch(() => undefined);
 }
 
 function getExpoProjectId() {

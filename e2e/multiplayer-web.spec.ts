@@ -57,55 +57,63 @@ test('local development offers reusable Test 1 and Test 2 logins at the bottom',
   }
 });
 
-test('signing out releases this browser notification endpoint for the next account', async ({ browser }) => {
-  const runId = crypto.randomUUID();
-  const alice = await createUser(`push-alice-${runId}`, 'Alice Push');
-  const bob = await createUser(`push-bob-${runId}`, 'Bob Push');
-  const endpoint = `https://push.example.test/${runId}`;
-  const otherEndpoint = `${endpoint}/other-device`;
-  const otherDevice = await admin.from('web_push_subscriptions').insert({
-    endpoint: otherEndpoint,
-    auth_key: 'other-auth',
-    p256dh_key: 'other-key',
-    profile_id: alice.id,
-  });
-  expect(otherDevice.error).toBeNull();
-  const page = await openAuthedPage(browser, alice, endpoint);
-  try {
-    await expect
-      .poll(async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data)
-      .toEqual([{ profile_id: alice.id }]);
-    await page.getByTestId('profile-button').click();
-    await page.getByTestId('sign-out-button').click();
-    await expect(page.getByTestId('local-test-login')).toBeVisible();
-    await expect
-      .poll(async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data)
-      .toEqual([]);
-    const retained = await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', otherEndpoint);
-    expect(retained.data).toEqual([{ profile_id: alice.id }]);
-    const session = await createSession(bob.email);
-    const bobClient = createClient(supabaseUrl, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${session.access_token}` } },
+for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
+  test(`signing out releases this browser notification endpoint for the next account (${unsubscribeResult})`, async ({
+    browser,
+  }) => {
+    const runId = crypto.randomUUID();
+    const alice = await createUser(`push-alice-${runId}`, 'Alice Push');
+    const bob = await createUser(`push-bob-${runId}`, 'Bob Push');
+    const endpoint = `https://push.example.test/${runId}`;
+    const otherEndpoint = `${endpoint}/other-device`;
+    const otherDevice = await admin.from('web_push_subscriptions').insert({
+      endpoint: otherEndpoint,
+      auth_key: 'other-auth',
+      p256dh_key: 'other-key',
+      profile_id: alice.id,
     });
-    const reassigned = await bobClient
-      .from('web_push_subscriptions')
-      .upsert(
-        {
-          endpoint,
-          auth_key: 'test-auth',
-          p256dh_key: 'test-key',
-          profile_id: bob.id,
-        },
-        { onConflict: 'endpoint' },
-      )
-      .select('profile_id');
-    expect(reassigned.error).toBeNull();
-    expect(reassigned.data).toEqual([{ profile_id: bob.id }]);
-  } finally {
-    await page.context().close();
-  }
-});
+    expect(otherDevice.error).toBeNull();
+    const page = await openAuthedPage(browser, alice, endpoint, unsubscribeResult);
+    try {
+      await expect
+        .poll(
+          async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data,
+        )
+        .toEqual([{ profile_id: alice.id }]);
+      await page.getByTestId('profile-button').click();
+      await page.getByTestId('sign-out-button').click();
+      await expect(page.getByTestId('local-test-login')).toBeVisible();
+      await expect
+        .poll(
+          async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data,
+        )
+        .toEqual([]);
+      const retained = await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', otherEndpoint);
+      expect(retained.data).toEqual([{ profile_id: alice.id }]);
+      const session = await createSession(bob.email);
+      const bobClient = createClient(supabaseUrl, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: `Bearer ${session.access_token}` } },
+      });
+      const reassigned = await bobClient
+        .from('web_push_subscriptions')
+        .upsert(
+          {
+            endpoint,
+            auth_key: 'test-auth',
+            p256dh_key: 'test-key',
+            profile_id: bob.id,
+          },
+          { onConflict: 'endpoint' },
+        )
+        .select('profile_id');
+      expect(reassigned.error).toBeNull();
+      expect(reassigned.data).toEqual([{ profile_id: bob.id }]);
+    } finally {
+      await page.context().close();
+    }
+  });
+}
 
 test('notification cleanup failure keeps the account signed in and supports retry', async ({ browser }) => {
   const runId = crypto.randomUUID();
@@ -912,50 +920,61 @@ test('player avatars open separate overall stats pages', async ({ browser }) => 
   await bobPage.context().close();
 });
 
-async function openAuthedPage(browser: Browser, user: TestUser, pushEndpoint?: string) {
+async function openAuthedPage(
+  browser: Browser,
+  user: TestUser,
+  pushEndpoint?: string,
+  unsubscribeResult: 'success' | 'false' | 'error' = 'success',
+) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   const session = await createSession(user.email);
-  await context.addInitScript((endpoint) => {
-    const testWindow = window as Window & { PushManager?: unknown };
-    const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
+  await context.addInitScript(
+    ({ endpoint, unsubscribeResult }) => {
+      const testWindow = window as Window & { PushManager?: unknown };
+      const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
 
-    Object.defineProperty(testWindow, 'Notification', {
-      configurable: true,
-      value: {
-        permission: endpoint ? 'granted' : 'default',
-        requestPermission: async () => 'default',
-      },
-    });
-
-    if (!('PushManager' in testWindow)) {
-      Object.defineProperty(testWindow, 'PushManager', {
+      Object.defineProperty(testWindow, 'Notification', {
         configurable: true,
-        value: function PushManager() {},
+        value: {
+          permission: endpoint ? 'granted' : 'default',
+          requestPermission: async () => 'default',
+        },
       });
-    }
 
-    if (endpoint) {
-      const subscription = {
-        endpoint,
-        toJSON: () => ({ endpoint, keys: { auth: 'test-auth', p256dh: 'test-key' } }),
-        unsubscribe: async () => true,
-      };
-      const registration = {
-        pushManager: { getSubscription: async () => subscription, subscribe: async () => subscription },
-      };
-      const serviceWorker = Object.assign(new EventTarget(), {
-        register: async () => registration,
-        getRegistration: async () => registration,
-        ready: Promise.resolve(registration),
-      });
-      Object.defineProperty(testNavigator, 'serviceWorker', { configurable: true, value: serviceWorker });
-    } else if (!('serviceWorker' in testNavigator)) {
-      Object.defineProperty(testNavigator, 'serviceWorker', {
-        configurable: true,
-        value: {},
-      });
-    }
-  }, pushEndpoint);
+      if (!('PushManager' in testWindow)) {
+        Object.defineProperty(testWindow, 'PushManager', {
+          configurable: true,
+          value: function PushManager() {},
+        });
+      }
+
+      if (endpoint) {
+        const subscription = {
+          endpoint,
+          toJSON: () => ({ endpoint, keys: { auth: 'test-auth', p256dh: 'test-key' } }),
+          unsubscribe: async () => {
+            if (unsubscribeResult === 'error') throw new Error('Provider unavailable');
+            return unsubscribeResult !== 'false';
+          },
+        };
+        const registration = {
+          pushManager: { getSubscription: async () => subscription, subscribe: async () => subscription },
+        };
+        const serviceWorker = Object.assign(new EventTarget(), {
+          register: async () => registration,
+          getRegistration: async () => registration,
+          ready: Promise.resolve(registration),
+        });
+        Object.defineProperty(testNavigator, 'serviceWorker', { configurable: true, value: serviceWorker });
+      } else if (!('serviceWorker' in testNavigator)) {
+        Object.defineProperty(testNavigator, 'serviceWorker', {
+          configurable: true,
+          value: {},
+        });
+      }
+    },
+    { endpoint: pushEndpoint, unsubscribeResult },
+  );
   await context.addInitScript(
     ({ accessToken, refreshToken, supabaseAnonKey, supabaseUrl }) => {
       (

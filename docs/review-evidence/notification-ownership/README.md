@@ -19,3 +19,12 @@ Sign-out is local to this installation so other devices retain their sessions.
 
 Screenshots are reports of actual browser test output. Native push delivery and
 account switching on a physical phone have not been verified; no native build was run.
+
+## Review follow-up
+
+The reviewer identified that a false/rejected browser unsubscribe response could
+block sign-out after server ownership was already removed. The new regression
+reproduced the stuck session (`unsubscribe-before.png`). Browser provider cleanup
+is now best-effort after the database deletion succeeds; all four browser cases
+pass (`unsubscribe-after.png`), including false/rejected unsubscribe and retry
+after a database deletion failure.
