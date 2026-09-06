@@ -5,7 +5,7 @@ const test = require('node:test');
 
 const maximumFontSizeMultiplier = 1.2;
 const repositoryRoot = path.resolve(__dirname, '..');
-const gameUiSources = ['App.tsx', 'src/ui/PlayerAvatar.tsx', 'src/ui/StatsPage.tsx'];
+const gameUiSources = ['App.tsx', 'src/ui/PlayerAvatar.tsx', 'src/ui/StatsPage.tsx', 'src/ui/StatsDefinitions.tsx'];
 
 test('game UI keeps Dynamic Type enabled with bounded growth', () => {
   for (const relativePath of gameUiSources) {

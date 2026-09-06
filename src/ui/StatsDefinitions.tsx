@@ -3,6 +3,8 @@ import { StyleSheet, Text, View } from 'react-native';
 import { blowoutPointMargin, comebackPointMargin } from '../../shared/stats';
 import { Pressable } from './Pressable';
 
+const statsMaxFontSizeMultiplier = 1.2;
+
 const definitions = [
   ['Blowout win', `Win by at least ${blowoutPointMargin} points.`],
   ['Comeback win', `Win after trailing by at least ${comebackPointMargin} points.`],
@@ -30,14 +32,20 @@ export function StatsDefinitions() {
         style={styles.toggle}
         testID="stats-definitions-toggle"
       >
-        <Text style={styles.toggleText}>{expanded ? 'Hide metric explanations' : 'What do these stats mean?'}</Text>
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.toggleText}>
+          {expanded ? 'Hide metric explanations' : 'What do these stats mean?'}
+        </Text>
       </Pressable>
       {expanded && (
         <View style={styles.definitions} testID="stats-definitions">
           {definitions.map(([title, body]) => (
             <View key={title} style={styles.row}>
-              <Text style={styles.label}>{title}</Text>
-              <Text style={styles.body}>{body}</Text>
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.label}>
+                {title}
+              </Text>
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.body}>
+                {body}
+              </Text>
             </View>
           ))}
         </View>
