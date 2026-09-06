@@ -1634,7 +1634,7 @@ export function LocalGameScreen({
     setIsChoosingSuckerDeal(false);
     setIsComputerThinking(true);
     const timer = setTimeout(() => {
-      const result = playComputerTurn(game, pendingTurn);
+      const result = resolveComputerTurn(game, pendingTurn);
       void animateComputerTurnResult(result);
     }, computerThinkingDelayMs);
 
@@ -2265,10 +2265,9 @@ export function LocalGameScreen({
     setIsRolling(false);
   }
 
-  function finishComputerTurnResult(result: ComputerTurnResult) {
+  function resolveComputerTurn(sourceGame: GameState, sourcePendingTurn: ComputerSession['pendingTurn']) {
+    const result = playComputerTurn(sourceGame, sourcePendingTurn);
     recordLocalScoreTurn(result);
-    const punchedTurn =
-      result.suckerPunchAttempt?.outcome.landed && result.pendingTurn?.status === 'punched' ? result.pendingTurn : null;
     if (result.suckerPunchAttempt) {
       const puncher = result.game.players[result.suckerPunchAttempt.puncherIndex];
       const target = result.game.players[result.suckerPunchAttempt.targetPlayerIndex];
@@ -2285,6 +2284,13 @@ export function LocalGameScreen({
         updateLocalScoreTurnStatus(result.suckerPunchAttempt.targetTurnId, 'punched');
       }
     }
+    persistResolvedLocalGame(result.game, result.pendingTurn);
+    return result;
+  }
+
+  function finishComputerTurnResult(result: ComputerTurnResult) {
+    const punchedTurn =
+      result.suckerPunchAttempt?.outcome.landed && result.pendingTurn?.status === 'punched' ? result.pendingTurn : null;
     setLocalGame(result.game);
     setLocalPendingTurn(result.pendingTurn);
     if (punchedTurn && punchedTurn.scorerIndex === myPlayerIndex) {
@@ -2770,7 +2776,7 @@ export function LocalGameScreen({
             scorer.scorecard[targetTurn.category],
             (scorer.suckerBonusCategories ?? []).includes(targetTurn.category),
           ) ?? targetTurn.score;
-        const replayed = playComputerTurn(punched.game, null);
+        const replayed = resolveComputerTurn(punched.game, null);
         setLocalGame(punched.game);
         setLocalPendingTurn(punched.pendingTurn);
         showSuckerPunchScoreWipe({

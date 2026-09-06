@@ -36,3 +36,7 @@ The latest Linux CI confirmed all geometry/dice checks pass. Its remaining three
 # Review follow-up: interrupted rolls
 
 Reloading immediately after Roll restored an empty tray and all four rolls (`roll-interruption-before.png`). The resolved dice, consumed roll, and roll action now save before animation. A temporary committed-state reference prevents an older presentation render from overwriting that save while a response window closes. The same reload retains the dice and three rolls left (`roll-interruption-after.png`). All seven save/resume browser cases pass, as do typecheck and lint.
+
+# Review follow-up: interrupted computer reveals
+
+The local reproduction showed the computer revealing a 50-point Sucker, then changing to a 40-point straight when reloaded during the reveal (`computer-reveal-before.png`, `computer-reload-before.png`). Computer turn resolution now records the score/punch history and saves the resolved result before starting presentation. Reloading retains the original 50-point Sucker even when the test supplies different subsequent randomness (`computer-reveal-after.png`, `computer-reload-after.png`). State and both histories remain identical through reload. All eight save/resume browser cases passed.

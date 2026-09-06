@@ -93,6 +93,47 @@ async function diceLabels(page: Page) {
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
 }
 
+test('a resolved computer turn survives reloading during its score reveal', async ({ page }) => {
+  const game = createGame(['Player', 'Computer']);
+  game.currentPlayerIndex = 1;
+  game.players[0].scorecard.chance = 15;
+  await page.addInitScript((initialGame) => {
+    if (!localStorage.getItem('sucker.computer-session.v1.guest')) {
+      localStorage.setItem(
+        'sucker.computer-session.v1.guest',
+        JSON.stringify({
+          version: 1,
+          game: initialGame,
+          pendingTurn: null,
+          actions: [],
+          turns: [],
+          recordedGameIds: [],
+        }),
+      );
+    }
+    const random = Math.random;
+    let index = 0;
+    Math.random = localStorage.getItem('review.computer-reloaded')
+      ? () => [0.2, 0.4, 0.6, 0.8, 0.1][index++ % 5] + random() * 0.001
+      : () => random() * 0.001;
+  }, game);
+  await page.goto('/local');
+  await expect(page.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 25_000 });
+  await page.screenshot({ path: test.info().outputPath('computer-reveal.png') });
+  const resolvedSave = await page.evaluate(() => {
+    localStorage.setItem('review.computer-reloaded', '1');
+    return JSON.parse(localStorage.getItem('sucker.computer-session.v1.guest')!);
+  });
+  await page.reload();
+  await expect(page.getByTestId('roll-button')).toBeEnabled({ timeout: 25_000 });
+  await page.screenshot({ path: test.info().outputPath('computer-reloaded.png') });
+  expect(resolvedSave.game.currentPlayerIndex).toBe(0);
+  const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.computer-session.v1.guest')!));
+  expect(restored.game).toEqual(resolvedSave.game);
+  expect(restored.turns).toEqual(resolvedSave.turns);
+  expect(restored.actions).toEqual(resolvedSave.actions);
+});
+
 test('a resolved roll survives reloading during the dice animation', async ({ page }) => {
   await page.goto('/local');
   await page.getByTestId('roll-button').click();
