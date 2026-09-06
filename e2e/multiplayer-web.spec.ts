@@ -57,6 +57,57 @@ test('local development offers reusable Test 1 and Test 2 logins at the bottom',
   }
 });
 
+test('the displayed multiplayer punch chance matches the server outcome', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`chance-alice-${runId}`, 'Alice Chance');
+  const bob = await createUser(`chance-bob-${runId}`, 'Bob Chance');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  await bobPage.context().addInitScript(() => {
+    const random = Math.random;
+    // Keep entropy for Expo's development UUID fallback while forcing a displayed one.
+    Math.random = () => random() / 6;
+  });
+  await bobPage.reload();
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await alicePage.getByTestId('category-button-sucker').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await expect.poll(async () => (await loadGame(gameId)).current_player_id).toBe(bob.id);
+    await openGameFromLobby(bobPage, gameId);
+    await expect(bobPage.getByTestId('token-menu-button')).toBeEnabled({ timeout: 15_000 });
+    await bobPage.getByTestId('token-menu-button').click();
+    await bobPage.getByTestId('token-option-sucker-punch').click();
+    const dialog = bobPage.getByTestId('sucker-punch-chance-dialog');
+    const actionButton = bobPage.getByTestId('sucker-punch-chance-roll-button');
+    await actionButton.click();
+    await expect(dialog).toContainText(/Rolled [1-6]/);
+    const shownDie = Number((await dialog.innerText()).match(/Rolled ([1-6])/)![1]);
+    await bobPage.screenshot({ path: test.info().outputPath('shown-chance.png') });
+    const outcomeResponse = bobPage.waitForResponse(
+      (response) =>
+        response.url().includes('/functions/v1/game-action') &&
+        response.request().postDataJSON()?.type === 'sucker_punch',
+    );
+    await actionButton.click();
+    const response = await outcomeResponse;
+    expect(response.ok()).toBe(true);
+    const outcome = (await response.json()).suckerPunchOutcome;
+    expect(outcome.chanceDie).toBe(shownDie);
+    const actions = await admin
+      .from('turn_actions')
+      .select('payload')
+      .eq('game_id', gameId)
+      .eq('action_type', 'sucker_punch');
+    expect(actions.data?.[0].payload.chanceDie).toBe(shownDie);
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('two players can create an invite and play turns through the web UI', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`alice-${runId}`, 'Alice E2E');
@@ -347,8 +398,7 @@ test('taunt picker stays connected to the avatar without moving the scorecard', 
   expect(opponentAvatarBox).not.toBeNull();
   expect(
     Math.abs(
-      receivedPointerBox!.x + receivedPointerBox!.width / 2 -
-        (opponentAvatarBox!.x + opponentAvatarBox!.width / 2),
+      receivedPointerBox!.x + receivedPointerBox!.width / 2 - (opponentAvatarBox!.x + opponentAvatarBox!.width / 2),
     ),
   ).toBeLessThan(5);
   await bobPage.waitForTimeout(2_500);

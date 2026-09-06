@@ -3,6 +3,11 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      sucker_punch_attempts: {
+        Row: { game_id: string; actor_id: string; turn_id: string; chance_die: number; created_at: string };
+        Insert: { game_id: string; actor_id: string; turn_id: string; chance_die: number; created_at?: string };
+        Update: { chance_die?: number };
+      };
       profiles: {
         Row: {
           avatar_url: string | null;

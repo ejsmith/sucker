@@ -106,6 +106,8 @@ export function getActionKey(action: MultiplayerAction) {
       return JSON.stringify([action.type, action.gameId, action.category]);
     case 'sucker_punch':
       return JSON.stringify([action.type, action.gameId, action.turnId, action.chanceDie ?? null]);
+    case 'prepare_sucker_punch':
+      return JSON.stringify([action.type, action.gameId, action.turnId]);
   }
 }
 

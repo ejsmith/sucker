@@ -51,6 +51,7 @@ type ActionResult = {
   notificationProfileIds?: string[];
   removedGameId?: string;
   suckerPunchOutcome?: SuckerPunchOutcome;
+  suckerPunchChanceDie?: DieValue;
 };
 type NotificationContent = {
   body: string;
@@ -94,6 +95,7 @@ type ActionInput =
     }
   | { type: 'pass_response'; gameId: string }
   | { type: 'mulligan'; gameId: string }
+  | { type: 'prepare_sucker_punch'; gameId: string; turnId: string }
   | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 type Action = ActionInput & { requestId: string };
@@ -240,7 +242,9 @@ async function applyAction(
     case 'mulligan':
       return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
+      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState);
+    case 'prepare_sucker_punch':
+      return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId, mutationState);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -831,6 +835,7 @@ function toAction(value: unknown): Action {
         type,
       };
     case 'sucker_punch':
+    case 'prepare_sucker_punch':
     case 'sucker_blocker':
       return {
         gameId: readString(action, 'gameId'),
@@ -1642,13 +1647,12 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   return { game: updatedGame };
 }
 
-async function suckerPunchTurn(
+async function prepareSuckerPunchChance(
   admin: DbClient,
   actorId: string,
   gameId: string,
   turnId: string,
   mutationState: ActionMutationState,
-  requestedChanceDie?: DieValue,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
@@ -1659,6 +1663,7 @@ async function suckerPunchTurn(
   if (turn.player_id === actorId) {
     throw new Error('You cannot Sucker Punch your own turn.');
   }
+  if (game.current_player_id !== actorId) throw new Error('Only the responding player can Sucker Punch.');
 
   const state = game.state;
   const actor = findPlayer(state, actorId);
@@ -1666,14 +1671,41 @@ async function suckerPunchTurn(
     throw new Error(`You need ${suckerTokenCosts.suckerPunch} Sucker Tokens to Sucker Punch.`);
   }
 
-  if (
-    requestedChanceDie !== undefined &&
-    (!Number.isInteger(requestedChanceDie) || requestedChanceDie < 1 || requestedChanceDie > 6)
-  ) {
-    throw new Error('Sucker Punch chance die must be between 1 and 6.');
-  }
+  mutationState.mayHaveWritten = true;
+  const { error: insertError } = await admin.from('sucker_punch_attempts').upsert(
+    {
+      game_id: gameId,
+      actor_id: actorId,
+      turn_id: turnId,
+      chance_die: rollDie(edgeSuckerPunchDieRandom),
+    },
+    { onConflict: 'game_id,actor_id,turn_id', ignoreDuplicates: true },
+  );
+  if (insertError) throw insertError;
+  const { data: attempt, error } = await admin
+    .from('sucker_punch_attempts')
+    .select('chance_die')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .eq('turn_id', turnId)
+    .single();
+  if (error) throw error;
+  return { game, suckerPunchChanceDie: attempt.chance_die as DieValue };
+}
 
-  const chanceDie = requestedChanceDie ?? rollDie(edgeSuckerPunchDieRandom);
+async function suckerPunchTurn(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  turnId: string,
+  mutationState: ActionMutationState,
+) {
+  // Legacy clients can still throw directly; new clients prepare first and display this saved die.
+  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, mutationState);
+  const game = prepared.game;
+  const state = game.state;
+  const turn = await loadTurn(admin, turnId);
+  const chanceDie = prepared.suckerPunchChanceDie;
   const outcome = resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom);
   let nextState = updatePlayerTokens(state, actorId, -suckerTokenCosts.suckerPunch);
   if (outcome.landed) {

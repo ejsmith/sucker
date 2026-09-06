@@ -58,6 +58,7 @@ import {
   hasPendingMultiplayerAction,
   markRemoteTauntSeen,
   PendingMultiplayerActionError,
+  prepareRemoteSuckerPunch,
   rollRemoteGame,
   scoreRemoteCategory,
   sendRemoteTaunt,
@@ -246,6 +247,7 @@ type RemoteBlockedPunchRevealGate = {
   turnId: string;
 };
 type RemoteActionHandlers = {
+  onPrepareSuckerPunch: (turnId: string) => Promise<DieValue | null>;
   onExtraRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onRematch: () => Promise<ReturnType<typeof createGame> | null>;
   onRoll: (held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
@@ -996,6 +998,14 @@ export function RemoteGameScreen({
     onRoll: (held) => runRemoteAction(() => rollRemoteGame(remoteGame.id, held)),
     onScore: (category, held) => runRemoteAction(() => scoreRemoteCategory(remoteGame.id, category, held)),
     onScratch: (category, held) => runRemoteAction(() => scratchRemoteCategory(remoteGame.id, category, held)),
+    onPrepareSuckerPunch: async (turnId) => {
+      const result = await runRemoteActionResult(() => prepareRemoteSuckerPunch(remoteGame.id, turnId), {
+        applyGameResult: false,
+        preserveNextTurns: true,
+        showNextTurns: false,
+      });
+      return result?.suckerPunchChanceDie ?? null;
+    },
     onSuckerPunch: async (turnId, chanceDie) => {
       const result = await runRemoteActionResult(() => useRemoteSuckerPunch(remoteGame.id, turnId, chanceDie));
       return result ? { game: result.game.state, outcome: result.suckerPunchOutcome ?? null } : null;
@@ -2657,13 +2667,21 @@ export function LocalGameScreen({
       useNativeDriver: true,
     });
 
+    let chanceDie: DieValue | null = null;
     try {
-      await runAnimation(chanceRollAnimation);
+      const chanceRequest =
+        dialog.scope === 'remote'
+          ? (remoteHandlers?.onPrepareSuckerPunch(dialog.targetTurnId) ?? Promise.resolve(null))
+          : Promise.resolve(rollDisplayDie());
+      [chanceDie] = await Promise.all([chanceRequest, runAnimation(chanceRollAnimation)]);
     } finally {
       clearInterval(scrambleTimer);
     }
 
-    const chanceDie = rollDisplayDie();
+    if (chanceDie === null) {
+      setSuckerPunchDialog({ ...dialog, phase: 'ready' });
+      return;
+    }
     setSuckerPunchChanceFace(chanceDie);
     await wait(rollFinalFaceHoldMs);
     setSuckerPunchDialog({ ...dialog, phase: 'rolled' });
