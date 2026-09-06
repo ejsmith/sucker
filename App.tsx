@@ -45,6 +45,7 @@ import {
 } from './src/game/computer';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
+import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -636,14 +637,13 @@ export function RemoteGameScreen({
       return;
     }
 
-    const latestWithGame = [...recovered]
-      .reverse()
-      .find((item) => item.action.type !== 'taunt' && 'game' in item.result && Boolean(item.result.game));
+    const latestWithGame = latestRecoveredGameAction(recovered);
     if (recovered.some((item) => item.action.type === 'taunt')) {
       setTauntOpportunityRefreshKey((current) => current + 1);
     }
     consumeRecoveredActions(recovered.map((item) => item.requestId));
     setUnresolvedRequestId(null);
+    setError(null);
 
     if (!latestWithGame || !('game' in latestWithGame.result)) {
       return;
