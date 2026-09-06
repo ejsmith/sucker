@@ -1078,6 +1078,7 @@ export function RemoteGameScreen({
 
 export function LocalGameScreen({
   initialLocalSession,
+  localPlayerProfileId,
   onLocalSessionChange,
   onNewComputerGame,
   isRemoteBusy = false,
@@ -1100,6 +1101,7 @@ export function LocalGameScreen({
   remoteStatus,
 }: {
   initialLocalSession?: ComputerSession | null;
+  localPlayerProfileId?: string | null;
   onLocalSessionChange?: (session: ComputerSession) => void;
   onNewComputerGame?: () => void;
   isRemoteBusy?: boolean;
@@ -1822,17 +1824,22 @@ export function LocalGameScreen({
       return;
     }
 
-    recordedComputerGameIds.current.add(game.id);
-    void recordComputerGameResult(game, localSuckerStatActions.current, localSuckerStatTurns.current)
+    void recordComputerGameResult(
+      game,
+      localSuckerStatActions.current,
+      localSuckerStatTurns.current,
+      localPlayerProfileId,
+    )
       .then((nextStats) => {
         if (nextStats) {
+          recordedComputerGameIds.current.add(game.id);
           setComputerStats(nextStats);
         }
       })
       .catch((statsError) => {
         console.warn('Unable to record computer stats', statsError);
       });
-  }, [game, isRemoteGame]);
+  }, [game, isRemoteGame, localPlayerProfileId]);
 
   useEffect(() => {
     if (isRemoteGame || !onLocalSessionChange) return;
