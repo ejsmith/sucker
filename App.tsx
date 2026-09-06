@@ -45,6 +45,7 @@ import {
 } from './src/game/computer';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
+import type { ComputerSession } from './src/game/computerSession';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -1031,6 +1032,9 @@ export function RemoteGameScreen({
 }
 
 export function LocalGameScreen({
+  initialLocalSession,
+  onLocalSessionChange,
+  onNewComputerGame,
   isRemoteBusy = false,
   localPlayerAvatarUrl,
   localPlayerName,
@@ -1050,6 +1054,9 @@ export function LocalGameScreen({
   remoteTauntOpportunity,
   remoteStatus,
 }: {
+  initialLocalSession?: ComputerSession | null;
+  onLocalSessionChange?: (session: ComputerSession) => void;
+  onNewComputerGame?: () => void;
   isRemoteBusy?: boolean;
   localPlayerAvatarUrl?: string | null;
   localPlayerName?: string;
@@ -1074,8 +1081,10 @@ export function LocalGameScreen({
   const [devViewportPresetKey, setDevViewportPresetKey] =
     useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
   const localPlayerNames = [localPlayerName?.trim() || playerNames[0], playerNames[1]];
-  const [localGame, setLocalGame] = useState(() => createGame(localPlayerNames));
-  const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(null);
+  const [localGame, setLocalGame] = useState(() => initialLocalSession?.game ?? createGame(localPlayerNames));
+  const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(
+    initialLocalSession?.pendingTurn ?? null,
+  );
   const [showSuckerPunchNotice, setShowSuckerPunchNotice] = useState(false);
   const [suckerPunchWipe, setSuckerPunchWipe] = useState<SuckerPunchWipe | null>(null);
   const [suckerBlockedNotice, setSuckerBlockedNotice] = useState<SuckerBlockedNotice | null>(null);
@@ -1132,9 +1141,9 @@ export function LocalGameScreen({
   const dieSlotRefs = useRef<(ViewRef | null)[]>([]);
   const scoreBoxRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
   const opponentScoreRefs = useRef<Partial<Record<ScoreCategory, ViewRef | null>>>({});
-  const recordedComputerGameIds = useRef<Set<string>>(new Set());
-  const localSuckerStatActions = useRef<SuckerStatAction[]>([]);
-  const localSuckerStatTurns = useRef<SuckerStatTurn[]>([]);
+  const recordedComputerGameIds = useRef<Set<string>>(new Set(initialLocalSession?.recordedGameIds));
+  const localSuckerStatActions = useRef<SuckerStatAction[]>(initialLocalSession?.actions ?? []);
+  const localSuckerStatTurns = useRef<SuckerStatTurn[]>(initialLocalSession?.turns ?? []);
   const lastRemotePunchNoticeId = useRef<string | null>(null);
   const lastRemoteBlockedPunchNoticeId = useRef<string | null>(null);
   const remoteBlockedPunchRevealCheckTurnId = useRef<string | null>(null);
@@ -1756,6 +1765,18 @@ export function LocalGameScreen({
         console.warn('Unable to record computer stats', statsError);
       });
   }, [game, isRemoteGame]);
+
+  useEffect(() => {
+    if (isRemoteGame || !onLocalSessionChange) return;
+    onLocalSessionChange({
+      version: 1,
+      game: localGame,
+      pendingTurn: localPendingTurn,
+      actions: localSuckerStatActions.current,
+      turns: localSuckerStatTurns.current,
+      recordedGameIds: [...recordedComputerGameIds.current],
+    });
+  }, [isRemoteGame, localGame, localPendingTurn, onLocalSessionChange]);
 
   useEffect(() => {
     if (!isRemoteGame || !opponentPlayer.id) {
@@ -3137,6 +3158,18 @@ export function LocalGameScreen({
                     STATS
                   </Text>
                 </Pressable>
+                {!isRemoteGame && onNewComputerGame && (
+                  <Pressable
+                    onPress={onNewComputerGame}
+                    disabled={isRolling || isScoring || isComputerTurn}
+                    style={[styles.topMenuItem, gameLayout.styles.topMenuItem]}
+                    testID="new-computer-game-button"
+                  >
+                    <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                      NEW GAME
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             </View>
           )}
