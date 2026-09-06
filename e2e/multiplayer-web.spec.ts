@@ -34,6 +34,33 @@ const scoreCategories = [
   'chance',
 ] as const;
 
+test('friend entry leads with invitations and keeps code entry and search available', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`friend-alice-${runId}`, 'Friend Alice');
+  const bob = await createUser(`friend-bob-${runId}`, 'Friend Bob');
+  const page = await openAuthedPage(browser, alice);
+  try {
+    await dismissTurnNotificationPrompt(page);
+    await page.getByTestId('start-with-friend-button').click();
+    const invitation = await page.getByTestId('friend-invite-panel').boundingBox();
+    const join = await page.getByTestId('friend-join-panel').boundingBox();
+    const search = await page.getByTestId('friend-search-panel').boundingBox();
+    expect(invitation!.y + invitation!.height).toBeLessThan(join!.y);
+    expect(join!.y + join!.height).toBeLessThan(search!.y);
+    await expect(page.getByRole('textbox', { name: 'Invite code', exact: true })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Find a player by username or name', exact: true })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('friend-entry.png') });
+    await page.getByTestId('create-invite-button').click();
+    await expect(page.getByTestId('generated-invite-code')).toHaveText(/^[A-F0-9]{8}$/);
+    await expect(page.getByTestId('share-invite-button')).toBeVisible();
+    await page.getByTestId('profile-search-input').fill('Friend Bob');
+    await page.getByTestId('profile-search-button').click();
+    await expect(page.getByTestId(`profile-play-${bob.id}`)).toBeVisible();
+  } finally {
+    await page.context().close();
+  }
+});
+
 test('local development offers reusable Test 1 and Test 2 logins at the bottom', async ({ browser }) => {
   for (const player of [1, 2, 1] as const) {
     const context = await browser.newContext({ viewport: { height: 852, width: 393 } });

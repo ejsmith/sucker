@@ -1076,8 +1076,76 @@ export function MultiplayerLobby({
         <SuckerLobbyTitle />
         <ScreenHeader title="Start With Friend" onBack={() => setPage('games')} />
 
-        <View style={lobbyStyles.panel}>
-          <Text style={lobbyStyles.sectionTitle}>Find By Username</Text>
+        <View style={lobbyStyles.panel} testID="friend-invite-panel">
+          <Text style={lobbyStyles.sectionTitle}>Invite a Friend</Text>
+          <Text style={lobbyStyles.friendEntryHelp}>Send a private link. Your game starts when your friend joins.</Text>
+          <Pressable
+            disabled={isBusy}
+            onPress={() =>
+              void runAction(async () => {
+                const result = await createInviteGame();
+                setGeneratedInviteCode(result.inviteCode ?? null);
+                await refreshGames();
+              })
+            }
+            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+            testID="create-invite-button"
+          >
+            <Text style={lobbyStyles.primaryButtonText}>Create Invite Link</Text>
+          </Pressable>
+          {generatedInviteCode && (
+            <View style={lobbyStyles.inviteLinkBlock}>
+              <Text style={lobbyStyles.inviteCode} testID="generated-invite-code">
+                {generatedInviteCode}
+              </Text>
+              <Text selectable style={lobbyStyles.inviteLinkText}>
+                {getInviteLink(generatedInviteCode)}
+              </Text>
+              <Pressable
+                onPress={() => void shareInviteLink()}
+                style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+                testID="share-invite-button"
+              >
+                <Text style={lobbyStyles.primaryButtonText}>Share Invite</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
+        <View style={lobbyStyles.panel} testID="friend-join-panel">
+          <Text style={lobbyStyles.sectionTitle}>Have an Invite Code?</Text>
+          <View style={lobbyStyles.row}>
+            <TextInput
+              autoCapitalize="characters"
+              onChangeText={setInviteCode}
+              accessibilityLabel="Invite code"
+              placeholder="Invite code"
+              placeholderTextColor="#8A4B12"
+              style={[lobbyStyles.input, lobbyStyles.flexInput]}
+              testID="invite-code-input"
+              value={inviteCode}
+            />
+            <Pressable
+              disabled={isBusy || inviteCode.trim().length === 0}
+              onPress={() =>
+                void runAction(async () => {
+                  await acceptInviteCode(inviteCode);
+                  setInviteCode('');
+                  await refreshGames();
+                  setMessage('Invite accepted.');
+                  setPage('games');
+                })
+              }
+              style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
+              testID="join-invite-button"
+            >
+              <Text style={lobbyStyles.smallButtonText}>Join</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={lobbyStyles.panel} testID="friend-search-panel">
+          <Text style={lobbyStyles.sectionTitle}>Find a Player</Text>
           <View style={lobbyStyles.row}>
             <TextInput
               autoCapitalize="none"
@@ -1127,72 +1195,6 @@ export function MultiplayerLobby({
               </Pressable>
             </View>
           ))}
-        </View>
-
-        <View style={lobbyStyles.panel}>
-          <Text style={lobbyStyles.sectionTitle}>Join By Invite Code</Text>
-          <View style={lobbyStyles.row}>
-            <TextInput
-              autoCapitalize="characters"
-              onChangeText={setInviteCode}
-              placeholder="Invite code"
-              placeholderTextColor="#8A4B12"
-              style={[lobbyStyles.input, lobbyStyles.flexInput]}
-              testID="invite-code-input"
-              value={inviteCode}
-            />
-            <Pressable
-              disabled={isBusy || inviteCode.trim().length === 0}
-              onPress={() =>
-                void runAction(async () => {
-                  await acceptInviteCode(inviteCode);
-                  setInviteCode('');
-                  await refreshGames();
-                  setMessage('Invite accepted.');
-                  setPage('games');
-                })
-              }
-              style={({ pressed }) => [lobbyStyles.smallButton, pressed && lobbyStyles.pressed]}
-              testID="join-invite-button"
-            >
-              <Text style={lobbyStyles.smallButtonText}>Join</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={lobbyStyles.panel}>
-          <Text style={lobbyStyles.sectionTitle}>Create Invite Link</Text>
-          <Pressable
-            disabled={isBusy}
-            onPress={() =>
-              void runAction(async () => {
-                const result = await createInviteGame();
-                setGeneratedInviteCode(result.inviteCode ?? null);
-                await refreshGames();
-              })
-            }
-            style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
-            testID="create-invite-button"
-          >
-            <Text style={lobbyStyles.secondaryButtonText}>Create Link</Text>
-          </Pressable>
-          {generatedInviteCode && (
-            <View style={lobbyStyles.inviteLinkBlock}>
-              <Text style={lobbyStyles.inviteCode} testID="generated-invite-code">
-                {generatedInviteCode}
-              </Text>
-              <Text selectable style={lobbyStyles.inviteLinkText}>
-                {getInviteLink(generatedInviteCode)}
-              </Text>
-              <Pressable
-                onPress={() => void shareInviteLink()}
-                style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
-                testID="share-invite-button"
-              >
-                <Text style={lobbyStyles.primaryButtonText}>Share Invite</Text>
-              </Pressable>
-            </View>
-          )}
         </View>
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
@@ -2434,6 +2436,7 @@ function SuckerLobbyTitle() {
 }
 
 const lobbyStyles = StyleSheet.create({
+  friendEntryHelp: { color: '#FFF3C2', fontSize: 16, lineHeight: 23 },
   accountDivider: {
     backgroundColor: '#8F3B10',
     height: 1,
