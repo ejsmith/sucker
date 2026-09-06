@@ -971,7 +971,11 @@ test('password editor resets after signing out and back in', async ({ browser })
   await page.getByTestId('password-sign-in-button').click();
   await expect(page.getByTestId('multiplayer-lobby-shell')).toBeVisible();
   await expect.poll(async () => await page.getByTestId('profile-button').count() + await page.getByTestId('toggle-password-editor').count()).toBeGreaterThan(0);
-  if (await page.getByTestId('profile-button').isVisible()) await page.getByTestId('profile-button').click();
+  if (await page.getByTestId('profile-button').isVisible()) {
+    await expect(page.getByText(`Hi, ${player.displayName}`)).toBeVisible();
+    await page.getByTestId('profile-button').click();
+  }
+  await expect(page.getByTestId('display-name-input')).toHaveValue(player.displayName);
   await page.screenshot({ path: test.info().outputPath('session-editor.png') });
   await expect(page.getByTestId('toggle-password-editor')).toHaveAttribute('aria-expanded', 'false');
   await page.getByTestId('toggle-password-editor').click();
