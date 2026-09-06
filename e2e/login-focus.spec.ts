@@ -129,7 +129,8 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
       });
       await page.setViewportSize({ width: 852, height: 393 });
       await expect(page.getByTestId('pwa-landscape-guard')).toBeVisible();
-      await expect(page.getByTestId('login-email-input')).toHaveCount(0);
+      await expect(email).toHaveCount(1);
+      await expect(email).toBeHidden();
       await page.evaluate(() => {
         Object.defineProperty(screen.orientation, 'type', { configurable: true, value: 'portrait-primary' });
         screen.orientation.dispatchEvent(new Event('change'));
@@ -137,8 +138,70 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
       await page.setViewportSize({ width: 393, height: 852 });
       await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
       await expect(page.getByTestId('login-email-input')).toBeVisible();
+      await expect(email).toHaveValue('qa@example.com');
+      await expect(password).toHaveValue('test-only-password');
+      expect(await email.evaluate((node, original) => node === original, originalInput)).toBe(true);
     });
   }
+}
+
+for (const installed of [false, true]) {
+  test(`portrait guard preserves an in-progress local game (${installed ? 'installed PWA' : 'browser'})`, async ({
+    page,
+  }, testInfo) => {
+    await page.addInitScript((installed) => {
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+      Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+      Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
+      Object.defineProperty(screen, 'orientation', {
+        configurable: true,
+        value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
+      });
+      const values = [0.01, 0.2, 0.4, 0.6, 0.8];
+      let index = 0;
+      Math.random = () => values[index++ % values.length];
+    }, installed);
+    await page.setViewportSize({ width: 393, height: 852 });
+    await page.goto('/');
+    await page.getByTestId('play-computer-button').click();
+    const game = page.getByTestId('game-screen');
+    const roll = page.getByTestId('roll-button');
+    const die = page.getByTestId('die-slot-0');
+    await expect(game).toBeVisible();
+    await roll.click();
+    await expect(die).toBeEnabled();
+    await die.click();
+    await expect(die).toHaveAttribute('aria-label', /, held$/);
+    const heldDieLabel = await die.getAttribute('aria-label');
+    const rollText = await roll.textContent();
+
+    for (const orientation of ['landscape-primary', 'landscape-secondary']) {
+      await page.evaluate((orientation) => {
+        Object.defineProperty(screen.orientation, 'type', { configurable: true, value: orientation });
+        screen.orientation.dispatchEvent(new Event('change'));
+      }, orientation);
+      await page.setViewportSize({ width: 852, height: 393 });
+      await expect(page.getByTestId('pwa-landscape-guard')).toBeVisible();
+      await expect(game).toHaveCount(1);
+      await expect(game).toBeHidden();
+      await expect(page.getByRole('button', { name: heldDieLabel!, exact: true })).toHaveCount(0);
+      if (orientation === 'landscape-primary') {
+        await page.screenshot({ path: testInfo.outputPath('landscape-blocker.png') });
+      }
+      await page.evaluate(() => {
+        Object.defineProperty(screen.orientation, 'type', { configurable: true, value: 'portrait-primary' });
+        screen.orientation.dispatchEvent(new Event('change'));
+      });
+      await page.setViewportSize({ width: 393, height: 852 });
+      await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+      await expect(game).toBeVisible();
+      await expect(die).toHaveAttribute('aria-label', heldDieLabel!);
+      await expect(roll).toHaveText(rollText!);
+    }
+    await page.screenshot({ path: testInfo.outputPath('portrait-game-restored.png') });
+    await die.click();
+    await expect(die).toHaveAttribute('aria-label', /, not held$/);
+  });
 }
 
 async function expectFieldOverlay(page: Page, testId: string, value: string, screenshotPath?: string) {

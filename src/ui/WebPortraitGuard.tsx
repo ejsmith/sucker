@@ -70,17 +70,23 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  if (showLandscapeGuard) {
-    return (
-      <View style={styles.guard} testID="pwa-landscape-guard">
-        <Text style={styles.icon}>↻</Text>
-        <Text style={styles.title}>Rotate to portrait</Text>
-        <Text style={styles.body}>Sucker! is designed to play upright.</Text>
-      </View>
-    );
-  }
+  if (Platform.OS !== 'web') return children;
 
-  return children;
+  // Keep the routed tree in a stable position. Replacing it with the guard
+  // destroys local games and unsaved forms. display:none blocks rendering,
+  // keyboard focus, and accessibility without unmounting the React subtree.
+  return (
+    <View style={styles.container}>
+      <View style={[styles.container, showLandscapeGuard && styles.hidden]}>{children}</View>
+      {showLandscapeGuard && (
+        <View style={styles.guard} testID="pwa-landscape-guard">
+          <Text style={styles.icon}>↻</Text>
+          <Text style={styles.title}>Rotate to portrait</Text>
+          <Text style={styles.body}>Sucker! is designed to play upright.</Text>
+        </View>
+      )}
+    </View>
+  );
 }
 
 async function lockPortraitOrientation() {
@@ -97,6 +103,13 @@ async function lockPortraitOrientation() {
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    minHeight: 0,
+  },
+  hidden: {
+    display: 'none',
+  },
   body: {
     color: '#FFF3C2',
     fontSize: 16,
