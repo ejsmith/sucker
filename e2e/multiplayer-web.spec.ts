@@ -373,6 +373,8 @@ test('two players can create an invite and play turns through the web UI', async
   await expect(alicePage.getByTestId('game-screen')).toHaveScreenshot('token-menu.png', {
     mask: [alicePage.getByTestId('dice-tray')],
   });
+  await expect(alicePage.getByTestId('token-option-mulligan')).toContainText('computer games only');
+  await expectPressableDisabled(alicePage.getByTestId('token-option-mulligan'));
   await alicePage.getByTestId('token-menu-close-button').click();
   await expect(alicePage.getByTestId('home-score-box-ones')).toBeVisible();
   await alicePage.getByTestId('home-score-box-ones').click();
