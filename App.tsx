@@ -3367,8 +3367,19 @@ export function LocalGameScreen({
 
             <View style={[styles.boardRow, gameLayout.styles.boardRow]}>
               <View style={[styles.scorePair, gameLayout.styles.scorePair]}>
-                <View style={styles.bonusPanel} testID="section-bonus-panel">
-                  <View style={[styles.bonusContent, gameLayout.styles.bonusContent]}>
+                <View
+                  accessible
+                  accessibilityRole="image"
+                  accessibilityLabel={`Section bonus: 35 points at ${upperBonusTarget}. ${homePlayer.name}: ${homeUpperTotal} of ${upperBonusTarget}${homeSectionBonusAwarded ? ', bonus awarded' : ''}. ${opponentPlayer.name}: ${opponentUpperTotal} of ${upperBonusTarget}${opponentUpperTotal >= upperBonusTarget ? ', bonus awarded' : ''}.`}
+                  style={styles.bonusPanel}
+                  testID="section-bonus-panel"
+                >
+                  <View
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    aria-hidden
+                    style={[styles.bonusContent, gameLayout.styles.bonusContent]}
+                  >
                     <View style={[styles.bonusTextBlock, gameLayout.styles.bonusTextBlock]}>
                       <Text
                         maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
