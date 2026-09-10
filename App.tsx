@@ -1112,7 +1112,9 @@ export function LocalGameScreen({
       ? { phase: 'rolled', scope: 'local', targetTurnId: initialLocalSession.preparedPunch.targetTurnId }
       : null,
   );
-  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(initialLocalSession?.preparedPunch?.chanceDie ?? 1);
+  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(
+    initialLocalSession?.preparedPunch?.chanceDie ?? 1,
+  );
   const preparedLocalPunch = useRef(initialLocalSession?.preparedPunch ?? null);
   const isRemoteGame = Boolean(remoteGame && remoteHandlers && myProfileId);
   const [visibleRemoteGame, setVisibleRemoteGame] = useState(
@@ -1813,7 +1815,8 @@ export function LocalGameScreen({
 
   function savedLocalPunch(nextPendingTurn: ComputerSession['pendingTurn']) {
     return nextPendingTurn?.status === 'submitted' && preparedLocalPunch.current?.targetTurnId === nextPendingTurn.id
-      ? preparedLocalPunch.current : null;
+      ? preparedLocalPunch.current
+      : null;
   }
 
   function prepareLocalPunchChance(targetTurnId: string): DieValue {
@@ -3937,7 +3940,11 @@ export function LocalGameScreen({
 
                 <TokenMenuOption
                   cost={suckerTokenCosts.extraRoll}
-                  description={myTokenCount < suckerTokenCosts.extraRoll ? 'Needs 1 token; you have 0.' : 'Add one roll to the Roll button.'}
+                  description={
+                    myTokenCount < suckerTokenCosts.extraRoll
+                      ? 'Needs 1 token; you have 0.'
+                      : 'Add one roll to the Roll button.'
+                  }
                   disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
                   label="Extra Roll"
                   onPress={() => void handleUseExtraRoll()}
@@ -3945,7 +3952,11 @@ export function LocalGameScreen({
                 />
                 <TokenMenuOption
                   cost={suckerTokenCosts.mulligan}
-                  description={myTokenCount < suckerTokenCosts.mulligan ? `Needs ${suckerTokenCosts.mulligan} tokens; you have ${myTokenCount}.` : 'Discard this turn and start it over.'}
+                  description={
+                    myTokenCount < suckerTokenCosts.mulligan
+                      ? `Needs ${suckerTokenCosts.mulligan} tokens; you have ${myTokenCount}.`
+                      : 'Discard this turn and start it over.'
+                  }
                   disabled={!canUseMulligan}
                   label="Mulligan"
                   onPress={() => void handleUseMulligan()}
