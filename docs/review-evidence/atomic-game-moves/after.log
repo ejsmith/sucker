@@ -1,0 +1,6 @@
+Local Supabase partial-write regression
+Injected failure: score action ledger insert, after the app computes a valid score.
+API response: 400 Local review: simulated ledger write failure
+Before: {"phase":"active","score":null,"turns":0,"actions":2}
+After:  {"phase":"active","score":null,"turns":0,"actions":2}
+1 passed (failed move rolled back all writes).
