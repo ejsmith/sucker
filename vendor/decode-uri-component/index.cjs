@@ -120,41 +120,12 @@ function decode(input) {
 }
 
 function customDecodeURIComponent(input) {
-	// Keep track of all the replacements and prefill the map with the `BOM`
-	const replaceMap = {
-		'%FE%FF': '\uFFFD\uFFFD',
-		'%FF%FE': '\uFFFD\uFFFD',
-	};
-
-	// Find percent-encoded runs separated by literal text or lone `%` characters.
-	let match = multiMatcher.exec(input);
-
-	while (match) {
-		try {
-			// Decode as big chunks as possible
-			replaceMap[match[0]] = decodeURIComponent(match[0]);
-		} catch {
-			const result = decode(match[0]);
-
-			if (result !== match[0]) {
-				replaceMap[match[0]] = result;
-			}
-		}
-
-		match = multiMatcher.exec(input);
-	}
-
-	// Add `%C2` at the end of the map to make sure it does not replace the combinator before everything else
-	replaceMap['%C2'] = '\uFFFD';
-
-	const entries = Object.keys(replaceMap);
-
-	for (const key of entries) {
-		// Replace all decoded components
-		input = input.replace(new RegExp(key, 'g'), replaceMap[key]);
-	}
-
-	return input;
+	// Preserve the legacy BOM and incomplete C2 substitutions, but decode each
+	// run once. A replacement map would rescan the full input for every unique run.
+	return input
+		.replace(/%FE%FF|%FF%FE/g, '\uFFFD\uFFFD')
+		.replace(multiMatcher, run => decode(run))
+		.replace(/%C2/g, '\uFFFD');
 }
 
 module.exports = function decodeUriComponent(encodedURI) {

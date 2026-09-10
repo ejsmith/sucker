@@ -28,6 +28,19 @@ test('query-string handles malformed Unicode in bounded time and preserves its C
   `);
 });
 
+test('decoder handles many distinct malformed runs in bounded time', () => {
+  bounded(`
+    const assert = require('node:assert/strict');
+    const decode = require('./vendor/decode-uri-component/index.cjs');
+    const runs = Array.from({length: 15000}, (_, index) =>
+      '%E0%A4%' + (index >> 8).toString(16).padStart(2, '0') +
+      '%' + (index & 255).toString(16).padStart(2, '0'));
+    const expected = runs.map(run => decode(run)).join('|');
+    assert.equal(decode(runs.join('|')), expected);
+    assert.equal(decode('%FE%FFx%C2y%FF%FE'), '\\uFFFD\\uFFFDx\\uFFFDy\\uFFFD\\uFFFD');
+  `);
+});
+
 for (const [format, hex] of [
   ['ICNS', '69636e73000000186963303400000000'],
   ['JPEG XL', '0000000c4a584c200d0a870a00000014667479706a786c20000000006a786c20000000006a786c7000000000'],
