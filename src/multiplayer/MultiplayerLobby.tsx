@@ -1148,6 +1148,7 @@ export function MultiplayerLobby({
           <Text style={lobbyStyles.sectionTitle}>Find a Player</Text>
           <View style={lobbyStyles.row}>
             <TextInput
+              accessibilityLabel="Find a player by username or name"
               autoCapitalize="none"
               onChangeText={setQuery}
               placeholder="Username or name"
