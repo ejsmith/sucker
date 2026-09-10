@@ -1,4 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { loadComputerSession } from '../game/computerSessionStorage';
 import {
   ActivityIndicator,
   Animated,
@@ -46,6 +48,8 @@ import type { RemoteGameRow } from './types';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { StatsPage } from '../ui/StatsPage';
+import { HowToPlayDialog } from '../ui/HowToPlayDialog';
+import { focusAccessibilityTarget, type AccessibilityTargetRef } from '../ui/accessibilityFocus';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
@@ -127,6 +131,8 @@ export function MultiplayerLobby({
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const learnButtonRef = useRef<AccessibilityTargetRef | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
   const [isPullRefreshActive, setIsPullRefreshActive] = useState(false);
@@ -152,6 +158,22 @@ export function MultiplayerLobby({
   const refreshGamesInFlight = useRef<Promise<void> | null>(null);
   const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileId = profile?.id ?? session?.user.id ?? null;
+  const [hasComputerSave, setHasComputerSave] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void loadComputerSession(profileId)
+        .then((saved) => {
+          if (active) setHasComputerSave(Boolean(saved && saved.game.phase !== 'complete'));
+        })
+        .catch(() => {
+          if (active) setHasComputerSave(true);
+        });
+      return () => {
+        active = false;
+      };
+    }, [profileId]),
+  );
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
@@ -174,8 +196,20 @@ export function MultiplayerLobby({
 
   function renderShell(children: ReactNode) {
     const shell = (
-      <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
+      <View
+        aria-hidden={Platform.OS === 'web' ? showHowToPlay : undefined}
+        style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]}
+        testID="multiplayer-lobby-shell"
+      >
         {children}
+        {showHowToPlay && (
+          <HowToPlayDialog
+            onClose={() => {
+              setShowHowToPlay(false);
+              requestAnimationFrame(() => focusAccessibilityTarget(learnButtonRef.current));
+            }}
+          />
+        )}
       </View>
     );
 
@@ -786,7 +820,15 @@ export function MultiplayerLobby({
             style={({ pressed }) => [lobbyStyles.soloButton, pressed && lobbyStyles.pressed]}
             testID="play-computer-button"
           >
-            <Text style={lobbyStyles.soloButtonText}>Play Computer</Text>
+            <Text style={lobbyStyles.soloButtonText}>{hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}</Text>
+          </Pressable>
+          <Pressable
+            ref={learnButtonRef}
+            onPress={() => setShowHowToPlay(true)}
+            style={lobbyStyles.helpButton}
+            testID="learn-to-play-button"
+          >
+            <Text style={lobbyStyles.helpButtonText}>New here? Learn to play</Text>
           </Pressable>
         </View>
         {showLocalTestLogin && (
@@ -1370,6 +1412,7 @@ export function MultiplayerLobby({
 
         <Pressable
           onPress={() => void endSession()}
+          disabled={isLoading}
           style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
           testID="sign-out-button"
         >
@@ -1624,9 +1667,19 @@ export function MultiplayerLobby({
             ]}
             testID="play-computer-button"
           >
-            <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
+            <Text style={lobbyStyles.secondaryButtonText}>
+              {hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}
+            </Text>
           </Pressable>
         </View>
+        <Pressable
+          ref={learnButtonRef}
+          onPress={() => setShowHowToPlay(true)}
+          style={lobbyStyles.helpButton}
+          testID="learn-to-play-button"
+        >
+          <Text style={lobbyStyles.helpButtonText}>How to Play</Text>
+        </Pressable>
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
         {(message || error) && (
@@ -2413,6 +2466,8 @@ function SuckerLobbyTitle() {
 }
 
 const lobbyStyles = StyleSheet.create({
+  helpButton: { padding: 12, alignItems: 'center' },
+  helpButtonText: { color: '#FFF3C2', fontSize: 16, fontWeight: '600', textDecorationLine: 'underline' },
   accountDivider: {
     backgroundColor: '#8F3B10',
     height: 1,

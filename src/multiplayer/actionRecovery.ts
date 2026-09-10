@@ -16,6 +16,18 @@ export type RecoveredMultiplayerAction = {
   result: MultiplayerActionResult | RemoveGameActionResult;
 };
 
+export function latestRecoveredGameAction(recovered: RecoveredMultiplayerAction[]) {
+  return [...recovered]
+    .reverse()
+    .find(
+      (item) =>
+        item.action.type !== 'taunt' &&
+        item.action.type !== 'prepare_sucker_punch' &&
+        'game' in item.result &&
+        Boolean(item.result.game),
+    );
+}
+
 export function createUuidV4(randomBytes: Uint8Array) {
   if (randomBytes.length !== 16) {
     throw new Error('UUID generation requires exactly 16 random bytes.');
@@ -106,6 +118,8 @@ export function getActionKey(action: MultiplayerAction) {
       return JSON.stringify([action.type, action.gameId, action.category]);
     case 'sucker_punch':
       return JSON.stringify([action.type, action.gameId, action.turnId, action.chanceDie ?? null]);
+    case 'prepare_sucker_punch':
+      return JSON.stringify([action.type, action.gameId, action.turnId]);
   }
 }
 

@@ -35,6 +35,29 @@ Deno.test('action request failures release only retryable claims that cannot hav
   );
 });
 
+Deno.test('idempotent Punch preparation releases transient failures after saving the chance', () => {
+  for (const persistenceFailed of [false, true]) {
+    assertEquals(
+      getActionRequestFailureDisposition({
+        actionType: 'prepare_sucker_punch',
+        httpStatus: 503,
+        mutationMayHaveWritten: true,
+        persistenceFailed,
+      }),
+      'release',
+    );
+  }
+  assertEquals(
+    getActionRequestFailureDisposition({
+      actionType: 'sucker_punch',
+      httpStatus: 503,
+      mutationMayHaveWritten: true,
+      persistenceFailed: false,
+    }),
+    'retain',
+  );
+});
+
 Deno.test('database errors are retryable only for transient failure codes', () => {
   for (const code of ['PGRST000', '08006', '53300', '40001', '40P01', '55P03', 'ECONNRESET']) {
     assertEquals(isRetryableDatabaseError({ code }), true);
