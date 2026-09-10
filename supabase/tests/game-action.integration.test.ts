@@ -600,11 +600,12 @@ Deno.test('game-action preserves token accounting when mulligan races other turn
     const accepted = results.filter((result) => result.status === 200).map((result) => result.type);
     if (accepted.length === 0) throw new Error('Expected at least one racing action to succeed.');
     for (const result of results.filter((result) => result.status !== 200)) {
-      assertEquals(result.status, 400);
-      assertIncludes(
-        ['The game changed before your action. Refresh and try again.', 'Roll before playing a score.'],
-        result.body.error,
-      );
+      if (result.status === 409) {
+        assertEquals(result.body.error, 'The game changed on another device. Refresh and try again.');
+      } else {
+        assertEquals(result.status, 400);
+        assertEquals(result.body.error, 'Roll before playing a score.');
+      }
     }
     const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
     const expectedTokens =
@@ -689,8 +690,8 @@ Deno.test('game-action charges every accepted concurrent mulligan exactly once',
   const accepted = results.filter((result) => result.status === 200).length;
   if (accepted === 0) throw new Error('Expected at least one concurrent Mulligan to succeed.');
   for (const result of results.filter((result) => result.status !== 200)) {
-    assertEquals(result.status, 400);
-    assertEquals(result.body.error, 'The game changed before your action. Refresh and try again.');
+    assertEquals(result.status, 409);
+    assertEquals(result.body.error, 'The game changed on another device. Refresh and try again.');
   }
   const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
   const expectedTokens = startingSuckerTokens - accepted * suckerTokenCosts.mulligan;
