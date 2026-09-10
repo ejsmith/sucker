@@ -1,4 +1,72 @@
 import { devices, expect, test, type Page } from '@playwright/test';
+import { createGame } from '../shared/game';
+
+for (const width of [393, 440]) {
+  test(`installed PWA lobby scrolls to the screen edges (${width}px phone)`, async ({ browser }, testInfo) => {
+    const height = width === 440 ? 956 : 852;
+    const context = await browser.newContext({ ...devices['iPhone 13'], viewport: { width, height } });
+    const page = await context.newPage();
+    try {
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
+      });
+      // The safe-area probe is intercepted at navigation, before the provider
+      // measures it. This is deliberately independent of diagnostic presets.
+      await page.route(/\/$/, async (route) => {
+        if (!route.request().isNavigationRequest()) return route.continue();
+        const response = await route.fetch();
+        await route.fulfill({
+          response,
+          body: (await response.text()).replace(
+            '</head>',
+            '<style>[style*="safe-area-inset-top"] { padding: 62px 0 34px !important; }</style></head>',
+          ),
+        });
+      });
+      await mockKeyboardTestAccount(page, 8);
+      await page.goto('/');
+      await page.getByTestId('login-email-input').fill('keyboard@example.com');
+      await page.getByTestId('send-code-button').click();
+      await page.getByTestId('login-code-input').fill('123456');
+      await page.getByTestId('verify-code-button').click();
+      const scroll = page.getByTestId('lobby-games-scroll');
+      await expect(page.getByText('8 active games')).toBeVisible();
+      const shell = page.getByTestId('multiplayer-lobby-shell');
+      await expect.poll(() => shell.boundingBox()).toMatchObject({ x: 0, y: 0, width, height });
+      await expect.poll(() => scroll.boundingBox()).toMatchObject({ y: 0, height });
+      const firstProfile = await page.getByTestId('profile-button').boundingBox();
+      expect(firstProfile!.y).toBeGreaterThan(62);
+      await page.screenshot({ path: testInfo.outputPath('pwa-lobby-top.png') });
+
+      // A real content scroller must extend to the viewport edge. Outer safe
+      // padding used to leave a permanent 46px band that clipped every card.
+      await scroll.evaluate((node) => {
+        node.scrollTop = 300;
+      });
+      await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+      await page.screenshot({ path: testInfo.outputPath('pwa-lobby-scrolled.png') });
+      await scroll.evaluate((node) => {
+        node.scrollTop = node.scrollHeight;
+      });
+      const lastAction = page.getByTestId('play-computer-button');
+      await expect(lastAction).toBeInViewport({ ratio: 1 });
+      const lastBox = await lastAction.boundingBox();
+      expect(lastBox!.y + lastBox!.height).toBeLessThanOrEqual(height - 34);
+      await page.screenshot({ path: testInfo.outputPath('pwa-lobby-bottom.png') });
+      expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(height);
+
+      await page.setViewportSize({ width, height: height - 62 });
+      await expect.poll(() => shell.boundingBox()).toMatchObject({ x: 0, y: 0, width, height: height - 62 });
+      await expect.poll(() => scroll.boundingBox()).toMatchObject({ y: 0, height: height - 62 });
+      await scroll.evaluate((node) => {
+        node.scrollTop = node.scrollHeight;
+      });
+      await expect(lastAction).toBeInViewport({ ratio: 1 });
+    } finally {
+      await context.close();
+    }
+  });
+}
 
 for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
   for (const installed of [false, true]) {
@@ -304,7 +372,7 @@ async function expectFieldOverlay(page: Page, testId: string, value: string, scr
   await expect.poll(() => shell.boundingBox()).toMatchObject({ width: shellSize!.width, height: shellSize!.height });
 }
 
-async function mockKeyboardTestAccount(page: Page) {
+async function mockKeyboardTestAccount(page: Page, gameCount = 0) {
   // Test-only responses: no emails, accounts, or profile changes reach Supabase.
   const user = {
     id: '00000000-0000-4000-8000-000000000001',
@@ -316,6 +384,24 @@ async function mockKeyboardTestAccount(page: Page) {
     created_at: '2026-01-01T00:00:00Z',
   };
   const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  const games = Array.from({ length: gameCount }, (_, index) => {
+    const state = createGame(['Keyboard Tester', `Opponent ${index + 1}`]);
+    state.players[0].id = user.id;
+    return {
+      id: `00000000-0000-4000-8000-${String(index + 2).padStart(12, '0')}`,
+      state,
+      status: 'active',
+      created_by: user.id,
+      current_player_id: user.id,
+      created_at: user.created_at,
+      updated_at: user.created_at,
+      completed_at: null,
+      last_turn_id: null,
+      last_nudged_at: null,
+      winner_id: null,
+      sucker_tokens_spent: {},
+    };
+  });
   const accessToken =
     [
       { alg: 'HS256', typ: 'JWT' },
@@ -339,7 +425,9 @@ async function mockKeyboardTestAccount(page: Page) {
     } else if (pathname === '/auth/v1/user') body = user;
     else if (pathname === '/rest/v1/profiles') {
       body = { id: user.id, display_name: 'Keyboard Tester', username: 'keyboard_tester', avatar_url: null };
-    } else if (pathname === '/rest/v1/games' || pathname === '/rest/v1/head_to_head_stats') body = [];
+    } else if (pathname === '/rest/v1/games') {
+      body = new URL(route.request().url()).searchParams.get('status') === 'eq.complete' ? [] : games;
+    } else if (pathname === '/rest/v1/head_to_head_stats' || pathname === '/rest/v1/turn_actions') body = [];
     else {
       await route.abort();
       return;
