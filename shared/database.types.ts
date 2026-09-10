@@ -349,6 +349,13 @@ export type Database = {
         Row: { profile_id: string; game_id: string; result: Json; recorded_at: string };
         Insert: { profile_id: string; game_id: string; result: Json; recorded_at?: string };
         Update: { result?: Json };
+        Relationships: [{
+          foreignKeyName: 'computer_game_results_profile_id_fkey';
+          columns: ['profile_id'];
+          isOneToOne: false;
+          referencedRelation: 'profiles';
+          referencedColumns: ['id'];
+        }];
       };
       computer_stats: {
         Row: {
