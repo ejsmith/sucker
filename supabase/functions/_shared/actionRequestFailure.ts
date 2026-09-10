@@ -35,14 +35,22 @@ export function isRetryableDatabaseError(error: unknown): boolean {
 }
 
 export function getActionRequestFailureDisposition({
+  actionType,
   httpStatus,
   mutationMayHaveWritten,
   persistenceFailed,
 }: {
+  actionType?: string;
   httpStatus: number;
   mutationMayHaveWritten: boolean;
   persistenceFailed: boolean;
 }): ActionRequestFailureDisposition {
+  // Preparation uses an insert-once attempt key and reads the saved die.
+  // Retrying it cannot spend tokens or reroll an already prepared chance.
+  if (httpStatus >= 500 && actionType === 'prepare_sucker_punch') {
+    return 'release';
+  }
+
   if (persistenceFailed || (httpStatus >= 500 && mutationMayHaveWritten)) {
     return 'retain';
   }

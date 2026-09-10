@@ -1,8 +1,9 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
-import type { Json } from '../../../shared/database.types.ts';
+import { commitGameMove, planGameMove, type GameMovePlan } from '../_shared/gameMoveTransaction.ts';
 import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
+import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import {
   createEmptyScorecard,
   type Dice,
@@ -53,6 +54,7 @@ type ActionResult = {
   notificationProfileIds?: string[];
   removedGameId?: string;
   suckerPunchOutcome?: SuckerPunchOutcome;
+  suckerPunchChanceDie?: DieValue;
 };
 type NotificationContent = {
   body: string;
@@ -96,10 +98,11 @@ type ActionInput =
     }
   | { type: 'pass_response'; gameId: string }
   | { type: 'mulligan'; gameId: string }
+  | { type: 'prepare_sucker_punch'; gameId: string; turnId: string }
   | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 type Action = ActionInput & { requestId: string };
-type ActionMutationState = { mayHaveWritten: boolean };
+type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -163,8 +166,31 @@ Deno.serve(async (request) => {
 
     const mutationState: ActionMutationState = { mayHaveWritten: false };
     try {
-      const result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
-      await completeActionRequest(admin, user.id, action, result, 200);
+      let result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
+      if (mutationState.plan) {
+        if (!result.game) throw new Error('A game move must return its game.');
+        mutationState.mayHaveWritten = true;
+        try {
+          result = await commitGameMove(admin, mutationState.plan, user.id, action.requestId, {
+            ...result,
+            game: result.game,
+          });
+        } catch (commitError) {
+          // A PostgreSQL error confirms rollback. A transport error can hide a
+          // successful commit, so keep that request pending for reconciliation.
+          if (
+            typeof commitError === 'object' &&
+            commitError &&
+            'code' in commitError &&
+            /^[0-9A-Z]{5}$/.test(String(commitError.code)) &&
+            !String(commitError.code).startsWith('08')
+          )
+            mutationState.mayHaveWritten = false;
+          throw commitError;
+        }
+      } else {
+        await completeActionRequest(admin, user.id, action, result, 200);
+      }
       timer.logIfSlow(actionType);
       queueActionNotifications(admin, user.id, action, result);
       return json(result, 200, timer.toHeaders());
@@ -172,6 +198,7 @@ Deno.serve(async (request) => {
       const message = toErrorMessage(actionError);
       const status = toErrorStatus(actionError);
       const disposition = getActionRequestFailureDisposition({
+        actionType: action.type,
         httpStatus: status,
         mutationMayHaveWritten: mutationState.mayHaveWritten,
         persistenceFailed: actionError instanceof ActionRequestPersistenceError,
@@ -243,6 +270,8 @@ async function applyAction(
       return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
       return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
+    case 'prepare_sucker_punch':
+      return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId, mutationState);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -674,25 +703,12 @@ function buildTurnSubmittedNotification(
   actorName: string,
   latestTurn: TurnRow | null,
 ): NotificationContent {
-  if (latestTurn && isSuckerRoll(toDice(latestTurn.dice))) {
-    return {
-      body: `${actorName} rolled a SUCKER!`,
-      title: 'SUCKER!!',
-    };
-  }
-
-  if (action.type === 'scratch_category') {
-    return {
-      body: `${actorName} scratched ${formatScoreCategory(action.category)}.`,
-      title: 'Your turn',
-    };
-  }
-
-  const scoreText = latestTurn ? ` for ${latestTurn.score}` : '';
-  return {
-    body: `${actorName} played ${formatScoreCategory(action.category)}${scoreText}.`,
-    title: 'Your turn',
-  };
+  return buildScoredTurnNotification(
+    actorName,
+    formatScoreCategory(action.category),
+    action.type === 'scratch_category',
+    latestTurn,
+  );
 }
 
 function buildGameOverNotification(game: GameRow, recipientId: string): NotificationContent {
@@ -832,7 +848,20 @@ function toAction(value: unknown): Action {
         requestId,
         type,
       };
-    case 'sucker_punch':
+    case 'sucker_punch': {
+      const chanceDie = action.chanceDie;
+      if (chanceDie !== undefined && (!Number.isInteger(chanceDie) || Number(chanceDie) < 1 || Number(chanceDie) > 6)) {
+        throw new Error('Invalid Sucker Punch chance die.');
+      }
+      return {
+        gameId: readString(action, 'gameId'),
+        requestId,
+        turnId: readString(action, 'turnId'),
+        type,
+        chanceDie: chanceDie as DieValue | undefined,
+      };
+    }
+    case 'prepare_sucker_punch':
     case 'sucker_blocker':
       return {
         gameId: readString(action, 'gameId'),
@@ -1394,31 +1423,9 @@ async function loadTauntOpportunity(
   return null;
 }
 
-async function commitGameMutation(
-  admin: DbClient,
-  game: GameRow,
-  changes: Database['public']['Tables']['games']['Update'],
-  mutationState: ActionMutationState,
-  turn?: Database['public']['Tables']['turns']['Insert'],
-): Promise<GameRow> {
-  const nextGame = { ...game, ...changes };
-  const complete = nextGame.state.phase === 'complete';
-  mutationState.mayHaveWritten = true;
-  const { data, error } = await admin.rpc('commit_game_mutation', {
-    target_game_id: game.id,
-    expected_updated_at: game.updated_at,
-    next_game: nextGame as unknown as Json,
-    player_updates: nextGame.state.players.map((player) => ({
-      player_id: player.id,
-      final_score: complete ? totalScore(player.scorecard) : null,
-      sucker_tokens: player.suckerTokens,
-      upper_bonus_awarded: upperBonus(player.scorecard) > 0,
-    })),
-    submitted_turn: (turn ?? null) as unknown as Json,
-  });
-  if (error) throw error;
-  if (!data) throw new Error('The game changed before your action. Refresh and try again.');
-  return data as unknown as GameRow;
+function stageGameMove(mutationState: ActionMutationState, game: GameRow, patch: GameMovePlan['patch']): GameRow {
+  mutationState.plan = planGameMove(game, patch);
+  return { ...game, ...patch } as GameRow;
 }
 
 async function mutateGame(
@@ -1433,19 +1440,17 @@ async function mutateGame(
   const game = await loadGameForActor(admin, gameId, actorId);
   const nextState = mutate(game.state);
   const nextPlayer = nextState.players[nextState.currentPlayerIndex];
-  const updatedGame = await commitGameMutation(
-    admin,
-    game,
-    {
-      current_player_id: nextState.phase === 'complete' ? null : nextPlayer.id,
-      state: nextState,
-      status: nextState.phase === 'complete' ? 'complete' : 'active',
-    },
-    mutationState,
-  );
+  const data = stageGameMove(mutationState, game, {
+    current_player_id: nextState.phase === 'complete' ? null : nextPlayer.id,
+    state: nextState,
+    status: nextState.phase === 'complete' ? 'complete' : 'active',
+  });
 
-  await insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState));
-  return { game: updatedGame };
+  await Promise.all([
+    syncGamePlayers(admin, gameId, nextState, nextState.phase === 'complete', mutationState.plan),
+    insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState), mutationState.plan),
+  ]);
+  return { game: data };
 }
 
 async function scoreRemoteTurn(
@@ -1520,34 +1525,38 @@ async function scoreRemoteTurn(
     player_id: actorId,
     roll_count: state.rollNumber,
     score: turnScore,
-    status: complete ? ('finalized' as const) : ('submitted' as const),
+    status: complete ? 'finalized' : 'submitted',
     turn_index: turnIndex,
   };
-
-  const updatedGame = await commitGameMutation(
-    admin,
-    game,
-    {
-      completed_at: complete ? new Date().toISOString() : null,
-      current_player_id: complete ? null : players[nextState.currentPlayerIndex].id,
-      last_turn_id: turn.id,
-      state: nextState,
-      status: complete ? 'complete' : 'response_window',
-      winner_id: winner?.id ?? null,
-    },
-    mutationState,
-    turn,
-  );
-
-  await insertAction(admin, gameId, actorId, scratch ? 'scratch_category' : 'score_category', {
-    category,
-    scratched: scratch,
-    score: turnScore,
-    turnId: turn.id,
+  const updatedGame = stageGameMove(mutationState, game, {
+    completed_at: complete ? new Date().toISOString() : null,
+    current_player_id: complete ? null : players[nextState.currentPlayerIndex].id,
+    last_turn_id: turn.id,
+    state: nextState,
+    status: complete ? 'complete' : 'response_window',
+    winner_id: winner?.id ?? null,
   });
+  mutationState.plan!.writes.push({ table: 'turns', operation: 'insert', data: turn });
+
+  await Promise.all([
+    syncGamePlayers(admin, gameId, nextState, complete, mutationState.plan),
+    insertAction(
+      admin,
+      gameId,
+      actorId,
+      scratch ? 'scratch_category' : 'score_category',
+      {
+        category,
+        scratched: scratch,
+        score: turnScore,
+        turnId: turn.id,
+      },
+      mutationState.plan,
+    ),
+  ]);
 
   if (complete) {
-    await writeCompletedGameStats(admin, gameId, players, winner?.id ?? null);
+    await planCompletedGameStats(admin, gameId, players, winner?.id ?? null, mutationState.plan!);
   }
 
   return {
@@ -1576,11 +1585,18 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
     throw new Error('Only the responding player can pass.');
   }
 
-  const updatedGame = await commitGameMutation(admin, game, { status: 'active' }, mutationState);
+  const updatedGame = stageGameMove(mutationState, game, { status: 'active' });
 
-  await insertAction(admin, gameId, actorId, 'pass_response', {
-    turnId: game.last_turn_id,
-  });
+  await insertAction(
+    admin,
+    gameId,
+    actorId,
+    'pass_response',
+    {
+      turnId: game.last_turn_id,
+    },
+    mutationState.plan,
+  );
   return { game: updatedGame };
 }
 
@@ -1614,39 +1630,38 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   const nextState = turn
     ? removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan)
     : mulliganCurrentTurn(state);
-  const updatedGame = await commitGameMutation(
-    admin,
-    game,
-    {
-      current_player_id: actorId,
-      state: nextState,
-      status: 'active',
-    },
-    mutationState,
-  );
+  const updatedGame = stageGameMove(mutationState, game, {
+    current_player_id: actorId,
+    state: nextState,
+    status: 'active',
+  });
 
   await Promise.all([
-    ...(turn ? [updateTurnStatus(admin, turn.id, 'mulliganed')] : []),
-    insertTokenEvent(admin, {
-      event_type: 'mulligan',
-      game_id: gameId,
-      player_id: actorId,
-      target_turn_id: turn?.id ?? null,
-      token_delta: -suckerTokenCosts.mulligan,
-    }),
-    insertAction(admin, gameId, actorId, 'mulligan', turn ? { turnId: turn.id } : {}),
+    ...(turn ? [updateTurnStatus(admin, turn.id, 'mulliganed', mutationState.plan)] : []),
+    insertTokenEvent(
+      admin,
+      {
+        event_type: 'mulligan',
+        game_id: gameId,
+        player_id: actorId,
+        target_turn_id: turn?.id ?? null,
+        token_delta: -suckerTokenCosts.mulligan,
+      },
+      mutationState.plan,
+    ),
+    syncGamePlayers(admin, gameId, nextState, false, mutationState.plan),
+    insertAction(admin, gameId, actorId, 'mulligan', turn ? { turnId: turn.id } : {}, mutationState.plan),
   ]);
 
   return { game: updatedGame };
 }
 
-async function suckerPunchTurn(
+async function prepareSuckerPunchChance(
   admin: DbClient,
   actorId: string,
   gameId: string,
   turnId: string,
   mutationState: ActionMutationState,
-  requestedChanceDie?: DieValue,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
@@ -1657,6 +1672,7 @@ async function suckerPunchTurn(
   if (turn.player_id === actorId) {
     throw new Error('You cannot Sucker Punch your own turn.');
   }
+  if (game.current_player_id !== actorId) throw new Error('Only the responding player can Sucker Punch.');
 
   const state = game.state;
   const actor = findPlayer(state, actorId);
@@ -1664,14 +1680,54 @@ async function suckerPunchTurn(
     throw new Error(`You need ${suckerTokenCosts.suckerPunch} Sucker Tokens to Sucker Punch.`);
   }
 
-  if (
-    requestedChanceDie !== undefined &&
-    (!Number.isInteger(requestedChanceDie) || requestedChanceDie < 1 || requestedChanceDie > 6)
-  ) {
-    throw new Error('Sucker Punch chance die must be between 1 and 6.');
-  }
+  mutationState.mayHaveWritten = true;
+  const { error: insertError } = await admin.from('sucker_punch_attempts').upsert(
+    {
+      game_id: gameId,
+      actor_id: actorId,
+      turn_id: turnId,
+      chance_die: rollDie(edgeSuckerPunchDieRandom),
+    },
+    { onConflict: 'game_id,actor_id,turn_id', ignoreDuplicates: true },
+  );
+  if (insertError) throw insertError;
+  const { data: attempt, error } = await admin
+    .from('sucker_punch_attempts')
+    .select('chance_die')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .eq('turn_id', turnId)
+    .single();
+  if (error) throw error;
+  return { game, suckerPunchChanceDie: attempt.chance_die as DieValue };
+}
 
-  const chanceDie = requestedChanceDie ?? rollDie(edgeSuckerPunchDieRandom);
+async function suckerPunchTurn(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  turnId: string,
+  mutationState: ActionMutationState,
+  displayedChanceDie?: DieValue,
+) {
+  // A throw must use a chance that was prepared and shown before committing.
+  const { data: existingChance, error: chanceError } = await admin
+    .from('sucker_punch_attempts')
+    .select('chance_die')
+    .eq('game_id', gameId)
+    .eq('actor_id', actorId)
+    .eq('turn_id', turnId)
+    .maybeSingle();
+  if (chanceError) throw chanceError;
+  if (!existingChance) throw new Error('Update Sucker and roll the Sucker Punch chance before throwing.');
+  if (displayedChanceDie !== undefined && displayedChanceDie !== existingChance.chance_die) {
+    throw new Error('The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
+  }
+  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, mutationState);
+  const game = prepared.game;
+  const state = game.state;
+  const turn = await loadTurn(admin, turnId);
+  const chanceDie = prepared.suckerPunchChanceDie;
   const outcome = resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom);
   let nextState = updatePlayerTokens(state, actorId, -suckerTokenCosts.suckerPunch);
   if (outcome.landed) {
@@ -1679,32 +1735,39 @@ async function suckerPunchTurn(
   }
   const nextPlayerId = outcome.landed ? turn.player_id : actorId;
 
-  const updatedGame = await commitGameMutation(
-    admin,
-    game,
-    {
-      current_player_id: nextPlayerId,
-      state: nextState,
-      status: 'active',
-    },
-    mutationState,
-  );
+  const updatedGame = stageGameMove(mutationState, game, {
+    current_player_id: nextPlayerId,
+    state: nextState,
+    status: 'active',
+  });
 
   await Promise.all([
-    outcome.landed ? updateTurnStatus(admin, turn.id, 'punched') : Promise.resolve(),
-    insertTokenEvent(admin, {
-      event_type: 'sucker_punch',
-      game_id: gameId,
-      player_id: actorId,
-      target_turn_id: turn.id,
-      token_delta: -suckerTokenCosts.suckerPunch,
-    }),
-    insertAction(admin, gameId, actorId, 'sucker_punch', {
-      ...buildSuckerPunchActionPayload(turn.player_id, outcome, {
-        id: turn.id,
-        turnIndex: turn.turn_index,
-      }),
-    }),
+    outcome.landed ? updateTurnStatus(admin, turn.id, 'punched', mutationState.plan) : Promise.resolve(),
+    insertTokenEvent(
+      admin,
+      {
+        event_type: 'sucker_punch',
+        game_id: gameId,
+        player_id: actorId,
+        target_turn_id: turn.id,
+        token_delta: -suckerTokenCosts.suckerPunch,
+      },
+      mutationState.plan,
+    ),
+    syncGamePlayers(admin, gameId, nextState, false, mutationState.plan),
+    insertAction(
+      admin,
+      gameId,
+      actorId,
+      'sucker_punch',
+      {
+        ...buildSuckerPunchActionPayload(turn.player_id, outcome, {
+          id: turn.id,
+          turnIndex: turn.turn_index,
+        }),
+      },
+      mutationState.plan,
+    ),
   ]);
 
   return { game: updatedGame, notificationProfileIds: [turn.player_id], suckerPunchOutcome: outcome };
@@ -1789,6 +1852,47 @@ async function loadNextTurnIndex(admin: DbClient, gameId: string, lastTurnId: st
   return Math.max(latestTurn?.turn_index ?? 0, lastTurn?.turn_index ?? 0) + 1;
 }
 
+async function syncGamePlayers(
+  admin: DbClient,
+  gameId: string,
+  state: GameState,
+  complete: boolean,
+  plan?: GameMovePlan,
+) {
+  if (plan) {
+    for (const player of state.players) {
+      plan.writes.push({
+        table: 'game_players',
+        operation: 'update',
+        match: { game_id: gameId, player_id: player.id },
+        data: {
+          final_score: complete ? totalScore(player.scorecard) : null,
+          sucker_tokens: player.suckerTokens,
+          upper_bonus_awarded: upperBonus(player.scorecard) > 0,
+        },
+      });
+    }
+    return;
+  }
+  const results = await Promise.all(
+    state.players.map((player) =>
+      admin
+        .from('game_players')
+        .update({
+          final_score: complete ? totalScore(player.scorecard) : null,
+          sucker_tokens: player.suckerTokens,
+          upper_bonus_awarded: upperBonus(player.scorecard) > 0,
+        })
+        .eq('game_id', gameId)
+        .eq('player_id', player.id),
+    ),
+  );
+
+  const error = results.find((result) => result.error)?.error;
+  if (error) {
+    throw error;
+  }
+}
 function findPlayer(state: GameState, playerId: string): Player {
   const player = state.players.find((candidate) => candidate.id === playerId);
   if (!player) {
@@ -1835,7 +1939,7 @@ function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tok
 
 function restoreScoredTurn(state: GameState, turn: TurnRow, tokenDelta: number): GameState {
   const category = toScoreCategory(turn.category);
-  const hasBonus = category !== 'sucker' && isSuckerRoll(toDice(turn.dice));
+  const hasBonus = turn.roll_count > 0 && category !== 'sucker' && isSuckerRoll(toDice(turn.dice));
   const players = state.players.map((player) => {
     if (player.id !== turn.player_id) {
       return player;
@@ -1998,15 +2102,18 @@ function assertCurrentPlayer(state: GameState, actorId: string) {
   }
 }
 
-async function writeCompletedGameStats(admin: DbClient, gameId: string, players: Player[], winnerId: string | null) {
+async function planCompletedGameStats(
+  admin: DbClient,
+  gameId: string,
+  players: Player[],
+  winnerId: string | null,
+  plan: GameMovePlan,
+) {
   for (const player of players) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
-    const result = await buildResult(admin, gameId, player, opponent, players, winnerId);
+    const result = await buildResult(admin, gameId, player, opponent, players, winnerId, plan);
     const lost = winnerId !== null && !result.won;
-    const { error: resultError } = await admin.from('game_player_results').upsert(result);
-    if (resultError) {
-      throw resultError;
-    }
+    plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
     const { data: existing, error } = await admin
       .from('head_to_head_stats')
       .select('*')
@@ -2019,7 +2126,7 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
     }
 
     if (!existing) {
-      const { error: insertError } = await admin.from('head_to_head_stats').insert({
+      const firstStats = {
         player_id: player.id,
         opponent_id: opponent.id,
         games_played: 1,
@@ -2052,58 +2159,55 @@ async function writeCompletedGameStats(admin: DbClient, gameId: string, players:
         average_sucker_tokens_spent: result.sucker_tokens_spent,
         sucker_tokens_leftover: result.sucker_tokens_leftover,
         average_sucker_tokens_leftover: result.sucker_tokens_leftover,
-      });
-      if (insertError) {
-        throw insertError;
-      }
+      };
+      plan.writes.push({ table: 'head_to_head_stats', operation: 'insert', data: firstStats });
       continue;
     }
 
     const gamesPlayed = existing.games_played + 1;
     const totalScoreValue = existing.total_score + result.final_score;
-    const { error: updateError } = await admin
-      .from('head_to_head_stats')
-      .update({
-        average_score: Number((totalScoreValue / gamesPlayed).toFixed(2)),
-        four_of_a_kind_games: existing.four_of_a_kind_games + (result.four_of_a_kind_count > 0 ? 1 : 0),
-        full_house_games: existing.full_house_games + (result.full_house_count > 0 ? 1 : 0),
-        games_played: gamesPlayed,
-        highest_score: Math.max(existing.highest_score, result.final_score),
-        large_straight_games: existing.large_straight_games + (result.large_straight_count > 0 ? 1 : 0),
-        blowout_losses: existing.blowout_losses + result.blowout_loss,
-        blowout_wins: existing.blowout_wins + result.blowout_win,
-        buzzer_beater_wins: existing.buzzer_beater_wins + result.buzzer_beater_win,
-        comeback_wins: existing.comeback_wins + result.comeback_win,
-        losses: existing.losses + (lost ? 1 : 0),
-        extra_rolls_used: existing.extra_rolls_used + result.extra_rolls_used,
-        forced_rerolls: existing.forced_rerolls + result.forced_rerolls,
-        mulligans_used: existing.mulligans_used + result.mulligans_used,
-        sucker_hunt_misses: existing.sucker_hunt_misses + result.sucker_hunt_misses,
-        sucker_hunts: existing.sucker_hunts + result.sucker_hunts,
-        small_straight_games: existing.small_straight_games + (result.small_straight_count > 0 ? 1 : 0),
-        sucker_blockers_used: existing.sucker_blockers_used + result.sucker_blockers_used,
-        sucker_games: existing.sucker_games + (result.sucker_count > 0 ? 1 : 0),
-        sucker_punches_received: existing.sucker_punches_received + result.sucker_punches_received,
-        sucker_punches_landed: existing.sucker_punches_landed + result.sucker_punches_landed,
-        sucker_punches_used: existing.sucker_punches_used + result.sucker_punches_used,
-        sucker_tokens_leftover: existing.sucker_tokens_leftover + result.sucker_tokens_leftover,
-        average_sucker_tokens_leftover: Number(
-          ((existing.sucker_tokens_leftover + result.sucker_tokens_leftover) / gamesPlayed).toFixed(2),
-        ),
-        sucker_tokens_spent: existing.sucker_tokens_spent + result.sucker_tokens_spent,
-        average_sucker_tokens_spent: Number(
-          ((existing.sucker_tokens_spent + result.sucker_tokens_spent) / gamesPlayed).toFixed(2),
-        ),
-        three_of_a_kind_games: existing.three_of_a_kind_games + (result.three_of_a_kind_count > 0 ? 1 : 0),
-        total_score: totalScoreValue,
-        upper_bonus_games: existing.upper_bonus_games + (result.upper_bonus_awarded ? 1 : 0),
-        wins: existing.wins + (result.won ? 1 : 0),
-      })
-      .eq('player_id', player.id)
-      .eq('opponent_id', opponent.id);
-    if (updateError) {
-      throw updateError;
-    }
+    const updatedStats = {
+      average_score: Number((totalScoreValue / gamesPlayed).toFixed(2)),
+      four_of_a_kind_games: existing.four_of_a_kind_games + (result.four_of_a_kind_count > 0 ? 1 : 0),
+      full_house_games: existing.full_house_games + (result.full_house_count > 0 ? 1 : 0),
+      games_played: gamesPlayed,
+      highest_score: Math.max(existing.highest_score, result.final_score),
+      large_straight_games: existing.large_straight_games + (result.large_straight_count > 0 ? 1 : 0),
+      blowout_losses: existing.blowout_losses + result.blowout_loss,
+      blowout_wins: existing.blowout_wins + result.blowout_win,
+      buzzer_beater_wins: existing.buzzer_beater_wins + result.buzzer_beater_win,
+      comeback_wins: existing.comeback_wins + result.comeback_win,
+      losses: existing.losses + (lost ? 1 : 0),
+      extra_rolls_used: existing.extra_rolls_used + result.extra_rolls_used,
+      forced_rerolls: existing.forced_rerolls + result.forced_rerolls,
+      mulligans_used: existing.mulligans_used + result.mulligans_used,
+      sucker_hunt_misses: existing.sucker_hunt_misses + result.sucker_hunt_misses,
+      sucker_hunts: existing.sucker_hunts + result.sucker_hunts,
+      small_straight_games: existing.small_straight_games + (result.small_straight_count > 0 ? 1 : 0),
+      sucker_blockers_used: existing.sucker_blockers_used + result.sucker_blockers_used,
+      sucker_games: existing.sucker_games + (result.sucker_count > 0 ? 1 : 0),
+      sucker_punches_received: existing.sucker_punches_received + result.sucker_punches_received,
+      sucker_punches_landed: existing.sucker_punches_landed + result.sucker_punches_landed,
+      sucker_punches_used: existing.sucker_punches_used + result.sucker_punches_used,
+      sucker_tokens_leftover: existing.sucker_tokens_leftover + result.sucker_tokens_leftover,
+      average_sucker_tokens_leftover: Number(
+        ((existing.sucker_tokens_leftover + result.sucker_tokens_leftover) / gamesPlayed).toFixed(2),
+      ),
+      sucker_tokens_spent: existing.sucker_tokens_spent + result.sucker_tokens_spent,
+      average_sucker_tokens_spent: Number(
+        ((existing.sucker_tokens_spent + result.sucker_tokens_spent) / gamesPlayed).toFixed(2),
+      ),
+      three_of_a_kind_games: existing.three_of_a_kind_games + (result.three_of_a_kind_count > 0 ? 1 : 0),
+      total_score: totalScoreValue,
+      upper_bonus_games: existing.upper_bonus_games + (result.upper_bonus_awarded ? 1 : 0),
+      wins: existing.wins + (result.won ? 1 : 0),
+    };
+    plan.writes.push({
+      table: 'head_to_head_stats',
+      operation: 'update',
+      data: { ...updatedStats, player_id: player.id, opponent_id: opponent.id },
+      match: { player_id: player.id, opponent_id: opponent.id },
+    });
   }
 }
 
@@ -2114,11 +2218,18 @@ async function buildResult(
   opponent: Player,
   players: Player[],
   winnerId: string | null,
+  plan?: GameMovePlan,
 ) {
   const [actions, turns] = await Promise.all([
     loadSuckerStatActions(admin, gameId),
     loadSuckerStatTurns(admin, gameId),
   ]);
+  if (plan) {
+    // The final turn is part of this transaction and is not in the database yet.
+    for (const write of plan.writes) {
+      if (write.table === 'turns' && write.operation === 'insert') turns.push(write.data as unknown as SuckerStatTurn);
+    }
+  }
 
   return buildCompletedPlayerStats({
     actions,
@@ -2166,7 +2277,16 @@ async function insertAction(
   actorId: string,
   actionType: ActionType,
   payload: Record<string, unknown>,
+  plan?: GameMovePlan,
 ) {
+  if (plan) {
+    plan.writes.push({
+      table: 'turn_actions',
+      operation: 'insert',
+      data: { action_type: actionType, actor_id: actorId, game_id: gameId, payload },
+    });
+    return;
+  }
   const { error } = await admin.from('turn_actions').insert({
     action_type: actionType,
     actor_id: actorId,
@@ -2179,14 +2299,31 @@ async function insertAction(
   }
 }
 
-async function updateTurnStatus(admin: DbClient, turnId: string, status: TurnRow['status']) {
+async function updateTurnStatus(admin: DbClient, turnId: string, status: TurnRow['status'], plan?: GameMovePlan) {
+  if (plan) {
+    plan.writes.push({
+      table: 'turns',
+      operation: 'update',
+      data: { status },
+      match: { id: turnId, game_id: plan.original.id },
+    });
+    return;
+  }
   const { error } = await admin.from('turns').update({ status }).eq('id', turnId);
   if (error) {
     throw error;
   }
 }
 
-async function insertTokenEvent(admin: DbClient, event: Database['public']['Tables']['token_events']['Insert']) {
+async function insertTokenEvent(
+  admin: DbClient,
+  event: Database['public']['Tables']['token_events']['Insert'],
+  plan?: GameMovePlan,
+) {
+  if (plan) {
+    plan.writes.push({ table: 'token_events', operation: 'insert', data: event });
+    return;
+  }
   const { error } = await admin.from('token_events').insert(event);
   if (error) {
     throw error;
@@ -2232,6 +2369,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function toErrorStatus(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'PT409') return 409;
   if (error instanceof ActionRequestPersistenceError) {
     return 503;
   }

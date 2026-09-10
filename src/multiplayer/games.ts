@@ -522,6 +522,10 @@ export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanc
   return applyMultiplayerAction({ chanceDie, gameId, turnId, type: 'sucker_punch' });
 }
 
+export async function prepareRemoteSuckerPunch(gameId: string, turnId: string) {
+  return applyMultiplayerAction({ gameId, turnId, type: 'prepare_sucker_punch' });
+}
+
 export async function nudgeRemoteGame(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'nudge_turn' });
 }
