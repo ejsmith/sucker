@@ -101,7 +101,7 @@ for (const failure of ['outage', 'lost acknowledgement'] as const) {
       await expect
         .poll(() =>
           page.evaluate(
-            (owner) => JSON.parse(localStorage.getItem(`sucker.computer-results.v1.${owner}`) ?? '[]').length,
+            (owner) => Object.keys(localStorage).filter((key) => key.startsWith(`sucker.computer-result.v2.${encodeURIComponent(owner)}.`)).length,
             profileId,
           ),
         )

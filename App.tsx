@@ -48,9 +48,9 @@ import {
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
-import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import { createGameRefresh, startRecoveryRefresh } from './src/multiplayer/gameRefresh';
 import { createComputerGame } from './src/game/createComputerGame';
+import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,

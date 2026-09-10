@@ -8,31 +8,40 @@ type Stats = Database['public']['Tables']['computer_stats']['Row'];
 let storageWrites: Promise<unknown> = Promise.resolve();
 const deliveries = new Map<string, Promise<Stats | null>>();
 const queueKey = (ownerId: string) => `sucker.computer-results.v1.${ownerId}`;
+const resultPrefix = (ownerId: string) => `sucker.computer-result.v2.${encodeURIComponent(ownerId)}.`;
+const resultKey = (ownerId: string, gameId: string) => `${resultPrefix(ownerId)}${encodeURIComponent(gameId)}`;
 
 async function readQueue(ownerId: string): Promise<PendingResult[]> {
+  // Convert old array saves before reading per-game records. Replayed uploads
+  // remain safe if another tab migrates the same legacy snapshot concurrently.
   const raw = await AsyncStorage.getItem(queueKey(ownerId));
-  if (raw === null) return [];
-  const queue = JSON.parse(raw);
-  if (!Array.isArray(queue) || queue.some((entry) => !entry || typeof entry.gameId !== 'string' || !entry.payload)) {
-    throw new Error('The saved computer result queue could not be read.');
+  if (raw !== null) {
+    const legacy = JSON.parse(raw);
+    if (!Array.isArray(legacy) || legacy.some((entry) => !entry || typeof entry.gameId !== 'string' || !entry.payload)) {
+      throw new Error('The saved computer result queue could not be read.');
+    }
+    for (const entry of legacy) {
+      await AsyncStorage.setItem(resultKey(ownerId, entry.gameId), JSON.stringify(entry));
+    }
+    await AsyncStorage.removeItem(queueKey(ownerId));
   }
-  return queue;
-}
-
-function updateQueue(ownerId: string, update: (queue: PendingResult[]) => PendingResult[]) {
-  const write = async () => {
-    const queue = update(await readQueue(ownerId));
-    await AsyncStorage.setItem(queueKey(ownerId), JSON.stringify(queue));
-  };
-  const result = storageWrites.then(write, write);
-  storageWrites = result;
-  return result;
+  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(resultPrefix(ownerId)));
+  const records = await AsyncStorage.multiGet(keys);
+  return records.flatMap(([key, serialized]) => {
+    if (serialized === null) return []; // Another tab acknowledged it.
+    const entry = JSON.parse(serialized);
+    if (!entry || typeof entry.gameId !== 'string' || !entry.payload || resultKey(ownerId, entry.gameId) !== key) {
+      throw new Error('The saved computer result could not be read.');
+    }
+    return [entry as PendingResult];
+  });
 }
 
 export function enqueueComputerResult(ownerId: string, gameId: string, payload: ComputerResultPayload) {
-  return updateQueue(ownerId, (queue) =>
-    queue.some((entry) => entry.gameId === gameId) ? queue : [...queue, { gameId, payload }],
-  );
+  const write = () => AsyncStorage.setItem(resultKey(ownerId, gameId), JSON.stringify({ gameId, payload }));
+  const result = storageWrites.then(write, write);
+  storageWrites = result;
+  return result;
 }
 
 export async function flushComputerResults(expectedOwnerId?: string): Promise<Stats | null> {
@@ -62,7 +71,7 @@ export async function flushComputerResults(expectedOwnerId?: string): Promise<St
       if (uploadError) throw uploadError;
       if (!data) throw new Error('The computer result was not acknowledged.');
       latest = data;
-      await updateQueue(ownerId, (queue) => queue.filter((entry) => entry.gameId !== next.gameId));
+      await AsyncStorage.removeItem(resultKey(ownerId, next.gameId));
     }
   };
   const pending = deliver().finally(() => deliveries.delete(ownerId));
