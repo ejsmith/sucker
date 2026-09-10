@@ -45,6 +45,10 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
         ['new-password-input', 'test-only-password'],
         ['confirm-password-input', 'test-only-password'],
       ]) {
+        if (testId === 'new-password-input') {
+          await page.getByTestId('toggle-password-editor').click();
+          await expect(page.getByTestId('new-password-input')).toBeVisible();
+        }
         await expectFieldOverlay(
           page,
           testId,

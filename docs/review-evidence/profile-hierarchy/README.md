@@ -12,3 +12,7 @@ CI follow-up: the only failed check compared macOS's 349 × 319 password-form ca
 Signing out with an expanded editor retained both the open form and abandoned password draft after signing back in. Editor state now belongs to the authenticated session owner; changing that owner clears only the editor and draft. The browser regression signs out and back in within one page, verifies the collapsed editor, and reopens an empty password field. `session-before.png` and `session-after.png` show the difference. Typecheck and lint pass.
 
 Review caught the first reset implementation replacing a pending invitation route. A signed-out `?invite=ABC123` opened Games after sign-in instead of the prefilled Join form. The reset now preserves navigation. Both the invitation and session-reset regressions pass; `invite-before.png` and `invite-after.png` capture the result.
+
+## Keyboard coverage after the main rebase
+
+Main's newer keyboard test waited for a password field while the editor was collapsed. Reproduced locally with mocked account responses: the test timed out waiting for `new-password-input`. It now opens `toggle-password-editor` before exercising both password fields, preserving all keyboard geometry and focus assertions. All six Chromium account-entry scenarios pass. `keyboard-before.png` shows the collapsed editor where the old test stopped; `keyboard-after.png` shows the form after the passing scenario. No application behavior changed.
