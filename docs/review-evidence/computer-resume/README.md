@@ -1,0 +1,49 @@
+# Computer-game resume
+
+CI follow-up: save hydration delayed the board mount and exposed a lost development viewport query during navigation. The asymmetric fixture reproduced 0 px left inset instead of 12 (`geometry-before.png`). The lobby route now carries the existing development viewport/preset parameters explicitly. Chromium and mobile WebKit geometry checks pass, and the same fixture measures x=12, y=59, width=377, height=759 (`geometry-after.png`).
+
+The deterministic screenshot RNG now resets at the Roll click to retain the existing 5/1/2/3/4 dice fixture regardless of startup calls. The iPhone 16 dice snapshot passes. The local Mac still differs slightly from some stored pixel baselines; the iPhone Mini difference also reproduces on the branch without computer resume. Those snapshots were not regenerated to conceal the environment difference; CI validates the canonical rendering environment.
+
+The local app was inspected at 393 × 852 with guest computer play.
+
+Before: scored 16 in Chance (`progress-before.png`), returned to the lobby,
+and reopened Play Computer. The board reset to zero (`before.png`).
+
+After: played to 13–30 (`progress-after.png`), returned to the lobby, chose
+Resume Computer Game, then refreshed the page. Both scores remain (`after.png`).
+New-game replacement is available explicitly from the game menu with confirmation.
+
+Versioned saves retain dice, holds, purchased rolls, tokens, both scorecards,
+pending response opportunities, statistics event history, and recorded-result IDs.
+Guest and authenticated accounts use separate storage keys. Save writes are
+serialized, and the lobby exit waits for the latest write. Incompatible/corrupt
+saves require retry or explicit replacement instead of silent reset.
+
+Validation: four save-format unit regressions and three browser regressions
+cover corruption, tokens/dice/holds/rolls, navigation, refresh, scorecards,
+and cancel/confirm New Game. Native process termination has not been tested;
+the implementation uses the existing cross-platform AsyncStorage dependency.
+# Review follow-up: completed games
+
+Reviewer feedback identified that the lobby said Play Computer while the route reopened a completed save. The new browser regression failed on the original PR with a disabled Roll button and the previous game-over overlay (`completed-before.png`). The route now treats completed sessions as absent; the same entry starts a fresh board (`completed-after.png`). All four save/resume browser scenarios pass, including reload of the new game.
+
+# Review follow-up: resolved punches
+
+Reloading while a local punch result was visible restored ten tokens and the pre-punch response window, for both a hit and a miss. The landed case is shown in `punch-result-before.png` and `punch-reload-before.png`. Save the resolved state and action history immediately when the throw completes; dismissal still controls the score-wipe presentation. After reload, the cost remains paid (seven tokens), the action appears exactly once, and a landed punch resumes the computer's required replay. See `punch-result-after.png` and `punch-reload-after.png`. Both browser regressions passed; the deterministic replay can score another Sucker, so the opponent may again show 50 after replay.
+
+The latest Linux CI confirmed all geometry/dice checks pass. Its remaining three failures were header-menu baselines lacking the new explicit New Game command. Inspected the SE, iPhone 16, and Max artifacts and updated those three intentional menu snapshots from CI's canonical rendering environment.
+
+# Review follow-up: interrupted rolls
+
+Reloading immediately after Roll restored an empty tray and all four rolls (`roll-interruption-before.png`). The resolved dice, consumed roll, and roll action now save before animation. A temporary committed-state reference prevents an older presentation render from overwriting that save while a response window closes. The same reload retains the dice and three rolls left (`roll-interruption-after.png`). All seven save/resume browser cases pass, as do typecheck and lint.
+
+# Review follow-up: interrupted computer reveals
+
+The local reproduction showed the computer revealing a 50-point Sucker, then changing to a 40-point straight when reloaded during the reveal (`computer-reveal-before.png`, `computer-reload-before.png`). Computer turn resolution now records the score/punch history and saves the resolved result before starting presentation. Reloading retains the original 50-point Sucker even when the test supplies different subsequent randomness (`computer-reveal-after.png`, `computer-reload-after.png`). State and both histories remain identical through reload. All eight save/resume browser cases passed.
+
+# Review follow-up: interrupted score submissions
+
+Reloading during the submitted dice flight erased the player's 24-point Chance score (`score-interruption-before.png`). Score resolution and its history now save before measuring or animating the dice, with the input locked immediately. Presentation consumes the already resolved result instead of resolving it again. The passing regression retains its rolled Chance score (16 in the captured run) through reload (`score-interruption-after.png`). All nine save/resume browser cases, typecheck, and lint passed.
+# Prepared chance resume follow-up
+
+Review reproduced a free chance reroll: a prepared 1 (10%) became 6 (75%) after reload before Throw Punch. The saved session now retains the target turn and face before animation and restores the rolled dialog. Resolving the Punch clears the preparation while persisting its token charge. Ten interruption browser cases pass, including a reload before and after throwing; legacy saves remain readable. See `chance-before.png` and `chance-after.png`.

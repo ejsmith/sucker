@@ -1,0 +1,52 @@
+Local Supabase partial-write regression
+Injected failure: score action ledger insert, after the app computes a valid score.
+API response: 400 Local review: simulated ledger write failure
+Before: {"phase":"active","score":null,"turns":0,"actions":2}
+After:  {"phase":"response_window","score":5,"turns":1,"actions":2}
+FAIL: A failed move must leave the game, turn history, and action ledger unchanged
++ actual - expected
+... Skipped lines
+
+  {
+    actionCount: 2,
+    game: {
++     current_player_id: 'a8b8ba58-88b6-4b04-9fef-55e968ddf5e6',
++     last_turn_id: 'd803bd13-670e-49df-98f2-b4d546259ab5',
+-     current_player_id: 'dbcaa7fc-c00c-4e21-b384-e3991534ab05',
+-     last_turn_id: null,
+      state: {
++       currentPlayerIndex: 1,
+-       currentPlayerIndex: 0,
+        dice: [
+          1,
+          1,
+          1,
+          1,
+...
+        id: 'f9f46410-3083-4550-b5cb-08de980f8f43',
++       phase: 'rolling',
+-       phase: 'scoring',
+        players: [
+          {
+            id: 'dbcaa7fc-c00c-4e21-b384-e3991534ab05',
+            name: 'Test Player 1',
+            scorecard: {
++             chance: 5,
+-             chance: null,
+              fives: null,
+              fourOfAKind: null,
+              fours: null,
+              fullHouse: null,
+              largeStraight: null,
+...
+        ],
++       rollNumber: 0
+-       rollNumber: 1
+      },
++     status: 'response_window'
+-     status: 'active'
+    },
++   turnCount: 1
+-   turnCount: 0
+  }
+
