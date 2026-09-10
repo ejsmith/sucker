@@ -197,6 +197,7 @@ Deno.serve(async (request) => {
       const message = toErrorMessage(actionError);
       const status = toErrorStatus(actionError);
       const disposition = getActionRequestFailureDisposition({
+        actionType: action.type,
         httpStatus: status,
         mutationMayHaveWritten: mutationState.mayHaveWritten,
         persistenceFailed: actionError instanceof ActionRequestPersistenceError,

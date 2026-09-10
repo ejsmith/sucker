@@ -9,3 +9,9 @@ The original recovery selector was extracted unchanged to reproduce its behavior
 # Rejected preparation follow-up
 
 A controlled HTTP 400 on prepare_sucker_punch left the dialog open after its roll animation, with no dismissal path. The null-result path now closes the dialog and leaves the server error visible. The local browser regression verifies the board accepts the next roll and retains all 10 tokens. Screenshots are `preparation-before.png` and `preparation-after.png`; the regression was exercised on the resume branch containing this integrated protocol. The successful authoritative-chance browser case also passes.
+
+## Transient preparation retry, September 10
+
+The request-failure regression reproduced a retained claim after a transient preparation error: expected `release`, received `retain`. Preparation now releases retryable claims even if its insert-once chance record was written. This exception applies only to `prepare_sucker_punch`; actual Punch throws still retain ambiguous writes. The existing unique attempt key preserves the prepared die across retries.
+
+`claim-before.png` and `claim-after.png` show the actual local regression output, not an app-level network reproduction. The regression covers a failed chance read and failed response persistence, and confirms actual throws retain their protection. Edge typechecking, all 12 Edge tests, and lint pass. The existing integration suite separately covers repeated/concurrent preparation retaining one saved die.
