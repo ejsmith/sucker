@@ -11,6 +11,12 @@ export type PhoneStageOptions = {
   fillNarrowViewport?: boolean;
 };
 
+export function shouldFillWebViewport(windowWidth: number) {
+  // Decide from the whole window, before subtracting safe areas. A phone must
+  // not acquire side gutters just because its status/home bars reduce height.
+  return windowWidth <= phoneStageMaxWidth;
+}
+
 export function getPhoneStageStyle(
   windowWidth: number,
   windowHeight: number,

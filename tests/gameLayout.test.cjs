@@ -11,6 +11,7 @@ const {
 } = require('../.build/src/ui/gameLayout');
 const {
   getPhoneStageStyle,
+  shouldFillWebViewport,
   phoneStageMaxHeight,
   phoneStageMaxWidth,
   phoneStageMinHeight,
@@ -67,6 +68,21 @@ const acceptedPhoneViewports = [
     stage: [412, 867],
   },
 ];
+
+test('normal phone-sized web windows fill their safe area, including settled PWA heights', () => {
+  for (const fixture of acceptedPhoneViewports) {
+    for (const height of [fixture.height, fixture.height - 55]) {
+      const stage = getSafeGameStageStyle(fixture.width, height, fixture.insets, {
+        fillNarrowViewport: shouldFillWebViewport(fixture.width),
+      });
+      assert.equal(stage.width, fixture.width);
+      assert.equal(stage.height, height - fixture.insets.top - fixture.insets.bottom);
+    }
+  }
+  for (const width of [454, 720, 1440]) {
+    assert.equal(shouldFillWebViewport(width), false, 'desktop windows keep proportional sizing');
+  }
+});
 
 test('supported phone presets fill the safe viewport without creating overflow', () => {
   for (const fixture of acceptedPhoneViewports) {

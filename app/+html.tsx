@@ -17,6 +17,7 @@ export default function Root({ children }: { children: ReactNode }) {
         <link href="/manifest.json" rel="manifest" />
         <link href="/apple-touch-icon.png" rel="apple-touch-icon" />
         <ScrollViewStyleReset />
+        <link href="/app-shell.css" rel="stylesheet" />
       </head>
       <body>{children}</body>
     </html>
