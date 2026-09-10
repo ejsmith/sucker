@@ -29,7 +29,7 @@ test('the optional first-turn guide is available before signing in', async ({ pa
   await expect(page.getByTestId('how-to-play-close')).toBeFocused();
   for (let step = 1; step <= 5; step += 1) {
     await expect(dialog).toContainText(`Step ${step} of 5`);
-    if (step === 5) await expect(dialog).toContainText('it is currently unavailable in multiplayer');
+    if (step === 5) await expect(dialog).toContainText('Mulligan costs 3 and restarts your current turn in computer and multiplayer games.');
     await page.getByTestId('how-to-play-next').click();
   }
   await expect(dialog).toHaveCount(0);
