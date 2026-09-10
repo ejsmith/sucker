@@ -82,6 +82,7 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
       // follow its genuinely settled viewport before any field is focused.
       await page.setViewportSize({ width: 393, height: 797 });
       await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(installed ? 797 : 852, 0);
+      await expect.poll(async () => (await shell.boundingBox())?.width).toBeCloseTo(393, 0);
       const displayedShell = await shell.boundingBox();
       const displayedEmail = await email.boundingBox();
       await email.click();

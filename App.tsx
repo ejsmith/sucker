@@ -88,6 +88,7 @@ import {
   type GameViewportPresetKey,
 } from './src/ui/gameLayout';
 import { useAppActivity } from './src/ui/useAppActivity';
+import { shouldFillWebViewport } from './src/ui/phoneStage';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
 import {
   createRollingLaunch,
@@ -444,7 +445,7 @@ export function RemoteGameScreen({
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const remoteStageStyle = getSafeGameStageStyle(windowWidth, windowHeight, safeAreaInsets, {
-    fillNarrowViewport: Platform.OS !== 'web',
+    fillNarrowViewport: Platform.OS !== 'web' || shouldFillWebViewport(windowWidth),
   });
   const remoteStageViewportWidth = Math.max(1, windowWidth - safeAreaInsets.left - safeAreaInsets.right);
   const remoteStageViewportHeight = Math.max(1, windowHeight - safeAreaInsets.top - safeAreaInsets.bottom);
@@ -1320,9 +1321,10 @@ export function LocalGameScreen({
   const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
   const effectiveSafeAreaInsets = devViewportPreset?.insets ?? safeAreaInsets;
   const gameStageStyle = getSafeGameStageStyle(effectiveWindowWidth, effectiveWindowHeight, effectiveSafeAreaInsets, {
-    // Device presets model native safe-area layouts inside a browser. Normal
-    // web windows keep one aspect ratio and use the stage scroller when short.
-    fillNarrowViewport: Platform.OS !== 'web' || Boolean(devViewportPreset),
+    // Phone-sized web windows use the same safe-area layout as native. Larger
+    // desktop windows retain their proportional, optionally scrollable stage.
+    fillNarrowViewport:
+      Platform.OS !== 'web' || Boolean(devViewportPreset) || shouldFillWebViewport(effectiveWindowWidth),
   });
   const gameLayout = useMemo(
     () => createGameLayout(gameStageStyle.width, gameStageStyle.height),
