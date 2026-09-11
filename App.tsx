@@ -47,6 +47,7 @@ import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './s
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
 import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
+import { createGameRefresh } from './src/multiplayer/gameRefresh';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -517,8 +518,18 @@ export function RemoteGameScreen({
     setNextTurnPrompt(null);
   }, [nextTurnPrompt, profileId, remoteGame]);
 
+  const refreshRemoteGameRef = useRef<(() => Promise<void>) | null>(null);
+
   useEffect(() => {
     let isMounted = true;
+    const refresh = createGameRefresh(
+      () => getGame(gameId),
+      (nextGame) => {
+        setRemoteGame(nextGame);
+        if (profileIdRef.current) onGameChange(profileIdRef.current, nextGame);
+      },
+    );
+    refreshRemoteGameRef.current = refresh.refresh;
 
     async function loadRemoteGame() {
       setIsLoading(true);
@@ -532,18 +543,13 @@ export function RemoteGameScreen({
           throw new Error('Sign in again to open this game.');
         }
         profileIdRef.current = userData.user.id;
-        const [nextGame, latestTaunt] = await Promise.all([
-          getGame(gameId),
-          getLatestRemoteTaunt(gameId, userData.user.id),
-        ]);
+        const [, latestTaunt] = await Promise.all([refresh.refresh(), getLatestRemoteTaunt(gameId, userData.user.id)]);
         if (!isMounted) {
           return;
         }
 
         setProfileId(userData.user.id);
-        setRemoteGame(nextGame);
         setRemoteTaunt(latestTaunt);
-        onGameChange(userData.user.id, nextGame);
       } catch (loadError) {
         if (isMounted) {
           setError(loadError instanceof Error ? loadError.message : 'Unable to load game.');
@@ -560,6 +566,7 @@ export function RemoteGameScreen({
       gameId,
       (nextGame) => {
         if (isMounted) {
+          refresh.invalidate();
           setRemoteGame(nextGame);
           if (profileIdRef.current) {
             onGameChange(profileIdRef.current, nextGame);
@@ -569,6 +576,9 @@ export function RemoteGameScreen({
       (status) => {
         if (isMounted) {
           setIsRealtimeConnected(status === 'SUBSCRIBED');
+          if (status === 'SUBSCRIBED') {
+            void refresh.refresh().catch((error) => console.warn('Unable to refresh reconnected game', error));
+          }
         }
       },
     );
@@ -609,6 +619,8 @@ export function RemoteGameScreen({
 
     return () => {
       isMounted = false;
+      refresh.dispose();
+      refreshRemoteGameRef.current = null;
       unsubscribe();
       unsubscribeTaunts();
     };
@@ -647,6 +659,7 @@ export function RemoteGameScreen({
     setError(null);
 
     if (!latestWithGame || !('game' in latestWithGame.result)) {
+      void refreshRemoteGameRef.current?.().catch((error) => console.warn('Unable to refresh recovered game', error));
       return;
     }
 
@@ -1111,7 +1124,9 @@ export function LocalGameScreen({
       ? { phase: 'rolled', scope: 'local', targetTurnId: initialLocalSession.preparedPunch.targetTurnId }
       : null,
   );
-  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(initialLocalSession?.preparedPunch?.chanceDie ?? 1);
+  const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(
+    initialLocalSession?.preparedPunch?.chanceDie ?? 1,
+  );
   const preparedLocalPunch = useRef(initialLocalSession?.preparedPunch ?? null);
   const isRemoteGame = Boolean(remoteGame && remoteHandlers && myProfileId);
   const [visibleRemoteGame, setVisibleRemoteGame] = useState(
@@ -1806,7 +1821,8 @@ export function LocalGameScreen({
 
   function savedLocalPunch(nextPendingTurn: ComputerSession['pendingTurn']) {
     return nextPendingTurn?.status === 'submitted' && preparedLocalPunch.current?.targetTurnId === nextPendingTurn.id
-      ? preparedLocalPunch.current : null;
+      ? preparedLocalPunch.current
+      : null;
   }
 
   function prepareLocalPunchChance(targetTurnId: string): DieValue {

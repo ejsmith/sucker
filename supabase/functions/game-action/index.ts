@@ -3,6 +3,7 @@ import webpush from 'npm:web-push@3.6.7';
 import type { Database } from '../_shared/database.types.ts';
 import { commitGameMove, planGameMove, type GameMovePlan } from '../_shared/gameMoveTransaction.ts';
 import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
+import { deliverActionNotifications } from '../_shared/notificationDelivery.ts';
 import {
   createEmptyScorecard,
   type Dice,
@@ -148,6 +149,9 @@ Deno.serve(async (request) => {
 
     const claim = await timer.measure('claim', () => claimActionRequest(admin, user.id, action));
     if (claim.kind === 'completed') {
+      if (claim.httpStatus === 200) {
+        queueActionNotifications(admin, user.id, action, claim.response as ActionResult);
+      }
       return json(claim.response, claim.httpStatus, timer.toHeaders());
     }
     if (claim.kind === 'processing') {
@@ -380,7 +384,9 @@ function actionGameId(action: Action) {
 }
 
 function queueActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
-  const task = sendActionNotifications(admin, actorId, action, result).catch((notificationError) => {
+  const task = deliverActionNotifications(admin, actorId, action.requestId, () =>
+    sendActionNotifications(admin, actorId, action, result),
+  ).catch((notificationError) => {
     console.error('Unable to send action notifications', notificationError);
   });
   const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
@@ -411,10 +417,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
     ]);
 
   if (pushTokenError) {
-    console.error('Unable to load push tokens', pushTokenError);
+    throw pushTokenError;
   }
   if (webPushError) {
-    console.error('Unable to load web push subscriptions', webPushError);
+    throw webPushError;
   }
   if (!pushTokens?.length && !webPushSubscriptions?.length) {
     return;
@@ -465,7 +471,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
     return;
   }
 
-  await Promise.all([
+  await settleNotificationSends([
     sendExpoPushMessages(messages),
     sendWebPushNotifications(
       admin,
@@ -486,21 +492,17 @@ async function sendExpoPushMessages(messages: unknown[]) {
   }
 
   for (const chunk of chunkArray(messages, 100)) {
-    try {
-      const response = await fetch('https://exp.host/--/api/v2/push/send', {
-        body: JSON.stringify(chunk),
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        method: 'POST',
-      });
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      body: JSON.stringify(chunk),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    });
 
-      if (!response.ok) {
-        console.error('Expo push send failed', response.status, await response.text());
-      }
-    } catch (pushError) {
-      console.error('Expo push send failed', pushError);
+    if (!response.ok) {
+      throw new Error(`Expo push send failed: ${response.status} ${await response.text()}`);
     }
   }
 }
@@ -520,11 +522,10 @@ async function sendWebPushNotifications(
   }
 
   if (!configureWebPush()) {
-    console.error('Web push subscriptions exist, but VAPID secrets are not configured.');
-    return;
+    throw new Error('Web push subscriptions exist, but VAPID secrets are not configured.');
   }
 
-  await Promise.all(
+  await settleNotificationSends(
     subscriptions.map(async (subscription) => {
       const content = buildNotificationContent(action, result, game, latestTurn, actorId, subscription.profile_id);
       if (!content) {
@@ -556,10 +557,17 @@ async function sendWebPushNotifications(
           return;
         }
 
-        console.error('Web push send failed', pushError);
+        throw pushError;
       }
     }),
   );
+}
+
+async function settleNotificationSends(sends: Promise<void>[]) {
+  // Do not release the shared lease while another recipient is still sending.
+  const results = await Promise.allSettled(sends);
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
 }
 
 async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {

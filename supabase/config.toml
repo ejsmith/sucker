@@ -60,5 +60,7 @@ content_path = "./supabase/templates/sign-in-code.html"
 
 [edge_runtime]
 enabled = true
-policy = "oneshot"
+# Keep waitUntil notification tasks alive after the response, as in production.
+# Restart functions serve after editing Edge Function code in this mode.
+policy = "per_worker"
 inspector_port = 8083

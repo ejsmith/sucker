@@ -183,6 +183,8 @@ create table public.game_action_requests (
   status text not null default 'processing' check (status in ('processing', 'completed')),
   http_status integer check (http_status between 200 and 599),
   response jsonb,
+  notification_claimed_at timestamptz,
+  notification_sent_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (actor_id, request_id)

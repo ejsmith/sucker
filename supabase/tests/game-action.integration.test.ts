@@ -1,5 +1,6 @@
 import { createClient, type Session, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import type { Database } from '../functions/_shared/database.types.ts';
+import { deliverActionNotifications } from '../functions/_shared/notificationDelivery.ts';
 import {
   scoreCategories,
   startingSuckerTokens,
@@ -199,6 +200,94 @@ Deno.test('profile stats aggregate every matchup and are visible to signed-in pl
   const charlieStats = await alice.client.rpc('get_profile_stat_rates', { target_profile_id: charlie.id });
   assertNoError(charlieStats.error);
   assertEquals(charlieStats.data?.length, 0);
+});
+
+Deno.test('completed request replay recovers notifications without replaying the move', async () => {
+  const [alice, bob] = await createUsers('notification-recovery', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const requestId = crypto.randomUUID();
+  // This is the database state after commit_game_move succeeds but its HTTP
+  // response is lost before the Edge Function reaches notification dispatch.
+  assertNoError(
+    (
+      await admin.from('game_action_requests').insert({
+        actor_id: alice.id,
+        request_id: requestId,
+        game_id: game.id,
+        action_type: 'roll',
+        status: 'completed',
+        http_status: 200,
+        response: {
+          game,
+          notificationProfileIds: [bob.id],
+        } as unknown as Database['public']['Tables']['game_action_requests']['Insert']['response'],
+      })
+    ).error,
+  );
+  const action = { gameId: game.id, held: falseHeld, requestId, type: 'roll' };
+  const replay = await invokeGameAction(alice, action);
+  assertEquals((replay.game as GameRow).state, game.state);
+  let sentAt: string | null = null;
+  for (let attempt = 0; attempt < 40 && !sentAt; attempt += 1) {
+    const row = await selectSingle<{ notification_sent_at: string | null }>(
+      admin
+        .from('game_action_requests')
+        .select('notification_sent_at')
+        .eq('actor_id', alice.id)
+        .eq('request_id', requestId)
+        .single(),
+    );
+    sentAt = row.notification_sent_at;
+    if (!sentAt) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!sentAt) throw new Error('Completed replay skipped pending notification delivery');
+  assertEquals((await loadActions(game.id)).filter((item) => item.action_type === 'roll').length, 0);
+
+  let deliveries = 0;
+  await deliverActionNotifications(admin, alice.id, requestId, async () => {
+    deliveries += 1;
+  });
+  assertEquals(deliveries, 0);
+  assertNoError(
+    (
+      await admin
+        .from('game_action_requests')
+        .update({ notification_sent_at: null, notification_claimed_at: null })
+        .eq('actor_id', alice.id)
+        .eq('request_id', requestId)
+    ).error,
+  );
+  await Promise.all(
+    Array.from({ length: 4 }, () =>
+      deliverActionNotifications(admin, alice.id, requestId, async () => {
+        deliveries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }),
+    ),
+  );
+  assertEquals(deliveries, 1);
+
+  assertNoError(
+    (
+      await admin
+        .from('game_action_requests')
+        .update({ notification_sent_at: null, notification_claimed_at: null })
+        .eq('actor_id', alice.id)
+        .eq('request_id', requestId)
+    ).error,
+  );
+  try {
+    await deliverActionNotifications(admin, alice.id, requestId, async () => {
+      throw new Error('provider unavailable');
+    });
+    throw new Error('Expected delivery failure');
+  } catch (error) {
+    assertEquals((error as Error).message, 'provider unavailable');
+  }
+  await deliverActionNotifications(admin, alice.id, requestId, async () => {
+    deliveries += 1;
+  });
+  assertEquals(deliveries, 2);
 });
 
 Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {

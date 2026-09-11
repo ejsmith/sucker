@@ -196,6 +196,8 @@ export type Database = {
       };
       game_action_requests: {
         Row: {
+          notification_claimed_at: string | null;
+          notification_sent_at: string | null;
           action_type: string;
           actor_id: string;
           created_at: string;
@@ -207,6 +209,8 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          notification_claimed_at?: string | null;
+          notification_sent_at?: string | null;
           action_type: string;
           actor_id: string;
           created_at?: string;
@@ -218,6 +222,8 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          notification_claimed_at?: string | null;
+          notification_sent_at?: string | null;
           http_status?: number | null;
           response?: Json | null;
           status?: 'processing' | 'completed';

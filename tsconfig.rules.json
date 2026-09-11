@@ -12,6 +12,7 @@
   "include": [
     "src/game/**/*.ts",
     "src/multiplayer/actionRecovery.ts",
+    "src/multiplayer/gameRefresh.ts",
     "src/multiplayer/heldDice.ts",
     "src/multiplayer/localDevelopment.ts",
     "src/multiplayer/realtimeTopics.ts",
