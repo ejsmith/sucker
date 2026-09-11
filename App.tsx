@@ -518,7 +518,7 @@ export function RemoteGameScreen({
     setNextTurnPrompt(null);
   }, [nextTurnPrompt, profileId, remoteGame]);
 
-  const refreshRemoteGameRef = useRef<(() => Promise<void>) | null>(null);
+  const refreshRemoteGameRef = useRef<{ refresh: () => Promise<void>; invalidate: () => void } | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -529,7 +529,7 @@ export function RemoteGameScreen({
         if (profileIdRef.current) onGameChange(profileIdRef.current, nextGame);
       },
     );
-    refreshRemoteGameRef.current = refresh.refresh;
+    refreshRemoteGameRef.current = refresh;
 
     async function loadRemoteGame() {
       setIsLoading(true);
@@ -659,12 +659,15 @@ export function RemoteGameScreen({
     setError(null);
 
     if (!latestWithGame || !('game' in latestWithGame.result)) {
-      void refreshRemoteGameRef.current?.().catch((error) => console.warn('Unable to refresh recovered game', error));
+      void refreshRemoteGameRef.current
+        ?.refresh()
+        .catch((error) => console.warn('Unable to refresh recovered game', error));
       return;
     }
 
     const nextGame = latestWithGame.result.game;
     setError(null);
+    refreshRemoteGameRef.current?.invalidate();
     setRemoteGame(nextGame);
     onGameChange(profileId, nextGame);
     void syncRemoteBadgeCount(profileId);
@@ -732,6 +735,7 @@ export function RemoteGameScreen({
     const interval = setInterval(() => {
       void Promise.all([getGame(gameId), getLatestRemoteTaunt(gameId, profileId)])
         .then(([nextGame, latestTaunt]) => {
+          refreshRemoteGameRef.current?.invalidate();
           setRemoteGame(nextGame);
           setRemoteTaunt(latestTaunt);
           if (profileIdRef.current) {
@@ -762,6 +766,7 @@ export function RemoteGameScreen({
         }
 
         setError(null);
+        refreshRemoteGameRef.current?.invalidate();
         setRemoteGame(nextGame);
         setRemoteTaunt(latestTaunt);
         if (profileId) {
@@ -838,6 +843,7 @@ export function RemoteGameScreen({
     try {
       const result = await action();
       if (applyGameResult) {
+        refreshRemoteGameRef.current?.invalidate();
         setRemoteGame(result.game);
       }
       if (profileId && applyGameResult) {
@@ -878,6 +884,7 @@ export function RemoteGameScreen({
 
     try {
       const nextGame = await getGame(gameId);
+      refreshRemoteGameRef.current?.invalidate();
       setRemoteGame(nextGame);
       onGameChange(profileId, nextGame);
       setUnresolvedRequestId((current) => (current === requestId ? null : current));
@@ -917,6 +924,7 @@ export function RemoteGameScreen({
     setNextTurnPrompt(null);
     setError(null);
     setIsLoading(true);
+    refreshRemoteGameRef.current?.invalidate();
     setRemoteGame(null);
     setRemoteTaunt(null);
     setRemoteTauntOpportunity(null);
@@ -935,6 +943,7 @@ export function RemoteGameScreen({
     try {
       const result = await createGameAgainst(opponentProfileId);
       setNextTurnPrompt(null);
+      refreshRemoteGameRef.current?.invalidate();
       setRemoteGame(result.game);
       setRemoteLastTurn(null);
       setRemoteLastTurnLoadFailedId(null);
