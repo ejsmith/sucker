@@ -601,6 +601,15 @@ async function installDeterministicNonSuckerRandom(page: Page) {
     const values = [0.01, 0.2, 0.4, 0.6, 0.8];
     let index = 0;
     Math.random = () => values[index++ % values.length];
+    // Boot/navigation may consume randomness. Pin the roll input to the existing
+    // screenshot fixture (5, 1, 2, 3, 4) at the user action instead of at page load.
+    document.addEventListener(
+      'click',
+      (event) => {
+        if (event.target instanceof Element && event.target.closest('[data-testid="roll-button"]')) index = 4;
+      },
+      true,
+    );
   });
 }
 

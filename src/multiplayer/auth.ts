@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { isLocalMultiplayerDevelopment } from './env';
+import { signOutWithNotificationCleanup } from './notifications';
 import { supabase } from './supabase';
 import type { ProfileInput } from './types';
 
@@ -174,10 +175,10 @@ function clearAuthParamsFromBrowserUrl() {
 }
 
 export async function signOut() {
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    throw error;
-  }
+  await signOutWithNotificationCleanup(async () => {
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
+    if (error) throw error;
+  });
 }
 
 export async function upsertProfile(input: ProfileInput) {

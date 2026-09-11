@@ -1,4 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { loadComputerSession } from '../game/computerSessionStorage';
 import {
   ActivityIndicator,
   Animated,
@@ -152,6 +154,22 @@ export function MultiplayerLobby({
   const refreshGamesInFlight = useRef<Promise<void> | null>(null);
   const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileId = profile?.id ?? session?.user.id ?? null;
+  const [hasComputerSave, setHasComputerSave] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void loadComputerSession(profileId)
+        .then((saved) => {
+          if (active) setHasComputerSave(Boolean(saved && saved.game.phase !== 'complete'));
+        })
+        .catch(() => {
+          if (active) setHasComputerSave(true);
+        });
+      return () => {
+        active = false;
+      };
+    }, [profileId]),
+  );
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
@@ -245,33 +263,37 @@ export function MultiplayerLobby({
     [onRefreshGames, profileId],
   );
 
-  useEffect(() => {
-    if (!profile) {
-      return;
-    }
-
-    const recovered = recoveredActions.filter((item) => item.actorId === profile.id);
-    if (recovered.length === 0) {
-      return;
-    }
-
-    const recoveredInvite = recovered.find(
-      (item) =>
-        item.action.type === 'create_invite' &&
-        'inviteCode' in item.result &&
-        typeof item.result.inviteCode === 'string',
-    );
-    const timer = setTimeout(() => {
-      consumeRecoveredActions(recovered.map((item) => item.requestId));
-      if (recoveredInvite && 'inviteCode' in recoveredInvite.result && recoveredInvite.result.inviteCode) {
-        setGeneratedInviteCode(recoveredInvite.result.inviteCode);
-        setMessage('Your recovered invite is ready to share.');
-        setPage('startFriend');
+  useFocusEffect(
+    useCallback(() => {
+      if (!profile) {
+        return;
       }
-      void refreshGames({ surfaceError: false });
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [consumeRecoveredActions, profile, recoveredActions, refreshGames, setPage]);
+
+      const recovered = recoveredActions.filter((item) => item.actorId === profile.id);
+      if (recovered.length === 0) {
+        return;
+      }
+
+      const recoveredInvite = recovered.find(
+        (item) =>
+          item.action.type === 'create_invite' &&
+          'inviteCode' in item.result &&
+          typeof item.result.inviteCode === 'string',
+      );
+      // The stack keeps the lobby mounted behind a game. Only the focused
+      // screen may consume recovery, so it cannot cancel that game's retry.
+      const timer = setTimeout(() => {
+        consumeRecoveredActions(recovered.map((item) => item.requestId));
+        if (recoveredInvite && 'inviteCode' in recoveredInvite.result && recoveredInvite.result.inviteCode) {
+          setGeneratedInviteCode(recoveredInvite.result.inviteCode);
+          setMessage('Your recovered invite is ready to share.');
+          setPage('startFriend');
+        }
+        void refreshGames({ surfaceError: false });
+      }, 0);
+      return () => clearTimeout(timer);
+    }, [consumeRecoveredActions, profile, recoveredActions, refreshGames, setPage]),
+  );
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -795,7 +817,7 @@ export function MultiplayerLobby({
             style={({ pressed }) => [lobbyStyles.soloButton, pressed && lobbyStyles.pressed]}
             testID="play-computer-button"
           >
-            <Text style={lobbyStyles.soloButtonText}>Play Computer</Text>
+            <Text style={lobbyStyles.soloButtonText}>{hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}</Text>
           </Pressable>
         </View>
         {showLocalTestLogin && (
@@ -1381,6 +1403,7 @@ export function MultiplayerLobby({
 
         <Pressable
           onPress={() => void endSession()}
+          disabled={isLoading}
           style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
           testID="sign-out-button"
         >
@@ -1636,7 +1659,9 @@ export function MultiplayerLobby({
             ]}
             testID="play-computer-button"
           >
-            <Text style={lobbyStyles.secondaryButtonText}>Play Computer</Text>
+            <Text style={lobbyStyles.secondaryButtonText}>
+              {hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}
+            </Text>
           </Pressable>
         </View>
 

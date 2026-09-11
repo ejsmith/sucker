@@ -4,9 +4,20 @@ const {
   createOrReuseActionRequest,
   createUuidV4,
   getActionKey,
+  latestRecoveredGameAction,
   mergeRecoveredActions,
   selectActionRequestsForRecovery,
 } = require('../.build/src/multiplayer/actionRecovery');
+
+test('recovering a prepared chance cannot replace a newer game with its old response-window snapshot', () => {
+  const latest = { action: { type: 'roll' }, result: { game: { status: 'active', version: 8 } } };
+  const delayed = {
+    action: { type: 'prepare_sucker_punch' },
+    result: { game: { status: 'response_window', version: 7 } },
+  };
+  assert.equal(latestRecoveredGameAction([latest, delayed]), latest);
+  assert.equal(latestRecoveredGameAction([delayed]), undefined);
+});
 
 test('createUuidV4 builds a standards-compliant UUID without crypto.randomUUID', () => {
   const uuid = createUuidV4(Uint8Array.from({ length: 16 }, (_, index) => index));

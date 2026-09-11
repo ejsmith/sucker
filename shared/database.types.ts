@@ -3,6 +3,11 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      sucker_punch_attempts: {
+        Row: { game_id: string; actor_id: string; turn_id: string; chance_die: number; created_at: string };
+        Insert: { game_id: string; actor_id: string; turn_id: string; chance_die: number; created_at?: string };
+        Update: { chance_die?: number };
+      };
       profiles: {
         Row: {
           avatar_url: string | null;
@@ -191,6 +196,8 @@ export type Database = {
       };
       game_action_requests: {
         Row: {
+          notification_claimed_at: string | null;
+          notification_sent_at: string | null;
           action_type: string;
           actor_id: string;
           created_at: string;
@@ -202,6 +209,8 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          notification_claimed_at?: string | null;
+          notification_sent_at?: string | null;
           action_type: string;
           actor_id: string;
           created_at?: string;
@@ -213,6 +222,8 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          notification_claimed_at?: string | null;
+          notification_sent_at?: string | null;
           http_status?: number | null;
           response?: Json | null;
           status?: 'processing' | 'completed';
@@ -503,6 +514,18 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      commit_game_move: {
+        Args: {
+          p_actor_id: string;
+          p_request_id: string;
+          p_game_id: string;
+          p_expected_updated_at: string;
+          p_game_patch: Json;
+          p_writes: Json;
+          p_result: Json;
+        };
+        Returns: Json;
+      };
       commit_game_mutation: {
         Args: {
           target_game_id: string;
