@@ -179,6 +179,12 @@ export function MultiplayerLobby({
     paddingBottom: Math.max(12, safeAreaInsets.bottom + 12),
     paddingTop: Math.max(12, safeAreaInsets.top + 4),
   };
+  // Insets belong to the scrollable content, not its clipping viewport. This
+  // keeps the first/last controls safe while letting cards scroll to the edge.
+  const scrollSafeAreaStyle: StyleProp<ViewStyle> = {
+    paddingBottom: Math.max(12, safeAreaInsets.bottom + 12) + 18,
+    paddingTop: Math.max(12, safeAreaInsets.top + 4) + 8,
+  };
   const needsScrollableStage =
     Platform.OS === 'web' && (shellStyle.height > windowHeight || shellStyle.width > windowWidth);
   const stageHostStableStyle: StyleProp<ViewStyle> =
@@ -190,9 +196,12 @@ export function MultiplayerLobby({
   const passwordsMatch = newPassword === confirmPassword;
   const canUpdatePassword = passwordIsLongEnough && confirmPassword.length > 0 && passwordsMatch;
 
-  function renderShell(children: ReactNode) {
+  function renderShell(children: ReactNode, scrollable = true) {
     const shell = (
-      <View style={[lobbyStyles.shell, shellStyle, shellSafeAreaStyle]} testID="multiplayer-lobby-shell">
+      <View
+        style={[lobbyStyles.shell, shellStyle, scrollable ? lobbyStyles.scrollShell : shellSafeAreaStyle]}
+        testID="multiplayer-lobby-shell"
+      >
         {children}
       </View>
     );
@@ -830,6 +839,7 @@ export function MultiplayerLobby({
           </View>
         )}
       </>,
+      false,
     );
   }
 
@@ -904,7 +914,7 @@ export function MultiplayerLobby({
   if (page === 'completedGames') {
     return renderShell(
       <ScrollView
-        contentContainerStyle={lobbyStyles.scrollContent}
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
         refreshControl={
           <RefreshControl
             colors={['#FFD329']}
@@ -981,7 +991,7 @@ export function MultiplayerLobby({
   if (page === 'completedGameDetail') {
     return renderShell(
       <ScrollView
-        contentContainerStyle={lobbyStyles.scrollContent}
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
         showsVerticalScrollIndicator={false}
         style={lobbyStyles.scroll}
       >
@@ -1045,12 +1055,13 @@ export function MultiplayerLobby({
             statsKind="headToHead"
           />
         </View>,
+        false,
       );
     }
 
     return renderShell(
       <ScrollView
-        contentContainerStyle={lobbyStyles.scrollContent}
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
         showsVerticalScrollIndicator={false}
         style={lobbyStyles.scroll}
       >
@@ -1069,7 +1080,7 @@ export function MultiplayerLobby({
   if (page === 'startFriend') {
     return renderShell(
       <ScrollView
-        contentContainerStyle={lobbyStyles.scrollContent}
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
         showsVerticalScrollIndicator={false}
         style={lobbyStyles.scroll}
       >
@@ -1204,7 +1215,7 @@ export function MultiplayerLobby({
   if (page === 'profile') {
     return renderShell(
       <ScrollView
-        contentContainerStyle={lobbyStyles.scrollContent}
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
         refreshControl={
           <RefreshControl
             colors={['#FFD329']}
@@ -1497,7 +1508,7 @@ export function MultiplayerLobby({
       <ScrollView
         alwaysBounceVertical
         bounces
-        contentContainerStyle={[lobbyStyles.scrollContent, lobbyStyles.gamesScrollContent]}
+        contentContainerStyle={[lobbyStyles.scrollContent, lobbyStyles.gamesScrollContent, scrollSafeAreaStyle]}
         onScroll={(event) => {
           const nextIsScrolled = event.nativeEvent.contentOffset.y > 1;
           setIsGamesScrolled((current) => (current === nextIsScrolled ? current : nextIsScrolled));
@@ -1515,6 +1526,7 @@ export function MultiplayerLobby({
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         style={[lobbyStyles.scroll, lobbyStyles.gamesScroll]}
+        testID="lobby-games-scroll"
         {...(usesWebPullRefresh ? gamesPullRefreshResponder.panHandlers : {})}
       >
         <SuckerLobbyTitle />
@@ -3357,6 +3369,9 @@ const lobbyStyles = StyleSheet.create({
     gap: 8,
     paddingBottom: 18,
     paddingTop: 8,
+  },
+  scrollShell: {
+    paddingVertical: 0,
   },
   shell: {
     alignItems: 'center',

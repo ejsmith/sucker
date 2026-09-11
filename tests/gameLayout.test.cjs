@@ -84,6 +84,33 @@ test('normal phone-sized web windows fill their safe area, including settled PWA
   }
 });
 
+test('large phones fill the viewport beyond the desktop preview caps', () => {
+  for (const navigator of [
+    { userAgent: 'iPhone', maxTouchPoints: 5 },
+    { userAgent: 'Android', maxTouchPoints: 5 },
+  ]) {
+    for (const [width, height] of [
+      [440, 956],
+      [440, 894],
+      [450, 1000],
+      [480, 1040],
+      [393, 1020],
+    ]) {
+      assert.equal(shouldFillWebViewport(width, navigator), true);
+      assert.deepEqual(
+        getPhoneStageStyle(width, height, { fillNarrowViewport: shouldFillWebViewport(width, navigator) }),
+        { width, height },
+      );
+      assert.deepEqual(getSafeGameStageStyle(width, height, { top: 62, right: 0, bottom: 34, left: 0 }), {
+        width,
+        height: height - 96,
+      });
+    }
+  }
+  assert.equal(shouldFillWebViewport(454, { userAgent: 'Windows', maxTouchPoints: 5 }), false);
+  assert.equal(shouldFillWebViewport(1024, { userAgent: 'iPad', maxTouchPoints: 5 }), false);
+});
+
 test('supported phone presets fill the safe viewport without creating overflow', () => {
   for (const fixture of acceptedPhoneViewports) {
     const stage = getSafeGameStageStyle(fixture.width, fixture.height, fixture.insets);
@@ -158,26 +185,26 @@ test('minimum touch targets remain reachable on the shortest supported phone', (
   assertTouchTargets(layout);
 });
 
-test('stage caps apply continuously through the former 499/500 breakpoint', () => {
+test('phone fill sizing stays continuous beyond the former preview caps', () => {
   const at499 = getPhoneStageStyle(499, 900);
   const at500 = getPhoneStageStyle(500, 900);
   const at501 = getPhoneStageStyle(501, 900);
 
-  assert.deepEqual(at499, { width: phoneStageMaxWidth, height: 900 });
-  assert.deepEqual(at500, at499);
-  assert.deepEqual(at501, at500);
+  assert.deepEqual(at499, { width: 499, height: 900 });
+  assert.deepEqual(at500, { width: 500, height: 900 });
+  assert.deepEqual(at501, { width: 501, height: 900 });
 
   const justBelowWidthCap = getPhoneStageStyle(phoneStageMaxWidth - 0.5, 900);
   const atWidthCap = getPhoneStageStyle(phoneStageMaxWidth, 900);
   const justAboveWidthCap = getPhoneStageStyle(phoneStageMaxWidth + 0.5, 900);
   assert.equal(atWidthCap.width - justBelowWidthCap.width, 0.5);
-  assert.equal(justAboveWidthCap.width - atWidthCap.width, 0);
+  assert.equal(justAboveWidthCap.width - atWidthCap.width, 0.5);
 
   const justBelowHeightCap = getPhoneStageStyle(400, phoneStageMaxHeight - 0.5);
   const atHeightCap = getPhoneStageStyle(400, phoneStageMaxHeight);
   const justAboveHeightCap = getPhoneStageStyle(400, phoneStageMaxHeight + 0.5);
   assert.equal(atHeightCap.height - justBelowHeightCap.height, 0.5);
-  assert.equal(justAboveHeightCap.height - atHeightCap.height, 0);
+  assert.equal(justAboveHeightCap.height - atHeightCap.height, 0.5);
 });
 
 test('short or zoomed web viewports receive a minimum proportional scrollable stage', () => {
