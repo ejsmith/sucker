@@ -410,6 +410,51 @@ test.describe('desktop window sizing', () => {
   });
 });
 
+test('the installed PWA document fills the large viewport when percentage height is status-bar-short', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 440, height: 956 });
+  // Playwright cannot emulate CSS display-mode. Activate the real standalone
+  // rule without rewriting its declarations; the iOS Home Screen launch is
+  // checked separately in Simulator. Keep the normal browser rule as a control.
+  await page.route('**/app-shell.css', async (route) => {
+    const response = await route.fetch();
+    const css = await response.text();
+    expect(css).toContain('@media (display-mode: standalone), (display-mode: fullscreen)');
+    await route.fulfill({
+      response,
+      body: css.replace('@media (display-mode: standalone), (display-mode: fullscreen)', '@media all'),
+    });
+  });
+  await page.route(/\/$/, async (route) => {
+    if (!route.request().isNavigationRequest()) return route.continue();
+    const response = await route.fetch();
+    // Model iOS's shortened percentage containing block independently from
+    // its 956px large viewport. Simply resizing the page cannot catch this.
+    await route.fulfill({
+      response,
+      body: (await response.text()).replace(
+        '</head>',
+        '<style>html { height: calc(100vh - 62px); min-height: 0; } body { min-height: 0; }</style></head>',
+      ),
+    });
+  });
+  await page.route(/\.bundle(?:\?|$)/, (route) => route.abort());
+  await page.goto(e2eBaseUrl);
+  for (const selector of ['html', 'body', '#root']) {
+    const box = await visibleBox(page.locator(selector));
+    expect(box).toMatchObject({ x: 0, y: 0, width: 440, height: 956 });
+  }
+  // Guard against a colored strip masking an actually undersized app root.
+  expect(await page.evaluate(() => document.elementFromPoint(220, 950)?.id)).toBe('root');
+  // Without standalone mode the same fixture really does produce the short
+  // percentage root. This control prevents an ineffective fixture from passing.
+  await page.unroute('**/app-shell.css');
+  await page.reload();
+  expect((await visibleBox(page.locator('#root'))).height).toBe(894);
+  expect(await page.evaluate(() => document.elementFromPoint(220, 950)?.id)).not.toBe('root');
+});
+
 test('an installed PWA follows the settled visible viewport instead of clipping its controls', async ({
   browser,
 }, testInfo) => {
@@ -447,7 +492,23 @@ test('an installed PWA follows the settled visible viewport instead of clipping 
 });
 
 test.describe('normal mobile web route', () => {
-  for (const viewport of acceptedViewports) {
+  for (const viewport of [
+    ...acceptedViewports,
+    {
+      key: 'iphone17max',
+      label: 'iPhone 17 Pro Max',
+      width: 440,
+      height: 956,
+      insets: { top: 62, right: 0, bottom: 34, left: 0 },
+    },
+    {
+      key: 'androidXL',
+      label: 'extra-large Android',
+      width: 450,
+      height: 1000,
+      insets: { top: 24, right: 0, bottom: 24, left: 0 },
+    },
+  ]) {
     test(`${viewport.label} fills the safe viewport without a diagnostic preset`, async ({ browser }, testInfo) => {
       const context = await browser.newContext({
         ...devices[viewport.key.startsWith('android') ? 'Pixel 7' : 'iPhone 13'],

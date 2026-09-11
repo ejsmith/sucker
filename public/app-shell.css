@@ -11,3 +11,20 @@ body {
   margin: 0;
   min-height: 100%;
 }
+
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  /* iOS can settle the percentage-based containing block one status bar short
+     while still exposing the full display through lvh. Make the drawable
+     document explicit; 100dvh has the same short-height bug on affected PWAs.
+     Browser tabs retain their toolbar-aware percentage layout. */
+  html:root,
+  html:root body {
+    height: 100vh;
+    height: 100lvh;
+  }
+
+  #root {
+    min-height: 100vh;
+    min-height: 100lvh;
+  }
+}

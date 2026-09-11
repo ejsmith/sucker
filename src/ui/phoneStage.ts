@@ -6,15 +6,24 @@ export const phoneStageMinWidth = 320;
 export const phoneStageMinHeight = 570;
 export const phoneStageMaxWidth = 430;
 export const phoneStageMaxHeight = 932;
+const phoneViewportMaxWidth = 700;
 
 export type PhoneStageOptions = {
   fillNarrowViewport?: boolean;
 };
 
-export function shouldFillWebViewport(windowWidth: number) {
+export function shouldFillWebViewport(
+  windowWidth: number,
+  navigator: Pick<Navigator, 'userAgent' | 'maxTouchPoints'> | undefined = globalThis.navigator,
+) {
   // Decide from the whole window, before subtracting safe areas. A phone must
   // not acquire side gutters just because its status/home bars reduce height.
-  return windowWidth <= phoneStageMaxWidth;
+  // 430 is a desktop preview cap, not a maximum phone width (Pro Max is 440).
+  // Preserve proportional layouts for short/zoomed desktop browser windows.
+  const isMobile =
+    /Android|iPhone|iPad|iPod/i.test(navigator?.userAgent ?? '') ||
+    (/Macintosh/i.test(navigator?.userAgent ?? '') && (navigator?.maxTouchPoints ?? 0) > 1);
+  return windowWidth <= phoneStageMaxWidth || (isMobile && windowWidth <= phoneViewportMaxWidth);
 }
 
 export function getPhoneStageStyle(
@@ -26,9 +35,10 @@ export function getPhoneStageStyle(
   const availableHeight = Math.max(1, windowHeight);
 
   if (fillNarrowViewport) {
+    const fillsPhone = availableWidth <= phoneViewportMaxWidth;
     return {
-      height: clamp(availableHeight, phoneStageMinHeight, phoneStageMaxHeight),
-      width: clamp(availableWidth, phoneStageMinWidth, phoneStageMaxWidth),
+      height: clamp(availableHeight, phoneStageMinHeight, fillsPhone ? Infinity : phoneStageMaxHeight),
+      width: clamp(availableWidth, phoneStageMinWidth, fillsPhone ? Infinity : phoneStageMaxWidth),
     };
   }
 
