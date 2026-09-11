@@ -2,6 +2,8 @@
 // snapshot on subscription/recovery, but let a later realtime event win.
 export function createGameRefresh<T>(load: () => Promise<T>, apply: (game: T) => void) {
   let revision = 0;
+  let nextRequest = 0;
+  let appliedRequest = 0;
   let disposed = false;
   return {
     invalidate() {
@@ -12,9 +14,13 @@ export function createGameRefresh<T>(load: () => Promise<T>, apply: (game: T) =>
       revision += 1;
     },
     async refresh() {
-      const startedAt = ++revision;
+      const startedAt = revision;
+      const request = ++nextRequest;
       const game = await load();
-      if (!disposed && revision === startedAt) apply(game);
+      if (!disposed && revision === startedAt && request > appliedRequest) {
+        appliedRequest = request;
+        apply(game);
+      }
     },
   };
 }

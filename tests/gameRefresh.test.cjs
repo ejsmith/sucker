@@ -52,3 +52,40 @@ test('a refresh cannot update a game after navigation', async () => {
   await pending;
   assert.equal(applied, false);
 });
+
+test('a failed redundant refresh cannot discard a successful initial load', async () => {
+  const pending = [];
+  let current;
+  const refresh = createGameRefresh(
+    () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    (game) => {
+      current = game;
+    },
+  );
+  const initial = refresh.refresh();
+  const redundant = refresh.refresh();
+  const failed = assert.rejects(redundant, /offline/);
+  pending[1].reject(new Error('offline'));
+  await failed;
+  pending[0].resolve({ version: 7 });
+  await initial;
+  assert.equal(current?.version, 7);
+});
+
+test('a newer successful refresh wins over an older response', async () => {
+  const pending = [];
+  let current;
+  const refresh = createGameRefresh(
+    () => new Promise((resolve) => pending.push(resolve)),
+    (game) => {
+      current = game;
+    },
+  );
+  const older = refresh.refresh();
+  const newer = refresh.refresh();
+  pending[1]({ version: 9 });
+  await newer;
+  pending[0]({ version: 8 });
+  await older;
+  assert.equal(current.version, 9);
+});
