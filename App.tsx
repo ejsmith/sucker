@@ -468,7 +468,6 @@ export function RemoteGameScreen({
   const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
   const [remoteLastTurnLoadFailedId, setRemoteLastTurnLoadFailedId] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
   const [unresolvedRequestId, setUnresolvedRequestId] = useState<string | null>(null);
   const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
@@ -522,9 +521,11 @@ export function RemoteGameScreen({
 
   useEffect(() => {
     let isMounted = true;
+    let hasGameSnapshot = false;
     const refresh = createGameRefresh(
       () => getGame(gameId),
       (nextGame) => {
+        hasGameSnapshot = true;
         setRemoteGame(nextGame);
         if (profileIdRef.current) onGameChange(profileIdRef.current, nextGame);
       },
@@ -532,7 +533,6 @@ export function RemoteGameScreen({
     refreshRemoteGameRef.current = refresh;
 
     async function loadRemoteGame() {
-      setIsLoading(true);
       setError(null);
       try {
         const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -542,21 +542,18 @@ export function RemoteGameScreen({
         if (!userData.user) {
           throw new Error('Sign in again to open this game.');
         }
+        if (!isMounted) return;
         profileIdRef.current = userData.user.id;
+        setProfileId(userData.user.id);
         const [, latestTaunt] = await Promise.all([refresh.refresh(), getLatestRemoteTaunt(gameId, userData.user.id)]);
         if (!isMounted) {
           return;
         }
 
-        setProfileId(userData.user.id);
         setRemoteTaunt(latestTaunt);
       } catch (loadError) {
-        if (isMounted) {
+        if (isMounted && (!hasGameSnapshot || !profileIdRef.current)) {
           setError(loadError instanceof Error ? loadError.message : 'Unable to load game.');
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
         }
       }
     }
@@ -566,6 +563,7 @@ export function RemoteGameScreen({
       gameId,
       (nextGame) => {
         if (isMounted) {
+          hasGameSnapshot = true;
           refresh.invalidate();
           setRemoteGame(nextGame);
           if (profileIdRef.current) {
@@ -932,7 +930,6 @@ export function RemoteGameScreen({
   function openNextTurnGame(nextGameId: string) {
     setNextTurnPrompt(null);
     setError(null);
-    setIsLoading(true);
     refreshRemoteGameRef.current?.invalidate();
     setRemoteGame(null);
     setRemoteTaunt(null);
@@ -973,7 +970,7 @@ export function RemoteGameScreen({
     onExit();
   }
 
-  if (isLoading || !remoteGame || !profileId) {
+  if (!remoteGame || !profileId) {
     const loadingStage = (
       <View style={[styles.remoteLoadingScreen, remoteStageStyle]} testID="remote-loading-screen">
         <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteLoadingTitle}>

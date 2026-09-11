@@ -89,6 +89,27 @@ These screenshots show actual local RPC regression output. They do not depict
 two browser users completing games. The clean stack also runs the normal
 end-to-end game-completion and rematch integration cases against the new planner.
 
+### Review follow-up: authenticated profile during competing game loads
+
+The inverse race was reproduced in the actual web app: a successful reconnect
+fetch and failed initial fetch left the screen on `Loading Game`, because profile
+state was assigned only after the initial fetch succeeded. Authentication now
+sets profile state independently, and the board renders as soon as a profile and
+game snapshot are available. A redundant pending request no longer blocks it.
+
+The browser regression controls HTTP failures and the Supabase WebSocket join
+handshake, including automatic HTTP retries. Both success/failure orderings pass
+in Chromium and iPhone WebKit at 393 x 852 (four cases). Authentication and server
+responses are mocked; this verifies the real screen under controlled network
+ordering, not a production reconnect or physical device.
+
+- [Before: game remains on the loading screen](profile-before.png)
+- [After: recovered snapshot opens the playable board](profile-after.png)
+
+The separate computer-result upload retention finding is tracked by PR #75,
+which adds an account-scoped retry queue and idempotent recording. It is not
+included in this PR.
+
 ## Release boundary
 
 Automatic web publishing is gated until the incompatible old/new Punch protocols
