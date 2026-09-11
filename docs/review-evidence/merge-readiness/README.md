@@ -39,6 +39,41 @@ preparation-snapshot exclusion remains intact. This is helper-level race coverag
 the previously unverified live Realtime offline scenario is not claimed as an
 end-to-end reproduction.
 
+### Review follow-up: overlapping initial loads
+
+The next review identified a flaw in the new refresh guard: starting a redundant
+subscription fetch invalidated the initial request even if the replacement
+failed. The local helper regression reproduced a discarded successful result
+(`undefined` instead of version 7). Refresh requests now supersede older requests
+only after successfully returning; realtime events and accepted actions still
+invalidate outstanding snapshots immediately. All five refresh tests pass.
+
+- [Before: successful initial load discarded](refresh-before.png)
+- [After: failed replacement preserves it](refresh-after.png)
+
+These are actual helper-test output screenshots, not a browser network capture.
+
+### Review follow-up: concurrent first-matchup completions
+
+A fresh disposable stack, `sucker_pr66_merge` on ports 56421/56422, was created
+from this PR's migrations to exclude schema left by other review branches. Two
+independently prepared first-matchup inserts were submitted through the real
+`commit_game_move` RPC. The baseline failed with PostgreSQL `23505` on
+`head_to_head_stats_pkey`. After the correction both commits succeed, both games
+contribute to totals and averages, and replay does not increment them again.
+
+The Edge Function now supplies each game's stat contributions instead of reading
+and replacing aggregate totals. The transaction adds those contributions with
+an atomic upsert and locks the player pair before either aggregate row, avoiding
+opposite-seat lock ordering. The migration also accepts older first-insert plans.
+
+- [Before: concurrent insert collision](stats-before.png)
+- [After: both completions counted once](stats-after.png)
+
+These screenshots show actual local RPC regression output. They do not depict
+two browser users completing games. The clean stack also runs the normal
+end-to-end game-completion and rematch integration cases against the new planner.
+
 ## Release boundary
 
 Automatic web publishing is gated until the incompatible old/new Punch protocols

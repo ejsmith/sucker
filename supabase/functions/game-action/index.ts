@@ -2129,105 +2129,46 @@ async function planCompletedGameStats(
   winnerId: string | null,
   plan: GameMovePlan,
 ) {
-  for (const player of players) {
+  for (const player of [...players].sort((left, right) => left.id.localeCompare(right.id))) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = await buildResult(admin, gameId, player, opponent, players, winnerId, plan);
     const lost = winnerId !== null && !result.won;
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
-    const { data: existing, error } = await admin
-      .from('head_to_head_stats')
-      .select('*')
-      .eq('player_id', player.id)
-      .eq('opponent_id', opponent.id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!existing) {
-      const firstStats = {
-        player_id: player.id,
-        opponent_id: opponent.id,
-        games_played: 1,
-        wins: result.won ? 1 : 0,
-        losses: lost ? 1 : 0,
-        highest_score: result.final_score,
-        total_score: result.final_score,
-        average_score: result.final_score,
-        upper_bonus_games: result.upper_bonus_awarded ? 1 : 0,
-        sucker_games: result.sucker_count > 0 ? 1 : 0,
-        three_of_a_kind_games: result.three_of_a_kind_count > 0 ? 1 : 0,
-        four_of_a_kind_games: result.four_of_a_kind_count > 0 ? 1 : 0,
-        full_house_games: result.full_house_count > 0 ? 1 : 0,
-        small_straight_games: result.small_straight_count > 0 ? 1 : 0,
-        large_straight_games: result.large_straight_count > 0 ? 1 : 0,
-        blowout_losses: result.blowout_loss,
-        blowout_wins: result.blowout_win,
-        buzzer_beater_wins: result.buzzer_beater_win,
-        comeback_wins: result.comeback_win,
-        extra_rolls_used: result.extra_rolls_used,
-        mulligans_used: result.mulligans_used,
-        sucker_hunt_misses: result.sucker_hunt_misses,
-        sucker_hunts: result.sucker_hunts,
-        sucker_punches_landed: result.sucker_punches_landed,
-        sucker_punches_used: result.sucker_punches_used,
-        sucker_punches_received: result.sucker_punches_received,
-        sucker_blockers_used: result.sucker_blockers_used,
-        forced_rerolls: result.forced_rerolls,
-        sucker_tokens_spent: result.sucker_tokens_spent,
-        average_sucker_tokens_spent: result.sucker_tokens_spent,
-        sucker_tokens_leftover: result.sucker_tokens_leftover,
-        average_sucker_tokens_leftover: result.sucker_tokens_leftover,
-      };
-      plan.writes.push({ table: 'head_to_head_stats', operation: 'insert', data: firstStats });
-      continue;
-    }
-
-    const gamesPlayed = existing.games_played + 1;
-    const totalScoreValue = existing.total_score + result.final_score;
-    const updatedStats = {
-      average_score: Number((totalScoreValue / gamesPlayed).toFixed(2)),
-      four_of_a_kind_games: existing.four_of_a_kind_games + (result.four_of_a_kind_count > 0 ? 1 : 0),
-      full_house_games: existing.full_house_games + (result.full_house_count > 0 ? 1 : 0),
-      games_played: gamesPlayed,
-      highest_score: Math.max(existing.highest_score, result.final_score),
-      large_straight_games: existing.large_straight_games + (result.large_straight_count > 0 ? 1 : 0),
-      blowout_losses: existing.blowout_losses + result.blowout_loss,
-      blowout_wins: existing.blowout_wins + result.blowout_win,
-      buzzer_beater_wins: existing.buzzer_beater_wins + result.buzzer_beater_win,
-      comeback_wins: existing.comeback_wins + result.comeback_win,
-      losses: existing.losses + (lost ? 1 : 0),
-      extra_rolls_used: existing.extra_rolls_used + result.extra_rolls_used,
-      forced_rerolls: existing.forced_rerolls + result.forced_rerolls,
-      mulligans_used: existing.mulligans_used + result.mulligans_used,
-      sucker_hunt_misses: existing.sucker_hunt_misses + result.sucker_hunt_misses,
-      sucker_hunts: existing.sucker_hunts + result.sucker_hunts,
-      small_straight_games: existing.small_straight_games + (result.small_straight_count > 0 ? 1 : 0),
-      sucker_blockers_used: existing.sucker_blockers_used + result.sucker_blockers_used,
-      sucker_games: existing.sucker_games + (result.sucker_count > 0 ? 1 : 0),
-      sucker_punches_received: existing.sucker_punches_received + result.sucker_punches_received,
-      sucker_punches_landed: existing.sucker_punches_landed + result.sucker_punches_landed,
-      sucker_punches_used: existing.sucker_punches_used + result.sucker_punches_used,
-      sucker_tokens_leftover: existing.sucker_tokens_leftover + result.sucker_tokens_leftover,
-      average_sucker_tokens_leftover: Number(
-        ((existing.sucker_tokens_leftover + result.sucker_tokens_leftover) / gamesPlayed).toFixed(2),
-      ),
-      sucker_tokens_spent: existing.sucker_tokens_spent + result.sucker_tokens_spent,
-      average_sucker_tokens_spent: Number(
-        ((existing.sucker_tokens_spent + result.sucker_tokens_spent) / gamesPlayed).toFixed(2),
-      ),
-      three_of_a_kind_games: existing.three_of_a_kind_games + (result.three_of_a_kind_count > 0 ? 1 : 0),
-      total_score: totalScoreValue,
-      upper_bonus_games: existing.upper_bonus_games + (result.upper_bonus_awarded ? 1 : 0),
-      wins: existing.wins + (result.won ? 1 : 0),
+    const statsDelta = {
+      player_id: player.id,
+      opponent_id: opponent.id,
+      games_played: 1,
+      wins: result.won ? 1 : 0,
+      losses: lost ? 1 : 0,
+      highest_score: result.final_score,
+      total_score: result.final_score,
+      average_score: result.final_score,
+      upper_bonus_games: result.upper_bonus_awarded ? 1 : 0,
+      sucker_games: result.sucker_count > 0 ? 1 : 0,
+      three_of_a_kind_games: result.three_of_a_kind_count > 0 ? 1 : 0,
+      four_of_a_kind_games: result.four_of_a_kind_count > 0 ? 1 : 0,
+      full_house_games: result.full_house_count > 0 ? 1 : 0,
+      small_straight_games: result.small_straight_count > 0 ? 1 : 0,
+      large_straight_games: result.large_straight_count > 0 ? 1 : 0,
+      blowout_losses: result.blowout_loss,
+      blowout_wins: result.blowout_win,
+      buzzer_beater_wins: result.buzzer_beater_win,
+      comeback_wins: result.comeback_win,
+      extra_rolls_used: result.extra_rolls_used,
+      mulligans_used: result.mulligans_used,
+      sucker_hunt_misses: result.sucker_hunt_misses,
+      sucker_hunts: result.sucker_hunts,
+      sucker_punches_landed: result.sucker_punches_landed,
+      sucker_punches_used: result.sucker_punches_used,
+      sucker_punches_received: result.sucker_punches_received,
+      sucker_blockers_used: result.sucker_blockers_used,
+      forced_rerolls: result.forced_rerolls,
+      sucker_tokens_spent: result.sucker_tokens_spent,
+      average_sucker_tokens_spent: result.sucker_tokens_spent,
+      sucker_tokens_leftover: result.sucker_tokens_leftover,
+      average_sucker_tokens_leftover: result.sucker_tokens_leftover,
     };
-    plan.writes.push({
-      table: 'head_to_head_stats',
-      operation: 'update',
-      data: { ...updatedStats, player_id: player.id, opponent_id: opponent.id },
-      match: { player_id: player.id, opponent_id: opponent.id },
-    });
+    plan.writes.push({ table: 'head_to_head_stats', operation: 'increment', data: statsDelta });
   }
 }
 

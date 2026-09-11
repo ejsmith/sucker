@@ -1068,11 +1068,20 @@ begin
     raise exception 'Invalid game move fields';
   end if;
 
+  -- Finalizing separate games can touch the same two matchup rows in opposite
+  -- seat order. Serialize that pair before taking either aggregate row lock.
+  if exists(select 1 from jsonb_array_elements(p_writes) item where item->>'table'='head_to_head_stats') then
+    perform pg_advisory_xact_lock(hashtextextended(
+      (select string_agg(player_id::text,',' order by player_id) from public.game_players where game_id=p_game_id),
+      6601
+    ));
+  end if;
+
   for change in select value from jsonb_array_elements(p_writes) loop
     table_name := change->>'table';
     operation := change->>'operation';
     if table_name not in ('turns','turn_actions','token_events','game_players','game_player_results','head_to_head_stats')
-      or operation not in ('insert','update','upsert') then raise exception 'Invalid game move write'; end if;
+      or operation not in ('insert','update','upsert','increment') then raise exception 'Invalid game move write'; end if;
     if table_name <> 'head_to_head_stats' and
       coalesce(change->'data'->>'game_id',change->'match'->>'game_id','') <> p_game_id::text then
       raise exception 'Move write must belong to the locked game';
@@ -1084,7 +1093,22 @@ begin
     select string_agg(format('%I',key),',') into fields from jsonb_object_keys(change->'data') key;
     if fields is null then raise exception 'Empty game move write'; end if;
 
-    if operation='update' then
+    if operation='increment' or (table_name='head_to_head_stats' and operation='insert') then
+      if table_name <> 'head_to_head_stats' then raise exception 'Invalid move increment'; end if;
+      -- Per-game deltas, never pre-read aggregate totals. Supporting insert here
+      -- also makes two older first-matchup plans safe during the rollout.
+      select string_agg(case
+        when key in ('player_id','opponent_id') then null
+        when key='highest_score' then 'highest_score = greatest(target.highest_score,excluded.highest_score)'
+        when key='average_score' then 'average_score = round((target.total_score + excluded.total_score)::numeric / (target.games_played + excluded.games_played),2)'
+        when key='average_sucker_tokens_spent' then 'average_sucker_tokens_spent = round((target.sucker_tokens_spent + excluded.sucker_tokens_spent)::numeric / (target.games_played + excluded.games_played),2)'
+        when key='average_sucker_tokens_leftover' then 'average_sucker_tokens_leftover = round((target.sucker_tokens_leftover + excluded.sucker_tokens_leftover)::numeric / (target.games_played + excluded.games_played),2)'
+        else format('%1$I = target.%1$I + excluded.%1$I',key)
+      end,',') into assignments from jsonb_object_keys(change->'data') key;
+      execute format('insert into public.head_to_head_stats as target (%1$s)
+        select %1$s from jsonb_populate_record(null::public.head_to_head_stats,$1)
+        on conflict (player_id,opponent_id) do update set %2$s',fields,assignments) using change->'data';
+    elsif operation='update' then
       if table_name not in ('turns','game_players','head_to_head_stats') then raise exception 'Invalid move update'; end if;
       select string_agg(format('%I = source.%I',key,key),',') into assignments from jsonb_object_keys(change->'data') key;
       select string_agg(format('target.%I is not distinct from filter.%I',key,key),' and ')

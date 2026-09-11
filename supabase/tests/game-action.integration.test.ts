@@ -290,6 +290,77 @@ Deno.test('completed request replay recovers notifications without replaying the
   assertEquals(deliveries, 2);
 });
 
+Deno.test('concurrent first matchup completions accumulate both games atomically', async () => {
+  const [alice, bob] = await createUsers('first-matchup-race', ['Alice', 'Bob']);
+  const requests = [];
+  for (let index = 0; index < 2; index += 1) {
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    const requestId = crypto.randomUUID();
+    assertNoError(
+      (
+        await admin.from('game_action_requests').insert({
+          actor_id: alice.id,
+          request_id: requestId,
+          game_id: game.id,
+          action_type: 'score_category',
+        })
+      ).error,
+    );
+    // Both old planners saw no matchup row. These are their independent first
+    // completion inserts, prepared before either transaction commits.
+    requests.push({
+      p_actor_id: alice.id,
+      p_request_id: requestId,
+      p_game_id: game.id,
+      p_expected_updated_at: game.updated_at,
+      p_game_patch: { status: 'complete', winner_id: null },
+      p_writes: [alice, bob].map((player) => ({
+        table: 'head_to_head_stats',
+        operation: 'insert',
+        data: {
+          player_id: player.id,
+          opponent_id: player.id === alice.id ? bob.id : alice.id,
+          games_played: 1,
+          wins: 0,
+          losses: 0,
+          total_score: 10 + index * 10,
+          highest_score: 10 + index * 10,
+          average_score: 10 + index * 10,
+          sucker_tokens_spent: 3 + index,
+          average_sucker_tokens_spent: 3 + index,
+          sucker_tokens_leftover: 7 - index,
+          average_sucker_tokens_leftover: 7 - index,
+        },
+      })),
+      p_result: { game },
+    });
+  }
+  const results = await Promise.all(requests.map((request) => admin.rpc('commit_game_move', request)));
+  for (const result of results) assertNoError(result.error);
+  const stats = await selectMany<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+  );
+  assertEquals(stats.length, 2);
+  for (const row of stats) {
+    assertEquals(row.games_played, 2);
+    assertEquals(row.total_score, 30);
+    assertEquals(row.highest_score, 20);
+    assertEquals(Number(row.average_score), 15);
+    assertEquals(row.sucker_tokens_spent, 7);
+    assertEquals(Number(row.average_sucker_tokens_spent), 3.5);
+    assertEquals(row.sucker_tokens_leftover, 13);
+    assertEquals(Number(row.average_sucker_tokens_leftover), 6.5);
+  }
+  for (const request of requests) assertNoError((await admin.rpc('commit_game_move', request)).error);
+  const replayed = await selectMany<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+  );
+  assertEquals(
+    replayed.every((row) => row.games_played === 2),
+    true,
+  );
+});
+
 Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {
   const [alice, bob] = await createUsers('idempotent-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

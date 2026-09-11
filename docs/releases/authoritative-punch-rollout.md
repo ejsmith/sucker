@@ -15,8 +15,9 @@ Leave it unset or false until a separately approved rollout meets these gates:
    an enforced minimum client version. Merely making a new app version available
    does not update every installed client. Do not replace the live game-action
    endpoint while incompatible clients can still reach it.
-2. Apply the invitation privacy, persisted chance, atomic move, and notification
-   delivery migrations before deploying their corresponding backend code.
+2. Apply the invitation privacy, persisted chance, atomic move, notification
+   delivery, and atomic matchup-stat migrations before deploying their
+   corresponding backend code.
 3. Verify new-client preparation, throw, retry, token accounting, and notification
    delivery against that backend. Verify the supported older-client behavior on
    a device, including any required upgrade flow.

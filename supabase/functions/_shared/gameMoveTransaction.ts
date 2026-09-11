@@ -12,7 +12,7 @@ type MoveTable =
   | 'head_to_head_stats';
 export type GameMoveWrite = {
   table: MoveTable;
-  operation: 'insert' | 'update' | 'upsert';
+  operation: 'insert' | 'update' | 'upsert' | 'increment';
   data: Record<string, unknown>;
   match?: Record<string, unknown>;
 };
