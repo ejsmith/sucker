@@ -263,33 +263,37 @@ export function MultiplayerLobby({
     [onRefreshGames, profileId],
   );
 
-  useEffect(() => {
-    if (!profile) {
-      return;
-    }
-
-    const recovered = recoveredActions.filter((item) => item.actorId === profile.id);
-    if (recovered.length === 0) {
-      return;
-    }
-
-    const recoveredInvite = recovered.find(
-      (item) =>
-        item.action.type === 'create_invite' &&
-        'inviteCode' in item.result &&
-        typeof item.result.inviteCode === 'string',
-    );
-    const timer = setTimeout(() => {
-      consumeRecoveredActions(recovered.map((item) => item.requestId));
-      if (recoveredInvite && 'inviteCode' in recoveredInvite.result && recoveredInvite.result.inviteCode) {
-        setGeneratedInviteCode(recoveredInvite.result.inviteCode);
-        setMessage('Your recovered invite is ready to share.');
-        setPage('startFriend');
+  useFocusEffect(
+    useCallback(() => {
+      if (!profile) {
+        return;
       }
-      void refreshGames({ surfaceError: false });
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [consumeRecoveredActions, profile, recoveredActions, refreshGames, setPage]);
+
+      const recovered = recoveredActions.filter((item) => item.actorId === profile.id);
+      if (recovered.length === 0) {
+        return;
+      }
+
+      const recoveredInvite = recovered.find(
+        (item) =>
+          item.action.type === 'create_invite' &&
+          'inviteCode' in item.result &&
+          typeof item.result.inviteCode === 'string',
+      );
+      // The stack keeps the lobby mounted behind a game. Only the focused
+      // screen may consume recovery, so it cannot cancel that game's retry.
+      const timer = setTimeout(() => {
+        consumeRecoveredActions(recovered.map((item) => item.requestId));
+        if (recoveredInvite && 'inviteCode' in recoveredInvite.result && recoveredInvite.result.inviteCode) {
+          setGeneratedInviteCode(recoveredInvite.result.inviteCode);
+          setMessage('Your recovered invite is ready to share.');
+          setPage('startFriend');
+        }
+        void refreshGames({ surfaceError: false });
+      }, 0);
+      return () => clearTimeout(timer);
+    }, [consumeRecoveredActions, profile, recoveredActions, refreshGames, setPage]),
+  );
 
   useEffect(() => {
     if (Platform.OS === 'web') return;

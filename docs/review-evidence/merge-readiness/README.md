@@ -110,6 +110,24 @@ The separate computer-result upload retention finding is tracked by PR #75,
 which adds an account-scoped retry queue and idempotent recording. It is not
 included in this PR.
 
+### Review follow-up: background lobby consumes game recovery
+
+Opening a game by clicking its lobby card preserves the lobby in the navigation
+stack. Its recovery effect previously consumed the open game's recovered request
+while the current-state fetch was pending, cancelling that fetch's completion
+handler and leaving moves permanently disabled. The lobby now consumes recovered
+requests only while focused, with timer cleanup on blur.
+
+The browser regression opens the game through its real lobby card, seeds one
+pending preparation request, triggers active-app recovery, and holds the resulting
+current-state fetch until both mounted screens process recovery. Before the fix,
+ROLL stays disabled after the fetch returns. Afterward it enables. All six cases
+in the recovery browser suite pass across Chromium and iPhone WebKit. HTTP and
+WebSocket responses are controlled test fixtures, not a hosted backend.
+
+- [Before: ROLL remains disabled after recovery](lobby-before.png)
+- [After: ROLL enables after the current snapshot arrives](lobby-after.png)
+
 ## Release boundary
 
 Automatic web publishing is gated until the incompatible old/new Punch protocols
