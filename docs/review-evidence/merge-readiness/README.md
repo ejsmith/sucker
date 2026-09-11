@@ -53,6 +53,21 @@ invalidate outstanding snapshots immediately. All five refresh tests pass.
 
 These are actual helper-test output screenshots, not a browser network capture.
 
+### Review follow-up: failed fetch after preparation recovery
+
+The subsequent review found that consuming recovery before a replacement fetch
+succeeded removed the retry signal. The existing consume-before-fetch order was
+extracted into the helper regression to reproduce this failure. Recovery now
+stays pending and keeps move controls busy until a current snapshot is fetched;
+failures show a retry message and retry every 2.5 seconds while the app is active.
+Navigation or backgrounding cancels outstanding retries. The eight refresh and
+recovery tests cover failure retention, successful retry, and cancellation.
+
+- [Before: recovery consumed before its fetch](recovery-retry-before.png)
+- [After: recovery retained until successful retry](recovery-retry-after.png)
+
+These are actual helper regression results, not a live Realtime reproduction.
+
 ### Review follow-up: concurrent first-matchup completions
 
 A fresh disposable stack, `sucker_pr66_merge` on ports 56421/56422, was created

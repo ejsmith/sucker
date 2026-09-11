@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createGameRefresh } = require('../.build/src/multiplayer/gameRefresh');
+const { createGameRefresh, startRecoveryRefresh } = require('../.build/src/multiplayer/gameRefresh');
 
 test('reconnect and preparation-only recovery fetch the current game', async () => {
   let current = { version: 7 };
@@ -88,4 +88,74 @@ test('a newer successful refresh wins over an older response', async () => {
   pending[0]({ version: 8 });
   await older;
   assert.equal(current.version, 9);
+});
+
+test('a failed recovery fetch retains its recovery signal', async () => {
+  let consumed = false;
+  let failed;
+  const failure = new Promise((resolve) => {
+    failed = resolve;
+  });
+  const stop = startRecoveryRefresh({
+    refresh: async () => {
+      throw new Error('offline');
+    },
+    complete: () => {
+      consumed = true;
+    },
+    onFailure: failed,
+    retryDelayMs: 10000,
+  });
+  try {
+    await failure;
+    assert.equal(consumed, false);
+  } finally {
+    stop();
+  }
+});
+
+test('recovery retries a failed fetch and consumes only after success', async () => {
+  let attempts = 0;
+  let consumed = 0;
+  let done;
+  const completion = new Promise((resolve) => {
+    done = resolve;
+  });
+  const stop = startRecoveryRefresh({
+    refresh: async () => {
+      if (++attempts === 1) throw new Error('offline');
+    },
+    complete: () => {
+      consumed += 1;
+      done();
+    },
+    onFailure: () => {},
+    retryDelayMs: 0,
+  });
+  try {
+    await completion;
+    assert.equal(attempts, 2);
+    assert.equal(consumed, 1);
+  } finally {
+    stop();
+  }
+});
+
+test('navigation cancels recovery completion while its fetch is pending', async () => {
+  let finish;
+  let consumed = 0;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const stop = startRecoveryRefresh({
+    refresh: () => pending,
+    complete: () => {
+      consumed += 1;
+    },
+    onFailure: () => {},
+  });
+  stop();
+  finish();
+  await pending;
+  assert.equal(consumed, 0);
 });

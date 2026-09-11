@@ -47,7 +47,7 @@ import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './s
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
 import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
-import { createGameRefresh } from './src/multiplayer/gameRefresh';
+import { createGameRefresh, startRecoveryRefresh } from './src/multiplayer/gameRefresh';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -654,24 +654,33 @@ export function RemoteGameScreen({
     if (recovered.some((item) => item.action.type === 'taunt')) {
       setTauntOpportunityRefreshKey((current) => current + 1);
     }
-    consumeRecoveredActions(recovered.map((item) => item.requestId));
-    setUnresolvedRequestId(null);
-    setError(null);
-
     if (!latestWithGame || !('game' in latestWithGame.result)) {
-      void refreshRemoteGameRef.current
-        ?.refresh()
-        .catch((error) => console.warn('Unable to refresh recovered game', error));
-      return;
+      setUnresolvedRequestId(recovered[0].requestId);
+      if (!isAppActive) return;
+      return startRecoveryRefresh({
+        refresh: async () => {
+          const refresh = refreshRemoteGameRef.current;
+          if (!refresh) throw new Error('Game refresh is not ready.');
+          await refresh.refresh();
+        },
+        complete: () => {
+          consumeRecoveredActions(recovered.map((item) => item.requestId));
+          setUnresolvedRequestId(null);
+          setError(null);
+        },
+        onFailure: () => setError('Unable to refresh the recovered move. Retrying…'),
+      });
     }
 
+    consumeRecoveredActions(recovered.map((item) => item.requestId));
+    setUnresolvedRequestId(null);
     const nextGame = latestWithGame.result.game;
     setError(null);
     refreshRemoteGameRef.current?.invalidate();
     setRemoteGame(nextGame);
     onGameChange(profileId, nextGame);
     void syncRemoteBadgeCount(profileId);
-  }, [consumeRecoveredActions, gameId, onGameChange, profileId, recoveredActions, syncRemoteBadgeCount]);
+  }, [consumeRecoveredActions, gameId, isAppActive, onGameChange, profileId, recoveredActions, syncRemoteBadgeCount]);
 
   useEffect(() => {
     let isMounted = true;

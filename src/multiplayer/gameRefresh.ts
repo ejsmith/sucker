@@ -24,3 +24,35 @@ export function createGameRefresh<T>(load: () => Promise<T>, apply: (game: T) =>
     },
   };
 }
+
+export function startRecoveryRefresh({
+  refresh,
+  complete,
+  onFailure,
+  retryDelayMs = 2500,
+}: {
+  refresh: () => Promise<void>;
+  complete: () => void;
+  onFailure: (error: unknown) => void;
+  retryDelayMs?: number;
+}) {
+  let cancelled = false;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  async function attempt() {
+    if (cancelled) return;
+    try {
+      await refresh();
+      if (!cancelled) complete();
+    } catch (error) {
+      if (!cancelled) {
+        onFailure(error);
+        retry = setTimeout(() => void attempt(), retryDelayMs);
+      }
+    }
+  }
+  void attempt();
+  return () => {
+    cancelled = true;
+    if (retry !== null) clearTimeout(retry);
+  };
+}
