@@ -34,6 +34,32 @@ const scoreCategories = [
   'chance',
 ] as const;
 
+test('scratching a zero choice clears the selection before the opponent turn', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`zero-alice-${runId}`, 'Zero Alice');
+  const bob = await createUser(`zero-bob-${runId}`, 'Zero Bob');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await alicePage.getByTestId('roll-button').click();
+    await waitForPressableEnabled(alicePage.getByTestId('home-score-box-twos'));
+    await alicePage.getByTestId('home-score-box-twos').click();
+    await alicePage.getByTestId('play-score-button').click();
+    await alicePage.getByTestId('zero-score-scratch').click();
+    await expect.poll(async () => (await loadGame(gameId)).current_player_id).toBe(bob.id);
+    await expect(alicePage.getByTestId('roll-button')).toBeDisabled();
+    await alicePage.screenshot({ path: test.info().outputPath('scratch-opponent-preview.png') });
+    await expect(alicePage.getByTestId('opponent-score-box-twos')).toHaveText('');
+    await expect(alicePage.getByTestId('home-score-box-twos')).toHaveText('0');
+    await expect(alicePage.getByTestId('token-menu-button')).toHaveText('11');
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('local development offers reusable Test 1 and Test 2 logins at the bottom', async ({ browser }) => {
   for (const player of [1, 2, 1] as const) {
     const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
@@ -408,6 +434,8 @@ test('two players can create an invite and play turns through the web UI', async
   await bobTwosScoreBox.click();
   await expect(bobPage.getByTestId('play-score-button')).toBeEnabled();
   await bobPage.getByTestId('play-score-button').click();
+  await expect(bobPage.getByTestId('zero-score-dialog')).toContainText('Twos: 0 points');
+  await bobPage.getByTestId('zero-score-confirm').click();
 
   await expect.poll(() => loadTurnCount(gameId)).toBe(2);
   await expect
