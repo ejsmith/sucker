@@ -956,6 +956,50 @@ test('a player can add and remove a profile avatar in the PWA', async ({ browser
     .toBe(0);
 });
 
+test('sign-in preserves a pending invitation destination', async ({ browser }) => {
+  const player = await createUser(`invite-login-${crypto.randomUUID()}`, 'Invite Login');
+  const password = 'SuckerTest9!';
+  await admin.auth.admin.updateUserById(player.id, { password });
+  const context = await browser.newContext({ viewport: { width: 393, height: 852 } });
+  const page = await context.newPage();
+  await page.goto('/?invite=ABC123');
+  await page.getByTestId('toggle-password-login').click();
+  await page.getByTestId('login-email-input').fill(player.email);
+  await page.getByTestId('login-password-input').fill(password);
+  await page.getByTestId('password-sign-in-button').click();
+  await expect(page.getByTestId('password-sign-in-button')).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('invite-after-login.png') });
+  await expect(page.getByTestId('invite-code-input')).toHaveValue('ABC123');
+  await context.close();
+});
+
+test('password editor resets after signing out and back in', async ({ browser }) => {
+  const player = await createUser(`editor-${crypto.randomUUID()}`, 'Editor E2E');
+  const password = 'SuckerTest9!';
+  await admin.auth.admin.updateUserById(player.id, { password });
+  const page = await openAuthedPage(browser, player);
+  await page.getByTestId('profile-button').click();
+  await page.getByTestId('toggle-password-editor').click();
+  await page.getByTestId('new-password-input').fill('abandoned-password');
+  await page.getByTestId('sign-out-button').click();
+  await page.getByTestId('toggle-password-login').click();
+  await page.getByTestId('login-email-input').fill(player.email);
+  await page.getByTestId('login-password-input').fill(password);
+  await page.getByTestId('password-sign-in-button').click();
+  await expect(page.getByTestId('multiplayer-lobby-shell')).toBeVisible();
+  await expect.poll(async () => await page.getByTestId('profile-button').count() + await page.getByTestId('toggle-password-editor').count()).toBeGreaterThan(0);
+  if (await page.getByTestId('profile-button').isVisible()) {
+    await expect(page.getByText(`Hi, ${player.displayName}`)).toBeVisible();
+    await page.getByTestId('profile-button').click();
+  }
+  await expect(page.getByTestId('display-name-input')).toHaveValue(player.displayName);
+  await page.screenshot({ path: test.info().outputPath('session-editor.png') });
+  await expect(page.getByTestId('toggle-password-editor')).toHaveAttribute('aria-expanded', 'false');
+  await page.getByTestId('toggle-password-editor').click();
+  await expect(page.getByTestId('new-password-input')).toHaveValue('');
+  await page.context().close();
+});
+
 test('an email-code account can set a password and use it to sign in', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const player = await createUser(`password-${runId}`, 'Password E2E');
@@ -964,6 +1008,15 @@ test('an email-code account can set a password and use it to sign in', async ({ 
 
   await page.getByTestId('profile-button').click();
   const passwordSection = page.getByTestId('account-password-section');
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await expect(page.getByTestId('toggle-password-editor')).toHaveAttribute('aria-expanded', 'false');
+  await page.screenshot({ path: test.info().outputPath('profile-collapsed.png') });
+  await page.getByTestId('toggle-password-editor').click();
+  await page.getByTestId('new-password-input').fill('discarded-draft');
+  await page.getByTestId('toggle-password-editor').click();
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await page.getByTestId('toggle-password-editor').click();
+  await expect(page.getByTestId('new-password-input')).toHaveValue('');
   await passwordSection.scrollIntoViewIfNeeded();
   const [shellBox, passwordSectionBox] = await Promise.all([
     page.getByTestId('multiplayer-lobby-shell').boundingBox(),
@@ -982,6 +1035,8 @@ test('an email-code account can set a password and use it to sign in', async ({ 
   await expect(page.getByTestId('set-password-button')).toBeEnabled();
   await page.getByTestId('set-password-button').click();
   await expect(page.getByText('Password updated. You can now sign in with your email and password.')).toBeVisible();
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await page.getByTestId('toggle-password-editor').click();
   await expect(page.getByTestId('new-password-input')).toHaveValue('');
   await expect(page.getByTestId('confirm-password-input')).toHaveValue('');
   await page.context().close();
