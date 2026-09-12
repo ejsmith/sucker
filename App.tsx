@@ -1180,6 +1180,9 @@ export function LocalGameScreen({
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
   const menuButtonRef = useRef<ViewRef | null>(null);
+  const tokenMenuButtonRef = useRef<ViewRef | null>(null);
+  const tokenMenuCloseRef = useRef<ViewRef | null>(null);
+  const tokenMenuWasOpen = useRef(false);
   const gameOverStatsButtonRef = useRef<ViewRef | null>(null);
   const homeAvatarButtonRef = useRef<ViewRef | null>(null);
   const opponentAvatarButtonRef = useRef<ViewRef | null>(null);
@@ -1205,6 +1208,15 @@ export function LocalGameScreen({
   const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
   const suckerPunchDieAnimation = useRef(new Animated.Value(0)).current;
   const suckerPunchResultCompletion = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const wasOpen = tokenMenuWasOpen.current;
+    tokenMenuWasOpen.current = isTokenMenuOpen;
+    if (!isTokenMenuOpen && (!wasOpen || suckerPunchDialog)) return;
+    const frame = requestAnimationFrame(() =>
+      focusAccessibilityTarget(isTokenMenuOpen ? tokenMenuCloseRef.current : tokenMenuButtonRef.current),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [isTokenMenuOpen, suckerPunchDialog]);
   const bgFloat = useRef(new Animated.Value(0)).current;
   const selectedPulse = useRef(new Animated.Value(0)).current;
   const sectionBonusPulse = useRef(new Animated.Value(0)).current;
@@ -3206,7 +3218,7 @@ export function LocalGameScreen({
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
+          aria-hidden={Platform.OS === 'web' ? showStatsPage || isTokenMenuOpen : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
@@ -3854,6 +3866,7 @@ export function LocalGameScreen({
               <View style={[styles.tokenButtonWrap, gameLayout.styles.tokenButtonWrap]}>
                 <Pressable
                   accessibilityLabel="Sucker token menu"
+                  ref={tokenMenuButtonRef}
                   accessibilityRole="button"
                   accessibilityState={{ disabled: !canOpenTokenMenu }}
                   disabled={!canOpenTokenMenu}
@@ -3913,78 +3926,118 @@ export function LocalGameScreen({
             </View>
           </View>
           {isTokenMenuOpen && (
-            <View style={[styles.tokenMenuOverlay, gameLayout.styles.tokenMenuOverlay]} testID="token-menu-overlay">
-              <Pressable
-                accessibilityLabel="Close Sucker token menu"
-                accessibilityRole="button"
-                onPress={() => setIsTokenMenuOpen(false)}
-                style={StyleSheet.absoluteFill}
-              />
-              <View style={[styles.tokenMenuPanel, gameLayout.styles.tokenMenuPanel]}>
-                <View style={[styles.tokenMenuHeader, gameLayout.styles.tokenMenuHeader]}>
-                  <Image source={suckerTokenImage} style={[styles.tokenMenuIcon, gameLayout.styles.tokenMenuIcon]} />
-                  <View style={styles.tokenMenuHeaderText}>
-                    <Text maxFontSizeMultiplier={1.2} style={[styles.tokenMenuTitle, gameLayout.styles.tokenMenuTitle]}>
-                      Sucker Tokens
-                    </Text>
-                    <Text
-                      maxFontSizeMultiplier={1.2}
-                      style={[styles.tokenMenuSubtitle, gameLayout.styles.tokenMenuSubtitle]}
-                    >
-                      {myTokenCount} available
-                    </Text>
-                  </View>
-                  <Pressable
-                    accessibilityLabel="Close Sucker token menu"
-                    accessibilityRole="button"
-                    hitSlop={gameLayout.unit(8)}
-                    onPress={() => setIsTokenMenuOpen(false)}
-                    style={[styles.tokenMenuClose, gameLayout.styles.tokenMenuClose]}
-                    testID="token-menu-close-button"
+            <Modal
+              accessibilityLabel="Sucker Tokens"
+              animationType="none"
+              navigationBarTranslucent
+              onRequestClose={() => setIsTokenMenuOpen(false)}
+              onShow={() => focusAccessibilityTarget(tokenMenuCloseRef.current)}
+              presentationStyle="overFullScreen"
+              statusBarTranslucent
+              transparent
+              visible
+            >
+              <SafeAreaView
+                edges={['top', 'right', 'bottom', 'left']}
+                style={[styles.tokenModalHost, needsScrollableStage && styles.statsModalScrollableHost]}
+              >
+                <View
+                  style={[
+                    gameStageStyle,
+                    devViewportStageOffset,
+                    { height: Math.min(gameStageStyle.height, availableStageViewportHeight) },
+                  ]}
+                >
+                  <View
+                    style={[styles.tokenMenuOverlay, gameLayout.styles.tokenMenuOverlay]}
+                    testID="token-menu-overlay"
                   >
-                    <CloseIcon size={gameLayout.unit(18)} />
-                  </Pressable>
-                </View>
+                    <Pressable
+                      accessible={false}
+                      tabIndex={-1}
+                      onPress={() => setIsTokenMenuOpen(false)}
+                      style={StyleSheet.absoluteFill}
+                      testID="token-menu-backdrop"
+                    />
+                    <View
+                      accessibilityViewIsModal
+                      onAccessibilityEscape={() => setIsTokenMenuOpen(false)}
+                      style={[styles.tokenMenuPanel, gameLayout.styles.tokenMenuPanel]}
+                    >
+                      <View style={[styles.tokenMenuHeader, gameLayout.styles.tokenMenuHeader]}>
+                        <Image
+                          source={suckerTokenImage}
+                          style={[styles.tokenMenuIcon, gameLayout.styles.tokenMenuIcon]}
+                        />
+                        <View style={styles.tokenMenuHeaderText}>
+                          <Text
+                            maxFontSizeMultiplier={1.2}
+                            style={[styles.tokenMenuTitle, gameLayout.styles.tokenMenuTitle]}
+                          >
+                            Sucker Tokens
+                          </Text>
+                          <Text
+                            maxFontSizeMultiplier={1.2}
+                            style={[styles.tokenMenuSubtitle, gameLayout.styles.tokenMenuSubtitle]}
+                          >
+                            {myTokenCount} available
+                          </Text>
+                        </View>
+                        <Pressable
+                          accessibilityLabel="Close Sucker token menu"
+                          ref={tokenMenuCloseRef}
+                          accessibilityRole="button"
+                          hitSlop={gameLayout.unit(8)}
+                          onPress={() => setIsTokenMenuOpen(false)}
+                          style={[styles.tokenMenuClose, gameLayout.styles.tokenMenuClose]}
+                          testID="token-menu-close-button"
+                        >
+                          <CloseIcon size={gameLayout.unit(18)} />
+                        </Pressable>
+                      </View>
 
-                <TokenMenuOption
-                  cost={suckerTokenCosts.extraRoll}
-                  description="Add one roll to the Roll button."
-                  disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
-                  label="Extra Roll"
-                  onPress={() => void handleUseExtraRoll()}
-                  testID="token-option-extra-roll"
-                />
-                <TokenMenuOption
-                  cost={suckerTokenCosts.mulligan}
-                  description="Discard this turn and start it over."
-                  disabled={!canUseMulligan}
-                  label="Mulligan"
-                  onPress={() => void handleUseMulligan()}
-                  testID="token-option-mulligan"
-                />
-                <TokenMenuOption
-                  cost={0}
-                  costLabel="+1"
-                  description="Pick a score box to sacrifice for 0 and gain 1 token."
-                  disabled={!canStartSuckerDeal}
-                  label="Sucker Deal"
-                  onPress={handleStartSuckerDeal}
-                  testID="token-option-sucker-deal"
-                />
-                <TokenMenuOption
-                  cost={suckerTokenCosts.suckerPunch}
-                  description={
-                    isRemoteGame
-                      ? 'Roll for a chance to make your opponent replay their turn.'
-                      : 'Roll for a chance to make the computer replay its turn.'
-                  }
-                  disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
-                  label="Sucker Punch"
-                  onPress={() => void handleUseSuckerPunch()}
-                  testID="token-option-sucker-punch"
-                />
-              </View>
-            </View>
+                      <TokenMenuOption
+                        cost={suckerTokenCosts.extraRoll}
+                        description="Add one roll to the Roll button."
+                        disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
+                        label="Extra Roll"
+                        onPress={() => void handleUseExtraRoll()}
+                        testID="token-option-extra-roll"
+                      />
+                      <TokenMenuOption
+                        cost={suckerTokenCosts.mulligan}
+                        description="Discard this turn and start it over."
+                        disabled={!canUseMulligan}
+                        label="Mulligan"
+                        onPress={() => void handleUseMulligan()}
+                        testID="token-option-mulligan"
+                      />
+                      <TokenMenuOption
+                        cost={0}
+                        costLabel="+1"
+                        description="Pick a score box to sacrifice for 0 and gain 1 token."
+                        disabled={!canStartSuckerDeal}
+                        label="Sucker Deal"
+                        onPress={handleStartSuckerDeal}
+                        testID="token-option-sucker-deal"
+                      />
+                      <TokenMenuOption
+                        cost={suckerTokenCosts.suckerPunch}
+                        description={
+                          isRemoteGame
+                            ? 'Roll for a chance to make your opponent replay their turn.'
+                            : 'Roll for a chance to make the computer replay its turn.'
+                        }
+                        disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
+                        label="Sucker Punch"
+                        onPress={() => void handleUseSuckerPunch()}
+                        testID="token-option-sucker-punch"
+                      />
+                    </View>
+                  </View>
+                </View>
+              </SafeAreaView>
+            </Modal>
           )}
           {suckerPunchDialog && (
             <SuckerPunchChanceDialog
@@ -5717,6 +5770,12 @@ const styles = StyleSheet.create({
   statsModalHost: {
     alignItems: 'center',
     backgroundColor: '#8F0000',
+    flex: 1,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  tokenModalHost: {
+    alignItems: 'center',
     flex: 1,
     justifyContent: 'center',
     overflow: 'hidden',
