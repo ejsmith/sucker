@@ -69,6 +69,7 @@ import {
   subscribeToGame,
   subscribeToGameListChanges,
   subscribeToGameTaunts,
+  subscribeToTurn,
   useRemoteMulligan,
   useRemoteSuckerPunch,
 } from './src/multiplayer/games';
@@ -106,6 +107,7 @@ import {
   wait,
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
+import { LastTurnDialog } from './src/ui/LastTurnDialog';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
@@ -466,6 +468,7 @@ export function RemoteGameScreen({
   const [remoteTauntOpportunity, setRemoteTauntOpportunity] = useState<RemoteTauntOpportunity | null>(null);
   const [tauntOpportunityRefreshKey, setTauntOpportunityRefreshKey] = useState(0);
   const [remoteLastTurn, setRemoteLastTurn] = useState<RemoteTurnRow | null>(null);
+  const [remoteTurnRefreshKey, setRemoteTurnRefreshKey] = useState(0);
   const [remoteLastTurnLoadFailedId, setRemoteLastTurnLoadFailedId] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
@@ -689,24 +692,36 @@ export function RemoteGameScreen({
       return;
     }
 
-    void getTurn(turnId)
-      .then((turn) => {
-        if (isMounted) {
-          setRemoteLastTurnLoadFailedId(null);
-          setRemoteLastTurn(turn);
-        }
-      })
-      .catch((turnError) => {
-        if (isMounted) {
-          setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
-          setRemoteLastTurnLoadFailedId(turnId);
-          setRemoteLastTurn(null);
-        }
-      });
+    let requestVersion = 0;
+    function refreshTurn() {
+      const version = ++requestVersion;
+      void getTurn(turnId!)
+        .then((turn) => {
+          if (isMounted && version === requestVersion) {
+            setRemoteLastTurnLoadFailedId(null);
+            setRemoteLastTurn(turn);
+          }
+        })
+        .catch((turnError) => {
+          if (isMounted && version === requestVersion) {
+            setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
+            setRemoteLastTurnLoadFailedId(turnId ?? null);
+            setRemoteLastTurn(null);
+          }
+        });
+    }
+    refreshTurn();
 
     return () => {
       isMounted = false;
     };
+    // Action events refresh scratch metadata; turn events catch later status writes.
+  }, [remoteGame?.last_turn_id, remoteGame?.status, tauntOpportunityRefreshKey, remoteTurnRefreshKey]);
+
+  useEffect(() => {
+    const turnId = remoteGame?.last_turn_id;
+    if (!turnId) return;
+    return subscribeToTurn(turnId, () => setRemoteTurnRefreshKey((current) => current + 1));
   }, [remoteGame?.last_turn_id]);
 
   useEffect(() => {
@@ -745,6 +760,7 @@ export function RemoteGameScreen({
           refreshRemoteGameRef.current?.invalidate();
           setRemoteGame(nextGame);
           setRemoteTaunt(latestTaunt);
+          setRemoteTurnRefreshKey((current) => current + 1);
           if (profileIdRef.current) {
             onGameChange(profileIdRef.current, nextGame);
           }
@@ -776,6 +792,7 @@ export function RemoteGameScreen({
         refreshRemoteGameRef.current?.invalidate();
         setRemoteGame(nextGame);
         setRemoteTaunt(latestTaunt);
+        setRemoteTurnRefreshKey((current) => current + 1);
         if (profileId) {
           onGameChange(profileId, nextGame);
           void syncRemoteBadgeCount(profileId);
@@ -1151,6 +1168,7 @@ export function LocalGameScreen({
   const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showLastTurn, setShowLastTurn] = useState(false);
   const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
   const [isSendingTaunt, setIsSendingTaunt] = useState(false);
   const [sentTauntTurnId, setSentTauntTurnId] = useState<string | null>(null);
@@ -2109,6 +2127,7 @@ export function LocalGameScreen({
 
     localSuckerStatTurns.current.push({
       category: animation.category,
+      scratched: animation.scratched,
       player_id: scorer.id,
       score: animation.score,
       status: result.game.phase === 'complete' ? 'finalized' : (result.pendingTurn?.status ?? 'submitted'),
@@ -2707,6 +2726,7 @@ export function LocalGameScreen({
     setLocalGame(nextGame);
     localSuckerStatTurns.current.push({
       category,
+      scratched: true,
       player_id: currentPlayer.id,
       score: 0,
       status: 'submitted',
@@ -3203,14 +3223,33 @@ export function LocalGameScreen({
   }
 
   function renderGameScreen() {
+    const latestTurn = isRemoteGame
+      ? remoteLastTurn?.id === remoteLastTurnId
+        ? remoteLastTurn
+        : null
+      : localSuckerStatTurns.current.at(-1);
+    const lastTurnPlayer = game.players.find((player) => player.id === latestTurn?.player_id);
+    const lastTurnSummary = latestTurn
+      ? `${lastTurnPlayer?.name ?? 'Player'} ${latestTurn.scratched ? 'scratched' : 'played'} ${categoryLabels[latestTurn.category as ScoreCategory] ?? latestTurn.category} for ${latestTurn.score} points.${latestTurn.status === 'punched' ? ' That score was removed by a Sucker Punch.' : latestTurn.status === 'mulliganed' ? ' That score was removed by a Mulligan.' : ''}`
+      : isRemoteGame && remoteLastTurnId
+        ? 'Last-turn details are unavailable. Reopen this game to retry.'
+        : 'No turn has been completed yet.';
+    const currentTurnSummary =
+      game.phase === 'complete'
+        ? 'Game complete'
+        : isMyRemoteTurn && !isComputerTurn
+          ? game.rollNumber === 0
+            ? 'Your turn · Ready to roll'
+            : `Your turn · Roll ${game.rollNumber} of ${maxAvailableRolls(game)}`
+          : `Waiting for ${opponentPlayer.name}`;
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage : undefined}
+          aria-hidden={Platform.OS === 'web' ? showStatsPage || showLastTurn : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
-          {...(showStatsPage ? {} : backSwipeResponder.panHandlers)}
+          {...(showStatsPage || showLastTurn ? {} : backSwipeResponder.panHandlers)}
         >
           <BackgroundDicePattern floatValue={bgFloat} />
           <View style={[styles.topBar, gameLayout.styles.topBar]} testID="game-top-bar">
@@ -3257,6 +3296,18 @@ export function LocalGameScreen({
                 style={StyleSheet.absoluteFill}
               />
               <View style={[styles.topMenu, gameLayout.styles.topMenu]} testID="game-top-menu">
+                <Pressable
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setShowLastTurn(true);
+                  }}
+                  style={[styles.topMenuItem, gameLayout.styles.topMenuItem]}
+                  testID="game-last-turn-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    LAST TURN
+                  </Text>
+                </Pressable>
                 <Pressable
                   accessibilityLabel="View stats"
                   accessibilityRole="button"
@@ -3355,6 +3406,11 @@ export function LocalGameScreen({
                     style={[styles.tokenText, gameLayout.styles.tokenText]}
                   >
                     {player.suckerTokens} Tokens
+                    {game.phase !== 'complete' && player.id === currentPlayer.id
+                      ? isHomePlayer
+                        ? ' · Your turn'
+                        : ' · Their turn'
+                      : ''}
                   </Text>
                 </View>
               );
@@ -4463,6 +4519,16 @@ export function LocalGameScreen({
                 </View>
               </View>
             </View>
+          )}
+          {showLastTurn && (
+            <LastTurnDialog
+              currentTurn={currentTurnSummary}
+              summary={lastTurnSummary}
+              onClose={() => {
+                setShowLastTurn(false);
+                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
+              }}
+            />
           )}
           {showStatsPage && (
             <Modal

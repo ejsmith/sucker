@@ -24,6 +24,7 @@ export type SuckerStatAction = {
 };
 
 export type SuckerStatTurn = {
+  scratched?: boolean;
   category: string;
   player_id: string;
   score: number;

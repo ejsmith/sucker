@@ -46,6 +46,7 @@ export type ComputerTurnResult = {
     targetTurnId: string;
   };
   scoreAnimation?: {
+    scratched?: boolean;
     category: ScoreCategory;
     dice: GameState['dice'];
     hadSuckerBonus: boolean;
@@ -236,6 +237,7 @@ export function scratchLocalTurn(game: GameState, category: ScoreCategory): Comp
     game: nextGame,
     pendingTurn: null,
     scoreAnimation: {
+      scratched: true,
       category,
       dice: game.dice,
       hadSuckerBonus: false,
