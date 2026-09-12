@@ -55,6 +55,7 @@ export type Database = {
       games: {
         Row: {
           completed_at: string | null;
+          completed_sort_at: string;
           created_at: string;
           created_by: string;
           current_player_id: string | null;

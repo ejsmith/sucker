@@ -437,6 +437,132 @@ test('two players can create an invite and play turns through the web UI', async
   });
 });
 
+test('completed history can reach games older than the first 25', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`history-alice-${runId}`, 'History Alice');
+  const bob = await createUser(`history-bob-${runId}`, 'History Bob');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  // The notification prompt can arrive after reload while the history button is being clicked.
+  let avatarLookups = 0;
+  alicePage.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/profiles') && url.searchParams.get('id')?.startsWith('in.')) avatarLookups += 1;
+  });
+  await alicePage.addLocatorHandler(alicePage.getByTestId('turn-notification-prompt'), async () => {
+    await alicePage.getByTestId('turn-notification-not-now').click();
+  });
+  try {
+    const templateId = await createAcceptedGame(alicePage, bobPage);
+    const template = await loadGame(templateId);
+    const rows = Array.from({ length: 51 }, (_, index) => {
+      const id = crypto.randomUUID();
+      const timestamp = `${index < 2 ? '2027' : '2026'}-01-01T12:00:00.${String(Math.floor(index / 2)).padStart(6, '0')}Z`;
+      const completedAt = index < 2 ? null : timestamp;
+      const state = {
+        ...template.state,
+        id,
+        phase: 'complete',
+        players: template.state.players.map((player: { scorecard: unknown }) => ({
+          ...player,
+          scorecard: Object.fromEntries(scoreCategories.map((category) => [category, 0])),
+        })),
+      };
+      return {
+        id,
+        state,
+        created_by: alice.id,
+        status: 'complete',
+        completed_at: completedAt,
+        updated_at: timestamp,
+        current_player_id: null,
+      };
+    });
+    const inserted = await admin.from('games').insert(rows);
+    expect(inserted.error).toBeNull();
+    const players = await admin.from('game_players').insert(
+      rows.flatMap((game) =>
+        [alice, bob].map((user, seat) => ({
+          game_id: game.id,
+          player_id: user.id,
+          seat_index: seat,
+          sucker_tokens: 10,
+        })),
+      ),
+    );
+    expect(players.error).toBeNull();
+    await alicePage.reload();
+    await alicePage.getByTestId('completed-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(25);
+    await alicePage.waitForLoadState('networkidle');
+    const lookupsAtFirstPage = avatarLookups;
+    await alicePage.screenshot({ path: test.info().outputPath('history-before.png') });
+    const newestLegacyId = rows
+      .slice(0, 2)
+      .map((row) => row.id)
+      .sort()
+      .reverse()[0];
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/).first()).toHaveAttribute(
+      'data-testid',
+      `completed-game-${newestLegacyId}`,
+    );
+    await expect(alicePage.getByTestId('load-older-games-button')).toBeVisible();
+    await alicePage.getByTestId('load-older-games-button').scrollIntoViewIfNeeded();
+    await alicePage.screenshot({ path: test.info().outputPath('history-load-more.png') });
+    let failNextPage = true;
+    await alicePage.route('**/rest/v1/games?**', (route) => {
+      if (failNextPage && new URL(route.request().url()).searchParams.get('limit') === '26') {
+        return route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'Local test: history temporarily unavailable' }),
+        });
+      }
+      return route.continue();
+    });
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByText('Could not load older games. Try again.')).toBeVisible();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(25);
+    failNextPage = false;
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(50);
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(51);
+    await expect(alicePage.getByTestId('load-older-games-button')).toHaveCount(0);
+    const shownIds = await alicePage
+      .getByTestId(/^completed-game-[a-f0-9-]+$/)
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid')!.replace('completed-game-', '')));
+    expect(shownIds.sort()).toEqual(rows.map((row) => row.id).sort());
+    await alicePage.getByTestId('refresh-completed-games-button').scrollIntoViewIfNeeded();
+    await alicePage.screenshot({ path: test.info().outputPath('history-after.png') });
+    await alicePage.waitForLoadState('networkidle');
+    console.log(
+      `Avatar lookups after first page: ${lookupsAtFirstPage}; after the same opponents across three pages: ${avatarLookups}.`,
+    );
+    expect(avatarLookups).toBe(lookupsAtFirstPage);
+    const lookupsBeforeRefresh = avatarLookups;
+    await alicePage.getByTestId('refresh-completed-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(25);
+    await alicePage.waitForLoadState('networkidle');
+    console.log(`Avatar lookups before refresh: ${lookupsBeforeRefresh}; after refresh: ${avatarLookups}.`);
+    expect(avatarLookups).toBe(lookupsBeforeRefresh);
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(50);
+    await alicePage.getByTestId('load-older-games-button').click();
+    await expect(alicePage.getByTestId(/^completed-game-[a-f0-9-]+$/)).toHaveCount(51);
+    const oldest = [...rows].sort((left, right) => {
+      const byDate = (left.completed_at ?? left.updated_at).localeCompare(right.completed_at ?? right.updated_at);
+      return byDate || left.id.localeCompare(right.id);
+    })[0];
+    await alicePage.getByTestId(`completed-game-${oldest.id}`).click();
+    await expect(alicePage.getByText('Score Card', { exact: true })).toBeVisible();
+    await expect(alicePage.getByText('History Bob', { exact: true }).first()).toBeVisible();
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('long player names stay inside the game summary dialog', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const longName = 'AlexandertheGreatWithoutAnyBreaks'.repeat(3);

@@ -42,6 +42,7 @@ import {
 import { getProfilesByIds, searchProfiles } from './profiles';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
+import { useCompletedGameHistory } from './useCompletedGameHistory';
 import { isLocalMultiplayerDevelopment } from './env';
 import type { LocalTestPlayer } from './auth';
 import type { RemoteGameRow } from './types';
@@ -140,7 +141,13 @@ export function MultiplayerLobby({
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
-  const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
+  const [avatarState, setAvatarState] = useState<{ owner: string | null; urls: Record<string, string | null> }>({
+    owner: null,
+    urls: {},
+  });
+  const avatarCache = useRef<{ owner: string | null; entries: Map<string, { url: string | null; fetchedAt: number }> }>(
+    { owner: null, entries: new Map() },
+  );
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
   const setPage = useCallback((nextPage: LobbyPage) => {
     if (nextPage !== 'profile') {
@@ -170,8 +177,11 @@ export function MultiplayerLobby({
       };
     }, [profileId]),
   );
+  const profileAvatars = avatarState.owner === profileId ? avatarState.urls : {};
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
+  const history = useCompletedGameHistory(visibleGames, profileId);
+  const avatarGames = useMemo(() => [...visibleGames, ...history.games], [visibleGames, history.games]);
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
     fillNarrowViewport: Platform.OS !== 'web' || shouldFillWebViewport(windowWidth),
   });
@@ -368,13 +378,28 @@ export function MultiplayerLobby({
   }, [profile, refreshProfile]);
 
   useEffect(() => {
-    const ids = visibleGames.flatMap((game) => game.state.players.map((player) => player.id));
-    if (profile?.id) ids.push(profile.id);
+    if (avatarCache.current.owner !== profileId) avatarCache.current = { owner: profileId, entries: new Map() };
+    const cache = avatarCache.current;
+    if (!profileId) return;
+    const ids = [...new Set(avatarGames.flatMap((game) => game.state.players.map((player) => player.id)))].filter(
+      (id) => {
+        if (id === profileId) return false;
+        const cached = cache.entries.get(id);
+        return !cached || Date.now() - cached.fetchedAt >= 5 * 60_000;
+      },
+    );
+    if (!ids.length) return;
     let active = true;
     void getProfilesByIds(ids)
       .then((profiles) => {
         if (active) {
-          setProfileAvatars(Object.fromEntries(profiles.map((item) => [item.id, item.avatar_url])));
+          const byId = new Map(profiles.map((item) => [item.id, item.avatar_url]));
+          const fetchedAt = Date.now();
+          for (const id of ids) cache.entries.set(id, { url: byId.get(id) ?? null, fetchedAt });
+          setAvatarState({
+            owner: profileId,
+            urls: Object.fromEntries([...cache.entries].map(([id, entry]) => [id, entry.url])),
+          });
         }
       })
       .catch(() => {
@@ -383,7 +408,7 @@ export function MultiplayerLobby({
     return () => {
       active = false;
     };
-  }, [profile?.avatar_url, profile?.id, visibleGames]);
+  }, [profileId, avatarGames]);
 
   useEffect(() => {
     void syncAppBadgeCount(profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0);
@@ -477,6 +502,7 @@ export function MultiplayerLobby({
     }
     setIsRefreshing(true);
     try {
+      history.reset();
       await Promise.all([refreshGames(), waitForVisibleRefresh()]);
     } finally {
       setIsRefreshing(false);
@@ -853,7 +879,7 @@ export function MultiplayerLobby({
     visibleGames.filter((game) => game.status !== 'complete'),
     activeProfileId,
   );
-  const completedGames = sortCompletedGames(visibleGames.filter((game) => game.status === 'complete')).slice(0, 25);
+  const completedGames = history.games;
   const webPushPromptVisible = Boolean(
     profile &&
     activeGames.length > 0 &&
@@ -862,7 +888,7 @@ export function MultiplayerLobby({
     getWebNotificationPermission() === 'default',
   );
   const selectedCompletedGame = selectedCompletedGameId
-    ? visibleGames.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
+    ? completedGames.find((game) => game.id === selectedCompletedGameId)
     : null;
   async function handleOpenCompletedGameStats(game: RemoteGameRow, playerStatsTarget: 'opponent' | null) {
     const { opponent } = getGamePlayers(game, activeProfileId);
@@ -937,7 +963,7 @@ export function MultiplayerLobby({
 
         <View style={lobbyStyles.panel}>
           <View style={lobbyStyles.panelHeader}>
-            <Text style={lobbyStyles.sectionTitle}>Last 25</Text>
+            <Text style={lobbyStyles.sectionTitle}>Showing {completedGames.length}</Text>
             <Pressable
               disabled={isRefreshing}
               onPress={() => void handleVisibleRefreshGames()}
@@ -983,6 +1009,27 @@ export function MultiplayerLobby({
                 profileId={activeProfileId}
               />
             ))
+          )}
+          {history.error && (
+            <Text accessibilityRole="alert" style={lobbyStyles.message}>
+              {history.error}
+            </Text>
+          )}
+          {history.hasMore && (
+            <Pressable
+              accessibilityLabel="Load older completed games"
+              accessibilityRole="button"
+              accessibilityState={{ busy: history.isLoading, disabled: history.isLoading || isRefreshing }}
+              disabled={history.isLoading || isRefreshing}
+              onPress={() => void history.loadMore()}
+              style={({ pressed }) => [lobbyStyles.secondaryButton, pressed && lobbyStyles.pressed]}
+              testID="load-older-games-button"
+            >
+              <Text style={lobbyStyles.secondaryButtonText}>{history.isLoading ? 'Loading…' : 'Load older games'}</Text>
+            </Pressable>
+          )}
+          {!history.hasMore && completedGames.length > 0 && (
+            <Text style={lobbyStyles.emptyBody}>All completed games loaded</Text>
           )}
         </View>
 
@@ -2285,14 +2332,6 @@ function sortActiveGames(games: RemoteGameRow[], profileId: string) {
 
     return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
   });
-}
-
-function sortCompletedGames(games: RemoteGameRow[]) {
-  return [...games].sort((left, right) => getCompletedGameTime(right) - getCompletedGameTime(left));
-}
-
-function getCompletedGameTime(game: RemoteGameRow) {
-  return new Date(game.completed_at ?? game.updated_at).getTime();
 }
 
 function getPlayerNameFromGames(games: RemoteGameRow[], profileId: string) {
