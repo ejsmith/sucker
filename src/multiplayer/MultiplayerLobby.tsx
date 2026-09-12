@@ -1097,6 +1097,7 @@ export function MultiplayerLobby({
             <TextInput
               autoCapitalize="none"
               onChangeText={setQuery}
+              accessibilityLabel="Find a player by username or name"
               placeholder="Username or name"
               placeholderTextColor="#8A4B12"
               style={[lobbyStyles.input, lobbyStyles.flexInput]}
@@ -1150,6 +1151,7 @@ export function MultiplayerLobby({
             <TextInput
               autoCapitalize="characters"
               onChangeText={setInviteCode}
+              accessibilityLabel="Invite code"
               placeholder="Invite code"
               placeholderTextColor="#8A4B12"
               style={[lobbyStyles.input, lobbyStyles.flexInput]}
