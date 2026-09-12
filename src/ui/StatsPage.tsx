@@ -16,6 +16,7 @@ import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
 import { formatRecord } from './statsFormat';
 import { Pressable } from './Pressable';
+import { StatsDefinitions } from './StatsDefinitions';
 
 type ComputerStatsSnapshot = Awaited<ReturnType<typeof getComputerStats>>;
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -137,11 +138,22 @@ export function StatsPage({
             </Text>
             <View style={styles.statsScoreRow}>
               <StatBox label="You" value={String(currentScore)} />
-              <StatBox label="Them" value={String(opponentScore)} />
+              <StatBox label="Computer" value={String(opponentScore)} />
             </View>
           </View>
         )}
 
+        <View testID="stats-scope">
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+            {statsKind === 'computer' ? 'Saved computer games' : `Saved games vs ${currentOpponentName}`}
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.scopeDescription}>
+            {statsKind === 'computer'
+              ? 'Completed computer games on this account. Multiplayer games are separate.'
+              : 'Completed multiplayer games between you and this opponent.'}
+          </Text>
+          <StatsDefinitions />
+        </View>
         {hasStats && stats ? (
           statsKind === 'headToHead' ? (
             <HeadToHeadStatsComparison mine={stats as HeadToHeadStatsRow} opponent={opponentStats} />
@@ -623,6 +635,17 @@ function PlayerStatsSummary({
         </Text>
       )}
 
+      <View testID="stats-scope">
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+          {statsView === 'headToHead' ? 'Saved games vs you' : 'Lifetime multiplayer'}
+        </Text>
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.scopeDescription}>
+          {statsView === 'headToHead'
+            ? 'Completed multiplayer games between you and this player.'
+            : 'All completed multiplayer games. Computer games are separate.'}
+        </Text>
+        <StatsDefinitions />
+      </View>
       {hasStats && stats ? (
         statsView === 'headToHead' ? (
           <HeadToHeadStatsComparison
@@ -1316,6 +1339,7 @@ function formatStatNumber(value: number) {
 }
 
 const styles = StyleSheet.create({
+  scopeDescription: { color: '#FFF3C2', fontSize: 15, lineHeight: 22, marginTop: 6 },
   currentGameStatsCard: {
     backgroundColor: '#210505',
     borderColor: '#FFB000',

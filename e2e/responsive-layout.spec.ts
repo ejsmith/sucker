@@ -329,7 +329,8 @@ test.describe('Chromium pixel baselines', () => {
         await expect(statsOverlay).toBeVisible();
         await expect(page.getByRole('dialog', { name: 'Game stats' })).toHaveCount(1);
         await expect(screen).toHaveAttribute('aria-hidden', 'true');
-        await expect(page.getByRole('button')).toHaveCount(1);
+        await expect(page.getByRole('button')).toHaveCount(2);
+        await expect(page.getByTestId('stats-definitions-toggle')).toHaveAccessibleName('What do these stats mean?');
         await expect(page.getByText('No saved stats yet')).toBeVisible();
         await expectContainedBy(statsOverlay, screenBox);
         const statsCloseButton = page.getByTestId('stats-page-close-button');

@@ -34,6 +34,42 @@ const scoreCategories = [
   'chance',
 ] as const;
 
+test('computer stats separate this match from completed games and explain metrics', async ({ browser }) => {
+  const user = await createUser(`stat-context-${crypto.randomUUID()}`, 'Stats Context');
+  const { error } = await admin
+    .from('computer_stats')
+    .insert({
+      profile_id: user.id,
+      games_played: 1,
+      wins: 1,
+      losses: 0,
+      highest_score: 180,
+      total_score: 180,
+      average_score: 180,
+      computer_total_score: 160,
+      computer_average_score: 160,
+      computer_highest_score: 160,
+    });
+  if (error) throw error;
+  const page = await openAuthedPage(browser, user);
+  try {
+    await dismissTurnNotificationPrompt(page);
+    await page.getByTestId('play-computer-button').click();
+    await page.getByTestId('game-menu-button').click();
+    await page.getByTestId('game-stats-menu-item').click();
+    await expect(page.getByTestId('stats-page-overlay')).toContainText('180');
+    await page.screenshot({ path: test.info().outputPath('stats-context.png') });
+    await expect(page.getByTestId('stats-page-overlay')).toContainText('Saved computer games');
+    await page.getByTestId('stats-definitions-toggle').click();
+    await expect(page.getByTestId('stats-definitions')).toContainText('75 points');
+    await expect(page.getByTestId('stats-definitions')).toContainText('50 points');
+    await expect(page.getByTestId('stats-definitions')).toContainText('four matching dice');
+    await page.screenshot({ path: test.info().outputPath('stats-definitions.png') });
+  } finally {
+    await page.context().close();
+  }
+});
+
 test('local development offers reusable Test 1 and Test 2 logins at the bottom', async ({ browser }) => {
   for (const player of [1, 2, 1] as const) {
     const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
