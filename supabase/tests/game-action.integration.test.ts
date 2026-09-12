@@ -35,6 +35,72 @@ const admin = createClient<Database>(supabaseUrl, serviceRoleKey, {
 const supabaseClients: DbClient[] = [admin];
 const falseHeld = [false, false, false, false, false] as GameState['held'];
 
+Deno.test('computer result receipts deduplicate concurrent retries and enforce account ownership', async () => {
+  const [alice, bob] = await createUsers('computer-result-receipts', ['Alice', 'Bob']);
+  const args = {
+    p_owner_id: alice.id,
+    p_game_id: 'local-' + crypto.randomUUID(),
+    p_result: {
+      player_score: 120,
+      computer_score: 100,
+      upper_bonus_awarded: false,
+      scored_sucker: false,
+      scored_three_of_a_kind: false,
+      scored_four_of_a_kind: false,
+      scored_full_house: false,
+      scored_small_straight: false,
+      scored_large_straight: false,
+      computer_upper_bonus_awarded: false,
+      computer_scored_sucker: false,
+      computer_scored_three_of_a_kind: false,
+      computer_scored_four_of_a_kind: false,
+      computer_scored_full_house: false,
+      computer_scored_small_straight: false,
+      computer_scored_large_straight: false,
+      buzzer_beater_wins: 0,
+      comeback_wins: 0,
+      extra_rolls_used: 0,
+      mulligans_used: 0,
+      sucker_hunts: 0,
+      sucker_hunt_misses: 0,
+      sucker_punches_landed: 0,
+      sucker_punches_used: 0,
+      sucker_blockers_used: 0,
+      sucker_tokens_spent: 0,
+      sucker_tokens_leftover: 0,
+    },
+  };
+  const responses = await Promise.all([
+    alice.client.rpc('record_computer_game_result_once', args),
+    alice.client.rpc('record_computer_game_result_once', args),
+  ]);
+  for (const response of responses) {
+    assertNoError(response.error);
+    assertEquals(response.data?.games_played, 1);
+    assertEquals(response.data?.total_score, 120);
+    assertEquals(response.data?.wins, 1);
+  }
+  const replay = await alice.client.rpc('record_computer_game_result_once', {
+    ...args,
+    p_result: { ...args.p_result, player_score: 999 },
+  });
+  assertNoError(replay.error);
+  assertEquals(replay.data?.games_played, 1);
+  assertEquals(replay.data?.total_score, 120);
+  const wrongAccount = await bob.client.rpc('record_computer_game_result_once', args);
+  assertEquals(wrongAccount.error?.code, '42501');
+  const ownReceipt = await alice.client.from('computer_game_results').select('game_id').eq('game_id', args.p_game_id);
+  assertNoError(ownReceipt.error);
+  assertEquals(ownReceipt.data?.length, 1);
+  const hiddenReceipt = await bob.client.from('computer_game_results').select('game_id').eq('game_id', args.p_game_id);
+  assertNoError(hiddenReceipt.error);
+  assertEquals(hiddenReceipt.data?.length, 0);
+  const forgedReceipt = await alice.client
+    .from('computer_game_results')
+    .insert({ profile_id: alice.id, game_id: 'forged', result: {} });
+  if (!forgedReceipt.error) throw new Error('Receipts must only be created by the recording RPC.');
+});
+
 Deno.test('avatar storage limits writes and deletes to the owning profile folder', async () => {
   const [alice, bob] = await createUsers('avatar-storage', ['Alice', 'Bob']);
   const path = `${alice.id}/rls-test.jpg`;
