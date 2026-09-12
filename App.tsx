@@ -1176,6 +1176,14 @@ export function LocalGameScreen({
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
   const isAppActive = useAppActivity();
   const prefersReducedMotion = useReducedMotion();
+  const reducedMotionRef = useRef(prefersReducedMotion);
+  const activeMotionStops = useRef(new Set<() => void>());
+  useEffect(() => {
+    reducedMotionRef.current = prefersReducedMotion;
+    if (prefersReducedMotion) {
+      [...activeMotionStops.current].forEach((stop) => stop());
+    }
+  }, [prefersReducedMotion]);
   const shouldReduceMotion = disableE2EAnimations || prefersReducedMotion;
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
@@ -1600,6 +1608,29 @@ export function LocalGameScreen({
     };
   }, []);
 
+  function runAnimation(animation: Animated.CompositeAnimation, settleReducedMotion?: () => void) {
+    return new Promise<void>((resolve) => {
+      let finished = false;
+      const complete = () => {
+        if (finished) return;
+        finished = true;
+        activeMotionStops.current.delete(stop);
+        resolve();
+      };
+      const stop = () => {
+        animation.stop();
+        settleReducedMotion?.();
+        complete();
+      };
+      if (reducedMotionRef.current) {
+        stop();
+      } else {
+        activeMotionStops.current.add(stop);
+        animation.start(complete);
+      }
+    });
+  }
+
   function showSuckerRollBanner(title: string) {
     if (suckerRollNoticeTimer.current) {
       clearTimeout(suckerRollNoticeTimer.current);
@@ -1627,9 +1658,21 @@ export function LocalGameScreen({
       clearTimeout(suckerPunchWipeStartTimer.current);
     }
 
+    if (reducedMotionRef.current) {
+      suckerPunchWipeStartTimer.current = null;
+      wipe.progress.setValue(1);
+      setSuckerPunchWipe(null);
+      return;
+    }
+
     suckerPunchWipeStartTimer.current = setTimeout(() => {
       suckerPunchWipeStartTimer.current = null;
       requestAnimationFrame(() => {
+        if (reducedMotionRef.current) {
+          wipe.progress.setValue(1);
+          setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
+          return;
+        }
         void runAnimation(
           Animated.timing(wipe.progress, {
             toValue: 1,
@@ -1637,6 +1680,7 @@ export function LocalGameScreen({
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
+          () => wipe.progress.setValue(1),
         ).then(() => {
           setSuckerPunchWipe((current) => (current?.turnId === wipe.turnId ? null : current));
         });
@@ -2236,7 +2280,7 @@ export function LocalGameScreen({
     setRollingFaces(sourceGame.dice);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
-    if (rollingIndexes.length === 0) {
+    if (rollingIndexes.length === 0 || reducedMotionRef.current) {
       const nextGame = await nextGamePromise;
       if (!nextGame) {
         setIsRolling(false);
@@ -2276,6 +2320,10 @@ export function LocalGameScreen({
       return gameResult;
     });
     const scrambleTimer = setInterval(() => {
+      if (reducedMotionRef.current) {
+        clearInterval(scrambleTimer);
+        return;
+      }
       setRollingFaces(
         (faces) => faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
       );
@@ -2296,12 +2344,26 @@ export function LocalGameScreen({
       }),
     );
 
+    let motionCancelled = false;
+    const stopRollMotion = () => {
+      motionCancelled = true;
+      clearInterval(scrambleTimer);
+      rollAnimation.stop();
+      rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
+      setRollingDieIndexes([]);
+      setRollingLaunches({});
+    };
+    // Keep this cancellation registered after the finite animation ends, since a
+    // remote result can still be pending while its flying overlays are mounted.
+    activeMotionStops.current.add(stopRollMotion);
+    if (reducedMotionRef.current) stopRollMotion();
     let nextGame: ReturnType<typeof createGame> | null = null;
     try {
       await runAnimation(rollAnimation);
       nextGame = resolvedNextGame === undefined ? await trackedNextGamePromise : resolvedNextGame;
     } finally {
       clearInterval(scrambleTimer);
+      activeMotionStops.current.delete(stopRollMotion);
     }
 
     if (!nextGame) {
@@ -2314,7 +2376,7 @@ export function LocalGameScreen({
     const finalDice = nextGame.dice;
 
     setRollingFaces(finalDice);
-    await wait(rollFinalFaceHoldMs);
+    if (!motionCancelled && !reducedMotionRef.current) await wait(rollFinalFaceHoldMs);
 
     if (isRemoteGame) {
       setLiveRemoteGame(nextGame);
@@ -2438,7 +2500,7 @@ export function LocalGameScreen({
       { x: 6, y: 4 },
       { x: 12, y: -4 },
     ];
-    const revealProgress = new Animated.Value(0);
+    const revealProgress = new Animated.Value(reducedMotionRef.current ? 1 : 0);
 
     setIsScoring(true);
     setOpponentTurnReveal({
@@ -2453,16 +2515,24 @@ export function LocalGameScreen({
       top: revealTop,
     });
 
-    await runAnimation(
-      Animated.timing(revealProgress, {
-        toValue: 1,
-        duration: computerScoreRevealDurationMs,
-        easing: Easing.out(Easing.back(1.12)),
-        useNativeDriver: true,
-      }),
-    );
+    if (!reducedMotionRef.current) {
+      await runAnimation(
+        Animated.timing(revealProgress, {
+          toValue: 1,
+          duration: computerScoreRevealDurationMs,
+          easing: Easing.out(Easing.back(1.12)),
+          useNativeDriver: true,
+        }),
+        () => revealProgress.setValue(1),
+      );
+    }
     await wait(computerScoreRevealPauseMs);
     setOpponentTurnReveal(null);
+
+    if (reducedMotionRef.current) {
+      setIsScoring(false);
+      return true;
+    }
 
     const flyingDice = dice.map((face, index) => {
       const offset = targetOffsets[index] ?? { x: 0, y: 0 };
@@ -2528,6 +2598,10 @@ export function LocalGameScreen({
     }
 
     const { category, dice, hadSuckerBonus, score, scorerIndex } = result.scoreAnimation;
+    if (reducedMotionRef.current && scorerIndex === myPlayerIndex) {
+      finishComputerTurnResult(result);
+      return;
+    }
     setLocalPendingTurn(null);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
@@ -2760,11 +2834,17 @@ export function LocalGameScreen({
     }
 
     setSuckerPunchDialog({ ...dialog, phase: 'rolling' });
-    suckerPunchDieAnimation.setValue(0);
+    suckerPunchDieAnimation.setValue(reducedMotionRef.current ? 1 : 0);
 
-    const scrambleTimer = setInterval(() => {
-      setSuckerPunchChanceFace(rollDisplayDie());
-    }, 70);
+    const scrambleTimer = reducedMotionRef.current
+      ? null
+      : setInterval(() => {
+          if (reducedMotionRef.current) {
+            clearInterval(scrambleTimer!);
+            return;
+          }
+          setSuckerPunchChanceFace(rollDisplayDie());
+        }, 70);
     const chanceRollAnimation = Animated.timing(suckerPunchDieAnimation, {
       toValue: 1,
       duration: defaultRollingLaunch.duration,
@@ -2778,9 +2858,12 @@ export function LocalGameScreen({
         dialog.scope === 'remote'
           ? (remoteHandlers?.onPrepareSuckerPunch(dialog.targetTurnId) ?? Promise.resolve(null))
           : Promise.resolve(prepareLocalPunchChance(dialog.targetTurnId));
-      [chanceDie] = await Promise.all([chanceRequest, runAnimation(chanceRollAnimation)]);
+      [chanceDie] = await Promise.all([
+        chanceRequest,
+        runAnimation(chanceRollAnimation, () => suckerPunchDieAnimation.setValue(1)),
+      ]);
     } finally {
-      clearInterval(scrambleTimer);
+      if (scrambleTimer) clearInterval(scrambleTimer);
     }
 
     if (chanceDie === null) {
@@ -2788,7 +2871,7 @@ export function LocalGameScreen({
       return;
     }
     setSuckerPunchChanceFace(chanceDie);
-    await wait(rollFinalFaceHoldMs);
+    if (!reducedMotionRef.current) await wait(rollFinalFaceHoldMs);
     setSuckerPunchDialog({ ...dialog, phase: 'rolled' });
   }
 
@@ -3040,6 +3123,7 @@ export function LocalGameScreen({
         easing: Easing.out(Easing.cubic),
         useNativeDriver: false,
       }),
+      () => sectionBonusPulse.setValue(1),
     );
   }
 
@@ -3087,7 +3171,7 @@ export function LocalGameScreen({
       Promise.all(dieSlotRefs.current.map((ref) => measureInWindow(ref))),
     ]);
 
-    if (!screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
+    if (reducedMotionRef.current || !screenRect || !targetRect || sourceRects.some((rect) => rect === null)) {
       if (isRemoteGame && remoteHandlers) {
         const optimisticGame = scoreTurn(scoringGame, category);
         const shouldAnimateSectionBonus = didAwardUpperBonusForPlayer(scoringGame, optimisticGame, homePlayer.id);
@@ -5288,12 +5372,6 @@ function SuckerPunchScoreWipe({ home, progress, score }: { home: boolean; progre
       </Animated.Text>
     </Animated.View>
   );
-}
-
-function runAnimation(animation: Animated.CompositeAnimation) {
-  return new Promise<void>((resolve) => {
-    animation.start(() => resolve());
-  });
 }
 
 function formatScoreRevealCategory(category: ScoreCategory) {
