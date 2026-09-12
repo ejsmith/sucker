@@ -112,6 +112,7 @@ import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
 import { useReducedMotion } from './src/ui/useReducedMotion';
+import { useComputerTurnSpeed } from './src/ui/useComputerTurnSpeed';
 import { useNetworkStatus } from './src/network/NetworkProvider';
 import {
   buildExtraRollActionPayload,
@@ -1176,6 +1177,8 @@ export function LocalGameScreen({
   const [opponentTurnReveal, setOpponentTurnReveal] = useState<OpponentTurnReveal | null>(null);
   const isAppActive = useAppActivity();
   const prefersReducedMotion = useReducedMotion();
+  const computerTurnSpeed = useComputerTurnSpeed();
+  const computerThinkingDelay = computerTurnSpeed.fast ? 300 : computerThinkingDelayMs;
   const shouldReduceMotion = disableE2EAnimations || prefersReducedMotion;
   const [revealingRemoteTurnId, setRevealingRemoteTurnId] = useState<string | null>(null);
   const screenRef = useRef<ViewRef | null>(null);
@@ -1676,7 +1679,14 @@ export function LocalGameScreen({
       return;
     }
 
-    if (!isComputerTurn || isComputerThinking || isRolling || isScoring || opponentTurnReveal) {
+    if (
+      !computerTurnSpeed.ready ||
+      !isComputerTurn ||
+      isComputerThinking ||
+      isRolling ||
+      isScoring ||
+      opponentTurnReveal
+    ) {
       return;
     }
 
@@ -1686,12 +1696,21 @@ export function LocalGameScreen({
     const timer = setTimeout(() => {
       const result = resolveComputerTurn(game, pendingTurn);
       void animateComputerTurnResult(result);
-    }, computerThinkingDelayMs);
+    }, computerThinkingDelay);
 
     return () => {
       clearTimeout(timer);
     };
-  }, [game, isComputerTurn, isRemoteGame, isRolling, isScoring, opponentTurnReveal, pendingTurn]);
+  }, [
+    computerTurnSpeed.ready,
+    game,
+    isComputerTurn,
+    isRemoteGame,
+    isRolling,
+    isScoring,
+    opponentTurnReveal,
+    pendingTurn,
+  ]);
 
   useEffect(() => {
     if (!showSuckerPunchNotice) {
@@ -2461,7 +2480,7 @@ export function LocalGameScreen({
         useNativeDriver: true,
       }),
     );
-    await wait(computerScoreRevealPauseMs);
+    await wait(!isRemoteGame && computerTurnSpeed.fast ? 250 : computerScoreRevealPauseMs);
     setOpponentTurnReveal(null);
 
     const flyingDice = dice.map((face, index) => {
@@ -2867,7 +2886,7 @@ export function LocalGameScreen({
         setIsComputerThinking(true);
         setTimeout(() => {
           void animateComputerTurnResult(replayed);
-        }, computerThinkingDelayMs);
+        }, computerThinkingDelay);
       };
     } else {
       if (!remoteHandlers || remoteStatus !== 'response_window' || remoteLastTurnId !== dialog.targetTurnId) {
@@ -3257,6 +3276,37 @@ export function LocalGameScreen({
                 style={StyleSheet.absoluteFill}
               />
               <View style={[styles.topMenu, gameLayout.styles.topMenu]} testID="game-top-menu">
+                {!isRemoteGame && (
+                  <>
+                    <Pressable
+                      accessibilityLabel={`Computer turn pace: ${computerTurnSpeed.fast ? 'Fast' : 'Normal'}. Switch to ${computerTurnSpeed.fast ? 'Normal' : 'Fast'}.`}
+                      disabled={
+                        !computerTurnSpeed.ready ||
+                        computerTurnSpeed.saving ||
+                        isComputerTurn ||
+                        isComputerThinking ||
+                        isRolling ||
+                        isScoring
+                      }
+                      onPress={() => void computerTurnSpeed.toggle()}
+                      style={[styles.topMenuItem, gameLayout.styles.topMenuItem]}
+                      testID="computer-pace-button"
+                    >
+                      <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                        PACE: {computerTurnSpeed.fast ? 'FAST' : 'NORMAL'}
+                      </Text>
+                    </Pressable>
+                    {computerTurnSpeed.error && (
+                      <Text
+                        accessibilityLiveRegion="polite"
+                        maxFontSizeMultiplier={1.2}
+                        style={[styles.topMenuText, gameLayout.styles.topMenuText]}
+                      >
+                        {computerTurnSpeed.error}
+                      </Text>
+                    )}
+                  </>
+                )}
                 <Pressable
                   accessibilityLabel="View stats"
                   accessibilityRole="button"
