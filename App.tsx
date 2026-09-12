@@ -232,6 +232,7 @@ type LocalPlayerProfile = {
   displayName: string;
 };
 type SuckerPunchDialogState = {
+  target?: { playerName: string; category: ScoreCategory; score: number };
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
   scope: 'local' | 'remote';
@@ -1371,6 +1372,12 @@ export function LocalGameScreen({
     Boolean(remoteLastTurnId) &&
     isRemoteLastTurnPunchable &&
     myTokenCount >= suckerTokenCosts.suckerPunch;
+  const punchDescription =
+    myTokenCount < suckerTokenCosts.suckerPunch
+      ? `Needs ${suckerTokenCosts.suckerPunch} tokens; you have ${myTokenCount}.`
+      : canUseLocalSuckerPunch || canUseRemoteSuckerPunch
+        ? 'Use now, before rolling or spending other tokens.'
+        : 'Available after an eligible opponent turn, before you start yours.';
   const devViewportPreset = getDevViewportPreset(devViewportPresetKey);
   const effectiveWindowWidth = devViewportPreset?.width ?? windowWidth;
   const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
@@ -2724,7 +2731,12 @@ export function LocalGameScreen({
       setSuckerPunchChanceFace(1);
       suckerPunchDieAnimation.setValue(0);
       suckerPunchResultCompletion.current = null;
-      setSuckerPunchDialog({ phase: 'ready', scope: 'local', targetTurnId: pendingTurn.id });
+      setSuckerPunchDialog({
+        phase: 'ready',
+        scope: 'local',
+        targetTurnId: pendingTurn.id,
+        target: { playerName: opponentPlayer.name, category: pendingTurn.category, score: pendingTurn.score },
+      });
       return;
     }
 
@@ -2738,7 +2750,15 @@ export function LocalGameScreen({
     setSuckerPunchChanceFace(1);
     suckerPunchDieAnimation.setValue(0);
     suckerPunchResultCompletion.current = null;
-    setSuckerPunchDialog({ phase: 'ready', scope: 'remote', targetTurnId: remoteLastTurnId });
+    setSuckerPunchDialog({
+      phase: 'ready',
+      scope: 'remote',
+      targetTurnId: remoteLastTurnId,
+      target:
+        remoteLastTurn?.id === remoteLastTurnId
+          ? { playerName: opponentPlayer.name, category: remoteLastTurn.category, score: remoteLastTurn.score }
+          : undefined,
+    });
   }
 
   function handleDismissSuckerPunchResult() {
@@ -3948,7 +3968,11 @@ export function LocalGameScreen({
 
                 <TokenMenuOption
                   cost={suckerTokenCosts.extraRoll}
-                  description="Add one roll to the Roll button."
+                  description={
+                    myTokenCount < suckerTokenCosts.extraRoll
+                      ? 'Needs 1 token; you have 0.'
+                      : 'Add one roll to the Roll button.'
+                  }
                   disabled={!canUseLocalExtraRoll && !canUseRemoteExtraRoll}
                   label="Extra Roll"
                   onPress={() => void handleUseExtraRoll()}
@@ -3956,7 +3980,11 @@ export function LocalGameScreen({
                 />
                 <TokenMenuOption
                   cost={suckerTokenCosts.mulligan}
-                  description="Discard this turn and start it over."
+                  description={
+                    myTokenCount < suckerTokenCosts.mulligan
+                      ? `Needs ${suckerTokenCosts.mulligan} tokens; you have ${myTokenCount}.`
+                      : 'Discard this turn and start it over.'
+                  }
                   disabled={!canUseMulligan}
                   label="Mulligan"
                   onPress={() => void handleUseMulligan()}
@@ -3973,11 +4001,7 @@ export function LocalGameScreen({
                 />
                 <TokenMenuOption
                   cost={suckerTokenCosts.suckerPunch}
-                  description={
-                    isRemoteGame
-                      ? 'Roll for a chance to make your opponent replay their turn.'
-                      : 'Roll for a chance to make the computer replay its turn.'
-                  }
+                  description={punchDescription}
                   disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
                   label="Sucker Punch"
                   onPress={() => void handleUseSuckerPunch()}
@@ -3994,6 +4018,7 @@ export function LocalGameScreen({
               onThrowPunch={() => void handleThrowSuckerPunch()}
               outcome={suckerPunchDialog.outcome}
               phase={suckerPunchDialog.phase}
+              target={suckerPunchDialog.target}
               rollProgress={suckerPunchDieAnimation}
             />
           )}
@@ -4768,6 +4793,7 @@ function SuckerPunchChanceDialog({
   outcome,
   phase,
   rollProgress,
+  target,
 }: {
   face: DieValue;
   onDismissResult: () => void;
@@ -4776,6 +4802,7 @@ function SuckerPunchChanceDialog({
   outcome?: SuckerPunchOutcome;
   phase: SuckerPunchDialogState['phase'];
   rollProgress: Animated.Value;
+  target?: SuckerPunchDialogState['target'];
 }) {
   const layout = useGameLayout();
   const isResult = phase === 'result';
@@ -4785,6 +4812,7 @@ function SuckerPunchChanceDialog({
   const isRollingChance = phase === 'rolling';
   const isThrowing = phase === 'throwing';
   const chancePercent = suckerPunchChanceByDie[face];
+  const chanceLabels = Object.entries(suckerPunchChanceByDie).map(([die, chance]) => `${die}: ${chance}%`);
   const title = isResult
     ? outcome?.landed
       ? 'Punch landed!'
@@ -4838,12 +4866,31 @@ function SuckerPunchChanceDialog({
         >
           {title}
         </Text>
+        {!isResult && target && (
+          <View style={{ width: '100%', gap: layout.unit(8) }} testID="sucker-punch-target">
+            <Text
+              numberOfLines={2}
+              ellipsizeMode="tail"
+              accessibilityLabel={target.playerName}
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+            >
+              {target.playerName}
+            </Text>
+            <Text
+              maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+              style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
+            >
+              {categoryLabels[target.category]} · {target.score} points
+            </Text>
+          </View>
+        )}
         {phase === 'ready' && (
           <Text
             maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
             style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
           >
-            Higher roll, higher chance.
+            {`Costs ${suckerTokenCosts.suckerPunch} tokens when you throw.\nA hit makes this turn replay.\n${chanceLabels.slice(0, 3).join(' · ')}\n${chanceLabels.slice(3).join(' · ')}`}
           </Text>
         )}
         {isRolled && (
