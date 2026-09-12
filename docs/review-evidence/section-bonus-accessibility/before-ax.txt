@@ -1,0 +1,8 @@
+Observed macOS browser accessibility tree, local game at 393 x 852:
+
+79 text SECTION BONUS
+81 text +35 +35 +35 +35 +35 +35 +35 +35 +35 +35
+84 text 0 /63
+87 text 0 /63
+
+The ten decorative copies were exposed to accessibility; progress lacked player identity.

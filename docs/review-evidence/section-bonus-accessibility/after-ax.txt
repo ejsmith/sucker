@@ -1,0 +1,5 @@
+Observed macOS browser accessibility tree after the fix:
+
+77 image Section bonus: 35 points at 63. You: 0 of 63. Computer: 0 of 63.
+
+No decorative outline text or anonymous meter children remain in the native browser accessibility tree.
