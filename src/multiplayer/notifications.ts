@@ -137,6 +137,13 @@ export async function syncAppBadgeCount(count: number) {
   } catch {
     // Badges are best-effort: unsupported browsers/dev clients should not surface an app error.
   }
+
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    // The badge library can wrap document.title and add its own count. Update the
+    // element after it finishes so both the favicon and tab show a single count.
+    const title = document.querySelector('title') ?? document.head.appendChild(document.createElement('title'));
+    title.textContent = badgeCount > 0 ? `(${badgeCount}) Sucker!` : 'Sucker!';
+  }
 }
 
 async function syncWebAppBadgeCount(count: number) {
