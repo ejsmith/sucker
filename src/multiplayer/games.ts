@@ -519,7 +519,7 @@ export async function useRemoteMulligan(gameId: string) {
 }
 
 export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
-  return applyMultiplayerAction({ chanceDie, gameId, turnId, type: 'sucker_punch' });
+  return applyMultiplayerAction({ chanceDie, chanceProtocol: 'prepared', gameId, turnId, type: 'sucker_punch' });
 }
 
 export async function prepareRemoteSuckerPunch(gameId: string, turnId: string) {

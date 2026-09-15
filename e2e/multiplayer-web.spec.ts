@@ -381,6 +381,7 @@ test('the displayed multiplayer punch chance matches the server outcome', async 
     await actionButton.click();
     const response = await outcomeResponse;
     expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON().chanceProtocol).toBe('prepared');
     const outcome = (await response.json()).suckerPunchOutcome;
     expect(outcome.chanceDie).toBe(shownDie);
     const actions = await admin
