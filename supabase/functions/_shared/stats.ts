@@ -128,13 +128,20 @@ export function calculateSuckerActionStats(actions: SuckerStatAction[], playerId
           stats.sucker_blockers_used += 1;
           stats.sucker_tokens_spent += retiredSuckerBlockerTokenCost;
           break;
-        case 'sucker_punch':
+        case 'sucker_punch': {
           stats.sucker_punches_used += 1;
           if (actionPayloadValue(action.payload, 'landed') !== false) {
             stats.sucker_punches_landed += 1;
           }
-          stats.sucker_tokens_spent += suckerTokenCosts.suckerPunch;
+          const tokenCost = actionPayloadValue(action.payload, 'tokenCost');
+          stats.sucker_tokens_spent +=
+            tokenCost === 1 || tokenCost === 2 || tokenCost === 3
+              ? tokenCost
+              : actionPayloadValue(action.payload, 'isCounterPunch') === true
+                ? suckerTokenCosts.counterPunch
+                : suckerTokenCosts.suckerPunch;
           break;
+        }
         default:
           break;
       }
@@ -241,6 +248,10 @@ export function buildSuckerPunchActionPayload(
           chancePercent: outcome.chancePercent,
           landed: outcome.landed,
           rollPercent: outcome.rollPercent,
+          isCounterPunch: outcome.isCounterPunch === true,
+          tokenCost:
+            outcome.tokenCost ??
+            (outcome.isCounterPunch ? suckerTokenCosts.counterPunch : suckerTokenCosts.suckerPunch),
         }
       : {}),
   };

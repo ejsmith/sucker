@@ -22,13 +22,7 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  createGameAgainst,
-  createRematch,
-  nudgeRemoteGame,
-  removeRemoteGame,
-  subscribeToGameListChanges,
-} from './games';
+import { createGameAgainst, createRematch, jabRemoteGame, removeRemoteGame, subscribeToGameListChanges } from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import { recoverPendingAvatar, removeAvatar, selectAvatar, uploadAvatar, type AvatarSource } from './avatars';
 import { deleteCurrentAccount } from './account';
@@ -45,6 +39,7 @@ import { useMultiplayerSession } from './useMultiplayerSession';
 import { isLocalMultiplayerDevelopment } from './env';
 import type { LocalTestPlayer } from './auth';
 import type { RemoteGameRow } from './types';
+import { canJabGame } from './jab';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { StatsPage } from '../ui/StatsPage';
@@ -63,8 +58,6 @@ const publicInviteBaseUrl = 'https://play.sucker.games/invite';
 const privacyPolicyUrl = 'https://play.sucker.games/privacy.html';
 const webPushPromptDismissedAtKey = 'sucker.webPushPromptDismissedAt';
 const webPushPromptSnoozeMs = 7 * 24 * 60 * 60 * 1_000;
-const nudgeTurnWaitMs = 60 * 60 * 1_000;
-const nudgeCooldownMs = 8 * 60 * 60 * 1_000;
 const gameListRemoveActionWidth = 96;
 const minimumVisibleRefreshMs = 450;
 const pullRefreshMinimumMove = 14;
@@ -557,9 +550,9 @@ export function MultiplayerLobby({
     });
   }
 
-  async function handleNudgeGame(game: RemoteGameRow) {
+  async function handleJabGame(game: RemoteGameRow) {
     await runAction(async () => {
-      await nudgeRemoteGame(game.id);
+      await jabRemoteGame(game.id);
       if (profileId) {
         onGamesChange(
           profileId,
@@ -568,7 +561,7 @@ export function MultiplayerLobby({
           ),
         );
       }
-      setMessage('Nudge sent.');
+      setMessage('Jab sent.');
       await refreshGames({ surfaceError: false });
     });
   }
@@ -1611,7 +1604,7 @@ export function MultiplayerLobby({
                 now={now}
                 onOpenGame={onOpenGame}
                 onRemoveGame={handleRemoveGame}
-                onNudgeGame={handleNudgeGame}
+                onJabGame={handleJabGame}
                 profileId={activeProfileId}
                 isBusy={isBusy || isLoading}
               />
@@ -1874,7 +1867,7 @@ function GameListItem({
   now,
   onOpenGame,
   onRemoveGame,
-  onNudgeGame,
+  onJabGame,
   profileId,
 }: {
   avatarUrl?: string | null;
@@ -1883,7 +1876,7 @@ function GameListItem({
   now: number;
   onOpenGame: (gameId: string) => void;
   onRemoveGame: (game: RemoteGameRow) => void;
-  onNudgeGame: (game: RemoteGameRow) => void;
+  onJabGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
   const opponent = game.state.players.find((player) => player.id !== profileId);
@@ -1892,7 +1885,7 @@ function GameListItem({
   const myScore = me ? totalScore(me.scorecard) : 0;
   const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
   const isMyTurn = game.current_player_id === profileId;
-  const nudgeState = getNudgeState(game, profileId, now);
+  const showJab = !isBusy && canJabGame(game, profileId, now);
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
   const waitText =
@@ -1974,24 +1967,23 @@ function GameListItem({
                 <Text style={lobbyStyles.scoreDivider}>-</Text>
                 <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
               </View>
-              {nudgeState.visible && <View style={lobbyStyles.nudgeButtonPlaceholder} />}
+              {showJab && <View style={lobbyStyles.jabButtonPlaceholder} />}
             </View>
           </View>
           <Text style={lobbyStyles.waitText}>{waitText}</Text>
         </Pressable>
-        {nudgeState.visible && (
+        {showJab && (
           <Pressable
-            disabled={isBusy || !nudgeState.enabled}
-            onPress={() => onNudgeGame(game)}
+            accessibilityLabel={`Jab ${opponentName}`}
+            onPress={() => onJabGame(game)}
             style={({ pressed }) => [
-              lobbyStyles.nudgeButton,
-              lobbyStyles.nudgeButtonOverlay,
-              (!nudgeState.enabled || isBusy) && lobbyStyles.nudgeButtonDisabled,
+              lobbyStyles.jabButton,
+              lobbyStyles.jabButtonOverlay,
               pressed && lobbyStyles.pressed,
             ]}
-            testID={`nudge-game-${game.id}`}
+            testID={`jab-game-${game.id}`}
           >
-            <Text style={lobbyStyles.nudgeButtonText}>{nudgeState.label}</Text>
+            <Text style={lobbyStyles.jabButtonText}>Jab</Text>
           </Pressable>
         )}
       </Animated.View>
@@ -2334,25 +2326,6 @@ function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
   }
 
   return game.current_player_id === profileId ? 'Your turn' : 'Their turn';
-}
-
-function getNudgeState(game: RemoteGameRow, profileId: string, now: number) {
-  if (game.status === 'inviting' || game.status === 'complete' || !game.current_player_id) {
-    return { enabled: false, label: 'Nudge', visible: false };
-  }
-  if (game.current_player_id === profileId) {
-    return { enabled: false, label: 'Nudge', visible: false };
-  }
-
-  const turnAgeMs = Math.max(0, now - new Date(game.updated_at).getTime());
-  const waitRemainingMs = Math.max(0, nudgeTurnWaitMs - turnAgeMs);
-  const lastNudgedAt = game.last_nudged_at ? new Date(game.last_nudged_at).getTime() : 0;
-  const cooldownRemainingMs = lastNudgedAt ? Math.max(0, nudgeCooldownMs - (now - lastNudgedAt)) : 0;
-  if (Math.max(waitRemainingMs, cooldownRemainingMs) > 0) {
-    return { enabled: false, label: 'Nudge', visible: true };
-  }
-
-  return { enabled: true, label: 'Nudge', visible: true };
 }
 
 function formatElapsed(now: number, updatedAt: string) {
@@ -3067,7 +3040,7 @@ const lobbyStyles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
-  nudgeButton: {
+  jabButton: {
     alignItems: 'center',
     backgroundColor: '#FFD329',
     borderColor: '#FFF3C2',
@@ -3077,19 +3050,16 @@ const lobbyStyles = StyleSheet.create({
     justifyContent: 'center',
     width: gameCardActionWidth,
   },
-  nudgeButtonDisabled: {
-    opacity: 0.55,
-  },
-  nudgeButtonOverlay: {
+  jabButtonOverlay: {
     position: 'absolute',
     right: gameCardBorderWidth + gameCardPadding,
     top: gameCardBorderWidth + gameCardPadding + gameCardActionHeight + gameCardActionGap,
   },
-  nudgeButtonPlaceholder: {
+  jabButtonPlaceholder: {
     height: gameCardActionHeight,
     width: gameCardActionWidth,
   },
-  nudgeButtonText: {
+  jabButtonText: {
     color: '#210505',
     fontSize: 12,
     fontWeight: '900',

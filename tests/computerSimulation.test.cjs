@@ -27,10 +27,15 @@ test('computer score simulation is deterministic for a seed', () => {
 test('computer strategy clears a strong 1000-game average', () => {
   const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
 
-  assert.equal(result.gameCount, 1000);
-  assert.equal(Number(result.averageScore.toFixed(3)), 298.822);
-  assert.equal(result.lowScore, 119);
-  assert.equal(result.highScore, 579);
+  assert.deepEqual(
+    {
+      gameCount: result.gameCount,
+      averageScore: Number(result.averageScore.toFixed(3)),
+      lowScore: result.lowScore,
+      highScore: result.highScore,
+    },
+    { gameCount: 1000, averageScore: 298.851, lowScore: 146, highScore: 579 },
+  );
 });
 
 test('computer tournament advances the strongest candidate', () => {

@@ -1,6 +1,31 @@
 import { createGame, type Player } from './game.ts';
 import { calculateSuckerActionStats, didPlayerPullAheadOnFinalTurn, type SuckerStatTurn } from './stats.ts';
 
+Deno.test('counterpunch stats count each actual cost and preserve legacy punch costs', () => {
+  const stats = calculateSuckerActionStats(
+    [
+      { action_type: 'sucker_punch', actor_id: 'player', payload: { landed: true, isCounterPunch: true } },
+      { action_type: 'sucker_punch', actor_id: 'player', payload: { landed: false, isCounterPunch: true } },
+      { action_type: 'sucker_punch', actor_id: 'player', payload: { landed: false } },
+      {
+        action_type: 'sucker_punch',
+        actor_id: 'player',
+        payload: { landed: false, isCounterPunch: true, tokenCost: 1 },
+      },
+      {
+        action_type: 'sucker_punch',
+        actor_id: 'player',
+        payload: { landed: false, isCounterPunch: true, tokenCost: 2 },
+      },
+      { action_type: 'sucker_punch', actor_id: 'player', payload: { landed: false, tokenCost: 3 } },
+    ],
+    'player',
+  );
+  assertEquals(stats.sucker_tokens_spent, 13);
+  assertEquals(stats.sucker_punches_used, 6);
+  assertEquals(stats.sucker_punches_landed, 1);
+});
+
 Deno.test('Sucker Punch stats separate throws from landed punches', () => {
   const stats = calculateSuckerActionStats(
     [

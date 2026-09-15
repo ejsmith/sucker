@@ -31,6 +31,9 @@ export type GamePhase = 'rolling' | 'scoring' | 'complete';
 
 export type GameState = {
   id: string;
+  // Set after any punch misses; expires when this player starts their next turn.
+  counterPunchPlayerId?: string;
+  counterPunchCost?: 1 | 2;
   players: Player[];
   currentPlayerIndex: number;
   dice: Dice;
@@ -79,6 +82,7 @@ export const suckerTokenCosts = {
   extraRoll: 1,
   mulligan: 3,
   suckerPunch: 3,
+  counterPunch: 2,
 } as const;
 
 export const suckerPunchChanceByDie = {
@@ -95,7 +99,44 @@ export type SuckerPunchOutcome = {
   chancePercent: number;
   landed: boolean;
   rollPercent: number;
+  isCounterPunch?: boolean;
+  tokenCost?: number;
 };
+
+export function getSuckerPunchCost(game: GameState, playerId: string): number {
+  return game.counterPunchPlayerId === playerId &&
+    game.players[game.currentPlayerIndex]?.id === playerId &&
+    game.phase === 'rolling' &&
+    game.rollNumber === 0
+    ? (game.counterPunchCost ?? suckerTokenCosts.counterPunch)
+    : suckerTokenCosts.suckerPunch;
+}
+
+export function expireCounterPunch(game: GameState, playerId: string): GameState {
+  if (game.counterPunchPlayerId !== playerId) {
+    return game;
+  }
+
+  const { counterPunchPlayerId: _expired, counterPunchCost: _expiredCost, ...nextGame } = game;
+  return nextGame;
+}
+
+export function applySuckerPunchOpportunity(
+  game: GameState,
+  targetPlayerId: string,
+  outcome: SuckerPunchOutcome,
+): GameState {
+  const { counterPunchPlayerId: _previous, counterPunchCost: _previousCost, ...nextGame } = game;
+  const spent =
+    outcome.tokenCost ?? (outcome.isCounterPunch ? suckerTokenCosts.counterPunch : suckerTokenCosts.suckerPunch);
+  return outcome.landed
+    ? nextGame
+    : {
+        ...nextGame,
+        counterPunchPlayerId: targetPlayerId,
+        counterPunchCost: spent === suckerTokenCosts.suckerPunch ? 2 : 1,
+      };
+}
 
 const upperValues = {
   ones: 1,
@@ -148,7 +189,7 @@ export function rollCurrentDice(game: GameState, random = Math.random): GameStat
   const dice = game.dice.map((die, index) => (game.held[index] ? die : rollDie(random))) as Dice;
 
   return {
-    ...game,
+    ...expireCounterPunch(game, game.players[game.currentPlayerIndex].id),
     dice,
     rollNumber: game.rollNumber + 1,
     phase: 'scoring',
@@ -200,7 +241,7 @@ export function purchaseExtraRoll(game: GameState): GameState {
   }
 
   return {
-    ...game,
+    ...expireCounterPunch(game, currentPlayer.id),
     extraRollsAvailable: Math.max(0, game.extraRollsAvailable ?? 0) + 1,
     players: updateCurrentPlayerTokens(game, -suckerTokenCosts.extraRoll),
   };
@@ -213,7 +254,7 @@ export function mulliganCurrentTurn(game: GameState): GameState {
   }
 
   return {
-    ...game,
+    ...expireCounterPunch(game, currentPlayer.id),
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
     held: [false, false, false, false, false],
@@ -331,7 +372,21 @@ export function toGameState(value: unknown): GameState {
     throw new Error('Stored game has invalid current player.');
   }
 
+  const counterPunchPlayerId = game.counterPunchPlayerId;
+  if (counterPunchPlayerId !== undefined && !players.some((player) => player.id === counterPunchPlayerId)) {
+    throw new Error('Stored game has invalid counterpunch player.');
+  }
+  const counterPunchCost = game.counterPunchCost;
+  if (
+    counterPunchCost !== undefined &&
+    (counterPunchPlayerId === undefined || (counterPunchCost !== 1 && counterPunchCost !== 2))
+  ) {
+    throw new Error('Stored game has invalid counterpunch cost.');
+  }
+
   return {
+    ...(typeof counterPunchPlayerId === 'string' ? { counterPunchPlayerId } : {}),
+    ...(counterPunchCost === 1 || counterPunchCost === 2 ? { counterPunchCost } : {}),
     currentPlayerIndex,
     dice: toDice(game.dice),
     extraRollsAvailable: toOptionalNonNegativeInteger(
@@ -373,9 +428,12 @@ function applyScore(
   });
 
   const complete = players.every((player) => availableCategories(player.scorecard).length === 0);
+  const nextGame = expireCounterPunch(game, game.players[game.currentPlayerIndex].id);
 
   return {
-    ...game,
+    ...(complete && nextGame.counterPunchPlayerId
+      ? expireCounterPunch(nextGame, nextGame.counterPunchPlayerId)
+      : nextGame),
     players,
     currentPlayerIndex: complete ? game.currentPlayerIndex : (game.currentPlayerIndex + 1) % game.players.length,
     dice: [1, 1, 1, 1, 1],

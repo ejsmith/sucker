@@ -34,6 +34,130 @@ const scoreCategories = [
   'chance',
 ] as const;
 
+test('Jab is hidden until available and disappears after sending', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`jab-alice-${runId}`, 'Alice Jab E2E');
+  const bob = await createUser(`jab-bob-${runId}`, 'Bob Jab E2E');
+  const game = (await invokeTestGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game;
+  const page = await openAuthedPage(browser, bob);
+  await dismissTurnNotificationPrompt(page);
+  const jab = page.getByTestId(`jab-game-${game.id}`);
+  await expect(page.getByTestId(`game-card-${game.id}`)).toBeVisible();
+  await expect(jab).toBeHidden();
+  // Age only the displayed turn, keeping authentication/session clocks real.
+  await page.route('**/rest/v1/games?**', async (route) => {
+    const response = await route.fetch();
+    const games = await response.json();
+    await route.fulfill({
+      response,
+      json: games.map((row: { id: string; updated_at: string }) =>
+        row.id === game.id ? { ...row, updated_at: new Date(Date.now() - 2 * 60 * 60 * 1_000).toISOString() } : row,
+      ),
+    });
+  });
+  await page.reload();
+  await dismissTurnNotificationPrompt(page);
+  await expect(jab).toBeVisible();
+  await expect(jab).toHaveText('Jab');
+  await expect(jab).toHaveAccessibleName('Jab Alice Jab E2E');
+  const [scoreBox, jabBox] = await Promise.all([
+    page.getByTestId(`score-game-${game.id}`).boundingBox(),
+    jab.boundingBox(),
+  ]);
+  expect(jabBox!.x).toBeCloseTo(scoreBox!.x, 0);
+  expect(jabBox!.width).toBeCloseTo(scoreBox!.width, 0);
+  await expect(page.getByTestId(`game-list-item-${game.id}`)).toHaveScreenshot('game-list-item-with-jab.png');
+  await jab.click();
+  await expect(page.getByText('Jab sent.')).toBeVisible();
+  await expect(jab).toBeHidden();
+  await page.reload();
+  await expect(page.getByTestId(`game-card-${game.id}`)).toBeVisible();
+  await expect(jab).toBeHidden();
+  await expect(page.getByTestId(`game-list-item-${game.id}`)).toHaveScreenshot('game-list-item-jab-cooldown.png');
+  await page.context().close();
+});
+
+for (const cost of [2, 1]) {
+  test(`counterpunch survives reload with a ${cost}-token price and throw dialog`, async ({ browser }) => {
+    const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const alice = await createUser(`counter-alice-${runId}`, 'Alice Counter E2E');
+    const bob = await createUser(`counter-bob-${runId}`, 'Bob Counter E2E');
+    let game = (await invokeTestGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game;
+    await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
+    game = (await invokeTestGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' })).game;
+    await prepareTestMiss(bob, game);
+    await invokeTestGameAction(bob, { gameId: game.id, turnId: game.last_turn_id, chanceDie: 1, type: 'sucker_punch' });
+    await invokeTestGameAction(bob, { gameId: game.id, type: 'roll' });
+    game = (await invokeTestGameAction(bob, { gameId: game.id, category: 'chance', type: 'score_category' })).game;
+    if (cost === 1) {
+      await prepareTestMiss(alice, game);
+      await invokeTestGameAction(alice, {
+        gameId: game.id,
+        turnId: game.last_turn_id,
+        chanceDie: 1,
+        type: 'sucker_punch',
+      });
+      await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
+      game = (await invokeTestGameAction(alice, { gameId: game.id, category: 'twos', type: 'score_category' })).game;
+    }
+    const responder = cost === 2 ? alice : bob;
+    const responderIndex = cost === 2 ? 0 : 1;
+    game.state.players[responderIndex].suckerTokens = cost;
+    assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
+    const page = await openAuthedPage(browser, responder);
+    await openGameFromLobby(page, game.id);
+    await page.reload();
+    await expect(page.getByTestId('game-screen')).toBeVisible();
+    await waitForPressableEnabled(page.getByTestId('token-menu-button'));
+    await page.getByTestId('token-menu-button').click();
+    const counter = page.getByTestId('token-option-sucker-punch');
+    await waitForPressableEnabled(counter);
+    await expect(counter).toContainText('Counterpunch');
+    await expect(counter).toContainText(`${cost} token`);
+    await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-menu.png`);
+    await counter.click();
+    const dialog = page.getByTestId('sucker-punch-chance-dialog');
+    await expect(dialog).toContainText('Counterpunch');
+    await expect(dialog).toContainText(`${cost} token`);
+    await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-dialog.png`);
+    await page.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(dialog).toContainText(/Rolled [1-6]/);
+    await page.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(dialog).toContainText(/Punch landed!|Punch blocked!/);
+    const after = await loadGame(game.id);
+    expect(after.state.players[responderIndex].suckerTokens).toBe(0);
+    expect(after.state.counterPunchPlayerId).toBeUndefined();
+    expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
+    await page.context().close();
+  });
+}
+
+async function prepareTestMiss(user: TestUser, game: { id: string; last_turn_id: string }) {
+  await invokeTestGameAction(user, { gameId: game.id, turnId: game.last_turn_id, type: 'prepare_sucker_punch' });
+  assertNoError(
+    (
+      await admin
+        .from('sucker_punch_attempts')
+        .update({ chance_die: 1 })
+        .eq('game_id', game.id)
+        .eq('actor_id', user.id)
+        .eq('turn_id', game.last_turn_id)
+    ).error,
+  );
+}
+
+async function invokeTestGameAction(user: TestUser, action: Record<string, unknown>) {
+  const session = await createSession(user.email);
+  const response = await fetch(`${supabaseUrl}/functions/v1/game-action`, {
+    method: 'POST',
+    headers: { apikey: anonKey, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...action, requestId: crypto.randomUUID() }),
+  });
+  const body = await response.json();
+  expect(response.status, JSON.stringify(body)).toBe(200);
+  return body;
+}
+
 test('local development offers reusable Test 1 and Test 2 logins at the bottom', async ({ browser }) => {
   for (const player of [1, 2, 1] as const) {
     const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
@@ -311,17 +435,8 @@ test('two players can create an invite and play turns through the web UI', async
   await bobPage.goto('/');
   await dismissTurnNotificationPrompt(bobPage);
   const gameListItem = bobPage.getByTestId(`game-list-item-${gameId}`);
-  const scorePill = bobPage.getByTestId(`score-game-${gameId}`);
-  const nudgeButton = bobPage.getByTestId(`nudge-game-${gameId}`);
   await expect(gameListItem).toBeVisible();
-  await expect(nudgeButton).toBeVisible();
-  const [scorePillBox, nudgeButtonBox] = await Promise.all([scorePill.boundingBox(), nudgeButton.boundingBox()]);
-  expect(scorePillBox).not.toBeNull();
-  expect(nudgeButtonBox).not.toBeNull();
-  expect(nudgeButtonBox!.x).toBeCloseTo(scorePillBox!.x, 0);
-  expect(nudgeButtonBox!.width).toBeCloseTo(scorePillBox!.width, 0);
-  expect(nudgeButtonBox!.height).toBeCloseTo(scorePillBox!.height, 0);
-  await expect(gameListItem).toHaveScreenshot('game-list-item-with-nudge.png');
+  await expect(bobPage.getByTestId(`jab-game-${gameId}`)).toBeHidden();
   await expect(bobPage.getByTestId('multiplayer-lobby-shell')).toHaveScreenshot('games-list.png');
 
   await alicePage.goto('/');

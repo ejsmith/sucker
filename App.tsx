@@ -19,6 +19,7 @@ import {
   availableCategories,
   categoryLabels,
   createGame,
+  getSuckerPunchCost,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -39,6 +40,7 @@ import {
   applyLocalSuckerPunch,
   computerPlayerIndex,
   playComputerTurn,
+  scratchLocalTurn,
   scoreLocalTurn,
   type ComputerTurnResult,
   type LocalPendingTurn,
@@ -232,6 +234,7 @@ type LocalPlayerProfile = {
   displayName: string;
 };
 type SuckerPunchDialogState = {
+  tokenCost: number;
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
   scope: 'local' | 'remote';
@@ -1136,7 +1139,15 @@ export function LocalGameScreen({
   const [suckerRollNoticeTitle, setSuckerRollNoticeTitle] = useState<string | null>(null);
   const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(() =>
     initialLocalSession?.preparedPunch
-      ? { phase: 'rolled', scope: 'local', targetTurnId: initialLocalSession.preparedPunch.targetTurnId }
+      ? {
+          tokenCost: getSuckerPunchCost(
+            initialLocalSession.game,
+            initialLocalSession.game.players[initialLocalSession.game.currentPlayerIndex].id,
+          ),
+          phase: 'rolled',
+          scope: 'local',
+          targetTurnId: initialLocalSession.preparedPunch.targetTurnId,
+        }
       : null,
   );
   const [suckerPunchChanceFace, setSuckerPunchChanceFace] = useState<DieValue>(
@@ -1356,6 +1367,11 @@ export function LocalGameScreen({
   const canStartSuckerDeal = canOpenTokenMenu && openCategories.length > 0 && isRemoteActionPlayable;
   const isLocalPendingTurnPunchable = Boolean(pendingTurn);
   const isRemoteLastTurnPunchable = Boolean(remoteLastTurn);
+  const hasPunchTarget = isRemoteGame
+    ? remoteStatus === 'response_window' && Boolean(remoteLastTurn)
+    : pendingTurn?.status === 'submitted';
+  const suckerPunchCost = hasPunchTarget ? getSuckerPunchCost(game, homePlayer.id) : suckerTokenCosts.suckerPunch;
+  const isCounterPunch = suckerPunchCost < suckerTokenCosts.suckerPunch;
   const canUseLocalSuckerPunch =
     !isRemoteGame &&
     canOpenTokenMenu &&
@@ -1363,14 +1379,15 @@ export function LocalGameScreen({
     isLocalPendingTurnPunchable &&
     pendingTurn.responderIndex === myPlayerIndex &&
     pendingTurn.scorerIndex !== myPlayerIndex &&
-    myTokenCount >= suckerTokenCosts.suckerPunch;
+    game.rollNumber === 0 &&
+    myTokenCount >= suckerPunchCost;
   const canUseRemoteSuckerPunch =
     isRemoteGame &&
     canOpenTokenMenu &&
     remoteStatus === 'response_window' &&
     Boolean(remoteLastTurnId) &&
     isRemoteLastTurnPunchable &&
-    myTokenCount >= suckerTokenCosts.suckerPunch;
+    myTokenCount >= suckerPunchCost;
   const devViewportPreset = getDevViewportPreset(devViewportPresetKey);
   const effectiveWindowWidth = devViewportPreset?.width ?? windowWidth;
   const effectiveWindowHeight = devViewportPreset?.height ?? windowHeight;
@@ -2702,18 +2719,14 @@ export function LocalGameScreen({
       return;
     }
 
-    const nextGame = scratchScoreBox(sourceGame, category);
+    const result = scratchLocalTurn(sourceGame, category);
+    const { game: nextGame, pendingTurn: scratchedTurn } = result;
+    recordLocalScoreTurn(result);
+    persistResolvedLocalGame(nextGame, scratchedTurn);
     liveGameRef.current = nextGame;
     setLocalGame(nextGame);
-    localSuckerStatTurns.current.push({
-      category,
-      player_id: currentPlayer.id,
-      score: 0,
-      status: 'submitted',
-      turn_id: `local-turn-${localSuckerStatTurns.current.length + 1}`,
-      turn_index: localSuckerStatTurns.current.length + 1,
-    });
     clearLocalTurnResponseWindow();
+    setLocalPendingTurn(scratchedTurn);
   }
 
   function handleUseSuckerPunch() {
@@ -2724,7 +2737,7 @@ export function LocalGameScreen({
       setSuckerPunchChanceFace(1);
       suckerPunchDieAnimation.setValue(0);
       suckerPunchResultCompletion.current = null;
-      setSuckerPunchDialog({ phase: 'ready', scope: 'local', targetTurnId: pendingTurn.id });
+      setSuckerPunchDialog({ tokenCost: suckerPunchCost, phase: 'ready', scope: 'local', targetTurnId: pendingTurn.id });
       return;
     }
 
@@ -2738,7 +2751,7 @@ export function LocalGameScreen({
     setSuckerPunchChanceFace(1);
     suckerPunchDieAnimation.setValue(0);
     suckerPunchResultCompletion.current = null;
-    setSuckerPunchDialog({ phase: 'ready', scope: 'remote', targetTurnId: remoteLastTurnId });
+    setSuckerPunchDialog({ tokenCost: suckerPunchCost, phase: 'ready', scope: 'remote', targetTurnId: remoteLastTurnId });
   }
 
   function handleDismissSuckerPunchResult() {
@@ -2813,7 +2826,8 @@ export function LocalGameScreen({
         targetTurn.status === 'submitted' &&
         targetTurn.responderIndex === myPlayerIndex &&
         targetTurn.scorerIndex !== myPlayerIndex &&
-        myTokenCount >= suckerTokenCosts.suckerPunch;
+        game.rollNumber === 0 &&
+        myTokenCount >= getSuckerPunchCost(game, homePlayer.id);
 
       if (!targetTurn || !scorer || !isStillPunchable) {
         setSuckerPunchDialog(null);
@@ -3972,14 +3986,14 @@ export function LocalGameScreen({
                   testID="token-option-sucker-deal"
                 />
                 <TokenMenuOption
-                  cost={suckerTokenCosts.suckerPunch}
+                  cost={suckerPunchCost}
                   description={
-                    isRemoteGame
-                      ? 'Roll for a chance to make your opponent replay their turn.'
-                      : 'Roll for a chance to make the computer replay its turn.'
+                    isCounterPunch
+                      ? `They missed! Punch back for ${suckerPunchCost} token${suckerPunchCost === 1 ? '' : 's'} before your turn. Miss, and they punch back for 1.`
+                      : 'Try to force a replay. Miss, and they can punch back for 2 tokens on their next turn.'
                   }
                   disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
-                  label="Sucker Punch"
+                  label={isCounterPunch ? 'Counterpunch' : 'Sucker Punch'}
                   onPress={() => void handleUseSuckerPunch()}
                   testID="token-option-sucker-punch"
                 />
@@ -3989,6 +4003,7 @@ export function LocalGameScreen({
           {suckerPunchDialog && (
             <SuckerPunchChanceDialog
               face={suckerPunchChanceFace}
+              tokenCost={suckerPunchDialog.tokenCost}
               onDismissResult={handleDismissSuckerPunchResult}
               onRoll={() => void handleRollSuckerPunchChance()}
               onThrowPunch={() => void handleThrowSuckerPunch()}
@@ -4762,6 +4777,7 @@ function TokenMenuOption({
 
 function SuckerPunchChanceDialog({
   face,
+  tokenCost,
   onDismissResult,
   onRoll,
   onThrowPunch,
@@ -4770,6 +4786,7 @@ function SuckerPunchChanceDialog({
   rollProgress,
 }: {
   face: DieValue;
+  tokenCost: number;
   onDismissResult: () => void;
   onRoll: () => void;
   onThrowPunch: () => void;
@@ -4778,6 +4795,7 @@ function SuckerPunchChanceDialog({
   rollProgress: Animated.Value;
 }) {
   const layout = useGameLayout();
+  const isCounterPunch = tokenCost < suckerTokenCosts.suckerPunch;
   const isResult = phase === 'result';
   const didLand = Boolean(outcome?.landed);
   const didBlock = isResult && !didLand;
@@ -4793,7 +4811,9 @@ function SuckerPunchChanceDialog({
       ? `Rolled ${face}`
       : isThrowing
         ? 'Throwing Punch'
-        : 'Sucker Punch';
+        : isCounterPunch
+          ? 'Counterpunch'
+          : 'Sucker Punch';
   const buttonLabel =
     phase === 'rolling'
       ? 'ROLLING'
@@ -4843,7 +4863,9 @@ function SuckerPunchChanceDialog({
             maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
             style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
           >
-            Higher roll, higher chance.
+            {isCounterPunch
+              ? `They missed. Punch back for ${tokenCost} token${tokenCost === 1 ? '' : 's'}. Higher roll, higher chance.`
+              : 'Higher roll, higher chance.'}
           </Text>
         )}
         {isRolled && (
