@@ -11,6 +11,7 @@ import { AppErrorBoundary } from '../src/ui/AppErrorBoundary';
 import { WebPortraitGuard } from '../src/ui/WebPortraitGuard';
 import { MonitoringRoute } from '../src/monitoring/MonitoringRoute';
 import { NetworkProvider, NetworkStatusBanner } from '../src/network/NetworkProvider';
+import { ComputerResultSync } from '../src/multiplayer/ComputerResultSync';
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
@@ -33,6 +34,7 @@ export default function RootLayout() {
             <NetworkStatusBanner />
             <GameListProvider>
               <MonitoringRoute />
+              <ComputerResultSync />
               <NotificationRouter />
               <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
             </GameListProvider>
