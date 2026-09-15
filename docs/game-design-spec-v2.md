@@ -224,6 +224,8 @@ Definition
 
 Instead of scoring a category, a player may permanently scratch it.
 
+Sucker Deal is available at any point during the player's active turn, including before any roll on their very first turn. Either player may choose any unfilled category, regardless of its potential score or strategic value.
+
 The category becomes unavailable for the remainder of the game.
 
 Reward
@@ -246,6 +248,8 @@ Design Intent
 Scratching becomes a strategic decision instead of a pure penalty.
 
 Players may sacrifice future scoring opportunities to gain tactical flexibility.
+
+Choosing when and what to sacrifice is part of the skill of the game. Do not require a roll, add a confirmation, or block a legal Sucker Deal to protect the player from a poor decision.
 
 ⸻
 

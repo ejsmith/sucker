@@ -5,6 +5,7 @@ import { commitGameMove, planGameMove, type GameMovePlan } from '../_shared/game
 import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
 import { deliverActionNotifications } from '../_shared/notificationDelivery.ts';
 import { discardRequestBody } from '../_shared/discardRequestBody.ts';
+import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import {
   createEmptyScorecard,
   applySuckerPunchOpportunity,
@@ -717,25 +718,12 @@ function buildTurnSubmittedNotification(
   actorName: string,
   latestTurn: TurnRow | null,
 ): NotificationContent {
-  if (latestTurn && isSuckerRoll(toDice(latestTurn.dice))) {
-    return {
-      body: `${actorName} rolled a SUCKER!`,
-      title: 'SUCKER!!',
-    };
-  }
-
-  if (action.type === 'scratch_category') {
-    return {
-      body: `${actorName} scratched ${formatScoreCategory(action.category)}.`,
-      title: 'Your turn',
-    };
-  }
-
-  const scoreText = latestTurn ? ` for ${latestTurn.score}` : '';
-  return {
-    body: `${actorName} played ${formatScoreCategory(action.category)}${scoreText}.`,
-    title: 'Your turn',
-  };
+  return buildScoredTurnNotification(
+    actorName,
+    formatScoreCategory(action.category),
+    action.type === 'scratch_category',
+    latestTurn,
+  );
 }
 
 function buildGameOverNotification(game: GameRow, recipientId: string): NotificationContent {
@@ -1977,7 +1965,7 @@ function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tok
 
 function restoreScoredTurn(state: GameState, turn: TurnRow, tokenDelta: number): GameState {
   const category = toScoreCategory(turn.category);
-  const hasBonus = category !== 'sucker' && isSuckerRoll(toDice(turn.dice));
+  const hasBonus = turn.roll_count > 0 && category !== 'sucker' && isSuckerRoll(toDice(turn.dice));
   const players = state.players.map((player) => {
     if (player.id !== turn.player_id) {
       return player;

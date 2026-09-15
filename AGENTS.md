@@ -22,6 +22,7 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - Sucker Punch rolls one die for hit chance: 1 = 10%, 2 = 20%, 3 = 30%, 4 = 45%, 5 = 60%, 6 = 75%.
 - Sucker Blocker is retired; do not add new blocker gameplay.
 - Scratching a category awards 1 token.
+- Sucker Deal may sacrifice any unfilled category before rolling, including either player's first turn. Do not add warnings, confirmations, or restrictions to prevent poor strategic choices.
 
 ## App And Stack
 
