@@ -24,7 +24,7 @@ const steps = [
   },
   {
     title: 'Spend tokens when they help',
-    body: `You start with 10 tokens. Extra Roll costs ${suckerTokenCosts.extraRoll} and adds one roll. Mulligan costs ${suckerTokenCosts.mulligan} and restarts your current turn in computer and multiplayer games. Sucker Punch costs ${suckerTokenCosts.suckerPunch} for a chance to make the opponent replay an eligible turn. Open the token menu to see available actions. Suckers do not award tokens.`,
+    body: `You start with 10 tokens. Extra Roll costs ${suckerTokenCosts.extraRoll} and adds one roll. Mulligan costs ${suckerTokenCosts.mulligan} and restarts your current turn in computer and multiplayer games. Sucker Punch costs ${suckerTokenCosts.suckerPunch} for a chance to force a replay. A miss offers the opponent a 2-token counterpunch; another miss allows a 1-token reply. Use a counterpunch before starting your turn. Open the token menu to see available actions. Suckers do not award tokens.`,
   },
 ] as const;
 
