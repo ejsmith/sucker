@@ -324,7 +324,11 @@ test('failed Punch preparation closes the dialog and keeps the board usable', as
     await bobPage.getByTestId('token-option-sucker-punch').click();
     await bobPage.route('**/functions/v1/game-action', async (route) => {
       if (route.request().postDataJSON()?.type === 'prepare_sucker_punch') {
-        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'The response opportunity has ended.' }) });
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'The response opportunity has ended.' }),
+        });
       } else await route.continue();
     });
     await bobPage.getByTestId('sucker-punch-chance-roll-button').click();
@@ -385,6 +389,75 @@ test('the displayed multiplayer punch chance matches the server outcome', async 
       .eq('game_id', gameId)
       .eq('action_type', 'sucker_punch');
     expect(actions.data?.[0].payload.chanceDie).toBe(shownDie);
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
+test('both players can take a Sucker Deal on their first turn without rolling', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`deal-alice-${runId}`, 'Alice Deal');
+  const bob = await createUser(`deal-bob-${runId}`, 'Bob Deal');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    expect((await loadGame(gameId)).state.rollNumber).toBe(0);
+    expect(await loadTurnCount(gameId)).toBe(0);
+    const sucker = alicePage.getByTestId('category-button-sucker');
+    await expect(sucker).toBeDisabled();
+    await alicePage.getByTestId('token-menu-button').click();
+    await alicePage.getByTestId('token-option-sucker-deal').click();
+    for (const category of scoreCategories) {
+      await expect(alicePage.getByTestId(`category-button-${category}`)).toBeEnabled();
+    }
+    await sucker.click();
+    await expect(
+      alicePage.getByRole('img', { name: 'Alice Deal, Sucker score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect.poll(async () => (await loadGame(gameId)).state.players[0].suckerTokens).toBe(11);
+    await expect.poll(() => loadTurnCount(gameId)).toBe(1);
+    const turns = await admin.from('turns').select('roll_count').eq('game_id', gameId);
+    expect(turns.error).toBeNull();
+    expect(turns.data).toEqual([{ roll_count: 0 }]);
+    await openGameFromLobby(bobPage, gameId);
+    await expect(bobPage.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 15_000 });
+    await expect(bobPage.getByTestId('opponent-turn-reveal-dice')).toHaveCount(0);
+    await expect(bobPage.getByTestId('opponent-turn-reveal')).toContainText('played 0 on');
+    await bobPage.getByTestId('token-menu-button').click();
+    await bobPage.getByTestId('token-option-sucker-deal').click();
+    for (const category of scoreCategories) {
+      await expect(bobPage.getByTestId(`category-button-${category}`)).toBeEnabled();
+    }
+    await bobPage.getByTestId('category-button-chance').click();
+    await expect(
+      bobPage.getByRole('img', { name: 'Bob Deal, Chance score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect.poll(async () => (await loadGame(gameId)).state.players[1].suckerTokens).toBe(11);
+    await expect.poll(() => loadTurnCount(gameId)).toBe(2);
+    const bothTurns = await admin
+      .from('turns')
+      .select('player_id, category, roll_count, score')
+      .eq('game_id', gameId)
+      .order('turn_index');
+    expect(bothTurns.error).toBeNull();
+    expect(bothTurns.data).toEqual([
+      { player_id: alice.id, category: 'sucker', roll_count: 0, score: 0 },
+      { player_id: bob.id, category: 'chance', roll_count: 0, score: 0 },
+    ]);
+    await alicePage.reload();
+    await expect(
+      alicePage.getByRole('img', { name: 'Alice Deal, Sucker score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect(alicePage.getByTestId('token-menu-button')).toHaveText('11');
+    await bobPage.reload();
+    await expect(
+      bobPage.getByRole('img', { name: 'Bob Deal, Chance score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect(bobPage.getByTestId('token-menu-button')).toHaveText('11');
+    await alicePage.screenshot({ path: test.info().outputPath('first-turn-multiplayer-deals.png') });
   } finally {
     await alicePage.context().close();
     await bobPage.context().close();
