@@ -37,6 +37,9 @@ Notifications.setNotificationHandler({
 
 const nativePushTokenStorageKey = 'sucker.current-push-token';
 let notificationWork: Promise<unknown> = Promise.resolve();
+// Keep badge writes ordered, independently of push registration/sign-out work
+// (sign-out itself awaits a badge clear).
+let badgeWork: Promise<void> = Promise.resolve();
 let isSigningOut = false;
 
 function serializeNotificationWork<T>(work: () => Promise<T>): Promise<T> {
@@ -125,9 +128,14 @@ export function countGamesAwaitingTurn(games: RemoteGameRow[], profileId: string
   ).length;
 }
 
-export async function syncAppBadgeCount(count: number) {
+export function syncAppBadgeCount(count: number) {
   const badgeCount = Math.max(0, Math.trunc(count));
+  const result = badgeWork.then(() => applyAppBadgeCount(badgeCount));
+  badgeWork = result.catch(() => undefined);
+  return result;
+}
 
+async function applyAppBadgeCount(badgeCount: number) {
   if (Platform.OS === 'web') {
     await syncWebAppBadgeCount(badgeCount);
   }
