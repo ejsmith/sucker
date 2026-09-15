@@ -131,13 +131,13 @@ Deno.test('open invite codes stay private while deliberate code redemption works
   assertEquals(unrelatedInvite, []);
 });
 
-Deno.test('pre-roll Sucker Deal saves a zero-roll turn and awards exactly one token', async () => {
+Deno.test('both players can take a first-turn Sucker Deal without rolling and earn one token each', async () => {
   const [alice, bob] = await createUsers('pre-roll-deal', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
   await invokeGameAction(alice, { category: 'ones', gameId: game.id, type: 'score_category' }, 400);
-  const action = { category: 'ones', gameId: game.id, requestId: crypto.randomUUID(), type: 'scratch_category' };
+  const action = { category: 'sucker', gameId: game.id, requestId: crypto.randomUUID(), type: 'scratch_category' };
   const scored = (await invokeGameAction(alice, action)).game as GameRow;
-  assertEquals(scored.state.players[0].scorecard.ones, 0);
+  assertEquals(scored.state.players[0].scorecard.sucker, 0);
   assertEquals(scored.state.players[0].suckerTokens, startingSuckerTokens + 1);
   assertEquals(scored.current_player_id, bob.id);
   const turn = await loadTurn(scored.last_turn_id);
@@ -146,8 +146,22 @@ Deno.test('pre-roll Sucker Deal saves a zero-roll turn and awards exactly one to
   const replay = (await invokeGameAction(alice, action)).game as GameRow;
   assertEquals(replay.last_turn_id, scored.last_turn_id);
   assertEquals(replay.state.players[0].suckerTokens, startingSuckerTokens + 1);
-  const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id));
-  assertEquals(turns.length, 1);
+  const bobAction = { category: 'chance', gameId: game.id, requestId: crypto.randomUUID(), type: 'scratch_category' };
+  const bobScored = (await invokeGameAction(bob, bobAction)).game as GameRow;
+  assertEquals(bobScored.state.players[1].scorecard.chance, 0);
+  assertEquals(bobScored.state.players[1].suckerTokens, startingSuckerTokens + 1);
+  assertEquals(bobScored.current_player_id, alice.id);
+  const bobReplay = (await invokeGameAction(bob, bobAction)).game as GameRow;
+  assertEquals(bobReplay.last_turn_id, bobScored.last_turn_id);
+  assertEquals(bobReplay.state.players[1].suckerTokens, startingSuckerTokens + 1);
+  const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', game.id).order('turn_index'));
+  assertEquals(
+    turns.map(({ category, player_id, roll_count, score }) => ({ category, player_id, roll_count, score })),
+    [
+      { category: 'sucker', player_id: alice.id, roll_count: 0, score: 0 },
+      { category: 'chance', player_id: bob.id, roll_count: 0, score: 0 },
+    ],
+  );
   const invalidTurn = {
     category: 'twos',
     dice: turn.dice,
@@ -156,7 +170,7 @@ Deno.test('pre-roll Sucker Deal saves a zero-roll turn and awards exactly one to
     player_id: alice.id,
     roll_count: 0,
     score: 0,
-    turn_index: 2,
+    turn_index: 3,
   };
   const invalidScore = await admin.from('turns').insert({ ...invalidTurn, score: 1 });
   assertEquals(invalidScore.error?.code, '23514');
