@@ -128,6 +128,9 @@ Deno.serve(async (request) => {
     }
     const contentLength = Number(request.headers.get('content-length') ?? 0);
     if (contentLength > 32_768) {
+      // An unread upload can abort the Edge Runtime connection and hide the 413
+      // behind a gateway timeout. Discard it without buffering it in memory.
+      await request.body?.pipeTo(new WritableStream());
       return json({ error: 'Request body is too large.' }, 413);
     }
 
