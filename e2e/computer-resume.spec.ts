@@ -30,12 +30,8 @@ for (const cost of [3, 2, 1] as const) {
     await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('10%');
     await page.evaluate(() => localStorage.setItem('review.chance-reloaded', '1'));
     await page.reload();
-    if (!(await page.getByTestId('sucker-punch-chance-dialog').isVisible())) {
-      await page.getByTestId('token-menu-button').click();
-      await page.getByTestId('token-option-sucker-punch').click();
-    }
+    await expect(page.getByTestId('sucker-punch-chance-dialog')).toBeVisible();
     const button = page.getByTestId('sucker-punch-chance-roll-button');
-    if (!(await button.textContent())?.includes('THROW PUNCH')) await button.click();
     await expect(button).toContainText('THROW PUNCH');
     await page.screenshot({ path: test.info().outputPath('prepared-chance.png') });
     await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('10%');

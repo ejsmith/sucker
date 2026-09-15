@@ -717,7 +717,125 @@ Deno.test('game-action jabs the current player only after the wait window and co
   );
 });
 
-Deno.test('legacy direct Punch cannot charge tokens using an unseen server chance', async () => {
+Deno.test('App Store direct Punch honors displayed odds and retries without charging twice', async () => {
+  const [alice, bob, outsider] = await createUsers('legacy-punch', ['Alice', 'Bob', 'Outsider']);
+  for (const chanceDie of [1, 6]) {
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+    const scored = (await invokeGameAction(alice, { gameId: game.id, type: 'score_category', category: 'sucker' }))
+      .game as GameRow;
+    const request = {
+      gameId: game.id,
+      turnId: scored.last_turn_id,
+      type: 'sucker_punch',
+      chanceDie,
+      requestId: crypto.randomUUID(),
+    };
+    await invokeGameAction(outsider, request, 400);
+    await invokeGameAction(alice, request, 400);
+    for (const invalidDie of [0, 7, 1.5, '6']) {
+      await invokeGameAction(bob, { ...request, chanceDie: invalidDie }, 400);
+    }
+    await invokeGameAction(bob, { ...request, chanceProtocol: 'unknown' }, 400);
+    const thrown = await invokeGameAction(bob, request);
+    const outcome = thrown.suckerPunchOutcome as { chanceDie: number; landed: boolean };
+    assertEquals(outcome.chanceDie, chanceDie);
+    assertEquals(outcome.landed, chanceDie === 6);
+    assertPlayerTokens(thrown.game as GameRow, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
+    const replay = await invokeGameAction(bob, request);
+    assertEquals(replay.suckerPunchOutcome, thrown.suckerPunchOutcome);
+    assertEquals((replay.game as GameRow).state, (thrown.game as GameRow).state);
+    const chances = await admin.from('sucker_punch_attempts').select('chance_die').eq('game_id', game.id);
+    assertNoError(chances.error);
+    assertEquals(chances.data, [{ chance_die: chanceDie }]);
+    assertEquals((await loadTokenEvents(game.id)).filter((event) => event.event_type === 'sucker_punch').length, 1);
+  }
+});
+
+Deno.test('old and updated clients can Punch each other in the same game', async () => {
+  const [alice, bob] = await createUsers('mixed-version-punch', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+  const first = (await invokeGameAction(alice, { gameId: game.id, type: 'score_category', category: 'ones' }))
+    .game as GameRow;
+  const missed = await invokeGameAction(bob, {
+    gameId: game.id,
+    turnId: first.last_turn_id,
+    type: 'sucker_punch',
+    chanceDie: 1,
+  });
+  assertEquals((missed.suckerPunchOutcome as { landed: boolean }).landed, false);
+  assertEquals((missed.game as GameRow).state.counterPunchPlayerId, alice.id);
+  await invokeGameAction(bob, { gameId: game.id, type: 'roll' });
+  const second = (await invokeGameAction(bob, { gameId: game.id, type: 'score_category', category: 'chance' }))
+    .game as GameRow;
+  const prepared = await invokeGameAction(alice, {
+    gameId: game.id,
+    turnId: second.last_turn_id,
+    type: 'prepare_sucker_punch',
+  });
+  const counter = await invokeGameAction(alice, {
+    gameId: game.id,
+    turnId: second.last_turn_id,
+    type: 'sucker_punch',
+    chanceDie: prepared.suckerPunchChanceDie,
+    chanceProtocol: 'prepared',
+  });
+  assertEquals((counter.suckerPunchOutcome as { tokenCost: number }).tokenCost, 2);
+  assertEquals((counter.suckerPunchOutcome as { landed: boolean }).landed, true);
+  assertPlayerTokens(counter.game as GameRow, alice.id, 8);
+  assertPlayerTokens(counter.game as GameRow, bob.id, 7);
+  const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+  assertEquals(saved.current_player_id, bob.id);
+  assertEquals(saved.state.players[1].scorecard.chance, null);
+  // The old client can continue its replayed turn after the new client's hit.
+  await invokeGameAction(bob, { gameId: game.id, type: 'roll' });
+  const replayed = (await invokeGameAction(bob, { gameId: game.id, type: 'score_category', category: 'chance' }))
+    .game as GameRow;
+  assertEquals(replayed.current_player_id, alice.id);
+  assertEquals(replayed.state.players[1].scorecard.chance, 5);
+});
+
+Deno.test('concurrent legacy throws commit one displayed chance and one token charge', async () => {
+  const [alice, bob] = await createUsers('legacy-punch-race', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+  const scored = (await invokeGameAction(alice, { gameId: game.id, type: 'score_category', category: 'ones' }))
+    .game as GameRow;
+  const results = await Promise.all(
+    [1, 6].map(async (chanceDie) => {
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${bob.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          gameId: game.id,
+          turnId: scored.last_turn_id,
+          type: 'sucker_punch',
+          chanceDie,
+          requestId: crypto.randomUUID(),
+        }),
+      });
+      return { chanceDie, status: response.status, body: await response.json() };
+    }),
+  );
+  const accepted = results.filter((result) => result.status === 200);
+  assertEquals(accepted.length, 1);
+  assertEquals(accepted[0].body.suckerPunchOutcome.chanceDie, accepted[0].chanceDie);
+  const rejected = results.find((result) => result.status !== 200)!;
+  assertEquals([400, 409].includes(rejected.status), true);
+  const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+  assertPlayerTokens(saved, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
+  assertEquals((await loadTokenEvents(game.id)).filter((event) => event.event_type === 'sucker_punch').length, 1);
+  const chances = await admin.from('sucker_punch_attempts').select('chance_die').eq('game_id', game.id);
+  assertNoError(chances.error);
+  assertEquals(chances.data, [{ chance_die: accepted[0].chanceDie }]);
+});
+
+Deno.test('updated Punch clients must prepare a chance before throwing', async () => {
   const [alice, bob] = await createUsers('legacy-punch', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
   await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
@@ -725,15 +843,18 @@ Deno.test('legacy direct Punch cannot charge tokens using an unseen server chanc
     .game as GameRow;
   const rejected = await invokeGameAction(
     bob,
-    { gameId: game.id, turnId: scored.last_turn_id, type: 'sucker_punch', chanceDie: 1 },
+    { gameId: game.id, turnId: scored.last_turn_id, type: 'sucker_punch', chanceDie: 1, chanceProtocol: 'prepared' },
     400,
   );
-  assertEquals(rejected.error, 'Update Sucker and roll the Sucker Punch chance before throwing.');
+  assertEquals(rejected.error, 'Roll the Sucker Punch chance before throwing.');
   const stored = await admin.from('games').select('*').eq('id', game.id).single();
   assertNoError(stored.error);
   assertEquals(stored.data?.status, 'response_window');
   assertPlayerTokens(stored.data as GameRow, bob.id, startingSuckerTokens);
   assertEquals((await loadTokenEvents(game.id)).length, 0);
+  const chances = await admin.from('sucker_punch_attempts').select('chance_die').eq('game_id', game.id);
+  assertNoError(chances.error);
+  assertEquals(chances.data, []);
 });
 Deno.test('Sucker Punch displays one authoritative chance across preparation, retries, and throwing', async () => {
   const [alice, bob, outsider] = await createUsers('punch-prepare', ['Alice', 'Bob', 'Outsider']);
@@ -763,12 +884,19 @@ Deno.test('Sucker Punch displays one authoritative chance across preparation, re
   assertEquals(attempts.data, [{ chance_die: 6 }]);
   const direct = await bob.client.from('sucker_punch_attempts').select('chance_die').eq('game_id', game.id);
   if (!direct.error) throw new Error('Authenticated clients must not access chance storage directly.');
-  const mismatch = await invokeGameAction(bob, { ...prepare, type: 'sucker_punch', chanceDie: 1 }, 400);
-  assertEquals(mismatch.error, 'The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
+  for (const chanceProtocol of [undefined, 'prepared']) {
+    const mismatch = await invokeGameAction(
+      bob,
+      { ...prepare, type: 'sucker_punch', chanceDie: 1, chanceProtocol },
+      400,
+    );
+    assertEquals(mismatch.error, 'The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
+  }
   const throwRequest = {
     ...prepare,
     type: 'sucker_punch',
     chanceDie: first.suckerPunchChanceDie,
+    chanceProtocol: 'prepared',
     requestId: crypto.randomUUID(),
   };
   const thrown = await invokeGameAction(bob, throwRequest);
