@@ -314,24 +314,39 @@ Deno.test('concurrent first matchup completions accumulate both games atomically
       p_game_id: game.id,
       p_expected_updated_at: game.updated_at,
       p_game_patch: { status: 'complete', winner_id: null },
-      p_writes: [alice, bob].map((player) => ({
-        table: 'head_to_head_stats',
-        operation: 'insert',
-        data: {
-          player_id: player.id,
-          opponent_id: player.id === alice.id ? bob.id : alice.id,
-          games_played: 1,
-          wins: 0,
-          losses: 0,
-          total_score: 10 + index * 10,
-          highest_score: 10 + index * 10,
-          average_score: 10 + index * 10,
-          sucker_tokens_spent: 3 + index,
-          average_sucker_tokens_spent: 3 + index,
-          sucker_tokens_leftover: 7 - index,
-          average_sucker_tokens_leftover: 7 - index,
-        },
-      })),
+      p_writes: [
+        ...[alice, bob].map((player) => ({
+          table: 'game_player_results',
+          operation: 'upsert',
+          data: {
+            game_id: game.id,
+            player_id: player.id,
+            opponent_id: player.id === alice.id ? bob.id : alice.id,
+            final_score: 10 + index * 10,
+            won: false,
+            sucker_tokens_spent: 3 + index,
+            sucker_tokens_leftover: 7 - index,
+          },
+        })),
+        ...[alice, bob].map((player) => ({
+          table: 'head_to_head_stats',
+          operation: 'insert',
+          data: {
+            player_id: player.id,
+            opponent_id: player.id === alice.id ? bob.id : alice.id,
+            games_played: 1,
+            wins: 0,
+            losses: 0,
+            total_score: 10 + index * 10,
+            highest_score: 10 + index * 10,
+            average_score: 10 + index * 10,
+            sucker_tokens_spent: 3 + index,
+            average_sucker_tokens_spent: 3 + index,
+            sucker_tokens_leftover: 7 - index,
+            average_sucker_tokens_leftover: 7 - index,
+          },
+        })),
+      ],
       p_result: { game },
     });
   }
@@ -527,7 +542,7 @@ Deno.test('completed games for one matchup retain every result under concurrent 
         // completion. The database must derive totals rather than accept it.
         {
           table: 'head_to_head_stats',
-          operation: 'upsert',
+          operation: index === 0 ? 'upsert' : 'increment',
           data: {
             player_id: alice.id,
             opponent_id: bob.id,

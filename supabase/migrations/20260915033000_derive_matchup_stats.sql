@@ -165,14 +165,15 @@ begin
     if cardinality(matchup_players) <> 2 then raise exception 'A completed game needs two players'; end if;
     -- Different games between the same players must not refresh totals concurrently.
     -- Acquire before inserting results so a waiting transaction sees the prior commit.
-    perform pg_advisory_xact_lock(hashtextextended(matchup_players[1]::text || ':' || matchup_players[2]::text,0));
+    perform pg_advisory_xact_lock(hashtextextended(matchup_players[1]::text || ',' || matchup_players[2]::text,6601));
   end if;
 
   for change in select value from jsonb_array_elements(p_writes) loop
     table_name := change->>'table';
     operation := change->>'operation';
     if table_name not in ('turns','turn_actions','token_events','game_players','game_player_results','head_to_head_stats')
-      or operation not in ('insert','update','upsert') then raise exception 'Invalid game move write'; end if;
+      or operation not in ('insert','update','upsert','increment')
+      or (operation='increment' and table_name <> 'head_to_head_stats') then raise exception 'Invalid game move write'; end if;
     if table_name <> 'head_to_head_stats' and
       coalesce(change->'data'->>'game_id',change->'match'->>'game_id','') <> p_game_id::text then
       raise exception 'Move write must belong to the locked game';
@@ -182,7 +183,7 @@ begin
       or not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'opponent_id')::uuid)
     ) then raise exception 'Stats write must belong to this game'; end if;
     if table_name='head_to_head_stats' then
-      -- Older Edge workers still send absolute totals. Ignore those only when
+      -- Older Edge workers still send totals or deltas. Ignore those only when
       -- this transaction supplies the source results; refresh them below instead.
       if not has_results then raise exception 'Stats require completed game results'; end if;
       continue;
@@ -266,7 +267,7 @@ begin
   for pair in select distinct least(player_id,opponent_id) as first_id,
       greatest(player_id,opponent_id) as second_id from public.game_player_results
       order by first_id,second_id loop
-    perform pg_advisory_xact_lock(hashtextextended(pair.first_id::text || ':' || pair.second_id::text,0));
+    perform pg_advisory_xact_lock(hashtextextended(pair.first_id::text || ',' || pair.second_id::text,6601));
     perform public.refresh_matchup_stats(pair.first_id,pair.second_id);
     perform public.refresh_matchup_stats(pair.second_id,pair.first_id);
   end loop;
