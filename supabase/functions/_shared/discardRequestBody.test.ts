@@ -66,6 +66,31 @@ Deno.test('discard stops reading a continuously available oversized upload', asy
   if (pulls > 17) throw new Error(`Expected at most 1 MiB plus one prefetched chunk, received ${pulls} chunks.`);
 });
 
+Deno.test('discard bounds the number of reads for tiny and empty chunks', async () => {
+  for (const chunkSize of [1, 0]) {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 1_024) {
+          controller.error(new Error('Discard kept reading tiny chunks beyond its read budget.'));
+          return;
+        }
+        controller.enqueue(new Uint8Array(chunkSize));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await discardRequestBody(body);
+    assertEquals(cancelled, true);
+    assertEquals(body.locked, false);
+    if (pulls > 129) throw new Error(`Expected at most 128 reads plus one prefetched chunk, received ${pulls}.`);
+  }
+});
+
 Deno.test('discard deadline does not wait for stalled source cancellation', async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let cancelled = false;

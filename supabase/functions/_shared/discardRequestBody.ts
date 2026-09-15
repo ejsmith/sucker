@@ -3,16 +3,21 @@ export async function discardRequestBody(body: ReadableStream<Uint8Array> | null
 
   const reader = body.getReader();
   let finished = false;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<undefined>((resolve) => {
-    timeout = setTimeout(() => resolve(undefined), 1_000);
-  });
+  let cancelled = false;
+  const cancel = () => {
+    if (cancelled) return;
+    cancelled = true;
+    // Cancellation itself can stall; do not wait for it to settle.
+    void reader.cancel().catch(() => {});
+  };
+  // Cancelling settles a pending read even if the underlying source stalls.
+  const timeout = setTimeout(cancel, 1_000);
 
   try {
     let discardedBytes = 0;
-    while (discardedBytes < 1_048_576) {
-      const chunk = await Promise.race([reader.read(), deadline]);
-      if (!chunk) return;
+    // The read budget also bounds continuously available tiny or empty chunks.
+    for (let reads = 0; reads < 128 && discardedBytes < 1_048_576; reads += 1) {
+      const chunk = await reader.read();
       if (chunk.done) {
         finished = true;
         return;
@@ -21,8 +26,7 @@ export async function discardRequestBody(body: ReadableStream<Uint8Array> | null
     }
   } finally {
     clearTimeout(timeout);
-    // Cancellation itself can stall; it must not extend the discard deadline.
-    if (!finished) void reader.cancel().catch(() => {});
+    if (!finished) cancel();
     reader.releaseLock();
   }
 }
