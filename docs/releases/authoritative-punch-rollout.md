@@ -23,14 +23,17 @@ Leave it unset or false until a separately approved rollout meets these gates:
 3. Verify supported-client preparation, throw, retry, token accounting, and
    notification delivery against that backend. During compatibility, verify old
    and new opponents on devices. At retirement, verify old requests receive the
-   update message and completed receipts still recover without another charge.
+   update message and completed receipts still recover for the same actor and
+   original `requestId` without another charge.
 4. Approve the web/client release, set `SUCKER_PUNCH_PROTOCOL_READY=true`, and
    rerun the main Build workflow. Native builds and OTA updates remain manual.
 
 The compatibility stage retains the old client's chance die. After retirement,
 new chances originate only in server preparation; the marker alone cannot create
 one. Historical chances retain their displayed odds, including those saved during
-compatibility, and completed receipts remain replayable.
+compatibility, and completed receipts remain replayable with the original
+`requestId`. Requests without that ID cannot recover a receipt and receive the
+update message without another charge; refresh the game to see its current state.
 
 ## Notification recovery limits
 

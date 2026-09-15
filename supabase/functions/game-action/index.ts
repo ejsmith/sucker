@@ -809,8 +809,8 @@ function chunkArray<T>(items: T[], chunkSize: number) {
 function toAction(value: unknown): Action {
   const action = toActionRecord(value);
   const type = readString(action, 'type');
-  // Legacy store binaries predate request ids. Keep them functional while all
-  // new clients receive replay protection.
+  // Some older clients omit request IDs. Generate one for processing; replay
+  // protection across requests requires the client to reuse its original ID.
   const requestId = action.requestId === undefined ? crypto.randomUUID() : readUuid(action, 'requestId');
 
   switch (type) {

@@ -9,7 +9,7 @@ Do not merge or deploy the retirement change until all of the following are reco
 - The replacement iOS version/build is available in the App Store and includes [PR #95](https://github.com/ejsmith/sucker/pull/95): it prepares the chance and sends `chanceProtocol: 'prepared'`. Verify the same protocol in every supported web, Android, and TestFlight release.
 - Record the adoption source, observation period, remaining legacy usage, and the owner's agreed minimum supported version and retirement date. Availability alone is insufficient. This cleanup does not add version telemetry or invent an adoption threshold; collect that evidence before removing support.
 - In staging, verify supported-client preparation, displayed odds, one-/two-/three-token costs, retries, and both opponents continuing an existing game. Verify an old client receives the update message without losing tokens.
-- Verify a completed pre-upgrade request still recovers its recorded outcome, and a pending request that never committed does not apply a legacy throw after cutover.
+- Verify a completed pre-upgrade request still recovers its recorded outcome when retried by the same actor with its original `requestId`, and a pending request that never committed does not apply a legacy throw after cutover.
 - Record the compatible backend revision to restore if a supported release fails its device smoke test. Deploy the verified `game-action` only after the owner approves retirement. No database migration or chance/receipt deletion is needed by this cleanup.
 
 ## Rollout order
@@ -23,7 +23,7 @@ Do not merge or deploy the retirement change until all of the following are reco
 
 - A new `sucker_punch` request without `chanceProtocol: 'prepared'` receives HTTP 400: `Update Sucker to the latest version to use Sucker Punch.` It creates no chance and applies no game move or token charge. This is a Punch protocol requirement, not a general app-version gate.
 - A marked throw requires an existing saved chance. `prepare_sucker_punch` is the only action that can create a new chance, and generates it on the server. The displayed die only checks that the caller saw the saved odds; it never sets those odds. Merely supplying the marker cannot bypass preparation.
-- Already-completed requests replay their durable results before protocol enforcement. Keep the optional marker in request parsing so old persisted requests can still reconcile. Uncommitted old requests receive the update message; stale processing requests retain the existing reconciliation behavior.
+- Already-completed requests replay their durable results before protocol enforcement when retried by the same actor with the original `requestId`. Keep the optional marker in request parsing so old persisted requests can still reconcile. An older request without that ID cannot identify its receipt: it receives the update message without another charge, and the client must refresh the game to see the committed state. Uncommitted old requests receive the update message; stale processing requests retain the existing reconciliation behavior.
 - Preserve existing saved chances, including any written during the compatibility period. Their origin was not recorded, so this cleanup cannot establish that every historical die was server-generated. It prevents new client-chosen chances while honoring odds already shown to players. Never wipe or silently reroll in-flight chances during deployment.
 - Participant, responder, target-turn, token, atomic-commit, and retry protections continue to share the same implementation.
 

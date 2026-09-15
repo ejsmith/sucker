@@ -774,6 +774,12 @@ Deno.test('completed Punch receipts still replay the old request format after re
   assertEquals(await invokeGameAction(bob, legacyRequest), committed);
   const { chanceDie: _displayedChance, ...legacyWithoutDie } = legacyRequest;
   assertEquals(await invokeGameAction(bob, legacyWithoutDie), committed);
+  // Without the original request ID, an older client cannot identify its receipt.
+  const { requestId: _originalRequestId, ...legacyWithoutRequestId } = legacyRequest;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const rejected = await invokeGameAction(bob, legacyWithoutRequestId, 400, false);
+    assertEquals(rejected.error, 'Update Sucker to the latest version to use Sucker Punch.');
+  }
   const saved = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
   assertEquals(saved.state, (committed.game as GameRow).state);
   assertPlayerTokens(saved, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
