@@ -324,6 +324,7 @@ Deno.test('concurrent first matchup completions accumulate both games atomically
             opponent_id: player.id === alice.id ? bob.id : alice.id,
             final_score: 10 + index * 10,
             won: false,
+            upper_bonus_awarded: false,
             sucker_tokens_spent: 3 + index,
             sucker_tokens_leftover: 7 - index,
           },
