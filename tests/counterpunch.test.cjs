@@ -155,6 +155,22 @@ test('a landed regular punch does not grant a counterpunch', () => {
   assert.equal(result.outcome.isCounterPunch, false);
 });
 
+test('the final score completes the game immediately and expires an earned counterpunch', () => {
+  const game = createGame(['Player', 'Computer']);
+  game.currentPlayerIndex = 1;
+  game.counterPunchPlayerId = game.players[0].id;
+  game.counterPunchCost = 1;
+  for (const player of game.players) {
+    for (const category of Object.keys(player.scorecard)) player.scorecard[category] = 0;
+  }
+  game.players[1].scorecard.chance = null;
+  const result = submitSucker(game, 'chance');
+  assert.equal(result.game.phase, 'complete');
+  assert.equal(result.pendingTurn, null);
+  assert.equal(result.game.counterPunchPlayerId, undefined);
+  assert.equal(result.game.counterPunchCost, undefined);
+});
+
 test('computer can take a counterpunch opportunity with exactly 2 tokens', () => {
   const game = createGame(['Player', 'Computer']);
   game.currentPlayerIndex = 1;

@@ -214,6 +214,7 @@ When any Sucker Punch misses, the target earns one opportunity to punch back at 
 - Uses the same chance die and hit odds as a regular Sucker Punch. A hit removes the score and forces a replay; a miss leaves the score intact. Both outcomes spend the displayed token cost.
 - Starting the next turn, passing the response, or throwing a punch consumes the opportunity. It cannot be saved for a later turn.
 - Every missed counterpunch gives the other player the next discount. A hit or an unused opportunity ends the chain; the next regular punch costs 3 tokens.
+- The game ends immediately when both scorecards are filled. Any unused counterpunch expires; it does not delay declaring the winner.
 
 ⸻
 

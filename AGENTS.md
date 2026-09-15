@@ -18,7 +18,7 @@ Keep this file concise. Put durable project rules here; put detailed gameplay/de
 - Extra Roll costs 1 token and can be chained while tokens remain.
 - Mulligan costs 3 tokens.
 - Regular Sucker Punch costs 3 tokens and targets the opponent's immediately previous submitted turn.
-- Every missed punch grants the target a counterpunch against the attacker's immediately following submitted turn, before starting their own turn. Consecutive misses reduce the cost from 3 to 2 to 1 token, staying at 1 until a punch hits or the opportunity expires.
+- Every missed punch grants the target a counterpunch against the attacker's immediately following submitted turn, before starting their own turn. Consecutive misses reduce the cost from 3 to 2 to 1 token, staying at 1 until a punch hits or the opportunity expires. Game completion immediately expires unused counterpunches.
 - Sucker Punch rolls one die for hit chance: 1 = 10%, 2 = 20%, 3 = 30%, 4 = 45%, 5 = 60%, 6 = 75%.
 - Sucker Blocker is retired; do not add new blocker gameplay.
 - Scratching a category awards 1 token.
