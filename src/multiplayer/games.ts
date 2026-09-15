@@ -526,7 +526,8 @@ export async function prepareRemoteSuckerPunch(gameId: string, turnId: string) {
   return applyMultiplayerAction({ gameId, turnId, type: 'prepare_sucker_punch' });
 }
 
-export async function nudgeRemoteGame(gameId: string) {
+export async function jabRemoteGame(gameId: string) {
+  // Preserve the wire action and reminder history used by existing clients.
   return applyMultiplayerAction({ gameId, type: 'nudge_turn' });
 }
 

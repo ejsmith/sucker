@@ -1,5 +1,7 @@
 import {
   availableCategories,
+  applySuckerPunchOpportunity,
+  getSuckerPunchCost,
   isSuckerRoll,
   maxAvailableRolls,
   mulliganCurrentTurn,
@@ -230,11 +232,24 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
 
 export function scratchLocalTurn(game: GameState, category: ScoreCategory): ComputerTurnResult {
   const scorerIndex = game.currentPlayerIndex;
+  const scorer = game.players[scorerIndex];
   const nextGame = scratchScoreBox(game, category);
 
   return {
     game: nextGame,
-    pendingTurn: null,
+    pendingTurn:
+      nextGame.phase === 'complete'
+        ? null
+        : {
+            category,
+            dice: game.dice,
+            hadSuckerBonus: false,
+            id: `${game.id}-${scorer.id}-${category}-${Date.now()}`,
+            responderIndex: nextGame.currentPlayerIndex,
+            score: 0,
+            scorerIndex,
+            status: 'submitted',
+          },
     scoreAnimation: {
       category,
       dice: game.dice,
@@ -254,17 +269,27 @@ export function applyLocalSuckerPunch(
 ): { game: GameState; outcome: SuckerPunchOutcome | null; pendingTurn: LocalPendingTurn | null } {
   const scorer = game.players[pendingTurn.scorerIndex];
   const puncher = game.players[puncherIndex];
+  const cost = getSuckerPunchCost(game, puncher?.id ?? '');
   if (
     pendingTurn.status !== 'submitted' ||
     !scorer ||
     !puncher ||
+    game.phase !== 'rolling' ||
+    game.rollNumber !== 0 ||
+    game.currentPlayerIndex !== puncherIndex ||
+    pendingTurn.responderIndex !== puncherIndex ||
     pendingTurn.scorerIndex === puncherIndex ||
-    puncher.suckerTokens < suckerTokenCosts.suckerPunch
+    puncher.suckerTokens < cost
   ) {
     return { game, outcome: null, pendingTurn };
   }
 
-  const outcome = chanceDie ? resolveSuckerPunchOutcome(chanceDie, random) : rollSuckerPunchOutcome(random);
+  const outcome = {
+    ...(chanceDie ? resolveSuckerPunchOutcome(chanceDie, random) : rollSuckerPunchOutcome(random)),
+    isCounterPunch: cost < suckerTokenCosts.suckerPunch,
+    tokenCost: cost,
+  };
+  const nextGame = applySuckerPunchOpportunity(game, scorer.id, outcome);
   const players = game.players.map((player, index) => {
     if (outcome.landed && index === pendingTurn.scorerIndex) {
       return {
@@ -280,7 +305,7 @@ export function applyLocalSuckerPunch(
     if (index === puncherIndex) {
       return {
         ...player,
-        suckerTokens: Math.max(0, player.suckerTokens - suckerTokenCosts.suckerPunch),
+        suckerTokens: player.suckerTokens - cost,
       };
     }
 
@@ -290,7 +315,7 @@ export function applyLocalSuckerPunch(
   if (!outcome.landed) {
     return {
       game: {
-        ...game,
+        ...nextGame,
         players,
       },
       outcome,
@@ -300,7 +325,7 @@ export function applyLocalSuckerPunch(
 
   return {
     game: {
-      ...game,
+      ...nextGame,
       currentPlayerIndex: pendingTurn.scorerIndex,
       dice: [1, 1, 1, 1, 1],
       extraRollsAvailable: 0,
@@ -1150,7 +1175,7 @@ function shouldAutomatedUseSuckerPunch(
   strategy: ComputerStrategyConfig,
 ) {
   const computer = game.players[automatedPlayerIndex];
-  if (!computer || computer.suckerTokens < suckerTokenCosts.suckerPunch) {
+  if (!computer || computer.suckerTokens < getSuckerPunchCost(game, computer.id)) {
     return false;
   }
 

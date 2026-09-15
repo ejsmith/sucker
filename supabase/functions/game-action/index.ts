@@ -6,6 +6,9 @@ import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '..
 import { deliverActionNotifications } from '../_shared/notificationDelivery.ts';
 import {
   createEmptyScorecard,
+  applySuckerPunchOpportunity,
+  expireCounterPunch,
+  getSuckerPunchCost,
   type Dice,
   type DieValue,
   type GameState,
@@ -697,7 +700,7 @@ function buildNotificationContent(
       };
     case 'nudge_turn':
       return {
-        body: `${actorName} nudged you. It is your turn in Sucker!`,
+        body: `${actorName} jabbed you. It is your turn in Sucker!`,
         title: 'Your turn',
       };
     default:
@@ -1301,7 +1304,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
   const now = Date.now();
   const turnStartedAt = new Date(game.updated_at).getTime();
   if (!Number.isFinite(turnStartedAt) || now - turnStartedAt < nudgeTurnWaitMs) {
-    throw new Error('You can nudge after it has been their turn for 1 hour.');
+    throw new Error('You can jab after it has been their turn for 1 hour.');
   }
 
   const cooldownCutoff = new Date(now - nudgeCooldownMs).toISOString();
@@ -1319,7 +1322,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
     throw recentNudgeError;
   }
   if (recentNudge) {
-    throw new Error('You can nudge this player again 8 hours after your last nudge.');
+    throw new Error('You can jab this player again 8 hours after your last jab.');
   }
 
   mutationState.mayHaveWritten = true;
@@ -1458,7 +1461,7 @@ async function mutateGame(
   createPayload: (state: GameState, nextState: GameState) => Record<string, unknown> = () => ({}),
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
-  const nextState = mutate(game.state);
+  const nextState = mutate(expireCounterPunch(game.state, actorId));
   const nextPlayer = nextState.players[nextState.currentPlayerIndex];
   const data = stageGameMove(mutationState, game, {
     current_player_id: nextState.phase === 'complete' ? null : nextPlayer.id,
@@ -1521,7 +1524,7 @@ async function scoreRemoteTurn(
     scoreCategories.every((scoreCategory) => player.scorecard[scoreCategory] !== null),
   );
   const nextState: GameState = {
-    ...state,
+    ...expireCounterPunch(state, complete ? (state.counterPunchPlayerId ?? actorId) : actorId),
     currentPlayerIndex: complete ? state.currentPlayerIndex : (state.currentPlayerIndex + 1) % players.length,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
@@ -1605,7 +1608,10 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
     throw new Error('Only the responding player can pass.');
   }
 
-  const updatedGame = stageGameMove(mutationState, game, { status: 'active' });
+  const updatedGame = stageGameMove(mutationState, game, {
+    state: expireCounterPunch(game.state, actorId),
+    status: 'active',
+  });
 
   await insertAction(
     admin,
@@ -1648,7 +1654,7 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   }
 
   const nextState = turn
-    ? removeScoredTurn(state, turn, actorId, -suckerTokenCosts.mulligan)
+    ? removeScoredTurn(expireCounterPunch(state, actorId), turn, actorId, -suckerTokenCosts.mulligan)
     : mulliganCurrentTurn(state);
   const updatedGame = stageGameMove(mutationState, game, {
     current_player_id: actorId,
@@ -1696,8 +1702,11 @@ async function prepareSuckerPunchChance(
 
   const state = game.state;
   const actor = findPlayer(state, actorId);
-  if (actor.suckerTokens < suckerTokenCosts.suckerPunch) {
-    throw new Error(`You need ${suckerTokenCosts.suckerPunch} Sucker Tokens to Sucker Punch.`);
+  const cost = getSuckerPunchCost(state, actorId);
+  if (actor.suckerTokens < cost) {
+    throw new Error(
+      `You need ${cost} Sucker Token${cost === 1 ? '' : 's'} to ${cost < suckerTokenCosts.suckerPunch ? 'Counterpunch' : 'Sucker Punch'}.`,
+    );
   }
 
   mutationState.mayHaveWritten = true;
@@ -1748,8 +1757,13 @@ async function suckerPunchTurn(
   const state = game.state;
   const turn = await loadTurn(admin, turnId);
   const chanceDie = prepared.suckerPunchChanceDie;
-  const outcome = resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom);
-  let nextState = updatePlayerTokens(state, actorId, -suckerTokenCosts.suckerPunch);
+  const cost = getSuckerPunchCost(state, actorId);
+  const outcome = {
+    ...resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom),
+    isCounterPunch: cost < suckerTokenCosts.suckerPunch,
+    tokenCost: cost,
+  };
+  let nextState = updatePlayerTokens(applySuckerPunchOpportunity(state, turn.player_id, outcome), actorId, -cost);
   if (outcome.landed) {
     nextState = removeScoredTurn(nextState, turn, turn.player_id, 0);
   }
@@ -1770,7 +1784,7 @@ async function suckerPunchTurn(
         game_id: gameId,
         player_id: actorId,
         target_turn_id: turn.id,
-        token_delta: -suckerTokenCosts.suckerPunch,
+        token_delta: -cost,
       },
       mutationState.plan,
     ),

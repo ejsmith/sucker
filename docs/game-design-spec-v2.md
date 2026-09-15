@@ -204,6 +204,18 @@ Must be used before the attacking player starts their next turn.
 
 Unused opportunities expire.
 
+Counterpunch
+
+When any Sucker Punch misses, the target earns one opportunity to punch back at a discount before starting their next turn.
+
+- The original attacker first plays their normal turn.
+- The counterpunch can target only that immediately following submitted turn, in any category, including a zero score or scratch.
+- Consecutive misses reduce the next punch's cost: 3 tokens, then 2, then 1. Further missed punches keep the cost at 1 token.
+- Uses the same chance die and hit odds as a regular Sucker Punch. A hit removes the score and forces a replay; a miss leaves the score intact. Both outcomes spend the displayed token cost.
+- Starting the next turn, passing the response, or throwing a punch consumes the opportunity. It cannot be saved for a later turn.
+- Every missed counterpunch gives the other player the next discount. A hit or an unused opportunity ends the chain; the next regular punch costs 3 tokens.
+- The game ends immediately when both scorecards are filled. Any unused counterpunch expires; it does not delay declaring the winner.
+
 ⸻
 
 Scratching Categories
@@ -267,6 +279,15 @@ After a turn is submitted:
    - Submitted score remains
    - Attacker starts their normal turn
 5. Turn becomes finalized
+
+⸻
+
+Jab
+
+- Jab sends the waiting opponent a turn reminder.
+- Available after it has been their turn for 1 hour, with an 8-hour cooldown per game and sender.
+- Hide Jab whenever it cannot be used, including the wait period, cooldown, your own turn, and completed or inviting games.
+- After sending, show “Jab sent.” and hide the button until it is available again.
 
 ⸻
 
