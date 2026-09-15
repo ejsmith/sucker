@@ -486,7 +486,7 @@ export function RemoteGameScreen({
   const syncRemoteGameList = useCallback(
     async (profileId: string) => {
       const games = await onRefreshGames(profileId);
-      await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId));
+      await syncAppBadgeCount(countGamesAwaitingTurn(games, profileId), profileId);
       return games;
     },
     [onRefreshGames],

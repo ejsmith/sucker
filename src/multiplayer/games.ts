@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
 import { getRandomBytes } from 'expo-crypto';
 import { supabase } from './supabase';
 import type { Database } from './database.types';
@@ -21,6 +20,7 @@ import {
 } from '../game';
 import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
 import { reportError } from '../monitoring/exceptionless';
+import { actionRequestStatus } from '../network/actionRequestStatus';
 import {
   createOrReuseActionRequest,
   createUuidV4,
@@ -234,11 +234,6 @@ export async function hasPendingMultiplayerAction(actorId: string, requestId: st
 }
 
 async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise<TResult> {
-  const networkState = await NetInfo.fetch();
-  if (networkState.isConnected === false || networkState.isInternetReachable === false) {
-    throw new Error('You are offline. Reconnect before making a game move.');
-  }
-
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -255,7 +250,7 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
   }
 
   try {
-    const result = await invokeActionRequest<TResult>(request);
+    const result = await actionRequestStatus.run(() => invokeActionRequest<TResult>(request));
     await removePendingAction(request.requestId);
     return result;
   } catch (error) {

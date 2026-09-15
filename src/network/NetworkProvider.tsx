@@ -1,5 +1,15 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { AppState, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCurrentSession } from '../multiplayer/auth';
@@ -10,6 +20,7 @@ import {
 } from '../multiplayer/actionRecovery';
 import { listPendingMultiplayerActions, recoverPendingMultiplayerActions } from '../multiplayer/games';
 import { reportError } from '../monitoring/exceptionless';
+import { actionRequestStatus } from './actionRequestStatus';
 
 type NetworkContextValue = {
   isOffline: boolean;
@@ -117,8 +128,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 }
 
 export function NetworkStatusBanner() {
-  const { isOffline, isRecovering } = useNetworkStatus();
-  if (!isOffline && !isRecovering) {
+  const isWaitingForServer = useSyncExternalStore(
+    actionRequestStatus.subscribe,
+    actionRequestStatus.getSnapshot,
+    () => false,
+  );
+  if (!isWaitingForServer) {
     return null;
   }
 
@@ -127,11 +142,10 @@ export function NetworkStatusBanner() {
       accessibilityLiveRegion="polite"
       edges={['top']}
       role="status"
-      style={[styles.banner, isOffline && styles.offline]}
+      style={styles.banner}
+      testID="network-status-banner"
     >
-      <Text style={styles.text}>
-        {isOffline ? 'Offline — showing saved games. Actions resume when connected.' : 'Synchronizing game actions…'}
-      </Text>
+      <Text style={styles.text}>Server is taking longer than usual…</Text>
     </SafeAreaView>
   );
 }
@@ -150,9 +164,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     zIndex: 100,
-  },
-  offline: {
-    backgroundColor: '#3F3030',
   },
   text: {
     color: '#FFF8DC',
