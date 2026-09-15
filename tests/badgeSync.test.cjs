@@ -19,6 +19,7 @@ function deferred() {
 
 function loadBadgeSync({ getRegistration = async () => null, setBadgeCountAsync = async () => {} } = {}) {
   const title = { textContent: 'Sucker!' };
+  let activeProfileId = 'player';
   const exports = {};
   const mocks = {
     'react-native': { Platform: { OS: 'web' } },
@@ -26,7 +27,16 @@ function loadBadgeSync({ getRegistration = async () => null, setBadgeCountAsync 
     'expo-constants': {},
     'expo-device': {},
     './authStorage': {},
-    './supabase': {},
+    './supabase': {
+      supabase: {
+        auth: {
+          getSession: async () => ({
+            data: { session: activeProfileId ? { user: { id: activeProfileId } } : null },
+            error: null,
+          }),
+        },
+      },
+    },
   };
   vm.runInNewContext(compiled, {
     exports,
@@ -37,7 +47,13 @@ function loadBadgeSync({ getRegistration = async () => null, setBadgeCountAsync 
     navigator: { serviceWorker: { getRegistration } },
     document: { querySelector: () => title },
   });
-  return { sync: exports.syncAppBadgeCount, title };
+  return {
+    sync: (count, profileId = 'player') => exports.syncAppBadgeCount(count, profileId),
+    setProfile: (profileId) => {
+      activeProfileId = profileId;
+    },
+    title,
+  };
 }
 
 test('a delayed web badge lookup cannot overwrite a newer turn count', async () => {
@@ -99,4 +115,35 @@ test('an unsupported badge API does not prevent later title updates', async () =
   });
   await Promise.all([sync(2), sync(1), sync(0)]);
   assert.equal(title.textContent, 'Sucker!');
+});
+
+test('a refresh completing after sign-out cannot restore the old badge count', async () => {
+  let iconCount = 0;
+  const { sync, title, setProfile } = loadBadgeSync({
+    setBadgeCountAsync: async (count) => {
+      iconCount = count;
+    },
+  });
+  await sync(2);
+  setProfile(null);
+  await sync(0, null);
+  await sync(3, 'player');
+  assert.equal(iconCount, 0);
+  assert.equal(title.textContent, 'Sucker!');
+});
+
+test('old-account writes and signed-out clears cannot overwrite a new account badge', async () => {
+  let iconCount = 0;
+  const { sync, title, setProfile } = loadBadgeSync({
+    setBadgeCountAsync: async (count) => {
+      iconCount = count;
+    },
+  });
+  await sync(2);
+  setProfile('next-player');
+  await sync(1, 'next-player');
+  await sync(3, 'player');
+  await sync(0, null);
+  assert.equal(iconCount, 1);
+  assert.equal(title.textContent, '(1) Sucker!');
 });

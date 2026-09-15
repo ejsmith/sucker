@@ -128,9 +128,15 @@ export function countGamesAwaitingTurn(games: RemoteGameRow[], profileId: string
   ).length;
 }
 
-export function syncAppBadgeCount(count: number) {
+export function syncAppBadgeCount(count: number, profileId: string | null) {
   const badgeCount = Math.max(0, Math.trunc(count));
-  const result = badgeWork.then(() => applyAppBadgeCount(badgeCount));
+  const result = badgeWork.then(async () => {
+    // A refresh can finish after sign-out or an account change. Check its owner
+    // when this queued write runs, not only when the refresh was started.
+    const { data, error } = await supabase.auth.getSession();
+    if (error || (data.session?.user.id ?? null) !== profileId || (!profileId && badgeCount > 0)) return;
+    await applyAppBadgeCount(badgeCount);
+  });
   badgeWork = result.catch(() => undefined);
   return result;
 }
@@ -283,7 +289,7 @@ export async function signOutWithNotificationCleanup(signOut: () => Promise<void
         throw signOutError;
       }
       await finishCleanup?.();
-      await syncAppBadgeCount(0);
+      await syncAppBadgeCount(0, null);
     });
   } finally {
     isSigningOut = false;
