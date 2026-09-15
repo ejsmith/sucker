@@ -286,7 +286,7 @@ async function applyAction(
         action.chanceProtocol,
       );
     case 'prepare_sucker_punch':
-      return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId, mutationState);
+      return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -1688,7 +1688,6 @@ async function prepareSuckerPunchChance(
   actorId: string,
   gameId: string,
   turnId: string,
-  mutationState: ActionMutationState,
   legacyChanceDie?: DieValue,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
@@ -1711,7 +1710,8 @@ async function prepareSuckerPunchChance(
     );
   }
 
-  mutationState.mayHaveWritten = true;
+  // This insert-once chance is safe to retry. Only the game-move commit marks
+  // a Punch as possibly applied; a failure here must release its request claim.
   const { error: insertError } = await admin.from('sucker_punch_attempts').upsert(
     {
       game_id: gameId,
@@ -1755,7 +1755,7 @@ async function suckerPunchTurn(
   if (!existingChance && chanceProtocol === 'prepared') {
     throw new Error('Roll the Sucker Punch chance before throwing.');
   }
-  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, mutationState, displayedChanceDie);
+  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, displayedChanceDie);
   // The first stored chance wins, including when an old throw races preparation
   // on another device. Never charge tokens for odds different from those shown.
   if (displayedChanceDie !== undefined && displayedChanceDie !== prepared.suckerPunchChanceDie) {
