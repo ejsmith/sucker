@@ -86,7 +86,13 @@ for (const cost of [2, 1]) {
     await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
     game = (await invokeTestGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' })).game;
     await prepareTestMiss(bob, game);
-    await invokeTestGameAction(bob, { gameId: game.id, turnId: game.last_turn_id, chanceDie: 1, type: 'sucker_punch' });
+    await invokeTestGameAction(bob, {
+      gameId: game.id,
+      turnId: game.last_turn_id,
+      chanceDie: 1,
+      type: 'sucker_punch',
+      chanceProtocol: 'prepared',
+    });
     await invokeTestGameAction(bob, { gameId: game.id, type: 'roll' });
     game = (await invokeTestGameAction(bob, { gameId: game.id, category: 'chance', type: 'score_category' })).game;
     if (cost === 1) {
@@ -96,6 +102,7 @@ for (const cost of [2, 1]) {
         turnId: game.last_turn_id,
         chanceDie: 1,
         type: 'sucker_punch',
+        chanceProtocol: 'prepared',
       });
       await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
       game = (await invokeTestGameAction(alice, { gameId: game.id, category: 'twos', type: 'score_category' })).game;

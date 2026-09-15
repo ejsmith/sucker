@@ -1,27 +1,32 @@
 # Backward-compatible iOS rollout
 
-Keep App Store 1.1.0 working while the replacement iOS version is reviewed and installed.
+Keep supported app versions working while replacements are reviewed and installed. Legacy Punch retirement is a separate release decision after adoption.
 
-## Punch protocols
+## Release hold for legacy Punch retirement
 
-- App Store 1.1.0 sends `sucker_punch` with its locally displayed `chanceDie` and no preparation request. Accept and save that chance before resolving the outcome. Retain the historical server-generated fallback when an older request omits the optional die.
-- Updated clients first call `prepare_sucker_punch`, then throw with `chanceProtocol: 'prepared'`. Reject a marked throw without a saved chance. Both protocols use the first saved chance; reject a conflicting displayed die before charging tokens.
-- Validate participation, current responder, target turn, die range, and token balance for either protocol. Commit the game, token charge, history, and retry receipt together.
-- Supporting legacy requests temporarily retains the existing production trust in the old client's chance die. The protocol marker selects behavior; it is not proof that a client is trusted or a security boundary.
+Do not merge or deploy the retirement change until all of the following are recorded in its PR:
 
-Old and updated players can share a game. The old app still displays a fixed three-token Punch price and cannot expose discounted counterpunches when the player has fewer than three tokens. The server applies the current cost to an accepted action. Updated clients display the discounted price and availability. Other client-side improvements, including selecting a Sucker Deal before rolling, require the updated app too.
+- The replacement iOS version/build is available in the App Store and includes [PR #95](https://github.com/ejsmith/sucker/pull/95): it prepares the chance and sends `chanceProtocol: 'prepared'`. Verify the same protocol in every supported web, Android, and TestFlight release.
+- Record the adoption source, observation period, remaining legacy usage, and the owner's agreed minimum supported version and retirement date. Availability alone is insufficient. This cleanup does not add version telemetry or invent an adoption threshold; collect that evidence before removing support.
+- In staging, verify supported-client preparation, displayed odds, one-/two-/three-token costs, retries, and both opponents continuing an existing game. Verify an old client receives the update message without losing tokens.
+- Verify a completed pre-upgrade request still recovers its recorded outcome, and a pending request that never committed does not apply a legacy throw after cutover.
+- Record the compatible backend revision to restore if a supported release fails its device smoke test. Deploy the verified `game-action` only after the owner approves retirement. No database migration or chance/receipt deletion is needed by this cleanup.
 
-## Release order
+## Rollout order
 
-1. Merge the compatibility fix and pass app, Edge, database, and browser checks, including legacy requests, prepared requests, mixed-version games, and retries.
-2. Apply the pending database migrations and compatible Edge Functions in a staging backend. Test App Store 1.1.0's client and the release candidate against that backend, covering sign-in, invites, turns, Punch, Mulligan, scoring, notifications, and reconnect/retry behavior. Then deploy the verified migrations followed by the compatible Edge Functions to production and smoke-test the installed App Store app.
-3. Prepare a new iOS app version/runtime for the native dependency and configuration changes since build 34. Build and verify it in TestFlight, then submit it for App Store review. Do not publish the entire current client as an over-the-air update to runtime 1.1.0: native changes require their own compatible binary/runtime. See [Expo's runtime compatibility guidance](https://docs.expo.dev/eas-update/runtime-versions/).
-4. Keep legacy backend support throughout review and adoption. App Store approval or availability does not mean existing installations have updated. Retire legacy support only under a separately agreed minimum-version policy with usage evidence.
+1. Deploy the compatible backend from PR #95, preceded by its required pending migrations. That stage accepts both App Store 1.1.0's direct throw and updated prepared throws. Smoke-test the installed app before releasing updated clients.
+2. Prepare a new iOS app version/runtime for the native dependency and configuration changes since build 34. Verify it in TestFlight, then release it through the App Store. Do not publish the entire current client as an over-the-air update to runtime 1.1.0: native changes require a compatible binary/runtime. See [Expo's runtime compatibility guidance](https://docs.expo.dev/eas-update/runtime-versions/).
+3. Keep the compatibility stage deployed throughout review and adoption. Old clients retain their three-token UI; new clients display discounted counterpunch prices and availability.
+4. Satisfy the retirement hold above, then merge and deploy the cleanup. Keep backward compatibility for supported versions as an ongoing release policy.
 
-No production deployment, native build, or app update accompanies this compatibility change.
+## Behavior after retirement
+
+- A new `sucker_punch` request without `chanceProtocol: 'prepared'` receives HTTP 400: `Update Sucker to the latest version to use Sucker Punch.` It creates no chance and applies no game move or token charge. This is a Punch protocol requirement, not a general app-version gate.
+- A marked throw requires an existing saved chance. `prepare_sucker_punch` is the only action that can create a new chance, and generates it on the server. The displayed die only checks that the caller saw the saved odds; it never sets those odds. Merely supplying the marker cannot bypass preparation.
+- Already-completed requests replay their durable results before protocol enforcement. Keep the optional marker in request parsing so old persisted requests can still reconcile. Uncommitted old requests receive the update message; stale processing requests retain the existing reconciliation behavior.
+- Preserve existing saved chances, including any written during the compatibility period. Their origin was not recorded, so this cleanup cannot establish that every historical die was server-generated. It prevents new client-chosen chances while honoring odds already shown to players. Never wipe or silently reroll in-flight chances during deployment.
+- Participant, responder, target-turn, token, atomic-commit, and retry protections continue to share the same implementation.
 
 ## Verification limits
 
-Automated mixed-version tests replay the request shapes used by App Store build 34 and the current client against one isolated backend. They cover both successful and missed legacy Punches, one-time token charges after retry, server preparation, conflicting odds, concurrent requests, and continuing a turn after the other version lands a Punch. The current browser regression verifies that the new client sends the prepared-protocol marker and displays the returned chance.
-
-These tests supplement the installed-device check; they do not execute the App Store binary or verify native notification delivery.
+Automated checks cover legacy rejection with and without a saved chance, completed legacy receipt replay, strict preparation, conflicting odds, concurrent throws, retries, and counterpunch costs. Browser checks verify that the supported client sends the marker and displays the saved chance. They supplement the required installed-device smoke test; they do not execute the App Store binary or verify native notification delivery.
