@@ -3,11 +3,11 @@
 PR #66 changes the client/server Punch protocol. A client first requests
 `prepare_sucker_punch`, displays the persisted die, then sends `sucker_punch`.
 An older installed client sends only the throw with a locally generated die.
-The compatibility path accepts the older client's displayed die and saves it
-before resolving the throw. Updated clients mark throws with
-`chanceProtocol: 'prepared'` and require an existing saved chance. The old server
-cannot handle the new preparation request, so deploy the compatible backend
-before releasing updated clients. See the [iOS rollout guide](../backward-compatible-ios-rollout.md).
+PR #95 supplies the compatibility stage for those clients. Updated clients mark
+throws with `chanceProtocol: 'prepared'` and require an existing saved chance.
+The retirement change rejects new unmarked throws. Hold it until the supported
+iOS release is deployed and adoption meets the agreed support policy; follow the
+[iOS rollout and retirement guide](../backward-compatible-ios-rollout.md).
 
 Merging this code is not release clearance. Automatic GitHub Pages builds and
 deployments are gated by the repository variable `SUCKER_PUNCH_PROTOCOL_READY`.
@@ -20,16 +20,20 @@ Leave it unset or false until a separately approved rollout meets these gates:
 2. Apply the invitation privacy, persisted chance, atomic move, notification
    delivery, and atomic matchup-stat migrations before deploying their
    corresponding backend code.
-3. Verify new-client preparation, throw, retry, token accounting, and notification
-   delivery against that backend. Verify the supported older-client behavior on
-   a device, including playing with an updated opponent and recovering a retry.
+3. Verify supported-client preparation, throw, retry, token accounting, and
+   notification delivery against that backend. During compatibility, verify old
+   and new opponents on devices. At retirement, verify old requests receive the
+   update message and completed receipts still recover for the same actor and
+   original `requestId` without another charge.
 4. Approve the web/client release, set `SUCKER_PUNCH_PROTOCOL_READY=true`, and
    rerun the main Build workflow. Native builds and OTA updates remain manual.
 
-Legacy support deliberately retains production's existing trust in the old
-client's chance die during migration. The protocol marker is not a security
-boundary. Never substitute different odds after a player sees the chance; an
-existing saved chance wins over either client's conflicting request.
+The compatibility stage retains the old client's chance die. After retirement,
+new chances originate only in server preparation; the marker alone cannot create
+one. Historical chances retain their displayed odds, including those saved during
+compatibility, and completed receipts remain replayable with the original
+`requestId`. Requests without that ID cannot recover a receipt and receive the
+update message without another charge; refresh the game to see its current state.
 
 ## Notification recovery limits
 

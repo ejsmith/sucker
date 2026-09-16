@@ -809,8 +809,8 @@ function chunkArray<T>(items: T[], chunkSize: number) {
 function toAction(value: unknown): Action {
   const action = toActionRecord(value);
   const type = readString(action, 'type');
-  // Legacy store binaries predate request ids. Keep them functional while all
-  // new clients receive replay protection.
+  // Some older clients omit request IDs. Generate one for processing; replay
+  // protection across requests requires the client to reuse its original ID.
   const requestId = action.requestId === undefined ? crypto.randomUUID() : readUuid(action, 'requestId');
 
   switch (type) {
@@ -1683,13 +1683,7 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   return { game: updatedGame };
 }
 
-async function prepareSuckerPunchChance(
-  admin: DbClient,
-  actorId: string,
-  gameId: string,
-  turnId: string,
-  legacyChanceDie?: DieValue,
-) {
+async function prepareSuckerPunchChance(admin: DbClient, actorId: string, gameId: string, turnId: string) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
     throw new Error('Sucker Punch can only target the opponent’s latest submitted turn.');
@@ -1717,7 +1711,7 @@ async function prepareSuckerPunchChance(
       game_id: gameId,
       actor_id: actorId,
       turn_id: turnId,
-      chance_die: legacyChanceDie ?? rollDie(edgeSuckerPunchDieRandom),
+      chance_die: rollDie(edgeSuckerPunchDieRandom),
     },
     { onConflict: 'game_id,actor_id,turn_id', ignoreDuplicates: true },
   );
@@ -1742,8 +1736,12 @@ async function suckerPunchTurn(
   displayedChanceDie?: DieValue,
   chanceProtocol?: 'prepared',
 ) {
-  // Updated clients require server preparation. App Store 1.1.0 sends its
-  // locally displayed chance directly; retain that protocol during the rollout.
+  // Completed requests are replayed before this check, so an old pending
+  // receipt can still recover its outcome without applying another move.
+  if (chanceProtocol !== 'prepared') {
+    throw new Error('Update Sucker to the latest version to use Sucker Punch.');
+  }
+
   const { data: existingChance, error: chanceError } = await admin
     .from('sucker_punch_attempts')
     .select('chance_die')
@@ -1752,12 +1750,11 @@ async function suckerPunchTurn(
     .eq('turn_id', turnId)
     .maybeSingle();
   if (chanceError) throw chanceError;
-  if (!existingChance && chanceProtocol === 'prepared') {
+  if (!existingChance) {
     throw new Error('Roll the Sucker Punch chance before throwing.');
   }
-  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, displayedChanceDie);
-  // The first stored chance wins, including when an old throw races preparation
-  // on another device. Never charge tokens for odds different from those shown.
+  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId);
+  // Preserve an already displayed chance across retries and backend upgrades.
   if (displayedChanceDie !== undefined && displayedChanceDie !== prepared.suckerPunchChanceDie) {
     throw new Error('The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
   }
