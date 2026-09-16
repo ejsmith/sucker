@@ -386,7 +386,8 @@ export function MultiplayerLobby({
   }, [games, isGamesProfileMismatch, profile, profileId]);
 
   useEffect(() => {
-    if (!session || !isAppActive) {
+    // Browser tabs and PWA windows still need live turn counts while hidden.
+    if (!session || (!isAppActive && Platform.OS !== 'web')) {
       return;
     }
 
