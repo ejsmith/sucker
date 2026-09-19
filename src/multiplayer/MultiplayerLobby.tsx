@@ -43,6 +43,8 @@ import { canJabGame } from './jab';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { StatsPage } from '../ui/StatsPage';
+import { HowToPlayDialog } from '../ui/HowToPlayDialog';
+import { focusAccessibilityTarget, type AccessibilityTargetRef } from '../ui/accessibilityFocus';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
@@ -122,6 +124,8 @@ export function MultiplayerLobby({
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const learnButtonRef = useRef<AccessibilityTargetRef | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
   const [isPullRefreshActive, setIsPullRefreshActive] = useState(false);
@@ -192,10 +196,19 @@ export function MultiplayerLobby({
   function renderShell(children: ReactNode, scrollable = true) {
     const shell = (
       <View
+        aria-hidden={Platform.OS === 'web' ? showHowToPlay : undefined}
         style={[lobbyStyles.shell, shellStyle, scrollable ? lobbyStyles.scrollShell : shellSafeAreaStyle]}
         testID="multiplayer-lobby-shell"
       >
         {children}
+        {showHowToPlay && (
+          <HowToPlayDialog
+            onClose={() => {
+              setShowHowToPlay(false);
+              requestAnimationFrame(() => focusAccessibilityTarget(learnButtonRef.current));
+            }}
+          />
+        )}
       </View>
     );
 
@@ -815,6 +828,14 @@ export function MultiplayerLobby({
             testID="play-computer-button"
           >
             <Text style={lobbyStyles.soloButtonText}>{hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}</Text>
+          </Pressable>
+          <Pressable
+            ref={learnButtonRef}
+            onPress={() => setShowHowToPlay(true)}
+            style={lobbyStyles.helpButton}
+            testID="learn-to-play-button"
+          >
+            <Text style={lobbyStyles.helpButtonText}>New here? Learn to play</Text>
           </Pressable>
         </View>
         {showLocalTestLogin && (
@@ -1661,6 +1682,14 @@ export function MultiplayerLobby({
             </Text>
           </Pressable>
         </View>
+        <Pressable
+          ref={learnButtonRef}
+          onPress={() => setShowHowToPlay(true)}
+          style={lobbyStyles.helpButton}
+          testID="learn-to-play-button"
+        >
+          <Text style={lobbyStyles.helpButtonText}>How to Play</Text>
+        </Pressable>
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
         {(message || error) && (
@@ -2427,6 +2456,8 @@ function SuckerLobbyTitle() {
 }
 
 const lobbyStyles = StyleSheet.create({
+  helpButton: { padding: 12, alignItems: 'center' },
+  helpButtonText: { color: '#FFF3C2', fontSize: 16, fontWeight: '600', textDecorationLine: 'underline' },
   accountDivider: {
     backgroundColor: '#8F3B10',
     height: 1,
