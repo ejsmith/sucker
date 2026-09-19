@@ -2154,43 +2154,7 @@ async function planCompletedGameStats(
   for (const player of [...players].sort((left, right) => left.id.localeCompare(right.id))) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = await buildResult(admin, gameId, player, opponent, players, winnerId, plan);
-    const lost = winnerId !== null && !result.won;
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
-    const statsDelta = {
-      player_id: player.id,
-      opponent_id: opponent.id,
-      games_played: 1,
-      wins: result.won ? 1 : 0,
-      losses: lost ? 1 : 0,
-      highest_score: result.final_score,
-      total_score: result.final_score,
-      average_score: result.final_score,
-      upper_bonus_games: result.upper_bonus_awarded ? 1 : 0,
-      sucker_games: result.sucker_count > 0 ? 1 : 0,
-      three_of_a_kind_games: result.three_of_a_kind_count > 0 ? 1 : 0,
-      four_of_a_kind_games: result.four_of_a_kind_count > 0 ? 1 : 0,
-      full_house_games: result.full_house_count > 0 ? 1 : 0,
-      small_straight_games: result.small_straight_count > 0 ? 1 : 0,
-      large_straight_games: result.large_straight_count > 0 ? 1 : 0,
-      blowout_losses: result.blowout_loss,
-      blowout_wins: result.blowout_win,
-      buzzer_beater_wins: result.buzzer_beater_win,
-      comeback_wins: result.comeback_win,
-      extra_rolls_used: result.extra_rolls_used,
-      mulligans_used: result.mulligans_used,
-      sucker_hunt_misses: result.sucker_hunt_misses,
-      sucker_hunts: result.sucker_hunts,
-      sucker_punches_landed: result.sucker_punches_landed,
-      sucker_punches_used: result.sucker_punches_used,
-      sucker_punches_received: result.sucker_punches_received,
-      sucker_blockers_used: result.sucker_blockers_used,
-      forced_rerolls: result.forced_rerolls,
-      sucker_tokens_spent: result.sucker_tokens_spent,
-      average_sucker_tokens_spent: result.sucker_tokens_spent,
-      sucker_tokens_leftover: result.sucker_tokens_leftover,
-      average_sucker_tokens_leftover: result.sucker_tokens_leftover,
-    };
-    plan.writes.push({ table: 'head_to_head_stats', operation: 'increment', data: statsDelta });
   }
 }
 

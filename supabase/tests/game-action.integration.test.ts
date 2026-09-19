@@ -361,24 +361,40 @@ Deno.test('concurrent first matchup completions accumulate both games atomically
       p_game_id: game.id,
       p_expected_updated_at: game.updated_at,
       p_game_patch: { status: 'complete', winner_id: null },
-      p_writes: [alice, bob].map((player) => ({
-        table: 'head_to_head_stats',
-        operation: 'insert',
-        data: {
-          player_id: player.id,
-          opponent_id: player.id === alice.id ? bob.id : alice.id,
-          games_played: 1,
-          wins: 0,
-          losses: 0,
-          total_score: 10 + index * 10,
-          highest_score: 10 + index * 10,
-          average_score: 10 + index * 10,
-          sucker_tokens_spent: 3 + index,
-          average_sucker_tokens_spent: 3 + index,
-          sucker_tokens_leftover: 7 - index,
-          average_sucker_tokens_leftover: 7 - index,
-        },
-      })),
+      p_writes: [
+        ...[alice, bob].map((player) => ({
+          table: 'game_player_results',
+          operation: 'upsert',
+          data: {
+            game_id: game.id,
+            player_id: player.id,
+            opponent_id: player.id === alice.id ? bob.id : alice.id,
+            final_score: 10 + index * 10,
+            won: false,
+            upper_bonus_awarded: false,
+            sucker_tokens_spent: 3 + index,
+            sucker_tokens_leftover: 7 - index,
+          },
+        })),
+        ...[alice, bob].map((player) => ({
+          table: 'head_to_head_stats',
+          operation: 'insert',
+          data: {
+            player_id: player.id,
+            opponent_id: player.id === alice.id ? bob.id : alice.id,
+            games_played: 1,
+            wins: 0,
+            losses: 0,
+            total_score: 10 + index * 10,
+            highest_score: 10 + index * 10,
+            average_score: 10 + index * 10,
+            sucker_tokens_spent: 3 + index,
+            average_sucker_tokens_spent: 3 + index,
+            sucker_tokens_leftover: 7 - index,
+            average_sucker_tokens_leftover: 7 - index,
+          },
+        })),
+      ],
       p_result: { game },
     });
   }
@@ -526,6 +542,113 @@ Deno.test('atomic move commits reject stale writes and roll back failed child re
   assertNoError(replay.error);
   assertEquals(replay.data, commits.find((result) => !result.error)?.data);
   assertEquals((await loadActions(original.id)).filter((action) => action.action_type === 'roll').length, 1);
+});
+
+Deno.test('completed games for one matchup retain every result under concurrent commits and replay', async () => {
+  const [alice, bob] = await createUsers('concurrent-matchup-stats', ['Alice', 'Bob']);
+  const plans: Database['public']['Functions']['commit_game_move']['Args'][] = [];
+  for (let index = 0; index < 2; index += 1) {
+    const game = (await invokeGameAction(alice, { type: 'create_game', opponentProfileId: bob.id })).game as GameRow;
+    const requestId = crypto.randomUUID();
+    assertNoError(
+      (
+        await admin.from('game_action_requests').insert({
+          actor_id: alice.id,
+          request_id: requestId,
+          game_id: game.id,
+          action_type: 'score_category',
+          status: 'processing',
+        })
+      ).error,
+    );
+    const resultWrites = [alice, bob].map((player, seat) => ({
+      table: 'game_player_results',
+      operation: 'upsert',
+      data: {
+        game_id: game.id,
+        player_id: player.id,
+        opponent_id: seat === 0 ? bob.id : alice.id,
+        final_score: seat === 0 ? 30 + index * 40 : 20 + index * 60,
+        won: seat === index,
+        upper_bonus_awarded: index === 1,
+        sucker_tokens_spent: 3 + index * 2,
+        sucker_tokens_leftover: 7 - index * 2,
+        sucker_count: index,
+        sucker_punches_landed: index,
+        sucker_punches_used: 1,
+      },
+    }));
+    plans.push({
+      p_actor_id: alice.id,
+      p_request_id: requestId,
+      p_game_id: game.id,
+      p_expected_updated_at: game.updated_at,
+      p_game_patch: { status: 'complete' },
+      p_writes: [
+        ...resultWrites,
+        // An older Edge worker may have prepared this value before another
+        // completion. The database must derive totals rather than accept it.
+        {
+          table: 'head_to_head_stats',
+          operation: index === 0 ? 'upsert' : 'increment',
+          data: {
+            player_id: alice.id,
+            opponent_id: bob.id,
+            games_played: 1,
+            total_score: 30 + index * 40,
+            wins: index === 0 ? 1 : 0,
+          },
+        },
+      ],
+      p_result: { game },
+    } as unknown as Database['public']['Functions']['commit_game_move']['Args']);
+  }
+  const commits = await Promise.all(plans.map((plan) => admin.rpc('commit_game_move', plan)));
+  for (const commit of commits) assertNoError(commit.error);
+  const stats = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', alice.id).eq('opponent_id', bob.id).single(),
+  );
+  assertEquals(stats.games_played, 2);
+  assertEquals(stats.wins, 1);
+  assertEquals(stats.losses, 1);
+  assertEquals(stats.total_score, 100);
+  assertEquals(stats.highest_score, 70);
+  assertEquals(stats.average_score, 50);
+  assertEquals(stats.upper_bonus_games, 1);
+  assertEquals(stats.sucker_games, 1);
+  assertEquals(stats.sucker_punches_landed, 1);
+  assertEquals(stats.sucker_punches_used, 2);
+  assertEquals(stats.sucker_tokens_spent, 8);
+  assertEquals(stats.average_sucker_tokens_spent, 4);
+  assertEquals(stats.sucker_tokens_leftover, 12);
+  assertEquals(stats.average_sucker_tokens_leftover, 6);
+  const opponentStats = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', bob.id).eq('opponent_id', alice.id).single(),
+  );
+  assertEquals(opponentStats.games_played, 2);
+  assertEquals(opponentStats.total_score, 100);
+  assertEquals(opponentStats.wins, 1);
+  assertEquals(opponentStats.losses, 1);
+  const replay = await admin.rpc('commit_game_move', plans[0]);
+  assertNoError(replay.error);
+  assertEquals(replay.data, commits[0].data);
+  const replayStats = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', alice.id).eq('opponent_id', bob.id).single(),
+  );
+  assertEquals(replayStats, stats);
+
+  // An invocation of the old SQL function can be waiting during migration and
+  // resume with a stale absolute update after the migration commits.
+  const legacyWrite = await admin
+    .from('head_to_head_stats')
+    .update({ games_played: 1, total_score: 30 })
+    .eq('player_id', alice.id)
+    .eq('opponent_id', bob.id);
+  assertEquals(legacyWrite.error?.code, 'PT409');
+  const afterLegacyWrite = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', alice.id).eq('opponent_id', bob.id).single(),
+  );
+  assertEquals(afterLegacyWrite, stats);
 });
 
 Deno.test('taunts are available only after the sender finishes the latest turn', async () => {
