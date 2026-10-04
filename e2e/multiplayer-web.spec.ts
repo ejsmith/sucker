@@ -54,10 +54,13 @@ test('a real Realtime update reaches the board while fallback timers are paused'
   const alice = await createUser(`realtime-alice-${runId}`, 'Realtime Alice');
   const bob = await createUser(`realtime-bob-${runId}`, 'Realtime Bob');
   const { game } = await invokeTestGameAction(alice, { type: 'create_game', opponentProfileId: bob.id });
-  const page = await openAuthedPage(browser, alice);
-  try {
-    const frames: string[] = [];
+  const frames: string[] = [];
+  const page = await openAuthedPage(browser, alice, undefined, 'success', true, (page) => {
     page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => frames.push(String(payload))));
+  });
+  try {
+    // Let the lobby establish its connection first, exercising socket reuse on entry.
+    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
     await page.clock.install();
     await openGameFromLobby(page, game.id);
     await expect
@@ -1316,6 +1319,7 @@ async function openAuthedPage(
   pushEndpoint?: string,
   unsubscribeResult: 'success' | 'false' | 'error' = 'success',
   snoozePrompt = true,
+  beforeNavigate?: (page: Page) => void,
 ) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   const session = await createSession(user.email);
@@ -1390,6 +1394,7 @@ async function openAuthedPage(
   const page = await context.newPage();
   const failedResponses = captureFailedResponses(page);
 
+  beforeNavigate?.(page);
   await page.goto('/');
   try {
     await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
