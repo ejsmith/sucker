@@ -159,12 +159,14 @@ for (const cost of [2, 1]) {
     const counter = page.getByTestId('token-option-sucker-punch');
     await waitForPressableEnabled(counter);
     await expect(counter).toContainText('Counterpunch');
-    await expect(counter).toContainText(`${cost} token`);
+    await expect(counter).toHaveAccessibleName(
+      `Counterpunch, ${cost} tokens. They missed. Punch them back! Try to force a replay.`,
+    );
     await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-menu.png`);
     await counter.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
     await expect(dialog).toContainText('Counterpunch');
-    await expect(dialog).toContainText(`${cost} token`);
+    await expect(dialog).toContainText('They missed. Punch them back! Higher roll, higher chance.');
     await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-dialog.png`);
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);
@@ -210,13 +212,14 @@ for (const hits of [1, 2]) {
     const option = page.getByTestId('token-option-sucker-punch');
     await waitForPressableEnabled(option);
     await expect(option).toContainText('Revenge Punch');
-    await expect(option).toHaveAccessibleName(new RegExp(`^Revenge Punch, ${cost} tokens\\.`));
-    await expect(option).toContainText('Saved until you throw');
+    await expect(option).toHaveAccessibleName(
+      `Revenge Punch, ${cost} tokens. They got you. Punch them back! Try to force a replay.`,
+    );
     await page.screenshot({ path: test.info().outputPath(`revenge-${cost}-menu.png`) });
     await option.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
     await expect(dialog).toContainText('Revenge Punch');
-    await expect(dialog).toContainText(`They got you. Punch back for ${cost} token`);
+    await expect(dialog).toContainText('They got you. Punch them back! Higher roll, higher chance.');
     await page.screenshot({ path: test.info().outputPath(`revenge-${cost}-dialog.png`) });
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);

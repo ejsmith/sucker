@@ -112,6 +112,7 @@ import {
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
+import { RulesDialog } from './src/ui/RulesDialog';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
@@ -236,7 +237,6 @@ type LocalPlayerProfile = {
   displayName: string;
 };
 type SuckerPunchDialogState = {
-  tokenCost: number;
   kind: ReturnType<typeof getSuckerPunchKind>;
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
@@ -1147,10 +1147,6 @@ export function LocalGameScreen({
             initialLocalSession.game,
             initialLocalSession.game.players[initialLocalSession.game.currentPlayerIndex].id,
           ),
-          tokenCost: getSuckerPunchCost(
-            initialLocalSession.game,
-            initialLocalSession.game.players[initialLocalSession.game.currentPlayerIndex].id,
-          ),
           phase: 'rolled',
           scope: 'local',
           targetTurnId: initialLocalSession.preparedPunch.targetTurnId,
@@ -1185,6 +1181,7 @@ export function LocalGameScreen({
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
   const [selectedCategory, setSelectedCategory] = useState<ScoreCategory | null>(null);
+  const [showRules, setShowRules] = useState(false);
   const [isChoosingSuckerDeal, setIsChoosingSuckerDeal] = useState(false);
   const [highlightCategory, setHighlightCategory] = useState<ScoreCategory | null>(null);
   const [isScoring, setIsScoring] = useState(false);
@@ -2760,7 +2757,6 @@ export function LocalGameScreen({
       suckerPunchResultCompletion.current = null;
       setSuckerPunchDialog({
         kind: suckerPunchKind,
-        tokenCost: suckerPunchCost,
         phase: 'ready',
         scope: 'local',
         targetTurnId: pendingTurn.id,
@@ -2780,7 +2776,6 @@ export function LocalGameScreen({
     suckerPunchResultCompletion.current = null;
     setSuckerPunchDialog({
       kind: suckerPunchKind,
-      tokenCost: suckerPunchCost,
       phase: 'ready',
       scope: 'remote',
       targetTurnId: remoteLastTurnId,
@@ -3257,7 +3252,7 @@ export function LocalGameScreen({
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage || isTokenMenuOpen : undefined}
+          aria-hidden={Platform.OS === 'web' ? showStatsPage || showRules || isTokenMenuOpen : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
@@ -3315,7 +3310,7 @@ export function LocalGameScreen({
                   style={({ pressed }) => [
                     styles.topMenuItem,
                     gameLayout.styles.topMenuItem,
-                    pressed && styles.pressed,
+                    pressed && styles.topMenuItemPressed,
                   ]}
                   testID="game-stats-menu-item"
                 >
@@ -3323,11 +3318,33 @@ export function LocalGameScreen({
                     STATS
                   </Text>
                 </Pressable>
+                <Pressable
+                  accessibilityLabel="View rules"
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setShowRules(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.topMenuItem,
+                    gameLayout.styles.topMenuItem,
+                    pressed && styles.topMenuItemPressed,
+                  ]}
+                  testID="game-rules-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    RULES
+                  </Text>
+                </Pressable>
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
                     onPress={onNewComputerGame}
                     disabled={isRolling || isScoring || isComputerTurn}
-                    style={[styles.topMenuItem, gameLayout.styles.topMenuItem]}
+                    style={({ pressed }) => [
+                      styles.topMenuItem,
+                      gameLayout.styles.topMenuItem,
+                      pressed && styles.topMenuItemPressed,
+                      (isRolling || isScoring || isComputerTurn) && styles.topMenuItemDisabled,
+                    ]}
                     testID="new-computer-game-button"
                   >
                     <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
@@ -3964,6 +3981,14 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
+          {showRules && (
+            <RulesDialog
+              onClose={() => {
+                setShowRules(false);
+                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
+              }}
+            />
+          )}
           {isTokenMenuOpen && (
             <Modal
               accessibilityLabel="Sucker Tokens"
@@ -4064,10 +4089,10 @@ export function LocalGameScreen({
                         cost={suckerPunchCost}
                         description={
                           suckerPunchKind === 'counter'
-                            ? `They missed! Punch back for ${suckerPunchCost} token${suckerPunchCost === 1 ? '' : 's'} before your turn. Miss, and they punch back for 1.`
+                            ? 'They missed. Punch them back! Try to force a replay.'
                             : suckerPunchKind === 'revenge'
-                              ? 'They got you! Each hit makes your next punch 1 token cheaper, down to 1. Saved until you throw, hit or miss.'
-                              : 'Try to force a replay. Miss, and they can punch back for 2 tokens on their next turn.'
+                              ? 'They got you. Punch them back! Try to force a replay.'
+                              : 'Knock their score out! Try to force a replay.'
                         }
                         disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
                         label={
@@ -4089,7 +4114,6 @@ export function LocalGameScreen({
           {suckerPunchDialog && (
             <SuckerPunchChanceDialog
               face={suckerPunchChanceFace}
-              tokenCost={suckerPunchDialog.tokenCost}
               kind={suckerPunchDialog.kind}
               onDismissResult={handleDismissSuckerPunchResult}
               onRoll={() => void handleRollSuckerPunchChance()}
@@ -4869,7 +4893,6 @@ function TokenMenuOption({
 
 function SuckerPunchChanceDialog({
   face,
-  tokenCost,
   kind,
   onDismissResult,
   onRoll,
@@ -4879,7 +4902,6 @@ function SuckerPunchChanceDialog({
   rollProgress,
 }: {
   face: DieValue;
-  tokenCost: number;
   kind: SuckerPunchDialogState['kind'];
   onDismissResult: () => void;
   onRoll: () => void;
@@ -4959,9 +4981,9 @@ function SuckerPunchChanceDialog({
             style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
           >
             {kind === 'counter'
-              ? `They missed. Punch back for ${tokenCost} token${tokenCost === 1 ? '' : 's'}. Higher roll, higher chance.`
+              ? 'They missed. Punch them back! Higher roll, higher chance.'
               : kind === 'revenge'
-                ? `They got you. Punch back for ${tokenCost} token${tokenCost === 1 ? '' : 's'}. Higher roll, higher chance.`
+                ? 'They got you. Punch them back! Higher roll, higher chance.'
                 : 'Higher roll, higher chance.'}
           </Text>
         )}
@@ -6023,26 +6045,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#210505',
     borderColor: '#FFD329',
     borderRadius: 10,
-    borderWidth: 3,
+    borderWidth: 2,
     ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.45)'),
     elevation: 12,
-    padding: 6,
+    gap: 8,
+    padding: 8,
     position: 'absolute',
     right: 8,
     top: 64,
-    width: 132,
+    width: 176,
     zIndex: 82,
   },
   topMenuItem: {
     alignItems: 'center',
     backgroundColor: '#F12D22',
     borderColor: '#FFB000',
-    borderRadius: 7,
     borderWidth: 2,
+    borderRadius: 7,
     justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  topMenuItemPressed: { backgroundColor: '#C8241B' },
+  topMenuItemDisabled: { opacity: 0.45 },
   topMenuText: {
     color: '#FFF3C2',
     fontSize: 15,
