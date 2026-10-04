@@ -3339,10 +3339,7 @@ export function LocalGameScreen({
                 </Pressable>
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
-                    onPress={() => {
-                      setIsMenuOpen(false);
-                      onNewComputerGame();
-                    }}
+                    onPress={onNewComputerGame}
                     disabled={isRolling || isScoring || isComputerTurn}
                     style={({ pressed }) => [
                       styles.topMenuItem,
