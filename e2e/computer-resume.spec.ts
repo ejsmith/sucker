@@ -2,17 +2,25 @@ import { expect, test, type Page } from '@playwright/test';
 import { createGame, scoreCategories } from '../shared/game';
 import { scoreLocalTurn } from '../src/game/computer';
 
-for (const cost of [3, 2, 1] as const) {
-  test(`prepared computer Punch chance and ${cost}-token cost survive reload`, async ({ page }) => {
+for (const { cost, kind } of [
+  { cost: 3, kind: 'Sucker Punch' },
+  { cost: 2, kind: 'Counterpunch' },
+  { cost: 1, kind: 'Counterpunch' },
+  { cost: 2, kind: 'Revenge Punch' },
+  { cost: 1, kind: 'Revenge Punch' },
+]) {
+  test(`prepared computer ${kind} chance and ${cost}-token cost survive reload`, async ({ page }) => {
     const game = createGame(['Player', 'Computer']);
     game.currentPlayerIndex = 1;
     game.dice = [6, 6, 6, 6, 6];
     game.phase = 'scoring';
     game.rollNumber = 1;
     const scored = scoreLocalTurn(game, 'sucker');
-    if (cost < 3) {
+    if (kind === 'Counterpunch') {
       scored.game.counterPunchPlayerId = scored.game.players[0].id;
       scored.game.counterPunchCost = cost as 1 | 2;
+    } else if (kind === 'Revenge Punch') {
+      scored.game.players[0].revengePunchDiscount = (3 - cost) as 1 | 2;
     }
     await page.addInitScript(
       (session) => {
@@ -24,7 +32,9 @@ for (const cost of [3, 2, 1] as const) {
     );
     await page.goto('/local');
     await page.getByTestId('token-menu-button').click();
+    await expect(page.getByTestId('token-option-sucker-punch')).toContainText(kind);
     await page.getByTestId('token-option-sucker-punch').click();
+    await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(kind);
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
     await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('10%');
@@ -39,6 +49,8 @@ for (const cost of [3, 2, 1] as const) {
     await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('They blocked your punch!');
     await page.reload();
     await expect(page.getByTestId('token-menu-button')).toHaveText(String(10 - cost));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.computer-session.v1.guest')!));
+    expect(saved.game.players[0].revengePunchDiscount).toBeUndefined();
   });
 }
 

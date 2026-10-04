@@ -21,6 +21,7 @@ import {
   categoryLabels,
   createGame,
   getSuckerPunchCost,
+  getSuckerPunchKind,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -236,7 +237,7 @@ type LocalPlayerProfile = {
   displayName: string;
 };
 type SuckerPunchDialogState = {
-  tokenCost: number;
+  kind: ReturnType<typeof getSuckerPunchKind>;
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
   scope: 'local' | 'remote';
@@ -1142,7 +1143,7 @@ export function LocalGameScreen({
   const [suckerPunchDialog, setSuckerPunchDialog] = useState<SuckerPunchDialogState | null>(() =>
     initialLocalSession?.preparedPunch
       ? {
-          tokenCost: getSuckerPunchCost(
+          kind: getSuckerPunchKind(
             initialLocalSession.game,
             initialLocalSession.game.players[initialLocalSession.game.currentPlayerIndex].id,
           ),
@@ -1382,11 +1383,8 @@ export function LocalGameScreen({
   const canStartSuckerDeal = canOpenTokenMenu && openCategories.length > 0 && isRemoteActionPlayable;
   const isLocalPendingTurnPunchable = Boolean(pendingTurn);
   const isRemoteLastTurnPunchable = Boolean(remoteLastTurn);
-  const hasPunchTarget = isRemoteGame
-    ? remoteStatus === 'response_window' && Boolean(remoteLastTurn)
-    : pendingTurn?.status === 'submitted';
-  const suckerPunchCost = hasPunchTarget ? getSuckerPunchCost(game, homePlayer.id) : suckerTokenCosts.suckerPunch;
-  const isCounterPunch = suckerPunchCost < suckerTokenCosts.suckerPunch;
+  const suckerPunchCost = getSuckerPunchCost(game, homePlayer.id);
+  const suckerPunchKind = getSuckerPunchKind(game, homePlayer.id);
   const canUseLocalSuckerPunch =
     !isRemoteGame &&
     canOpenTokenMenu &&
@@ -2758,7 +2756,7 @@ export function LocalGameScreen({
       suckerPunchDieAnimation.setValue(0);
       suckerPunchResultCompletion.current = null;
       setSuckerPunchDialog({
-        tokenCost: suckerPunchCost,
+        kind: suckerPunchKind,
         phase: 'ready',
         scope: 'local',
         targetTurnId: pendingTurn.id,
@@ -2777,7 +2775,7 @@ export function LocalGameScreen({
     suckerPunchDieAnimation.setValue(0);
     suckerPunchResultCompletion.current = null;
     setSuckerPunchDialog({
-      tokenCost: suckerPunchCost,
+      kind: suckerPunchKind,
       phase: 'ready',
       scope: 'remote',
       targetTurnId: remoteLastTurnId,
@@ -4090,12 +4088,20 @@ export function LocalGameScreen({
                       <TokenMenuOption
                         cost={suckerPunchCost}
                         description={
-                          isCounterPunch
-                            ? `They missed! Punch back for ${suckerPunchCost} token${suckerPunchCost === 1 ? '' : 's'} before your turn. Miss, and they punch back for 1.`
-                            : 'Try to force a replay. Miss, and they can punch back for 2 tokens on their next turn.'
+                          suckerPunchKind === 'counter'
+                            ? 'They missed. Punch them back! Try to force a replay.'
+                            : suckerPunchKind === 'revenge'
+                              ? 'They got you. Punch them back! Try to force a replay.'
+                              : 'Knock their score out! Try to force a replay.'
                         }
                         disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
-                        label={isCounterPunch ? 'Counterpunch' : 'Sucker Punch'}
+                        label={
+                          suckerPunchKind === 'counter'
+                            ? 'Counterpunch'
+                            : suckerPunchKind === 'revenge'
+                              ? 'Revenge Punch'
+                              : 'Sucker Punch'
+                        }
                         onPress={() => void handleUseSuckerPunch()}
                         testID="token-option-sucker-punch"
                       />
@@ -4108,7 +4114,7 @@ export function LocalGameScreen({
           {suckerPunchDialog && (
             <SuckerPunchChanceDialog
               face={suckerPunchChanceFace}
-              tokenCost={suckerPunchDialog.tokenCost}
+              kind={suckerPunchDialog.kind}
               onDismissResult={handleDismissSuckerPunchResult}
               onRoll={() => void handleRollSuckerPunchChance()}
               onThrowPunch={() => void handleThrowSuckerPunch()}
@@ -4887,7 +4893,7 @@ function TokenMenuOption({
 
 function SuckerPunchChanceDialog({
   face,
-  tokenCost,
+  kind,
   onDismissResult,
   onRoll,
   onThrowPunch,
@@ -4896,7 +4902,7 @@ function SuckerPunchChanceDialog({
   rollProgress,
 }: {
   face: DieValue;
-  tokenCost: number;
+  kind: SuckerPunchDialogState['kind'];
   onDismissResult: () => void;
   onRoll: () => void;
   onThrowPunch: () => void;
@@ -4905,7 +4911,6 @@ function SuckerPunchChanceDialog({
   rollProgress: Animated.Value;
 }) {
   const layout = useGameLayout();
-  const isCounterPunch = tokenCost < suckerTokenCosts.suckerPunch;
   const isResult = phase === 'result';
   const didLand = Boolean(outcome?.landed);
   const didBlock = isResult && !didLand;
@@ -4921,9 +4926,11 @@ function SuckerPunchChanceDialog({
       ? `Rolled ${face}`
       : isThrowing
         ? 'Throwing Punch'
-        : isCounterPunch
+        : kind === 'counter'
           ? 'Counterpunch'
-          : 'Sucker Punch';
+          : kind === 'revenge'
+            ? 'Revenge Punch'
+            : 'Sucker Punch';
   const buttonLabel =
     phase === 'rolling'
       ? 'ROLLING'
@@ -4973,9 +4980,11 @@ function SuckerPunchChanceDialog({
             maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
             style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
           >
-            {isCounterPunch
-              ? `They missed. Punch back for ${tokenCost} token${tokenCost === 1 ? '' : 's'}. Higher roll, higher chance.`
-              : 'Higher roll, higher chance.'}
+            {kind === 'counter'
+              ? 'They missed. Punch them back! Higher roll, higher chance.'
+              : kind === 'revenge'
+                ? 'They got you. Punch them back! Higher roll, higher chance.'
+                : 'Higher roll, higher chance.'}
           </Text>
         )}
         {isRolled && (
