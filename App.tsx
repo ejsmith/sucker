@@ -4066,7 +4066,7 @@ export function LocalGameScreen({
                           suckerPunchKind === 'counter'
                             ? `They missed! Punch back for ${suckerPunchCost} token${suckerPunchCost === 1 ? '' : 's'} before your turn. Miss, and they punch back for 1.`
                             : suckerPunchKind === 'revenge'
-                              ? 'They got you! Each hit makes your next punch 1 token cheaper, down to 1. Saved until you throw, hit or miss.'
+                              ? 'They got you!'
                               : 'Try to force a replay. Miss, and they can punch back for 2 tokens on their next turn.'
                         }
                         disabled={!canUseLocalSuckerPunch && !canUseRemoteSuckerPunch}
