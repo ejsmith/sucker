@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   createGame,
   scoreCategory,
+  scoreCategories,
   scoreCategoryForScorecard,
   scoreTurn,
   scratchScoreBox,
@@ -127,15 +128,22 @@ test('sucker deal scratches a selected score box and earns one token', () => {
   assert.equal(next.rollNumber, 0);
 });
 
-test('sucker deal can scratch a selected score box before rolling', () => {
-  const game = createGame(['Erin', 'Sam']);
+test('both players can sacrifice every category without rolling, starting on their first turns', () => {
+  let game = createGame(['Erin', 'Sam']);
 
-  const next = scratchScoreBox(game, 'largeStraight');
+  for (const [categoryIndex, category] of scoreCategories.entries()) {
+    for (const playerIndex of [0, 1]) {
+      assert.equal(game.currentPlayerIndex, playerIndex);
+      assert.equal(game.rollNumber, 0);
+      game = scratchScoreBox(game, category);
+      assert.equal(game.players[playerIndex].scorecard[category], 0);
+      assert.equal(game.players[playerIndex].suckerTokens, startingSuckerTokens + categoryIndex + 1);
+    }
+  }
 
-  assert.equal(next.players[0].scorecard.largeStraight, 0);
-  assert.equal(next.players[0].suckerTokens, startingSuckerTokens + 1);
-  assert.equal(next.currentPlayerIndex, 1);
-  assert.equal(next.rollNumber, 0);
+  assert.equal(game.phase, 'complete');
+  assert.equal(totalScore(game.players[0].scorecard), 0);
+  assert.equal(totalScore(game.players[1].scorecard), 0);
 });
 
 test('extra sucker adds 50 when sucker is already scored elsewhere', () => {

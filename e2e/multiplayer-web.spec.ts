@@ -18,6 +18,21 @@ const stageAspectRatio = 393 / 852;
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
+
+// These scenarios create multiple contexts rather than using the page fixture.
+// Always close them so later tests do not retain subscriptions or timers.
+test.afterEach(async ({ browser }, testInfo) => {
+  for (const [contextIndex, context] of browser.contexts().entries()) {
+    if (testInfo.status !== testInfo.expectedStatus) {
+      for (const [pageIndex, page] of context.pages().entries()) {
+        await page
+          .screenshot({ path: testInfo.outputPath(`context-${contextIndex}-page-${pageIndex}.png`) })
+          .catch(() => undefined);
+      }
+    }
+    await context.close();
+  }
+});
 const scoreCategories = [
   'ones',
   'twos',
@@ -33,6 +48,37 @@ const scoreCategories = [
   'sucker',
   'chance',
 ] as const;
+
+test('a real Realtime update reaches the board while fallback timers are paused', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`realtime-alice-${runId}`, 'Realtime Alice');
+  const bob = await createUser(`realtime-bob-${runId}`, 'Realtime Bob');
+  const { game } = await invokeTestGameAction(alice, { type: 'create_game', opponentProfileId: bob.id });
+  const frames: string[] = [];
+  const page = await openAuthedPage(browser, alice, undefined, 'success', true, (page) => {
+    page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => frames.push(String(payload))));
+  });
+  try {
+    // Let the lobby establish its connection first, exercising socket reuse on entry.
+    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
+    await page.clock.install();
+    await openGameFromLobby(page, game.id);
+    await expect
+      .poll(() => frames.some((frame) => frame.includes(`game:${game.id}`) && frame.includes('postgres_changes')))
+      .toBe(true);
+    // Freeze timers after subscription so polling cannot supply this update.
+    // Real HTTP and WebSocket events still run.
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1000)));
+    await page.route('**/rest/v1/games?**', (route) => route.abort());
+    frames.length = 0;
+    game.state.players[0].suckerTokens = 6;
+    assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
+    await expect(page.getByTestId('token-menu-button')).toHaveText('6');
+    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
+  } finally {
+    await page.context().close();
+  }
+});
 
 test('Jab is hidden until available and disappears after sending', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
@@ -123,7 +169,7 @@ for (const cost of [2, 1]) {
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);
     await page.getByTestId('sucker-punch-chance-roll-button').click();
-    await expect(dialog).toContainText(/Punch landed!|Punch blocked!/);
+    await expect(dialog).toContainText(/Your punch landed!|They blocked your punch!/);
     const after = await loadGame(game.id);
     expect(after.state.players[responderIndex].suckerTokens).toBe(0);
     expect(after.state.counterPunchPlayerId).toBeUndefined();
@@ -147,7 +193,7 @@ async function prepareTestMiss(user: TestUser, game: { id: string; last_turn_id:
 }
 
 async function invokeTestGameAction(user: TestUser, action: Record<string, unknown>) {
-  const session = await createSession(user.email);
+  const session = await getActionSession(user.email);
   const response = await fetch(`${supabaseUrl}/functions/v1/game-action`, {
     method: 'POST',
     headers: { apikey: anonKey, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
@@ -324,7 +370,11 @@ test('failed Punch preparation closes the dialog and keeps the board usable', as
     await bobPage.getByTestId('token-option-sucker-punch').click();
     await bobPage.route('**/functions/v1/game-action', async (route) => {
       if (route.request().postDataJSON()?.type === 'prepare_sucker_punch') {
-        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'The response opportunity has ended.' }) });
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'The response opportunity has ended.' }),
+        });
       } else await route.continue();
     });
     await bobPage.getByTestId('sucker-punch-chance-roll-button').click();
@@ -377,6 +427,7 @@ test('the displayed multiplayer punch chance matches the server outcome', async 
     await actionButton.click();
     const response = await outcomeResponse;
     expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON().chanceProtocol).toBe('prepared');
     const outcome = (await response.json()).suckerPunchOutcome;
     expect(outcome.chanceDie).toBe(shownDie);
     const actions = await admin
@@ -391,12 +442,81 @@ test('the displayed multiplayer punch chance matches the server outcome', async 
   }
 });
 
+test('both players can take a Sucker Deal on their first turn without rolling', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`deal-alice-${runId}`, 'Alice Deal');
+  const bob = await createUser(`deal-bob-${runId}`, 'Bob Deal');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    expect((await loadGame(gameId)).state.rollNumber).toBe(0);
+    expect(await loadTurnCount(gameId)).toBe(0);
+    const sucker = alicePage.getByTestId('category-button-sucker');
+    await expect(sucker).toBeDisabled();
+    await alicePage.getByTestId('token-menu-button').click();
+    await alicePage.getByTestId('token-option-sucker-deal').click();
+    for (const category of scoreCategories) {
+      await expect(alicePage.getByTestId(`category-button-${category}`)).toBeEnabled();
+    }
+    await sucker.click();
+    await expect(
+      alicePage.getByRole('img', { name: 'Alice Deal, Sucker score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect.poll(async () => (await loadGame(gameId)).state.players[0].suckerTokens).toBe(11);
+    await expect.poll(() => loadTurnCount(gameId)).toBe(1);
+    const turns = await admin.from('turns').select('roll_count').eq('game_id', gameId);
+    expect(turns.error).toBeNull();
+    expect(turns.data).toEqual([{ roll_count: 0 }]);
+    await openGameFromLobby(bobPage, gameId);
+    await expect(bobPage.getByTestId('opponent-turn-reveal')).toBeVisible({ timeout: 15_000 });
+    await expect(bobPage.getByTestId('opponent-turn-reveal-dice')).toHaveCount(0);
+    await expect(bobPage.getByTestId('opponent-turn-reveal')).toContainText('played 0 on');
+    await bobPage.getByTestId('token-menu-button').click();
+    await bobPage.getByTestId('token-option-sucker-deal').click();
+    for (const category of scoreCategories) {
+      await expect(bobPage.getByTestId(`category-button-${category}`)).toBeEnabled();
+    }
+    await bobPage.getByTestId('category-button-chance').click();
+    await expect(
+      bobPage.getByRole('img', { name: 'Bob Deal, Chance score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect.poll(async () => (await loadGame(gameId)).state.players[1].suckerTokens).toBe(11);
+    await expect.poll(() => loadTurnCount(gameId)).toBe(2);
+    const bothTurns = await admin
+      .from('turns')
+      .select('player_id, category, roll_count, score')
+      .eq('game_id', gameId)
+      .order('turn_index');
+    expect(bothTurns.error).toBeNull();
+    expect(bothTurns.data).toEqual([
+      { player_id: alice.id, category: 'sucker', roll_count: 0, score: 0 },
+      { player_id: bob.id, category: 'chance', roll_count: 0, score: 0 },
+    ]);
+    await alicePage.reload();
+    await expect(
+      alicePage.getByRole('img', { name: 'Alice Deal, Sucker score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect(alicePage.getByTestId('token-menu-button')).toHaveText('11');
+    await bobPage.reload();
+    await expect(
+      bobPage.getByRole('img', { name: 'Bob Deal, Chance score: 0 points, scored', exact: true }),
+    ).toBeVisible();
+    await expect(bobPage.getByTestId('token-menu-button')).toHaveText('11');
+    await alicePage.screenshot({ path: test.info().outputPath('first-turn-multiplayer-deals.png') });
+  } finally {
+    await alicePage.context().close();
+    await bobPage.context().close();
+  }
+});
+
 test('two players can create an invite and play turns through the web UI', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`alice-${runId}`, 'Alice E2E');
   const bob = await createUser(`bob-${runId}`, 'Bob E2E');
 
-  const alicePage = await openAuthedPage(browser, alice);
+  const alicePage = await openAuthedPage(browser, alice, undefined, 'success', false);
   const bobPage = await openAuthedPage(browser, bob);
 
   const aliceLobby = alicePage.getByTestId('multiplayer-lobby-shell');
@@ -930,9 +1050,12 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
   await expect(suckerPunchDieTrack).toBeVisible();
   await page.getByTestId('sucker-punch-chance-roll-button').click();
-  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Punch landed!|Punch blocked!/, {
-    timeout: 3_000,
-  });
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(
+    /Your punch landed!|They blocked your punch!/,
+    {
+      timeout: 3_000,
+    },
+  );
   await expect(page.getByTestId('sucker-punch-result-image')).toBeVisible();
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('CONTINUE');
   await page.getByTestId('sucker-punch-chance-roll-button').click();
@@ -961,9 +1084,12 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
 
   const notice = page.getByTestId('sucker-punch-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
-  await expect(notice).toContainText('Punch landed!');
+  await expect(notice).toContainText('You got punched!');
   await expect(page.getByTestId('sucker-punch-recipient-result-image')).toBeVisible();
-  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'Punch landed');
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute(
+    'aria-label',
+    'You got punched!',
+  );
   await expect(notice).toBeHidden({ timeout: 5_000 });
   await page.waitForTimeout(200);
   await expect(suckerScoreBox).toContainText('50');
@@ -1003,9 +1129,12 @@ test('blocked Sucker Punch shows the blocked artwork to the target', async ({ br
 
   const notice = page.getByTestId('sucker-punch-blocked-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
-  await expect(notice).toContainText('Punch blocked!');
+  await expect(notice).toContainText('You blocked their punch!');
   await expect(page.getByTestId('sucker-punch-recipient-result-image')).toBeVisible();
-  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'Punch blocked');
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute(
+    'aria-label',
+    'You blocked their punch!',
+  );
   await expect(notice).toBeHidden({ timeout: 5_000 });
   await expect(suckerScoreBox).toContainText('50');
 });
@@ -1189,11 +1318,14 @@ async function openAuthedPage(
   user: TestUser,
   pushEndpoint?: string,
   unsubscribeResult: 'success' | 'false' | 'error' = 'success',
+  snoozePrompt = true,
+  beforeNavigate?: (page: Page) => void,
 ) {
   const context = await browser.newContext({ viewport: { height: 852, width: 393 } });
   const session = await createSession(user.email);
   await context.addInitScript(
-    ({ endpoint, unsubscribeResult }) => {
+    ({ endpoint, unsubscribeResult, snoozePrompt }) => {
+      if (snoozePrompt) localStorage.setItem('sucker.webPushPromptDismissedAt', String(Date.now()));
       const testWindow = window as Window & { PushManager?: unknown };
       const testNavigator = navigator as Navigator & { serviceWorker?: unknown };
 
@@ -1237,7 +1369,7 @@ async function openAuthedPage(
         });
       }
     },
-    { endpoint: pushEndpoint, unsubscribeResult },
+    { endpoint: pushEndpoint, unsubscribeResult, snoozePrompt },
   );
   await context.addInitScript(
     ({ accessToken, refreshToken, supabaseAnonKey, supabaseUrl }) => {
@@ -1262,6 +1394,7 @@ async function openAuthedPage(
   const page = await context.newPage();
   const failedResponses = captureFailedResponses(page);
 
+  beforeNavigate?.(page);
   await page.goto('/');
   try {
     await expect(page.getByText(`Hi, ${user.displayName}`)).toBeVisible({ timeout: 30_000 });
@@ -1271,6 +1404,7 @@ async function openAuthedPage(
     await context.close().catch(() => undefined);
     throw new Error(`Authenticated lobby did not render.\n${details}\nOriginal error: ${message}`);
   }
+  pageUsers.set(page, user);
   return page;
 }
 
@@ -1394,23 +1528,14 @@ async function openGameFromLobby(page: Page, gameId: string) {
   await page.getByTestId(`game-card-${gameId}`).click();
 }
 
+// Invitation UI is covered by the full two-player smoke test. Focused tests
+// create the same server-owned game through the authenticated action API.
+const pageUsers = new WeakMap<Page, TestUser>();
 async function createAcceptedGame(creatorPage: Page, joinerPage: Page) {
-  await creatorPage.goto('/');
-  await expect(creatorPage.getByTestId('refresh-games-button')).toBeVisible();
-  await dismissTurnNotificationPrompt(creatorPage);
-  await creatorPage.getByTestId('start-with-friend-button').click();
-  await creatorPage.getByTestId('create-invite-button').click();
-  const inviteCode = (await creatorPage.getByTestId('generated-invite-code').innerText()).trim();
-  expect(inviteCode).toMatch(/^[A-F0-9]{8}$/);
-
-  await joinerPage.goto('/');
-  await expect(joinerPage.getByTestId('refresh-games-button')).toBeVisible();
-  await dismissTurnNotificationPrompt(joinerPage);
-  await joinerPage.getByTestId('start-with-friend-button').click();
-  await joinerPage.getByTestId('invite-code-input').fill(inviteCode);
-  await joinerPage.getByTestId('join-invite-button').click();
-
-  return waitForAcceptedGame(inviteCode);
+  const creator = pageUsers.get(creatorPage)!;
+  const joiner = pageUsers.get(joinerPage)!;
+  const { game } = await invokeTestGameAction(creator, { type: 'create_game', opponentProfileId: joiner.id });
+  return game.id;
 }
 
 async function openGameFromNotification(page: Page, gameId: string) {
@@ -1430,10 +1555,7 @@ async function openGameFromNotification(page: Page, gameId: string) {
 
 async function dismissTurnNotificationPrompt(page: Page) {
   const prompt = page.getByTestId('turn-notification-prompt');
-  const appeared = await prompt
-    .waitFor({ state: 'visible', timeout: 1_000 })
-    .then(() => true)
-    .catch(() => false);
+  const appeared = await prompt.isVisible();
   if (appeared) {
     await page.getByTestId('turn-notification-not-now').click();
   }
@@ -1475,7 +1597,9 @@ async function createUser(slug: string, displayName: string): Promise<TestUser> 
     throw new Error(`Unable to create ${displayName}.`);
   }
 
-  await upsertProfile(created.user.id, displayName, slug.replace(/[^a-z0-9_]/gi, '_').slice(0, 24));
+  // Preserve random entropy within the 24-character username limit. Truncating
+  // the slug used to discard the UUID and collide between concurrent tests.
+  await upsertProfile(created.user.id, displayName, `e2e_${created.user.id.replaceAll('-', '').slice(0, 20)}`);
 
   return {
     displayName,
@@ -1507,6 +1631,15 @@ async function upsertProfile(id: string, displayName: string, username: string) 
     username,
   });
   assertNoError(error);
+}
+
+const sessions = new Map<string, Awaited<ReturnType<typeof createSession>>>();
+async function getActionSession(email: string) {
+  const cached = sessions.get(email);
+  if (cached && (cached.expires_at ?? 0) > Date.now() / 1000 + 60) return cached;
+  const session = await createSession(email);
+  sessions.set(email, session);
+  return session;
 }
 
 async function createSession(email: string) {

@@ -77,7 +77,7 @@ create table public.turns (
   held boolean[] not null check (array_length(held, 1) = 5),
   category text not null,
   score integer not null,
-  roll_count integer not null check (roll_count >= 0),
+  roll_count integer not null check (roll_count >= 0 and (roll_count > 0 or score = 0)),
   status text not null default 'submitted' check (status in ('submitted', 'punched', 'blocked', 'mulliganed', 'finalized')),
   created_at timestamptz not null default now(),
   finalized_at timestamptz,

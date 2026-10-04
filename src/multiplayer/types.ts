@@ -113,6 +113,7 @@ export type MultiplayerAction =
       gameId: string;
       turnId: string;
       chanceDie?: DieValue;
+      chanceProtocol?: 'prepared';
     };
 
 export type MultiplayerActionResult = {

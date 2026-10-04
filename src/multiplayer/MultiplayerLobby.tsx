@@ -247,7 +247,7 @@ export function MultiplayerLobby({
           }
           const nextGames = gamesResult.value;
           setNow(Date.now());
-          await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId));
+          await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId), profileId);
           if (recordResult.status === 'fulfilled') {
             setAllTimeOpponentRecord(recordResult.value);
           } else if (surfaceError) {
@@ -392,11 +392,15 @@ export function MultiplayerLobby({
   }, [profile?.avatar_url, profile?.id, visibleGames]);
 
   useEffect(() => {
-    void syncAppBadgeCount(profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0);
-  }, [games, isGamesProfileMismatch, profile]);
+    void syncAppBadgeCount(
+      profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0,
+      profileId,
+    );
+  }, [games, isGamesProfileMismatch, profile, profileId]);
 
   useEffect(() => {
-    if (!session || !isAppActive) {
+    // Browser tabs and PWA windows still need live turn counts while hidden.
+    if (!session || (!isAppActive && Platform.OS !== 'web')) {
       return;
     }
 

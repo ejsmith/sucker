@@ -37,6 +37,9 @@ Notifications.setNotificationHandler({
 
 const nativePushTokenStorageKey = 'sucker.current-push-token';
 let notificationWork: Promise<unknown> = Promise.resolve();
+// Keep badge writes ordered, independently of push registration/sign-out work
+// (sign-out itself awaits a badge clear).
+let badgeWork: Promise<void> = Promise.resolve();
 let isSigningOut = false;
 
 function serializeNotificationWork<T>(work: () => Promise<T>): Promise<T> {
@@ -125,9 +128,20 @@ export function countGamesAwaitingTurn(games: RemoteGameRow[], profileId: string
   ).length;
 }
 
-export async function syncAppBadgeCount(count: number) {
+export function syncAppBadgeCount(count: number, profileId: string | null) {
   const badgeCount = Math.max(0, Math.trunc(count));
+  const result = badgeWork.then(async () => {
+    // A refresh can finish after sign-out or an account change. Check its owner
+    // when this queued write runs, not only when the refresh was started.
+    const { data, error } = await supabase.auth.getSession();
+    if (error || (data.session?.user.id ?? null) !== profileId || (!profileId && badgeCount > 0)) return;
+    await applyAppBadgeCount(badgeCount);
+  });
+  badgeWork = result.catch(() => undefined);
+  return result;
+}
 
+async function applyAppBadgeCount(badgeCount: number) {
   if (Platform.OS === 'web') {
     await syncWebAppBadgeCount(badgeCount);
   }
@@ -136,6 +150,13 @@ export async function syncAppBadgeCount(count: number) {
     await Notifications.setBadgeCountAsync(badgeCount);
   } catch {
     // Badges are best-effort: unsupported browsers/dev clients should not surface an app error.
+  }
+
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    // The badge library can wrap document.title and add its own count. Update the
+    // element after it finishes so both the favicon and tab show a single count.
+    const title = document.querySelector('title') ?? document.head.appendChild(document.createElement('title'));
+    title.textContent = badgeCount > 0 ? `(${badgeCount}) Sucker!` : 'Sucker!';
   }
 }
 
@@ -268,7 +289,7 @@ export async function signOutWithNotificationCleanup(signOut: () => Promise<void
         throw signOutError;
       }
       await finishCleanup?.();
-      await syncAppBadgeCount(0);
+      await syncAppBadgeCount(0, null);
     });
   } finally {
     isSigningOut = false;
