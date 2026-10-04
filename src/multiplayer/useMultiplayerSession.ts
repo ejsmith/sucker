@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Linking } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -22,6 +22,7 @@ import { isMultiplayerConfigured, supabase } from './supabase';
 import type { ProfileInput } from './types';
 import { reportError, setMonitoringUser } from '../monitoring/exceptionless';
 import { authenticateWithApple, type AppleAuthAction } from './appleAuth';
+import { hasAppleIdentity } from './appleIdentity';
 
 type Profile = Awaited<ReturnType<typeof getMyProfile>>;
 
@@ -29,6 +30,7 @@ export function useMultiplayerSession() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(isMultiplayerConfigured);
   const [isAppleAuthenticating, setIsAppleAuthenticating] = useState(false);
+  const [confirmedAppleUserId, setConfirmedAppleUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>(null);
   const [session, setSession] = useState<Session | null>(null);
   const lastHandledAuthUrl = useRef<string | null>(null);
@@ -42,6 +44,41 @@ export function useMultiplayerSession() {
       isMounted.current = false;
     };
   }, []);
+
+  const sessionUserId = session?.user.id;
+  const sessionAccessToken = session?.access_token;
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !sessionUserId || !sessionAccessToken || isAppleAuthenticating) return;
+    let active = true;
+    let syncing = false;
+    const syncAppleConnection = async () => {
+      if (!active || syncing) return;
+      syncing = true;
+      try {
+        const { data, error } = await supabase.auth.getUser(sessionAccessToken);
+        if (!active || error || !data.user || data.user.id !== sessionUserId) return;
+        const user = data.user;
+        setSession((current) => (current?.user.id === user.id ? { ...current, user } : current));
+        setConfirmedAppleUserId(hasAppleIdentity(user) ? user.id : null);
+      } catch {
+        // Keep a successful link visible while offline. Retry on reconnect/resume.
+      } finally {
+        syncing = false;
+      }
+    };
+    void syncAppleConnection();
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) void syncAppleConnection();
+    });
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncAppleConnection();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+      subscription.remove();
+    };
+  }, [isAppleAuthenticating, sessionAccessToken, sessionUserId]);
 
   const refreshProfile = useCallback(async () => {
     if (!isMultiplayerConfigured) {
@@ -161,6 +198,7 @@ export function useMultiplayerSession() {
         return;
       }
       setSession(nextSession);
+      setConfirmedAppleUserId((current) => (current === nextSession?.user.id ? current : null));
       profileLoadVersion.current++;
       setProfile((current) => (current?.id === nextSession?.user.id ? current : null));
       setMonitoringUser(nextSession?.user.id ?? null);
@@ -259,7 +297,13 @@ export function useMultiplayerSession() {
       // Canceling the Apple sheet must not clear an existing account.
       if (nextSession) {
         setSession(nextSession);
-        await refreshProfile();
+        if (action === 'link') {
+          setConfirmedAppleUserId(nextSession.user.id);
+          // Loading profile details cannot undo a successful account link.
+          await refreshProfile().catch(() => undefined);
+        } else {
+          await refreshProfile();
+        }
       }
       return nextSession;
     } catch (appleError) {
@@ -325,6 +369,7 @@ export function useMultiplayerSession() {
     error,
     isConfigured: isMultiplayerConfigured,
     isAppleAuthenticating,
+    isAppleConnected: Boolean(session && (confirmedAppleUserId === session.user.id || hasAppleIdentity(session.user))),
     isLoading,
     profile,
     refreshProfile,

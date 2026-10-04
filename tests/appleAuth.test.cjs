@@ -12,7 +12,13 @@ function compile(file) {
 }
 const appleSource = compile('../src/multiplayer/appleAuth.ts');
 const authSource = compile('../src/multiplayer/auth.ts');
-const session = { user: { id: 'existing-player', identities: [{ provider: 'apple' }] } };
+const session = {
+  access_token: 'linked-account-access-token',
+  refresh_token: 'linked-account-token',
+  user: { id: 'existing-player', identities: [{ provider: 'apple' }] },
+};
+const identityExports = {};
+vm.runInNewContext(compile('../src/multiplayer/appleIdentity.ts'), { exports: identityExports });
 
 function loadApple({
   platform = 'ios',
@@ -22,12 +28,28 @@ function loadApple({
   token = 'apple-token',
   authError,
   user = session.user,
+  linkSession = session,
+  refreshedSession = session,
+  refreshError = null,
+  userAfterApple = user,
+  storedSessionAfterLink = linkSession,
+  synchronizedUser = session.user,
+  synchronizationError = null,
+  throwRefreshError = false,
+  throwSynchronizationError = false,
+  sessionAfterSynchronization,
 } = {}) {
   const calls = [];
   const activity = [];
   let nextNonce = 0;
+  let userReads = 0;
+  let storedSession = null;
+  const refreshInputs = [];
+  const signOutOptions = [];
+  const synchronizationTokens = [];
   const authResult = { data: { session }, error: authError ?? null };
   const modules = {
+    './appleIdentity': identityExports,
     'expo-apple-authentication': {
       isAvailableAsync: async () => {
         activity.push('check-apple-availability');
@@ -52,9 +74,15 @@ function loadApple({
       isMultiplayerConfigured: configured,
       supabase: {
         auth: {
-          getUser: async () => {
+          getUser: async (accessToken) => {
             activity.push('get-user');
-            return { data: { user }, error: null };
+            if (accessToken) {
+              synchronizationTokens.push(accessToken);
+              if (sessionAfterSynchronization !== undefined) storedSession = sessionAfterSynchronization;
+              if (throwSynchronizationError) throw synchronizationError;
+              return { data: { user: synchronizationError ? null : synchronizedUser }, error: synchronizationError };
+            }
+            return { data: { user: userReads++ === 0 ? user : userAfterApple }, error: null };
           },
           signInWithIdToken: async (credentials) => {
             calls.push(['signIn', credentials]);
@@ -62,7 +90,21 @@ function loadApple({
           },
           linkIdentity: async (credentials) => {
             calls.push(['link', credentials]);
-            return authResult;
+            storedSession = storedSessionAfterLink;
+            return { data: { session: linkSession }, error: authError ?? null };
+          },
+          refreshSession: async (input) => {
+            activity.push('refresh-session');
+            refreshInputs.push(input);
+            if (throwRefreshError) throw refreshError;
+            if (input && refreshedSession && !refreshError) storedSession = refreshedSession;
+            return { data: { session: refreshError ? null : refreshedSession }, error: refreshError };
+          },
+          getSession: async () => ({ data: { session: storedSession }, error: null }),
+          signOut: async (options) => {
+            signOutOptions.push(options);
+            storedSession = null;
+            return { error: null };
           },
         },
       },
@@ -76,7 +118,15 @@ function loadApple({
       return modules[name];
     },
   });
-  return { authenticate: exports.authenticateWithApple, calls, activity };
+  return {
+    authenticate: exports.authenticateWithApple,
+    calls,
+    activity,
+    refreshInputs,
+    signOutOptions,
+    synchronizationTokens,
+    getStoredSession: () => storedSession,
+  };
 }
 
 test('native Apple sign-in sends a fresh hashed nonce to Apple and the raw nonce to Supabase', async () => {
@@ -108,6 +158,109 @@ test('linking requires an existing signed-in player', async () => {
   const { authenticate, calls } = loadApple({ user: null });
   await assert.rejects(authenticate('link'), /existing account/);
   assert.equal(calls.length, 0);
+});
+
+test('linking refreshes stale identity data before reporting success', async () => {
+  const stale = { user: { id: 'existing-player', identities: [{ provider: 'email' }] } };
+  const { authenticate, activity } = loadApple({ user: stale.user, linkSession: stale });
+  const linked = await authenticate('link');
+  assert.equal(linked, session);
+  assert.equal(identityExports.hasAppleIdentity(linked.user), true);
+  assert.equal(activity.filter((entry) => entry === 'refresh-session').length, 1);
+});
+
+test('a successful link reloads the authoritative user when refresh fails or has stale identity data', async () => {
+  const stale = { ...session, user: { id: 'existing-player', identities: [{ provider: 'email' }] } };
+  for (const options of [
+    { refreshError: new Error('Network unavailable') },
+    { refreshError: new Error('Network unavailable'), throwRefreshError: true },
+    { refreshedSession: null },
+    { refreshedSession: stale },
+  ]) {
+    const auth = loadApple({ linkSession: stale, ...options });
+    const result = await auth.authenticate('link');
+    assert.equal(result.user, session.user);
+    assert.deepEqual(auth.synchronizationTokens, [session.access_token]);
+    assert.equal(auth.calls.filter(([kind]) => kind === 'link').length, 1);
+    assert.equal(auth.signOutOptions.length, 0);
+  }
+});
+
+test('losing connectivity after linking preserves the successful session without linking again', async () => {
+  const stale = { ...session, user: { id: 'existing-player', identities: [] } };
+  for (const throwSynchronizationError of [false, true]) {
+    const auth = loadApple({
+      linkSession: stale,
+      refreshError: new Error('Offline'),
+      synchronizationError: new Error('Offline'),
+      throwSynchronizationError,
+    });
+    assert.equal(await auth.authenticate('link'), stale);
+    assert.equal(auth.getStoredSession(), stale);
+    assert.equal(auth.calls.filter(([kind]) => kind === 'link').length, 1);
+  }
+});
+
+test('follow-up user synchronization cannot return another account or restore a signed-out account', async () => {
+  const other = { ...session, user: { id: 'other-player' } };
+  for (const options of [
+    { synchronizedUser: other.user },
+    { sessionAfterSynchronization: other },
+    { sessionAfterSynchronization: null },
+  ]) {
+    const auth = loadApple({ refreshError: new Error('Offline'), ...options });
+    await assert.rejects(auth.authenticate('link'), /account changed/);
+    assert.equal(auth.getStoredSession(), null);
+  }
+});
+
+test('refresh uses the linked session even if another account becomes current during linking', async () => {
+  const other = { refresh_token: 'other-token', user: { id: 'other-player' } };
+  const auth = loadApple({ storedSessionAfterLink: other });
+  assert.equal(await auth.authenticate('link'), session);
+  assert.deepEqual(auth.refreshInputs, [session]);
+  assert.equal(auth.getStoredSession(), session);
+});
+
+test('account changes while the Apple sheet is open abort linking', async () => {
+  for (const userAfterApple of [null, { id: 'other-player' }]) {
+    const auth = loadApple({ userAfterApple });
+    await assert.rejects(auth.authenticate('link'), /account changed/);
+    assert.deepEqual(
+      auth.calls.map(([kind]) => kind),
+      ['apple'],
+    );
+    assert.equal(auth.refreshInputs.length, 0);
+  }
+});
+
+test('mismatched link or refresh results are removed from active auth storage', async () => {
+  const other = { refresh_token: 'other-token', user: { id: 'other-player', identities: [{ provider: 'apple' }] } };
+  for (const options of [{ linkSession: other }, { refreshedSession: other }]) {
+    const auth = loadApple(options);
+    await assert.rejects(auth.authenticate('link'), /account changed/);
+    assert.equal(auth.getStoredSession(), null);
+    assert.equal(auth.signOutOptions.length, 1);
+    assert.equal(auth.signOutOptions[0].scope, 'local');
+    if (options.linkSession) assert.equal(auth.refreshInputs.length, 0);
+  }
+});
+
+test('Apple connection recognizes identity and server provider metadata, never editable user metadata', () => {
+  for (const user of [
+    session.user,
+    { app_metadata: { providers: ['email', 'apple'] } },
+    { app_metadata: { provider: 'apple' } },
+  ]) {
+    assert.equal(identityExports.hasAppleIdentity(user), true);
+  }
+  for (const user of [
+    {},
+    { identities: [{ provider: 'email' }], app_metadata: { providers: ['email'] } },
+    { user_metadata: { provider: 'apple', providers: ['apple'] } },
+  ]) {
+    assert.equal(identityExports.hasAppleIdentity(user), false);
+  }
 });
 
 test('canceling native Apple sign-in does not call Supabase', async () => {
