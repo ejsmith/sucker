@@ -111,7 +111,7 @@ import {
 import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
-import { HowToPlayDialog } from './src/ui/HowToPlayDialog';
+import { RulesDialog } from './src/ui/RulesDialog';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
@@ -1180,7 +1180,7 @@ export function LocalGameScreen({
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
   const [selectedCategory, setSelectedCategory] = useState<ScoreCategory | null>(null);
-  const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const [isChoosingSuckerDeal, setIsChoosingSuckerDeal] = useState(false);
   const [highlightCategory, setHighlightCategory] = useState<ScoreCategory | null>(null);
   const [isScoring, setIsScoring] = useState(false);
@@ -2757,7 +2757,12 @@ export function LocalGameScreen({
       setSuckerPunchChanceFace(1);
       suckerPunchDieAnimation.setValue(0);
       suckerPunchResultCompletion.current = null;
-      setSuckerPunchDialog({ tokenCost: suckerPunchCost, phase: 'ready', scope: 'local', targetTurnId: pendingTurn.id });
+      setSuckerPunchDialog({
+        tokenCost: suckerPunchCost,
+        phase: 'ready',
+        scope: 'local',
+        targetTurnId: pendingTurn.id,
+      });
       return;
     }
 
@@ -2771,7 +2776,12 @@ export function LocalGameScreen({
     setSuckerPunchChanceFace(1);
     suckerPunchDieAnimation.setValue(0);
     suckerPunchResultCompletion.current = null;
-    setSuckerPunchDialog({ tokenCost: suckerPunchCost, phase: 'ready', scope: 'remote', targetTurnId: remoteLastTurnId });
+    setSuckerPunchDialog({
+      tokenCost: suckerPunchCost,
+      phase: 'ready',
+      scope: 'remote',
+      targetTurnId: remoteLastTurnId,
+    });
   }
 
   function handleDismissSuckerPunchResult() {
@@ -3244,7 +3254,7 @@ export function LocalGameScreen({
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage || showHowToPlay || isTokenMenuOpen : undefined}
+          aria-hidden={Platform.OS === 'web' ? showStatsPage || showRules || isTokenMenuOpen : undefined}
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
@@ -3302,7 +3312,7 @@ export function LocalGameScreen({
                   style={({ pressed }) => [
                     styles.topMenuItem,
                     gameLayout.styles.topMenuItem,
-                    pressed && styles.pressed,
+                    pressed && styles.topMenuItemPressed,
                   ]}
                   testID="game-stats-menu-item"
                 >
@@ -3310,11 +3320,36 @@ export function LocalGameScreen({
                     STATS
                   </Text>
                 </Pressable>
+                <Pressable
+                  accessibilityLabel="View rules"
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setShowRules(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.topMenuItem,
+                    gameLayout.styles.topMenuItem,
+                    pressed && styles.topMenuItemPressed,
+                  ]}
+                  testID="game-rules-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    RULES
+                  </Text>
+                </Pressable>
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
-                    onPress={onNewComputerGame}
+                    onPress={() => {
+                      setIsMenuOpen(false);
+                      onNewComputerGame();
+                    }}
                     disabled={isRolling || isScoring || isComputerTurn}
-                    style={[styles.topMenuItem, gameLayout.styles.topMenuItem]}
+                    style={({ pressed }) => [
+                      styles.topMenuItem,
+                      gameLayout.styles.topMenuItem,
+                      pressed && styles.topMenuItemPressed,
+                      (isRolling || isScoring || isComputerTurn) && styles.topMenuItemDisabled,
+                    ]}
                     testID="new-computer-game-button"
                   >
                     <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
@@ -3322,22 +3357,6 @@ export function LocalGameScreen({
                     </Text>
                   </Pressable>
                 )}
-                <Pressable
-                  onPress={() => {
-                    setIsMenuOpen(false);
-                    setShowHowToPlay(true);
-                  }}
-                  style={({ pressed }) => [
-                    styles.topMenuItem,
-                    gameLayout.styles.topMenuItem,
-                    pressed && styles.pressed,
-                  ]}
-                  testID="game-help-menu-item"
-                >
-                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
-                    HOW TO PLAY
-                  </Text>
-                </Pressable>
               </View>
             </View>
           )}
@@ -3967,10 +3986,10 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
-          {showHowToPlay && (
-            <HowToPlayDialog
+          {showRules && (
+            <RulesDialog
               onClose={() => {
-                setShowHowToPlay(false);
+                setShowRules(false);
                 requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
               }}
             />
@@ -6020,26 +6039,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#210505',
     borderColor: '#FFD329',
     borderRadius: 10,
-    borderWidth: 3,
+    borderWidth: 2,
     ...createBoxShadowStyle(0, 4, 0, 'rgba(5, 5, 5, 0.45)'),
     elevation: 12,
-    padding: 6,
+    gap: 8,
+    padding: 8,
     position: 'absolute',
     right: 8,
     top: 64,
-    width: 132,
+    width: 176,
     zIndex: 82,
   },
   topMenuItem: {
     alignItems: 'center',
     backgroundColor: '#F12D22',
     borderColor: '#FFB000',
-    borderRadius: 7,
     borderWidth: 2,
+    borderRadius: 7,
     justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  topMenuItemPressed: { backgroundColor: '#C8241B' },
+  topMenuItemDisabled: { opacity: 0.45 },
   topMenuText: {
     color: '#FFF3C2',
     fontSize: 15,
