@@ -4,6 +4,7 @@ import type { Database } from '../_shared/database.types.ts';
 import { commitGameMove, planGameMove, type GameMovePlan } from '../_shared/gameMoveTransaction.ts';
 import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
 import { deliverActionNotifications } from '../_shared/notificationDelivery.ts';
+import { discardRequestBody } from '../_shared/discardRequestBody.ts';
 import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import {
   createEmptyScorecard,
@@ -129,6 +130,9 @@ Deno.serve(async (request) => {
     }
     const contentLength = Number(request.headers.get('content-length') ?? 0);
     if (contentLength > 32_768) {
+      // An unread upload can abort the Edge Runtime connection and hide the 413
+      // behind a gateway timeout. Bound the discard by both size and time.
+      await discardRequestBody(request.body);
       return json({ error: 'Request body is too large.' }, 413);
     }
 
