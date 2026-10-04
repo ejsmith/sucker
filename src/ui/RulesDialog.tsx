@@ -64,6 +64,11 @@ const tokens: Rule[] = [
     body: 'Before starting your turn, target the opponent’s immediately previous submitted turn. A hit removes its score and forces a replay. A miss leaves it intact. Pay the token cost either way.',
   },
   {
+    title: 'Revenge Punch',
+    value: '2 → 1 tokens',
+    body: 'Each punch that hits you makes your next punch 1 token cheaper, down to 1 token. The discount carries across turns until you throw a punch, hit or miss, or the game ends. If Counterpunch also applies, you pay the lower price.',
+  },
+  {
     title: 'Counterpunch',
     value: '2 → 1 tokens',
     body: 'After a miss, the opponent can punch the attacker’s next submitted turn before starting their own. Further misses lower the cost to 1. Starting your turn or passing ends the opportunity; a hit or an unused opportunity ends the discount chain. All opportunities expire when the game ends.',
