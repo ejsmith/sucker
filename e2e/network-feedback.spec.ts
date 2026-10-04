@@ -58,13 +58,14 @@ test('idle offline signals stay quiet; only a slow player request shows feedback
     await route.fulfill({ json: { inviteCode: 'ABC12345' } });
   });
   await openLobby(page);
+  await page.clock.install();
   const banner = page.getByTestId('network-status-banner');
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
     window.dispatchEvent(new Event('offline'));
   });
   // A passive offline signal must not become a banner even after the delay.
-  await page.waitForTimeout(3200);
+  await page.clock.runFor(3200);
   await expect(banner).toHaveCount(0);
   await expect(page.getByText(/Offline —/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('idle-offline.png') });
@@ -73,9 +74,10 @@ test('idle offline signals stay quiet; only a slow player request shows feedback
   await page.getByTestId('create-invite-button').click();
   // The server is tried even when NetInfo's browser signal says offline.
   await request;
-  await page.waitForTimeout(500);
+  await page.clock.runFor(500);
   await expect(banner).toHaveCount(0);
-  await expect(banner).toHaveText('Server is taking longer than usual…', { timeout: 5000 });
+  await page.clock.runFor(2700);
+  await expect(banner).toHaveText('Server is taking longer than usual…');
   await page.screenshot({ path: testInfo.outputPath('slow-request.png') });
   release();
   await expect(page.getByTestId('generated-invite-code')).toHaveText('ABC12345');
@@ -97,6 +99,7 @@ test('background recovery stays quiet while its server response is delayed', asy
     await route.fulfill({ json: { inviteCode: 'ABC12345' } });
   });
   await openLobby(page);
+  await page.clock.install();
   await page.evaluate(
     ({ actorId }) => {
       localStorage.setItem(
@@ -116,7 +119,7 @@ test('background recovery stays quiet while its server response is delayed', asy
     { actorId },
   );
   await request;
-  await page.waitForTimeout(3200);
+  await page.clock.runFor(3200);
   await expect(page.getByTestId('network-status-banner')).toHaveCount(0);
   await expect(page.getByText('Synchronizing game actions…')).toHaveCount(0);
   release();
