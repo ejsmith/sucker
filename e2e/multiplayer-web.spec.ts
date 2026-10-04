@@ -65,7 +65,7 @@ test('a real Realtime update reaches the board while fallback timers are paused'
       .toBe(true);
     // Freeze timers after subscription so polling cannot supply this update.
     // Real HTTP and WebSocket events still run.
-    await page.clock.pauseAt(new Date());
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1000)));
     await page.route('**/rest/v1/games?**', (route) => route.abort());
     frames.length = 0;
     game.state.players[0].suckerTokens = 6;

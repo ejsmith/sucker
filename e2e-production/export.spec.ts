@@ -8,6 +8,11 @@ test('production export loads fonts, authenticates through the form, and support
   await page.route('**/*', (route) =>
     new URL(route.request().url()).origin === 'http://127.0.0.1:8099' ? route.continue() : route.abort(),
   );
+  // Successful local acknowledgements also cover configured telemetry on
+  // unload without submitting test events to the production collector.
+  await page.route(/\/api\/v2\/events(?:\/session\/heartbeat)?(?:\?|$)/, (route) =>
+    route.fulfill({ status: 202, body: '' }),
+  );
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
