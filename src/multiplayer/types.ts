@@ -131,6 +131,7 @@ export type RemoveGameActionResult = {
 
 export type ProfileInput = {
   avatarUrl?: string | null;
+  completeSetup?: boolean;
   displayName: string;
   username?: string | null;
 };

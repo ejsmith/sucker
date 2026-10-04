@@ -21,16 +21,19 @@ import { getE2ESession } from './env';
 import { isMultiplayerConfigured, supabase } from './supabase';
 import type { ProfileInput } from './types';
 import { reportError, setMonitoringUser } from '../monitoring/exceptionless';
+import { authenticateWithApple, type AppleAuthAction } from './appleAuth';
 
 type Profile = Awaited<ReturnType<typeof getMyProfile>>;
 
 export function useMultiplayerSession() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(isMultiplayerConfigured);
+  const [isAppleAuthenticating, setIsAppleAuthenticating] = useState(false);
   const [profile, setProfile] = useState<Profile>(null);
   const [session, setSession] = useState<Session | null>(null);
   const lastHandledAuthUrl = useRef<string | null>(null);
   const pushRegisteredProfileId = useRef<string | null>(null);
+  const profileLoadVersion = useRef(0);
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -45,8 +48,9 @@ export function useMultiplayerSession() {
       return null;
     }
 
+    const loadVersion = ++profileLoadVersion.current;
     const nextProfile = await getMyProfile();
-    if (!isMounted.current) {
+    if (!isMounted.current || loadVersion !== profileLoadVersion.current) {
       return nextProfile;
     }
     setProfile(nextProfile);
@@ -97,7 +101,7 @@ export function useMultiplayerSession() {
       setIsLoading(true);
 
       try {
-        const nextSession = await createSessionFromAuthUrl(url);
+        const nextSession = (await createSessionFromAuthUrl(url)) ?? (await getCurrentSession());
         if (!isMounted) {
           return true;
         }
@@ -157,10 +161,13 @@ export function useMultiplayerSession() {
         return;
       }
       setSession(nextSession);
-      setProfile(null);
+      profileLoadVersion.current++;
+      setProfile((current) => (current?.id === nextSession?.user.id ? current : null));
       setMonitoringUser(nextSession?.user.id ?? null);
       if (nextSession) {
-        void refreshProfile();
+        void refreshProfile().catch((profileError) => {
+          if (isMounted) setError(toErrorMessage(profileError));
+        });
       }
     });
 
@@ -243,11 +250,35 @@ export function useMultiplayerSession() {
     }
   }
 
+  async function continueWithApple(action: AppleAuthAction = 'signIn') {
+    setError(null);
+    setIsLoading(true);
+    setIsAppleAuthenticating(true);
+    try {
+      const nextSession = await authenticateWithApple(action);
+      // Canceling the Apple sheet must not clear an existing account.
+      if (nextSession) {
+        setSession(nextSession);
+        await refreshProfile();
+      }
+      return nextSession;
+    } catch (appleError) {
+      const message = toErrorMessage(appleError);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsAppleAuthenticating(false);
+      setIsLoading(false);
+    }
+  }
+
   async function saveProfile(input: ProfileInput) {
     setError(null);
     setIsLoading(true);
     try {
       const nextProfile = await upsertProfile(input);
+      // An older refresh must not restore the pending-setup flag after saving.
+      profileLoadVersion.current++;
       setProfile(nextProfile);
       return nextProfile;
     } catch (profileError) {
@@ -289,9 +320,11 @@ export function useMultiplayerSession() {
   }
 
   return {
+    continueWithApple,
     endSession,
     error,
     isConfigured: isMultiplayerConfigured,
+    isAppleAuthenticating,
     isLoading,
     profile,
     refreshProfile,

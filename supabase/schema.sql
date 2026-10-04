@@ -10,6 +10,7 @@ create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text unique,
   display_name text not null,
+  needs_profile_setup boolean not null default false,
   avatar_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -805,11 +806,16 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  is_apple_signup boolean := coalesce(new.raw_app_meta_data->>'provider' = 'apple', false);
 begin
-  insert into public.profiles (id, display_name)
+  insert into public.profiles (id, display_name, needs_profile_setup)
   values (
     new.id,
-    coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1), 'Player')
+    case when is_apple_signup then 'Player'
+      else coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1), 'Player')
+    end,
+    is_apple_signup
   )
   on conflict (id) do nothing;
 

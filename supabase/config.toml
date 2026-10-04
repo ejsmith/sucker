@@ -44,6 +44,7 @@ additional_redirect_urls = ["sucker://auth/callback", "https://play.sucker.games
 jwt_expiry = 3600
 enable_signup = true
 enable_anonymous_sign_ins = false
+enable_manual_linking = true
 
 [auth.email]
 enable_signup = true

@@ -1265,6 +1265,16 @@ test('an email-code account can set a password and use it to sign in', async ({ 
   const page = await openAuthedPage(browser, player);
 
   await page.getByTestId('profile-button').click();
+  await expect(page.getByTestId('new-password-input')).toHaveCount(0);
+  await page.getByTestId('open-password-page-button').click();
+  await expect(page.getByTestId('password-page')).toBeVisible();
+  await page.getByTestId('new-password-input').fill('unfinished-password');
+  await page.getByTestId('confirm-password-input').fill('unfinished-password');
+  await page.getByRole('button', { name: 'Back from Password', exact: true }).click();
+  await expect(page.getByTestId('save-profile-button')).toBeVisible();
+  await page.getByTestId('open-password-page-button').click();
+  await expect(page.getByTestId('new-password-input')).toHaveValue('');
+  await expect(page.getByTestId('confirm-password-input')).toHaveValue('');
   const passwordSection = page.getByTestId('account-password-section');
   await passwordSection.scrollIntoViewIfNeeded();
   const [shellBox, passwordSectionBox] = await Promise.all([

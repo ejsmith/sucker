@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import type { Database } from './database.types';
 
 const avatarPublicBase = supabase.storage.from('avatars').getPublicUrl('').data.publicUrl.replace(/\/$/, '');
 
@@ -15,7 +16,7 @@ export function getSafeAvatarUrl(value: string | null | undefined, profileId: st
   }
 }
 
-export async function getMyProfile() {
+export async function getMyProfile(): Promise<Database['public']['Tables']['profiles']['Row'] | null> {
   const {
     data: { user },
     error: userError,
