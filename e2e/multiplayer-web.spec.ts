@@ -164,7 +164,7 @@ for (const cost of [2, 1]) {
     await counter.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
     await expect(dialog).toContainText('Counterpunch');
-    await expect(dialog).toContainText(`${cost} token`);
+    await expect(dialog).toContainText('They missed. Punch them back! Higher roll, higher chance.');
     await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-dialog.png`);
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);
@@ -217,7 +217,7 @@ for (const hits of [1, 2]) {
     await option.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
     await expect(dialog).toContainText('Revenge Punch');
-    await expect(dialog).toContainText(`They got you. Punch back for ${cost} token`);
+    await expect(dialog).toContainText('They got you. Punch them back! Higher roll, higher chance.');
     await page.screenshot({ path: test.info().outputPath(`revenge-${cost}-dialog.png`) });
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);

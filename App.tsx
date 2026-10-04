@@ -236,7 +236,6 @@ type LocalPlayerProfile = {
   displayName: string;
 };
 type SuckerPunchDialogState = {
-  tokenCost: number;
   kind: ReturnType<typeof getSuckerPunchKind>;
   outcome?: SuckerPunchOutcome;
   phase: 'ready' | 'rolling' | 'rolled' | 'throwing' | 'result';
@@ -1144,10 +1143,6 @@ export function LocalGameScreen({
     initialLocalSession?.preparedPunch
       ? {
           kind: getSuckerPunchKind(
-            initialLocalSession.game,
-            initialLocalSession.game.players[initialLocalSession.game.currentPlayerIndex].id,
-          ),
-          tokenCost: getSuckerPunchCost(
             initialLocalSession.game,
             initialLocalSession.game.players[initialLocalSession.game.currentPlayerIndex].id,
           ),
@@ -2760,7 +2755,6 @@ export function LocalGameScreen({
       suckerPunchResultCompletion.current = null;
       setSuckerPunchDialog({
         kind: suckerPunchKind,
-        tokenCost: suckerPunchCost,
         phase: 'ready',
         scope: 'local',
         targetTurnId: pendingTurn.id,
@@ -2780,7 +2774,6 @@ export function LocalGameScreen({
     suckerPunchResultCompletion.current = null;
     setSuckerPunchDialog({
       kind: suckerPunchKind,
-      tokenCost: suckerPunchCost,
       phase: 'ready',
       scope: 'remote',
       targetTurnId: remoteLastTurnId,
@@ -4089,7 +4082,6 @@ export function LocalGameScreen({
           {suckerPunchDialog && (
             <SuckerPunchChanceDialog
               face={suckerPunchChanceFace}
-              tokenCost={suckerPunchDialog.tokenCost}
               kind={suckerPunchDialog.kind}
               onDismissResult={handleDismissSuckerPunchResult}
               onRoll={() => void handleRollSuckerPunchChance()}
@@ -4869,7 +4861,6 @@ function TokenMenuOption({
 
 function SuckerPunchChanceDialog({
   face,
-  tokenCost,
   kind,
   onDismissResult,
   onRoll,
@@ -4879,7 +4870,6 @@ function SuckerPunchChanceDialog({
   rollProgress,
 }: {
   face: DieValue;
-  tokenCost: number;
   kind: SuckerPunchDialogState['kind'];
   onDismissResult: () => void;
   onRoll: () => void;
@@ -4959,9 +4949,9 @@ function SuckerPunchChanceDialog({
             style={[styles.suckerPunchChanceHint, layout.styles.suckerPunchChanceHint]}
           >
             {kind === 'counter'
-              ? `They missed. Punch back for ${tokenCost} token${tokenCost === 1 ? '' : 's'}. Higher roll, higher chance.`
+              ? 'They missed. Punch them back! Higher roll, higher chance.'
               : kind === 'revenge'
-                ? `They got you. Punch back for ${tokenCost} token${tokenCost === 1 ? '' : 's'}. Higher roll, higher chance.`
+                ? 'They got you. Punch them back! Higher roll, higher chance.'
                 : 'Higher roll, higher chance.'}
           </Text>
         )}
