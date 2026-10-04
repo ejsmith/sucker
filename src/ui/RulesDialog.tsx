@@ -146,7 +146,7 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
               style={({ pressed }) => [styles.close, pressed && styles.pressed]}
               testID="rules-close"
             >
-              <CloseIcon />
+              <CloseIcon color="#FFF3CE" />
             </Pressable>
           </View>
           <View style={styles.sections}>
@@ -162,7 +162,7 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
                 ]}
                 testID={`rules-section-${name.toLowerCase()}`}
               >
-                <Text style={[styles.sectionText, section === name && styles.selectedSectionText]}>{name}</Text>
+                <Text style={styles.sectionText}>{name}</Text>
               </Pressable>
             ))}
           </View>
@@ -205,16 +205,15 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+// Use the original HowToPlayDialog palette from PR #79 (bf0eaaf).
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: '#0009' },
+  backdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: '#000A' },
   panel: {
     width: '100%',
     maxWidth: 420,
     maxHeight: '90%',
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#FFD329',
-    backgroundColor: '#210505',
+    borderRadius: 22,
+    backgroundColor: '#FFF3CE',
     overflow: 'hidden',
   },
   header: {
@@ -224,15 +223,13 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 12,
   },
-  title: { color: '#FFD329', fontFamily: 'Inter_900Black', fontSize: 22, fontWeight: '900' },
+  title: { color: '#8C2112', fontFamily: 'Inter_900Black', fontSize: 22, fontWeight: '900' },
   close: {
     width: 44,
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#B3281C',
-    borderWidth: 1,
-    borderColor: '#E99837',
+    backgroundColor: '#351005',
     borderRadius: 8,
   },
   pressed: { opacity: 0.75 },
@@ -241,14 +238,19 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 4,
     padding: 3,
-    backgroundColor: '#100303',
+    backgroundColor: 'rgba(167, 101, 38, 0.12)',
     borderRadius: 10,
     gap: 3,
   },
-  section: { flex: 1, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 7 },
+  section: {
+    flex: 1,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 7,
+  },
   selectedSection: { backgroundColor: '#FFD329' },
-  sectionText: { color: '#FFF3C2', fontSize: 14, fontWeight: '700' },
-  selectedSectionText: { color: '#210505' },
+  sectionText: { color: '#351005', fontSize: 14, fontWeight: '700' },
   scrollContainer: { flexShrink: 1, minHeight: 0 },
   scroll: { flexShrink: 1 },
   scrollTrack: {
@@ -258,12 +260,17 @@ const styles = StyleSheet.create({
     right: 6,
     width: 4,
     borderRadius: 2,
-    backgroundColor: '#673222',
+    backgroundColor: 'rgba(167, 101, 38, 0.18)',
   },
-  scrollThumb: { position: 'absolute', width: 4, borderRadius: 2, backgroundColor: '#FFD329' },
+  scrollThumb: { position: 'absolute', width: 4, borderRadius: 2, backgroundColor: '#A76526' },
   content: { paddingHorizontal: 18, paddingBottom: 20 },
-  intro: { color: '#FFF3C2', fontSize: 14, lineHeight: 21, paddingTop: 16 },
-  rule: { paddingVertical: 14, gap: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#673222' },
+  intro: { color: '#351005', fontSize: 14, lineHeight: 21, paddingTop: 16 },
+  rule: {
+    paddingVertical: 14,
+    gap: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(167, 101, 38, 0.3)',
+  },
   ruleHeading: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -271,13 +278,21 @@ const styles = StyleSheet.create({
     gap: 8,
     flexWrap: 'wrap',
   },
-  label: { color: '#FFF3C2', fontSize: 16, lineHeight: 22, fontWeight: '700' },
-  value: { color: '#FFD329', fontSize: 14, fontWeight: '700', lineHeight: 22 },
-  body: { color: '#E4C8AF', fontSize: 14, lineHeight: 21 },
-  note: { color: '#E4C8AF', fontSize: 13, lineHeight: 20, marginTop: 14 },
+  label: { color: '#351005', fontSize: 16, lineHeight: 22, fontWeight: '700' },
+  value: { color: '#8C2112', fontSize: 14, fontWeight: '700', lineHeight: 22 },
+  body: { color: '#351005', fontSize: 14, lineHeight: 21 },
+  note: { color: '#744323', fontSize: 13, lineHeight: 20, marginTop: 14 },
   oddsSection: { gap: 8, paddingTop: 16 },
   odds: { flexDirection: 'row', gap: 5 },
-  chance: { flex: 1, alignItems: 'center', gap: 5, borderRadius: 6, backgroundColor: '#3C160E', paddingVertical: 9 },
-  die: { color: '#FFF3C2', fontSize: 16, fontWeight: '800' },
-  percent: { color: '#FFD329', fontSize: 12, fontWeight: '700' },
+  chance: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A76526',
+    paddingVertical: 9,
+  },
+  die: { color: '#351005', fontSize: 16, fontWeight: '800' },
+  percent: { color: '#744323', fontSize: 12, fontWeight: '700' },
 });
