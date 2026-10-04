@@ -25,7 +25,13 @@ for (const width of [393, 440]) {
       });
       await mockKeyboardTestAccount(page, 8);
       await page.goto('/');
-      await page.getByTestId('login-email-input').fill('keyboard@example.com');
+      const email = page.getByTestId('login-email-input');
+      // WebKit can acknowledge fill before the controlled input's mount/focus
+      // render settles. Type through keyboard events and verify the value.
+      await email.click();
+      await expect(email).toBeFocused();
+      await email.pressSequentially('keyboard@example.com');
+      await expect(email).toHaveValue('keyboard@example.com');
       await page.getByTestId('send-code-button').click();
       await page.getByTestId('login-code-input').fill('123456');
       await page.getByTestId('verify-code-button').click();
@@ -246,8 +252,9 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
         await expect(password).toHaveValue('test-only-password');
 
         // Once editing ends, genuine viewport changes must still be respected.
-        await page.setViewportSize({ width: 393, height: 852 });
         await password.evaluate((node: HTMLInputElement) => node.blur());
+        await expect(password).not.toBeFocused();
+        await page.setViewportSize({ width: 393, height: 852 });
         if (installed) {
           await page.setViewportSize({ width: 393, height: 797 });
           await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(797, 0);
