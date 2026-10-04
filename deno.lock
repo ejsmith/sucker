@@ -26,6 +26,7 @@
         "npm:eslint-config-prettier@^10.1.8",
         "npm:eslint-plugin-prettier@^5.5.6",
         "npm:eslint@^9.39.4",
+        "npm:expo-apple-authentication@~57.0.2",
         "npm:expo-application@~57.0.3",
         "npm:expo-constants@~57.0.6",
         "npm:expo-crypto@~57.0.3",

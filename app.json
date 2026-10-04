@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.ejsmith.sucker",
       "icon": "./assets/ios-icon.png",
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "requireFullScreen": true,
       "associatedDomains": ["applinks:play.sucker.games"],
       "config": {
@@ -40,6 +41,7 @@
       "predictiveBackGestureEnabled": true
     },
     "plugins": [
+      "expo-apple-authentication",
       "expo-router",
       "expo-image",
       "expo-status-bar",

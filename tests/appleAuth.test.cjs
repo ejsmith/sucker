@@ -1,0 +1,220 @@
+const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const { readFileSync } = require('node:fs');
+const test = require('node:test');
+const vm = require('node:vm');
+const ts = require('typescript');
+
+function compile(file) {
+  return ts.transpileModule(readFileSync(require.resolve(file), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+}
+const appleSource = compile('../src/multiplayer/appleAuth.ts');
+const authSource = compile('../src/multiplayer/auth.ts');
+const session = { user: { id: 'existing-player', identities: [{ provider: 'apple' }] } };
+
+function loadApple({
+  platform = 'ios',
+  available = true,
+  configured = true,
+  appleError,
+  token = 'apple-token',
+  authError,
+  user = session.user,
+} = {}) {
+  const calls = [];
+  const activity = [];
+  let nextNonce = 0;
+  const authResult = { data: { session }, error: authError ?? null };
+  const modules = {
+    'expo-apple-authentication': {
+      isAvailableAsync: async () => {
+        activity.push('check-apple-availability');
+        return available;
+      },
+      AppleAuthenticationScope: { EMAIL: 1 },
+      signInAsync: async (options) => {
+        calls.push(['apple', options]);
+        if (appleError) throw appleError;
+        return { identityToken: token };
+      },
+    },
+    'expo-crypto': {
+      randomUUID: () => `nonce-${++nextNonce}`,
+      CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+      digestStringAsync: async (_algorithm, value) => createHash('sha256').update(value).digest('hex'),
+    },
+    'react-native': {
+      Platform: { OS: platform },
+    },
+    './supabase': {
+      isMultiplayerConfigured: configured,
+      supabase: {
+        auth: {
+          getUser: async () => {
+            activity.push('get-user');
+            return { data: { user }, error: null };
+          },
+          signInWithIdToken: async (credentials) => {
+            calls.push(['signIn', credentials]);
+            return authResult;
+          },
+          linkIdentity: async (credentials) => {
+            calls.push(['link', credentials]);
+            return authResult;
+          },
+        },
+      },
+    },
+  };
+  const exports = {};
+  vm.runInNewContext(appleSource, {
+    exports,
+    require: (name) => {
+      assert.ok(modules[name], `Unexpected dependency ${name}`);
+      return modules[name];
+    },
+  });
+  return { authenticate: exports.authenticateWithApple, calls, activity };
+}
+
+test('native Apple sign-in sends a fresh hashed nonce to Apple and the raw nonce to Supabase', async () => {
+  const { authenticate, calls } = loadApple();
+  assert.equal(await authenticate(), session);
+  assert.equal(await authenticate(), session);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const [apple, signIn] = calls.slice(attempt * 2, attempt * 2 + 2);
+    assert.equal(apple[0], 'apple');
+    assert.equal(signIn[0], 'signIn');
+    assert.equal(signIn[1].provider, 'apple');
+    assert.equal(signIn[1].token, 'apple-token');
+    assert.equal(signIn[1].nonce, `nonce-${attempt + 1}`);
+    assert.equal(apple[1].nonce, createHash('sha256').update(signIn[1].nonce).digest('hex'));
+  }
+});
+
+test('native linking attaches the Apple identity to the signed-in player without signing in as a different user', async () => {
+  const { authenticate, calls } = loadApple();
+  assert.equal(await authenticate('link'), session);
+  assert.deepEqual(
+    calls.map(([kind]) => kind),
+    ['apple', 'link'],
+  );
+  assert.equal(calls[1][1].nonce, 'nonce-1');
+});
+
+test('linking requires an existing signed-in player', async () => {
+  const { authenticate, calls } = loadApple({ user: null });
+  await assert.rejects(authenticate('link'), /existing account/);
+  assert.equal(calls.length, 0);
+});
+
+test('canceling native Apple sign-in does not call Supabase', async () => {
+  const { authenticate, calls } = loadApple({ appleError: { code: 'ERR_REQUEST_CANCELED' } });
+  assert.equal(await authenticate(), null);
+  assert.deepEqual(
+    calls.map(([kind]) => kind),
+    ['apple'],
+  );
+});
+
+test('missing Apple tokens and native failures do not create sessions', async () => {
+  const missing = loadApple({ token: null });
+  await assert.rejects(missing.authenticate(), /did not return a sign-in token/);
+  assert.equal(missing.calls.length, 1);
+  const failure = new Error('Apple unavailable');
+  await assert.rejects(loadApple({ appleError: failure }).authenticate(), (error) => error === failure);
+});
+
+test('unavailable devices and missing configuration cannot start sign-in', async () => {
+  for (const options of [{ available: false }, { configured: false }]) {
+    const { authenticate, calls } = loadApple(options);
+    await assert.rejects(authenticate(), /not (available|configured)/);
+    assert.equal(calls.length, 0);
+  }
+});
+
+for (const platform of ['web', 'android']) {
+  for (const action of ['signIn', 'link']) {
+    test(`${platform} cannot start Apple ${action} or contact the provider`, async () => {
+      const { authenticate, calls, activity } = loadApple({ platform });
+      await assert.rejects(authenticate(action), /only available in the iOS app/);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(activity, []);
+    });
+  }
+}
+
+test('Supabase linking errors propagate without signing in to a different account', async () => {
+  const authError = new Error('Identity already belongs to another account');
+  const { authenticate, calls } = loadApple({ authError });
+  await assert.rejects(authenticate('link'), (error) => error === authError);
+  assert.deepEqual(
+    calls.map(([kind]) => kind),
+    ['apple', 'link'],
+  );
+});
+
+function loadCallback(error = null) {
+  const exchanges = [];
+  const clearedUrls = [];
+  const modules = {
+    'react-native': { Platform: { OS: 'web' } },
+    'expo-router': { router: { setParams() {} } },
+    './env': {},
+    './notifications': {},
+    './supabase': {
+      supabase: {
+        auth: {
+          exchangeCodeForSession: async (code) => {
+            exchanges.push(code);
+            return { data: { session }, error };
+          },
+        },
+      },
+    },
+  };
+  const exports = {};
+  vm.runInNewContext(authSource, {
+    exports,
+    URL,
+    URLSearchParams,
+    document: { title: 'Sucker!' },
+    window: {
+      location: {
+        href: 'https://play.sucker.games/?code=apple-code',
+        origin: 'https://play.sucker.games',
+        pathname: '/',
+      },
+      history: { replaceState: (_state, _title, url) => clearedUrls.push(url) },
+    },
+    require: (name) => {
+      assert.ok(modules[name], `Unexpected dependency ${name}`);
+      return modules[name];
+    },
+  });
+  return { ...exports, exchanges, clearedUrls };
+}
+
+test('auth callbacks exchange the PKCE code and remove it from browser history', async () => {
+  const callback = loadCallback();
+  assert.equal(await callback.createSessionFromAuthUrl('https://play.sucker.games?code=apple-code'), session);
+  assert.deepEqual(callback.exchanges, ['apple-code']);
+  assert.deepEqual(callback.clearedUrls, ['https://play.sucker.games/']);
+});
+
+test('OAuth cancellation is quiet but linking conflicts and invalid codes remain visible', async () => {
+  const callback = loadCallback();
+  assert.equal(await callback.createSessionFromAuthUrl('https://play.sucker.games?error=access_denied'), null);
+  await assert.rejects(
+    callback.createSessionFromAuthUrl(
+      'https://play.sucker.games?error=access_denied&error_code=identity_already_exists&error_description=Already+linked',
+    ),
+    /Already linked/,
+  );
+  assert.equal(callback.exchanges.length, 0);
+  const invalid = loadCallback(new Error('Code expired'));
+  await assert.rejects(invalid.createSessionFromAuthUrl('https://play.sucker.games?code=expired'), /Code expired/);
+  assert.equal(invalid.clearedUrls.length, 1);
+});

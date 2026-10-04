@@ -125,8 +125,6 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
         for (const [testId, value] of [
           ['display-name-input', 'Keyboard Test'],
           ['username-input', 'keyboard_test'],
-          ['new-password-input', 'test-only-password'],
-          ['confirm-password-input', 'test-only-password'],
         ]) {
           await expectFieldOverlay(
             page,
@@ -137,6 +135,9 @@ for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
               : undefined,
           );
         }
+        await page.getByTestId('open-password-page-button').click();
+        await expectFieldOverlay(page, 'new-password-input', 'test-only-password');
+        await expectFieldOverlay(page, 'confirm-password-input', 'test-only-password');
       });
 
       test(`focus preserves the displayed frame after a viewport settles (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({

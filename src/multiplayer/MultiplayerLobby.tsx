@@ -38,7 +38,8 @@ import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecor
 import { useMultiplayerSession } from './useMultiplayerSession';
 import { isLocalMultiplayerDevelopment } from './env';
 import type { LocalTestPlayer } from './auth';
-import type { RemoteGameRow } from './types';
+import { AppleSignInButton } from './AppleSignInButton';
+import type { ProfileInput, RemoteGameRow } from './types';
 import { canJabGame } from './jab';
 import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
@@ -52,7 +53,14 @@ import { useNetworkStatus } from '../network/NetworkProvider';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
-type LobbyPage = 'games' | 'profile' | 'startFriend' | 'completedGames' | 'completedGameDetail' | 'completedGameStats';
+type LobbyPage =
+  | 'games'
+  | 'profile'
+  | 'password'
+  | 'startFriend'
+  | 'completedGames'
+  | 'completedGameDetail'
+  | 'completedGameStats';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://play.sucker.games/invite';
 const privacyPolicyUrl = 'https://play.sucker.games/privacy.html';
@@ -90,8 +98,11 @@ export function MultiplayerLobby({
   const safeAreaInsets = useSafeAreaInsets();
   const isAppActive = useAppActivity();
   const {
+    continueWithApple,
     endSession,
     error,
+    isAppleAuthenticating,
+    isConfigured,
     isLoading,
     profile,
     refreshProfile,
@@ -136,7 +147,7 @@ export function MultiplayerLobby({
   const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
   const setPage = useCallback((nextPage: LobbyPage) => {
-    if (nextPage !== 'profile') {
+    if (nextPage !== 'password') {
       setNewPassword('');
       setConfirmPassword('');
     }
@@ -301,6 +312,11 @@ export function MultiplayerLobby({
       }
       if (page === 'completedGameStats' && completedGameStatsBackHandler.current) {
         completedGameStatsBackHandler.current();
+        return true;
+      }
+      if (page === 'password') {
+        setMessage(null);
+        setPage('profile');
         return true;
       }
       if (page !== 'games') {
@@ -616,6 +632,13 @@ export function MultiplayerLobby({
     });
   }
 
+  async function handleAppleLogin() {
+    await runAction(async () => {
+      await continueWithApple();
+      setMessage(null);
+    });
+  }
+
   async function handleUpdatePassword() {
     await runAction(async () => {
       await updatePassword(newPassword);
@@ -677,7 +700,8 @@ export function MultiplayerLobby({
         : isCodeSent
           ? loginCode.trim().length < 6
           : email.trim().length === 0);
-    const loginButtonLabel = isLoginBusy
+    const isEmailLoginBusy = isLoginBusy && !isAppleAuthenticating;
+    const loginButtonLabel = isEmailLoginBusy
       ? usePasswordLogin
         ? 'Signing In...'
         : isCodeSent
@@ -694,6 +718,15 @@ export function MultiplayerLobby({
         <SuckerLobbyTitle />
         <View style={lobbyStyles.loginActionGroup}>
           <Text style={lobbyStyles.loginSectionTitle}>Play Friends</Text>
+          {Platform.OS === 'ios' && (
+            <>
+              <AppleSignInButton disabled={isLoginBusy || !isConfigured} onPress={() => void handleAppleLogin()} />
+              <Text style={lobbyStyles.accountHelpText}>
+                Already play? Sign in with email, then connect Apple in Profile to keep your games.
+              </Text>
+              <Text style={lobbyStyles.loginDividerText}>or use email</Text>
+            </>
+          )}
           {!usePasswordLogin && isCodeSent && <Text style={lobbyStyles.subtleText}>Code sent to {sentCodeEmail}</Text>}
           <TextInput
             autoCapitalize="none"
@@ -753,7 +786,7 @@ export function MultiplayerLobby({
             }
           >
             <View style={lobbyStyles.primaryButtonContent}>
-              {isLoginBusy && <ActivityIndicator color="#210505" size="small" />}
+              {isEmailLoginBusy && <ActivityIndicator color="#210505" size="small" />}
               <Text style={lobbyStyles.primaryButtonText}>{loginButtonLabel}</Text>
             </View>
           </Pressable>
@@ -841,6 +874,60 @@ export function MultiplayerLobby({
         )}
       </>,
       false,
+    );
+  }
+
+  if (session.user.app_metadata.provider === 'apple' && (!profile || profile.id !== session.user.id)) {
+    return renderShell(
+      <View style={lobbyStyles.scrollContent} testID="apple-profile-loading">
+        <SuckerLobbyTitle />
+        <ActivityIndicator color="#FFD329" />
+        <Text style={lobbyStyles.message}>{message ?? error ?? 'Loading your profile...'}</Text>
+        <Pressable
+          disabled={isBusy || isLoading}
+          onPress={() =>
+            void runAction(async () => {
+              await refreshProfile();
+            })
+          }
+          style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+          testID="retry-profile-button"
+        >
+          <Text style={lobbyStyles.signOutText}>Retry</Text>
+        </Pressable>
+        <Pressable
+          disabled={isBusy || isLoading}
+          onPress={() => void endSession()}
+          style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+        >
+          <Text style={lobbyStyles.signOutText}>Sign Out</Text>
+        </Pressable>
+      </View>,
+      false,
+    );
+  }
+
+  if (profile?.id === session.user.id && profile.needs_profile_setup === true) {
+    return renderShell(
+      <ScrollView
+        key="profile-setup"
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+        testID="profile-setup-page"
+      >
+        <SuckerLobbyTitle />
+        <ProfileSetupForm
+          key={session.user.id}
+          onSave={async (input) => {
+            await saveProfile(input);
+            setMessage(null);
+            if (page !== 'startFriend') setPage('games');
+          }}
+          onSignOut={endSession}
+        />
+      </ScrollView>,
     );
   }
 
@@ -1213,99 +1300,25 @@ export function MultiplayerLobby({
     );
   }
 
-  if (page === 'profile') {
+  if (page === 'password') {
     return renderShell(
       <ScrollView
+        key="password"
         contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
-        refreshControl={
-          <RefreshControl
-            colors={['#FFD329']}
-            onRefresh={() => void handleVisibleRefreshGames()}
-            progressBackgroundColor="#210505"
-            refreshing={isRefreshing}
-            tintColor="#FFD329"
-          />
-        }
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         style={lobbyStyles.scroll}
+        testID="password-page"
       >
         <SuckerLobbyTitle />
-        <ScreenHeader title="Profile" onBack={() => setPage('games')} />
-
+        <ScreenHeader
+          title="Password"
+          onBack={() => {
+            setMessage(null);
+            setPage('profile');
+          }}
+        />
         <View style={lobbyStyles.panel}>
-          <Text style={lobbyStyles.sectionTitle}>Player Info</Text>
-          <View style={lobbyStyles.profileAvatarSection} testID="profile-avatar-section">
-            <Pressable
-              accessibilityLabel="Change profile photo"
-              disabled={isBusy}
-              onPress={() => setAvatarPickerVisible(true)}
-              style={({ pressed }) => [lobbyStyles.profileAvatarButton, pressed && lobbyStyles.pressed]}
-              testID="profile-avatar-button"
-            >
-              <PlayerAvatar
-                avatarUrl={pendingAvatarUri ?? profile?.avatar_url}
-                name={displayName || 'Player'}
-                size={92}
-                testID="profile-avatar"
-              />
-              {isBusy && pendingAvatarUri ? (
-                <View style={lobbyStyles.avatarBusyOverlay}>
-                  <ActivityIndicator color="#FFD329" />
-                </View>
-              ) : (
-                <View style={lobbyStyles.avatarEditBadge}>
-                  <Text style={lobbyStyles.avatarEditBadgeText}>Edit</Text>
-                </View>
-              )}
-            </Pressable>
-            <Text style={lobbyStyles.avatarHelpText}>Tap to add or change your photo</Text>
-          </View>
-          <View style={lobbyStyles.profileField}>
-            <Text style={lobbyStyles.profileFieldLabel}>Display name</Text>
-            <TextInput
-              accessibilityLabel="Display name"
-              onChangeText={setDisplayName}
-              placeholder="Display name"
-              placeholderTextColor="#8A4B12"
-              style={lobbyStyles.input}
-              testID="display-name-input"
-              value={displayName}
-            />
-          </View>
-          <View style={lobbyStyles.profileField}>
-            <Text style={lobbyStyles.profileFieldLabel}>Username</Text>
-            <TextInput
-              accessibilityLabel="Username"
-              autoCapitalize="none"
-              onChangeText={setUsername}
-              placeholder="Username"
-              placeholderTextColor="#8A4B12"
-              style={lobbyStyles.input}
-              testID="username-input"
-              value={username}
-            />
-          </View>
-          <Pressable
-            disabled={isBusy || displayName.trim().length === 0}
-            onPress={() =>
-              void runAction(async () => {
-                await saveProfile({
-                  displayName: displayName.trim(),
-                  username: username.trim() || null,
-                });
-                setMessage('Profile saved.');
-                void refreshGames({ surfaceError: false });
-              })
-            }
-            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
-            testID="save-profile-button"
-          >
-            <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
-          </Pressable>
-        </View>
-
-        <View style={lobbyStyles.panel}>
-          <Text style={lobbyStyles.sectionTitle}>Account</Text>
           <View style={lobbyStyles.accountPasswordSection} testID="account-password-section">
             <Text style={lobbyStyles.accountHelpText}>
               Set a password to sign in with your email instead of a code. You can also use this form to change it.
@@ -1374,6 +1387,146 @@ export function MultiplayerLobby({
               <Text style={lobbyStyles.primaryButtonText}>Set or Change Password</Text>
             </Pressable>
           </View>
+        </View>
+        {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
+        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>,
+    );
+  }
+
+  if (page === 'profile') {
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
+        refreshControl={
+          <RefreshControl
+            colors={['#FFD329']}
+            onRefresh={() => void handleVisibleRefreshGames()}
+            progressBackgroundColor="#210505"
+            refreshing={isRefreshing}
+            tintColor="#FFD329"
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+      >
+        <SuckerLobbyTitle />
+        <ScreenHeader title="Profile" onBack={() => setPage('games')} />
+
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Player Info</Text>
+          <View style={lobbyStyles.profileAvatarSection} testID="profile-avatar-section">
+            <Pressable
+              accessibilityLabel="Change profile photo"
+              disabled={isBusy}
+              onPress={() => setAvatarPickerVisible(true)}
+              style={({ pressed }) => [lobbyStyles.profileAvatarButton, pressed && lobbyStyles.pressed]}
+              testID="profile-avatar-button"
+            >
+              <PlayerAvatar
+                avatarUrl={pendingAvatarUri ?? profile?.avatar_url}
+                name={displayName || 'Player'}
+                size={92}
+                testID="profile-avatar"
+              />
+              {isBusy && pendingAvatarUri ? (
+                <View style={lobbyStyles.avatarBusyOverlay}>
+                  <ActivityIndicator color="#FFD329" />
+                </View>
+              ) : (
+                <View style={lobbyStyles.avatarEditBadge}>
+                  <Text style={lobbyStyles.avatarEditBadgeText}>Edit</Text>
+                </View>
+              )}
+            </Pressable>
+            <Text style={lobbyStyles.avatarHelpText}>Tap to add or change your photo</Text>
+          </View>
+          <ProfileNameFields
+            disabled={isBusy}
+            displayName={displayName}
+            setDisplayName={setDisplayName}
+            setUsername={setUsername}
+            username={username}
+          />
+          <Pressable
+            disabled={isBusy || displayName.trim().length === 0}
+            onPress={() =>
+              void runAction(async () => {
+                await saveProfile({
+                  displayName: displayName.trim(),
+                  username: username.trim() || null,
+                });
+                setMessage('Profile saved.');
+                void refreshGames({ surfaceError: false });
+              })
+            }
+            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+            testID="save-profile-button"
+          >
+            <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
+          </Pressable>
+        </View>
+
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Account</Text>
+          {Platform.OS === 'ios' && (
+            <>
+              <View style={lobbyStyles.accountPasswordSection} testID="account-apple-section">
+                {session.user.identities?.some((identity) => identity.provider === 'apple') ? (
+                  <Text style={lobbyStyles.accountHelpText}>
+                    Apple connected. Continue with Apple to return to this account.
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={lobbyStyles.accountHelpText}>
+                      Connect Apple to sign in to this account and keep your games, even with Hide My Email.
+                    </Text>
+                    <AppleSignInButton
+                      compact
+                      disabled={isBusy || isLoading}
+                      onPress={() =>
+                        void runAction(async () => {
+                          const linkedSession = await continueWithApple('link');
+                          if (linkedSession) setMessage('Apple connected. Your games stay with this account.');
+                        })
+                      }
+                      testID="connect-apple-button"
+                    />
+                  </>
+                )}
+              </View>
+              <View style={lobbyStyles.accountDivider} />
+            </>
+          )}
+          {session.user.email && (
+            <Text
+              ellipsizeMode="middle"
+              numberOfLines={1}
+              selectable
+              style={lobbyStyles.accountEmail}
+              testID="account-email"
+            >
+              {session.user.email}
+            </Text>
+          )}
+          <Pressable
+            disabled={isBusy}
+            onPress={() => {
+              setMessage(null);
+              setPage('password');
+            }}
+            style={({ pressed }) => [
+              lobbyStyles.primaryButton,
+              lobbyStyles.accountActionButton,
+              isBusy && lobbyStyles.primaryButtonDisabled,
+              pressed && lobbyStyles.pressed,
+            ]}
+            testID="open-password-page-button"
+          >
+            <Text style={[lobbyStyles.primaryButtonText, lobbyStyles.accountActionButtonText]}>
+              Set or Change Password
+            </Text>
+          </Pressable>
           <View style={lobbyStyles.accountDivider} />
           <Pressable
             accessibilityRole="link"
@@ -1550,8 +1703,6 @@ export function MultiplayerLobby({
             onPress={() => {
               setDisplayName(profile?.display_name ?? '');
               setUsername(profile?.username ?? '');
-              setNewPassword('');
-              setConfirmPassword('');
               setMessage(null);
               setPage('profile');
             }}
@@ -1814,6 +1965,138 @@ function rememberWebPushPromptDismissed() {
   }
 
   window.localStorage.setItem(webPushPromptDismissedAtKey, String(Date.now()));
+}
+
+function ProfileNameFields({
+  disabled,
+  displayName,
+  setDisplayName,
+  setUsername,
+  username,
+}: {
+  disabled: boolean;
+  displayName: string;
+  setDisplayName: (value: string) => void;
+  setUsername: (value: string) => void;
+  username: string;
+}) {
+  return (
+    <>
+      <View style={lobbyStyles.profileField}>
+        <Text style={lobbyStyles.profileFieldLabel}>Name shown in games</Text>
+        <TextInput
+          editable={!disabled}
+          accessibilityHint="Use your name or a nickname."
+          accessibilityLabel="Name shown in games"
+          onChangeText={setDisplayName}
+          placeholder="e.g. Alex or Lucky Roller"
+          placeholderTextColor="#8A4B12"
+          style={lobbyStyles.input}
+          testID="display-name-input"
+          value={displayName}
+        />
+        <Text style={lobbyStyles.profileFieldHelp}>Use your name or a nickname.</Text>
+      </View>
+      <View style={lobbyStyles.profileField}>
+        <Text style={lobbyStyles.profileFieldLabel}>Username (optional)</Text>
+        <View style={lobbyStyles.usernameField}>
+          <TextInput
+            editable={!disabled}
+            accessibilityHint="Unique handle friends can search for. No spaces."
+            accessibilityLabel="Username (optional)"
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setUsername}
+            placeholder="e.g. alex_rolls"
+            placeholderTextColor="#8A4B12"
+            style={[lobbyStyles.input, lobbyStyles.usernameInput]}
+            testID="username-input"
+            value={username}
+          />
+          <View accessible={false} pointerEvents="none" style={lobbyStyles.usernamePrefix}>
+            <Text accessible={false} style={lobbyStyles.usernamePrefixText}>
+              @
+            </Text>
+          </View>
+        </View>
+        <Text style={lobbyStyles.profileFieldHelp}>Unique handle friends can search for. No spaces.</Text>
+      </View>
+    </>
+  );
+}
+
+function ProfileSetupForm({
+  onSave,
+  onSignOut,
+}: {
+  onSave: (input: ProfileInput) => Promise<unknown>;
+  onSignOut: () => Promise<void>;
+}) {
+  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    if (isSaving || !displayName.trim()) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      await onSave({ displayName, username, completeSetup: true });
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Unable to save your name. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <View style={[lobbyStyles.panel, lobbyStyles.profileSetupPanel]} testID="profile-setup-form">
+        <Text accessibilityRole="header" style={lobbyStyles.profileSetupTitle}>
+          Choose your player name
+        </Text>
+        <Text style={lobbyStyles.accountHelpText}>
+          Let friends know who they’re playing. You can change this later.
+        </Text>
+        <ProfileNameFields
+          disabled={isSaving}
+          displayName={displayName}
+          setDisplayName={setDisplayName}
+          setUsername={setUsername}
+          username={username}
+        />
+        {error && (
+          <Text accessibilityRole="alert" style={lobbyStyles.message}>
+            {error}
+          </Text>
+        )}
+        <Pressable
+          disabled={isSaving || !displayName.trim()}
+          onPress={() => void save()}
+          style={({ pressed }) => [
+            lobbyStyles.primaryButton,
+            (isSaving || !displayName.trim()) && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID="complete-profile-setup-button"
+        >
+          <View style={lobbyStyles.primaryButtonContent}>
+            {isSaving && <ActivityIndicator color="#210505" size="small" />}
+            <Text style={lobbyStyles.primaryButtonText}>{isSaving ? 'Saving...' : 'Continue'}</Text>
+          </View>
+        </Pressable>
+      </View>
+      <Pressable
+        disabled={isSaving}
+        onPress={() => void onSignOut()}
+        style={({ pressed }) => [lobbyStyles.signOutButton, pressed && lobbyStyles.pressed]}
+        testID="setup-sign-out-button"
+      >
+        <Text style={lobbyStyles.signOutText}>Sign Out</Text>
+      </Pressable>
+    </>
+  );
 }
 
 function ScreenHeader({ onBack, title }: { onBack: () => void; title: string }) {
@@ -2427,6 +2710,15 @@ function SuckerLobbyTitle() {
 }
 
 const lobbyStyles = StyleSheet.create({
+  accountActionButton: {
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 44,
+  },
+  accountActionButtonText: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
   accountDivider: {
     backgroundColor: '#8F3B10',
     height: 1,
@@ -3089,6 +3381,16 @@ const lobbyStyles = StyleSheet.create({
   profileAvatarButton: {
     position: 'relative',
   },
+  profileSetupPanel: {
+    gap: 12,
+    padding: 12,
+  },
+  profileSetupTitle: {
+    color: '#FFD329',
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 28,
+  },
   profileAvatarSection: {
     alignItems: 'center',
     gap: 8,
@@ -3098,11 +3400,36 @@ const lobbyStyles = StyleSheet.create({
     gap: 3,
     width: '100%',
   },
+  profileFieldHelp: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.88,
+  },
   profileFieldLabel: {
     color: '#FFF3C2',
     fontSize: 12,
     fontWeight: '900',
     textTransform: 'uppercase',
+  },
+  usernameField: {
+    position: 'relative',
+    width: '100%',
+  },
+  usernameInput: {
+    paddingLeft: 30,
+  },
+  usernamePrefix: {
+    bottom: 0,
+    justifyContent: 'center',
+    left: 12,
+    position: 'absolute',
+    top: 0,
+  },
+  usernamePrefixText: {
+    color: '#8A4B12',
+    fontSize: 16,
+    fontWeight: '800',
   },
   passwordHint: {
     color: '#FFD329',
