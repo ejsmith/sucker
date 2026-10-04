@@ -210,7 +210,9 @@ for (const hits of [1, 2]) {
     const option = page.getByTestId('token-option-sucker-punch');
     await waitForPressableEnabled(option);
     await expect(option).toContainText('Revenge Punch');
-    await expect(option).toHaveAccessibleName(`Revenge Punch, ${cost} tokens. They got you! Try to force a replay.`);
+    await expect(option).toHaveAccessibleName(
+      `Revenge Punch, ${cost} tokens. They got you. Punch them back! Try to force a replay.`,
+    );
     await page.screenshot({ path: test.info().outputPath(`revenge-${cost}-menu.png`) });
     await option.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
