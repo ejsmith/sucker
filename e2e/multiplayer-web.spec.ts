@@ -159,7 +159,9 @@ for (const cost of [2, 1]) {
     const counter = page.getByTestId('token-option-sucker-punch');
     await waitForPressableEnabled(counter);
     await expect(counter).toContainText('Counterpunch');
-    await expect(counter).toContainText(`${cost} token`);
+    await expect(counter).toHaveAccessibleName(
+      `Counterpunch, ${cost} tokens. They missed. Punch them back! Try to force a replay.`,
+    );
     await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-menu.png`);
     await counter.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');

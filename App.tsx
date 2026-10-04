@@ -4057,7 +4057,7 @@ export function LocalGameScreen({
                         cost={suckerPunchCost}
                         description={
                           suckerPunchKind === 'counter'
-                            ? `They missed! Punch back for ${suckerPunchCost} token${suckerPunchCost === 1 ? '' : 's'} before your turn. Miss, and they punch back for 1.`
+                            ? 'They missed. Punch them back! Try to force a replay.'
                             : suckerPunchKind === 'revenge'
                               ? 'They got you. Punch them back! Try to force a replay.'
                               : 'Knock their score out! Try to force a replay.'
