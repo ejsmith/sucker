@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { suckerPunchChanceByDie, suckerTokenCosts } from '../game';
@@ -75,6 +75,47 @@ const tokens: Rule[] = [
   },
 ];
 
+function RulesContent({ children }: { children: ReactNode }) {
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const scrollRange = Math.max(0, contentHeight - viewportHeight);
+  const trackHeight = Math.max(0, viewportHeight - 16);
+  const thumbHeight = Math.min(trackHeight, Math.max(24, (trackHeight * viewportHeight) / Math.max(1, contentHeight)));
+  const progress = scrollRange > 0 ? Math.min(1, Math.max(0, scrollOffset / scrollRange)) : 0;
+
+  return (
+    <View style={styles.scrollContainer}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        onContentSizeChange={(_width, height) => setContentHeight(height)}
+        onLayout={({ nativeEvent }) => setViewportHeight(nativeEvent.layout.height)}
+        onScroll={({ nativeEvent }) => setScrollOffset(nativeEvent.contentOffset.y)}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        testID="rules-content"
+      >
+        {children}
+      </ScrollView>
+      {viewportHeight > 0 && scrollRange > 1 && (
+        <View
+          aria-hidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          style={styles.scrollTrack}
+          testID="rules-scroll-indicator"
+        >
+          <View
+            style={[styles.scrollThumb, { height: thumbHeight, top: progress * (trackHeight - thumbHeight) }]}
+            testID="rules-scroll-thumb"
+          />
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function RulesDialog({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<Section>('Basics');
   const closeRef = useRef<AccessibilityTargetRef | null>(null);
@@ -125,13 +166,7 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
               </Pressable>
             ))}
           </View>
-          <ScrollView
-            key={section}
-            style={styles.scroll}
-            contentContainerStyle={styles.content}
-            showsVerticalScrollIndicator={false}
-            testID="rules-content"
-          >
+          <RulesContent key={section}>
             {section === 'Tokens' && <Text style={styles.intro}>Start with 10 tokens.</Text>}
             {rules.map(({ title, body, value }) => (
               <View key={title} style={styles.rule}>
@@ -163,7 +198,7 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
                 </View>
               </View>
             )}
-          </ScrollView>
+          </RulesContent>
         </View>
       </SafeAreaView>
     </Modal>
@@ -214,7 +249,18 @@ const styles = StyleSheet.create({
   selectedSection: { backgroundColor: '#FFD329' },
   sectionText: { color: '#FFF3C2', fontSize: 14, fontWeight: '700' },
   selectedSectionText: { color: '#210505' },
+  scrollContainer: { flexShrink: 1, minHeight: 0 },
   scroll: { flexShrink: 1 },
+  scrollTrack: {
+    position: 'absolute',
+    top: 8,
+    bottom: 8,
+    right: 6,
+    width: 4,
+    borderRadius: 2,
+    backgroundColor: '#673222',
+  },
+  scrollThumb: { position: 'absolute', width: 4, borderRadius: 2, backgroundColor: '#FFD329' },
   content: { paddingHorizontal: 18, paddingBottom: 20 },
   intro: { color: '#FFF3C2', fontSize: 14, lineHeight: 21, paddingTop: 16 },
   rule: { paddingVertical: 14, gap: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#673222' },

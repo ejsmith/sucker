@@ -67,8 +67,20 @@ for (const viewport of [
       expect(panel!.y + panel!.height).toBeLessThanOrEqual(viewport.height);
       await expect(page.getByTestId('rules-close')).toBeInViewport();
     }
+    const indicator = page.getByTestId('rules-scroll-indicator');
+    const thumb = page.getByTestId('rules-scroll-thumb');
+    await expect(indicator).toBeVisible();
+    const initialThumb = await thumb.boundingBox();
     await page.getByText('75%', { exact: true }).scrollIntoViewIfNeeded();
     await expect(page.getByText('75%', { exact: true })).toBeInViewport();
+    await expect.poll(async () => (await thumb.boundingBox())!.y).toBeGreaterThan(initialThumb!.y);
+    await page.getByTestId('rules-section-scoring').click();
+    await expect(indicator).toBeVisible();
+    await expect.poll(async () => (await thumb.boundingBox())!.y - (await indicator.boundingBox())!.y).toBe(0);
+    if (viewport.height >= 852) {
+      await page.getByTestId('rules-section-basics').click();
+      await expect(indicator).toHaveCount(0);
+    }
     await page.getByTestId('rules-close').click();
     await expect(page.getByTestId('game-menu-button')).toBeFocused();
   });
