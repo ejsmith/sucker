@@ -83,6 +83,8 @@
     "prepare:e2e-env": "node scripts/supabase-test-env.cjs",
     "test:integration:supabase": "node scripts/test-supabase-integration.cjs",
     "test:e2e:web": "node scripts/test-web-e2e.cjs",
+    "test:computer-quality": "tsc --project tsconfig.rules.json && node scripts/check-computer-quality.cjs",
+    "test:production": "playwright test --config playwright.production.config.ts",
     "test": "tsc --project tsconfig.rules.json && node --test tests/*.test.cjs",
     "ai-counterfactual": "tsc --project tsconfig.rules.json && node scripts/ai-counterfactual.cjs",
     "ai-optimizer": "tsc --project tsconfig.rules.json && node scripts/ai-optimizer.cjs",

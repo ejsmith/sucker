@@ -24,31 +24,52 @@ test('computer score simulation is deterministic for a seed', () => {
   assert.equal(simulateComputerScore(42), simulateComputerScore(42));
 });
 
-test('computer strategy clears a strong 1000-game average', () => {
-  const result = measureComputerStrategy({ gameCount: 1000, seed: 1 });
+test('computer simulation reports consistent totals for a small deterministic sample', () => {
+  const result = measureComputerStrategy({ gameCount: 8, seed: 1 });
 
-  assert.deepEqual(
-    {
-      gameCount: result.gameCount,
-      averageScore: Number(result.averageScore.toFixed(3)),
-      lowScore: result.lowScore,
-      highScore: result.highScore,
-    },
-    // Decision rollouts include both players' banked revenge discounts.
-    { gameCount: 1000, averageScore: 298.848, lowScore: 146, highScore: 579 },
-  );
+  assert.equal(result.gameCount, 8);
+  assert.equal(result.scores.length, 8);
+  assert.equal(result.averageScore, result.scores.reduce((sum, score) => sum + score, 0) / 8);
+  assert.equal(result.lowScore, Math.min(...result.scores));
+  assert.equal(result.highScore, Math.max(...result.scores));
+  assert.ok(result.scores.every((score) => Number.isInteger(score) && score > 0));
 });
 
-test('computer tournament advances the strongest candidate', () => {
-  const candidates = createComputerStrategyCandidates().slice(0, 4);
+test('computer tournament ranks candidates and only advances the strongest', (t) => {
+  const simulation = require('../.build/src/game/computerSimulation');
+  const candidates = createComputerStrategyCandidates().slice(0, 3);
+  const calls = [];
+  // Deliberately unsorted and tied averages: low score must break the tie.
+  const results = [
+    { averageScore: 200, lowScore: 100, highScore: 300 },
+    { averageScore: 300, lowScore: 150, highScore: 400 },
+    { averageScore: 300, lowScore: 200, highScore: 400 },
+  ];
+  t.mock.method(simulation, 'measureComputerStrategy', (options) => {
+    calls.push(options);
+    return {
+      ...results[candidates.findIndex((candidate) => candidate.strategy === options.strategy)],
+      gameCount: options.gameCount,
+      scores: [],
+    };
+  });
   const result = runComputerStrategyTournament({
     candidates,
-    rounds: [{ advanceCount: 1, gameCount: 10, seed: 1 }],
+    rounds: [
+      { advanceCount: 2, gameCount: 10, seed: 1 },
+      { advanceCount: 1, gameCount: 20, seed: 100 },
+    ],
   });
-
-  assert.equal(result.rounds.length, 1);
-  assert.equal(result.rounds[0].scores.length, 4);
-  assert.equal(result.winner, result.rounds[0].scores[0]);
+  assert.deepEqual(
+    result.rounds[0].scores.map((score) => score.candidate.name),
+    [candidates[2].name, candidates[1].name, candidates[0].name],
+  );
+  assert.deepEqual(
+    calls.slice(3).map((call) => call.strategy),
+    [candidates[2].strategy, candidates[1].strategy],
+  );
+  assert.ok(calls.slice(3).every((call) => call.gameCount === 20 && call.seed === 100));
+  assert.equal(result.winner.candidate.name, candidates[2].name);
 });
 
 test('side-balanced head-to-head measurement counts both player slots', () => {

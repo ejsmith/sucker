@@ -589,7 +589,7 @@ Deno.test('a missed-punch taunt remains available when the puncher is the active
   assertEquals(taunts[0]?.actor_id, bob.id);
 });
 
-Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {
+Deno.test('game-action rejects direct writes, token spoofing, and action floods', async () => {
   const [alice, bob] = await createUsers('action-abuse', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
 
@@ -617,17 +617,6 @@ Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, 
   });
   assertNoError(ownWebPush.error);
 
-  const oversized = await fetch(functionUrl, {
-    body: JSON.stringify({ padding: 'x'.repeat(33_000), requestId: crypto.randomUUID(), type: 'create_invite' }),
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${alice.session.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  assertEquals(oversized.status, 413);
-
   const floodRows = Array.from({ length: 120 }, () => ({
     action_type: 'abuse-test',
     actor_id: alice.id,
@@ -639,6 +628,37 @@ Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, 
   assertNoError((await admin.from('game_action_requests').insert(floodRows)).error);
   const rateLimited = await invokeGameAction(alice, { type: 'create_invite' }, 429);
   assertEquals(rateLimited.error, 'Too many game actions. Wait a moment and try again.');
+});
+
+Deno.test('game-action returns oversized-body errors promptly without claiming actions', async () => {
+  const [alice] = await createUsers('oversized-actions', ['Alice']);
+
+  for (const paddingLength of [33_000, 256_000, 33_000]) {
+    const oversized = await fetch(functionUrl, {
+      body: JSON.stringify({
+        padding: 'x'.repeat(paddingLength),
+        requestId: crypto.randomUUID(),
+        type: 'create_invite',
+      }),
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${alice.session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = await oversized.text();
+    assertEquals(oversized.status, 413);
+    assertEquals(JSON.parse(body), { error: 'Request body is too large.' });
+  }
+
+  const requests = await admin.from('game_action_requests').select('request_id').eq('actor_id', alice.id);
+  assertNoError(requests.error);
+  assertEquals(requests.data, []);
+
+  const invite = await invokeGameAction(alice, { type: 'create_invite' });
+  assertString(invite.inviteCode);
 });
 
 Deno.test('game-action removes open invites and hides started games from the actor', async () => {
