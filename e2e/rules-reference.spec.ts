@@ -26,7 +26,6 @@ test('rules stay optional and preserve the current turn and held dice', async ({
   await page.getByTestId('rules-section-scoring').click();
   await expect(dialog).toContainText('even with zero or a scratch');
   await page.getByTestId('rules-section-tokens').click();
-  await expect(dialog).toContainText('Suckers do not award tokens');
   await expect(dialog).toContainText('Counterpunch');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);

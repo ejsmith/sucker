@@ -127,9 +127,7 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
             showsVerticalScrollIndicator={false}
             testID="rules-content"
           >
-            {section === 'Tokens' && (
-              <Text style={styles.intro}>Start with 10 tokens. Suckers do not award tokens.</Text>
-            )}
+            {section === 'Tokens' && <Text style={styles.intro}>Start with 10 tokens.</Text>}
             {rules.map(({ title, body, value }) => (
               <View key={title} style={styles.rule}>
                 <View style={styles.ruleHeading}>
