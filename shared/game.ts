@@ -23,6 +23,8 @@ export type Player = {
   id: string;
   name: string;
   suckerTokens: number;
+  // Successful hits received since this player's last punch attempt, capped at two.
+  revengePunchDiscount?: 1 | 2;
   suckerBonusCategories: ScoreCategory[];
   scorecard: Scorecard;
 };
@@ -100,16 +102,40 @@ export type SuckerPunchOutcome = {
   landed: boolean;
   rollPercent: number;
   isCounterPunch?: boolean;
+  isRevengePunch?: boolean;
   tokenCost?: number;
 };
 
-export function getSuckerPunchCost(game: GameState, playerId: string): number {
+export type SuckerPunchKind = 'regular' | 'counter' | 'revenge';
+
+function getCounterPunchCost(game: GameState, playerId: string): number {
   return game.counterPunchPlayerId === playerId &&
     game.players[game.currentPlayerIndex]?.id === playerId &&
     game.phase === 'rolling' &&
     game.rollNumber === 0
     ? (game.counterPunchCost ?? suckerTokenCosts.counterPunch)
     : suckerTokenCosts.suckerPunch;
+}
+
+function getRevengePunchCost(game: GameState, playerId: string): number {
+  const discount =
+    game.phase === 'complete' ? 0 : (game.players.find((player) => player.id === playerId)?.revengePunchDiscount ?? 0);
+  return suckerTokenCosts.suckerPunch - discount;
+}
+
+export function getSuckerPunchCost(game: GameState, playerId: string): number {
+  return Math.min(getCounterPunchCost(game, playerId), getRevengePunchCost(game, playerId));
+}
+
+export function getSuckerPunchKind(game: GameState, playerId: string): SuckerPunchKind {
+  const counterCost = getCounterPunchCost(game, playerId);
+  if (getRevengePunchCost(game, playerId) < counterCost) return 'revenge';
+  return counterCost < suckerTokenCosts.suckerPunch ? 'counter' : 'regular';
+}
+
+export function clearRevengePunchDiscount(player: Player): Player {
+  const { revengePunchDiscount: _expired, ...nextPlayer } = player;
+  return nextPlayer;
 }
 
 export function expireCounterPunch(game: GameState, playerId: string): GameState {
@@ -123,18 +149,26 @@ export function expireCounterPunch(game: GameState, playerId: string): GameState
 
 export function applySuckerPunchOpportunity(
   game: GameState,
+  actorPlayerId: string,
   targetPlayerId: string,
   outcome: SuckerPunchOutcome,
 ): GameState {
   const { counterPunchPlayerId: _previous, counterPunchCost: _previousCost, ...nextGame } = game;
-  const spent =
-    outcome.tokenCost ?? (outcome.isCounterPunch ? suckerTokenCosts.counterPunch : suckerTokenCosts.suckerPunch);
+  // Revenge pricing must not accelerate the separate consecutive-miss chain.
+  const counterCost = getCounterPunchCost(game, actorPlayerId);
+  nextGame.players = game.players.map((player) => {
+    if (player.id === actorPlayerId) return clearRevengePunchDiscount(player);
+    if (player.id === targetPlayerId && outcome.landed) {
+      return { ...player, revengePunchDiscount: Math.min(2, (player.revengePunchDiscount ?? 0) + 1) as 1 | 2 };
+    }
+    return player;
+  });
   return outcome.landed
     ? nextGame
     : {
         ...nextGame,
         counterPunchPlayerId: targetPlayerId,
-        counterPunchCost: spent === suckerTokenCosts.suckerPunch ? 2 : 1,
+        counterPunchCost: counterCost === suckerTokenCosts.suckerPunch ? 2 : 1,
       };
 }
 
@@ -434,7 +468,7 @@ function applyScore(
     ...(complete && nextGame.counterPunchPlayerId
       ? expireCounterPunch(nextGame, nextGame.counterPunchPlayerId)
       : nextGame),
-    players,
+    players: complete ? players.map(clearRevengePunchDiscount) : players,
     currentPlayerIndex: complete ? game.currentPlayerIndex : (game.currentPlayerIndex + 1) % game.players.length,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
@@ -495,8 +529,13 @@ function sumDice(dice: Dice): number {
 
 function toPlayer(value: unknown): Player {
   const player = toRecord(value, 'Stored game has invalid player.');
+  const revengePunchDiscount = player.revengePunchDiscount;
+  if (revengePunchDiscount !== undefined && revengePunchDiscount !== 1 && revengePunchDiscount !== 2) {
+    throw new Error('Stored game has invalid revenge punch discount.');
+  }
 
   return {
+    ...(revengePunchDiscount === 1 || revengePunchDiscount === 2 ? { revengePunchDiscount } : {}),
     id: toString(player.id, 'Stored game has invalid player id.'),
     name: toString(player.name, 'Stored game has invalid player name.'),
     scorecard: toScorecard(player.scorecard),

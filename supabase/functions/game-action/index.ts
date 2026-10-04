@@ -9,8 +9,10 @@ import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import {
   createEmptyScorecard,
   applySuckerPunchOpportunity,
+  clearRevengePunchDiscount,
   expireCounterPunch,
   getSuckerPunchCost,
+  getSuckerPunchKind,
   type Dice,
   type DieValue,
   type GameState,
@@ -1535,7 +1537,7 @@ async function scoreRemoteTurn(
     extraRollsAvailable: 0,
     held: [false, false, false, false, false],
     phase: complete ? 'complete' : 'rolling',
-    players,
+    players: complete ? players.map(clearRevengePunchDiscount) : players,
     rollNumber: 0,
   };
   const rankedPlayers = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard)) : [];
@@ -1710,7 +1712,7 @@ async function prepareSuckerPunchChance(
   const cost = getSuckerPunchCost(state, actorId);
   if (actor.suckerTokens < cost) {
     throw new Error(
-      `You need ${cost} Sucker Token${cost === 1 ? '' : 's'} to ${cost < suckerTokenCosts.suckerPunch ? 'Counterpunch' : 'Sucker Punch'}.`,
+      `You need ${cost} Sucker Token${cost === 1 ? '' : 's'} to ${getSuckerPunchKind(state, actorId) === 'counter' ? 'Counterpunch' : getSuckerPunchKind(state, actorId) === 'revenge' ? 'Revenge Punch' : 'Sucker Punch'}.`,
     );
   }
 
@@ -1772,10 +1774,15 @@ async function suckerPunchTurn(
   const cost = getSuckerPunchCost(state, actorId);
   const outcome = {
     ...resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom),
-    isCounterPunch: cost < suckerTokenCosts.suckerPunch,
+    isCounterPunch: getSuckerPunchKind(state, actorId) === 'counter',
+    isRevengePunch: getSuckerPunchKind(state, actorId) === 'revenge',
     tokenCost: cost,
   };
-  let nextState = updatePlayerTokens(applySuckerPunchOpportunity(state, turn.player_id, outcome), actorId, -cost);
+  let nextState = updatePlayerTokens(
+    applySuckerPunchOpportunity(state, actorId, turn.player_id, outcome),
+    actorId,
+    -cost,
+  );
   if (outcome.landed) {
     nextState = removeScoredTurn(nextState, turn, turn.player_id, 0);
   }

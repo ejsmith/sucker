@@ -159,12 +159,14 @@ for (const cost of [2, 1]) {
     const counter = page.getByTestId('token-option-sucker-punch');
     await waitForPressableEnabled(counter);
     await expect(counter).toContainText('Counterpunch');
-    await expect(counter).toContainText(`${cost} token`);
+    await expect(counter).toHaveAccessibleName(
+      `Counterpunch, ${cost} tokens. They missed. Punch them back! Try to force a replay.`,
+    );
     await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-menu.png`);
     await counter.click();
     const dialog = page.getByTestId('sucker-punch-chance-dialog');
     await expect(dialog).toContainText('Counterpunch');
-    await expect(dialog).toContainText(`${cost} token`);
+    await expect(dialog).toContainText('They missed. Punch them back! Higher roll, higher chance.');
     await expect(page.getByTestId('game-screen')).toHaveScreenshot(`counterpunch-${cost}-dialog.png`);
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);
@@ -173,6 +175,62 @@ for (const cost of [2, 1]) {
     const after = await loadGame(game.id);
     expect(after.state.players[responderIndex].suckerTokens).toBe(0);
     expect(after.state.counterPunchPlayerId).toBeUndefined();
+    expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
+    await page.context().close();
+  });
+}
+
+for (const hits of [1, 2]) {
+  test(`revenge survives ${hits} hit(s) and reload with the correct price and label`, async ({ browser }) => {
+    const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const alice = await createUser(`revenge-alice-${runId}`, 'Alice Revenge E2E');
+    const bob = await createUser(`revenge-bob-${runId}`, 'Bob Revenge E2E');
+    let game = (await invokeTestGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game;
+    for (let hit = 0; hit < hits; hit++) {
+      await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
+      game = (await invokeTestGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' })).game;
+      const punched = await invokeTestGameAction(bob, {
+        gameId: game.id,
+        turnId: game.last_turn_id,
+        chanceDie: 6,
+        type: 'sucker_punch',
+      });
+      expect(punched.suckerPunchOutcome.landed).toBe(true);
+    }
+    await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
+    await invokeTestGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' });
+    await invokeTestGameAction(bob, { gameId: game.id, type: 'roll' });
+    game = (await invokeTestGameAction(bob, { gameId: game.id, category: 'chance', type: 'score_category' })).game;
+    const cost = 3 - hits;
+    game.state.players[0].suckerTokens = cost;
+    assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
+    const page = await openAuthedPage(browser, alice);
+    await openGameFromLobby(page, game.id);
+    await page.reload();
+    await waitForPressableEnabled(page.getByTestId('token-menu-button'));
+    await page.getByTestId('token-menu-button').click();
+    const option = page.getByTestId('token-option-sucker-punch');
+    await waitForPressableEnabled(option);
+    await expect(option).toContainText('Revenge Punch');
+    await expect(option).toHaveAccessibleName(
+      `Revenge Punch, ${cost} tokens. They got you. Punch them back! Try to force a replay.`,
+    );
+    await page.screenshot({ path: test.info().outputPath(`revenge-${cost}-menu.png`) });
+    await option.click();
+    const dialog = page.getByTestId('sucker-punch-chance-dialog');
+    await expect(dialog).toContainText('Revenge Punch');
+    await expect(dialog).toContainText('They got you. Punch them back! Higher roll, higher chance.');
+    await page.screenshot({ path: test.info().outputPath(`revenge-${cost}-dialog.png`) });
+    await page.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(dialog).toContainText(/Rolled [1-6]/);
+    const prepared = await loadGame(game.id);
+    expect(prepared.state.players[0].revengePunchDiscount).toBe(hits);
+    expect(prepared.state.players[0].suckerTokens).toBe(cost);
+    await page.getByTestId('sucker-punch-chance-roll-button').click();
+    await expect(dialog).toContainText(/Your punch landed!|They blocked your punch!/);
+    const after = await loadGame(game.id);
+    expect(after.state.players[0].suckerTokens).toBe(0);
+    expect(after.state.players[0].revengePunchDiscount).toBeUndefined();
     expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
     await page.context().close();
   });

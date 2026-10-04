@@ -2,6 +2,7 @@ import {
   availableCategories,
   applySuckerPunchOpportunity,
   getSuckerPunchCost,
+  getSuckerPunchKind,
   isSuckerRoll,
   maxAvailableRolls,
   mulliganCurrentTurn,
@@ -286,11 +287,12 @@ export function applyLocalSuckerPunch(
 
   const outcome = {
     ...(chanceDie ? resolveSuckerPunchOutcome(chanceDie, random) : rollSuckerPunchOutcome(random)),
-    isCounterPunch: cost < suckerTokenCosts.suckerPunch,
+    isCounterPunch: getSuckerPunchKind(game, puncher.id) === 'counter',
+    isRevengePunch: getSuckerPunchKind(game, puncher.id) === 'revenge',
     tokenCost: cost,
   };
-  const nextGame = applySuckerPunchOpportunity(game, scorer.id, outcome);
-  const players = game.players.map((player, index) => {
+  const nextGame = applySuckerPunchOpportunity(game, puncher.id, scorer.id, outcome);
+  const players = nextGame.players.map((player, index) => {
     if (outcome.landed && index === pendingTurn.scorerIndex) {
       return {
         ...player,
