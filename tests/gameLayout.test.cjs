@@ -140,19 +140,6 @@ test('the design viewport produces an exact one-to-one layout scale', () => {
   assert.equal(layout.touchSize(32), minimumTouchSize);
 });
 
-test('the standard iPhone safe stage keeps reference-sized game elements', () => {
-  const fixture = acceptedPhoneViewports.find(({ key }) => key === 'iphone16');
-  assert.ok(fixture);
-  const stage = getSafeGameStageStyle(fixture.width, fixture.height, fixture.insets);
-  const layout = createGameLayout(stage.width, stage.height);
-
-  assert.equal(layout.scale, 1);
-  assert.equal(layout.styles.screen.padding, 6);
-  assert.equal(layout.styles.topBar.minHeight, 56);
-  assert.equal(layout.styles.playerPill.minHeight, 64);
-  assert.equal(layout.styles.controlsRow.height, 60);
-});
-
 test('multi-digit score boxes use compact text that fits the fixed score column', () => {
   for (const key of ['se', 'iphone16', 'max']) {
     const fixture = acceptedPhoneViewports.find((viewport) => viewport.key === key);

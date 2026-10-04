@@ -29,7 +29,8 @@ export default defineConfig({
     },
     timeout: 10_000,
   },
-  fullyParallel: false,
+  fullyParallel: true,
+  outputDir: 'test-results/browser',
   projects: [
     {
       name: 'chromium',
@@ -41,7 +42,11 @@ export default defineConfig({
       use: { ...devices['iPhone 13'] },
     },
   ],
-  reporter: [['list']],
+  reporter: [
+    ['list'],
+    ['json', { outputFile: 'test-results/timings.json' }],
+    ...(process.env.CI ? [['blob'] as ['blob']] : []),
+  ],
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   testDir: './e2e',
   timeout: 60_000,
@@ -73,5 +78,5 @@ export default defineConfig({
       url: e2eBaseUrl,
     },
   ],
-  workers: 1,
+  workers: 2,
 });

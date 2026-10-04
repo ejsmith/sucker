@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, useWindowDimensions, type ScaledSize } from 'react-native';
+import { isMobileWebDevice } from './webDevice';
 
 const mobileWebWidthBreakpoint = 700;
 const widthChangeTolerance = 2;
@@ -27,10 +28,7 @@ export function useKeyboardStableWindowDimensions() {
     }
 
     const navigator = getWebNavigator();
-    const userAgent = navigator?.userAgent ?? '';
-    const isMobileDevice =
-      /Android|iPhone|iPad|iPod/i.test(userAgent) ||
-      (/Macintosh/i.test(userAgent) && (navigator?.maxTouchPoints ?? 0) > 1);
+    const isMobileDevice = isMobileWebDevice(navigator);
     if (!isMobileDevice) {
       return;
     }

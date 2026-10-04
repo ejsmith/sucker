@@ -1,0 +1,63 @@
+import { expect, test } from '@playwright/test';
+
+test('production export loads fonts, authenticates through the form, and supports local deep links', async ({
+  page,
+}) => {
+  // The export can contain real public deployment configuration. Do not send
+  // test authentication or telemetry to hosted services.
+  await page.route('**/*', (route) =>
+    new URL(route.request().url()).origin === 'http://127.0.0.1:8099' ? route.continue() : route.abort(),
+  );
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.text().includes('Unable to load Inter fonts')) errors.push(message.text());
+  });
+  // Exercise compiled auth UI without contacting a real account or sending mail.
+  const user = {
+    id: '00000000-0000-4000-8000-000000000001',
+    email: 'production-smoke@example.test',
+    aud: 'authenticated',
+    role: 'authenticated',
+    app_metadata: {},
+    user_metadata: {},
+    created_at: '2026-01-01T00:00:00Z',
+  };
+  const token =
+    [
+      { alg: 'HS256', typ: 'JWT' },
+      { sub: user.id, exp: Math.floor(Date.now() / 1000) + 3600, role: 'authenticated' },
+    ]
+      .map((value) => Buffer.from(JSON.stringify(value)).toString('base64url'))
+      .join('.') + '.test-only-signature';
+  await page.route(/\/auth\/v1\/otp(?:\?|$)/, (route) => route.fulfill({ json: {} }));
+  await page.route('**/auth/v1/verify', (route) =>
+    route.fulfill({
+      json: { access_token: token, refresh_token: 'test-only-refresh', expires_in: 3600, token_type: 'bearer', user },
+    }),
+  );
+  await page.route('**/auth/v1/user', (route) => route.fulfill({ json: user }));
+  await page.route('**/rest/v1/**', (route) =>
+    route.fulfill({
+      json: new URL(route.request().url()).pathname.endsWith('/profiles')
+        ? { id: user.id, display_name: 'Production Tester', username: 'production_tester', avatar_url: null }
+        : [],
+    }),
+  );
+  await page.routeWebSocket('**/realtime/v1/**', (socket) => socket.close());
+  await page.goto('/');
+  await page.getByTestId('login-email-input').fill('production-smoke@example.test');
+  await page.getByTestId('send-code-button').click();
+  await expect(page.getByTestId('login-code-input')).toBeVisible();
+  await page.getByTestId('login-code-input').fill('123456');
+  await page.getByTestId('verify-code-button').click();
+  await expect(page.getByText('Hi, Production Tester')).toBeVisible();
+  await page.goto('/local');
+  await expect(page.getByTestId('game-screen')).toBeVisible();
+  await page.getByTestId('roll-button').click();
+  await expect(page.getByTestId('dice-tray').locator('svg')).toHaveCount(5);
+  await page.reload();
+  await expect(page.getByTestId('game-screen')).toBeVisible();
+  expect(await page.evaluate(() => document.fonts.check('16px Inter_900Black'))).toBe(true);
+  expect(errors).toEqual([]);
+});
