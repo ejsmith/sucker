@@ -2,6 +2,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { Platform } from 'react-native';
 import { isMultiplayerConfigured, supabase } from './supabase';
+import { hasAppleIdentity } from './appleIdentity';
 
 export type AppleAuthAction = 'signIn' | 'link';
 
@@ -14,10 +15,12 @@ export async function authenticateWithApple(action: AppleAuthAction = 'signIn') 
     throw new Error('Online sign-in is not configured.');
   }
 
+  let linkingUserId: string | undefined;
   if (action === 'link') {
     const { data, error } = await supabase.auth.getUser();
     if (error) throw error;
     if (!data.user) throw new Error('Sign in to your existing account before connecting Apple.');
+    linkingUserId = data.user.id;
   }
 
   if (!(await AppleAuthentication.isAvailableAsync())) {
@@ -51,5 +54,19 @@ export async function authenticateWithApple(action: AppleAuthAction = 'signIn') 
       : await supabase.auth.signInWithIdToken(credentials);
   if (error) throw error;
   if (!data.session) throw new Error('Unable to finish signing in with Apple. Please try again.');
+  if (action === 'link') {
+    // The link response can carry the old user snapshot. Refresh also persists
+    // the updated account in auth storage so the connected state survives restart.
+    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError) throw refreshError;
+    if (
+      !refreshed.session ||
+      refreshed.session.user.id !== linkingUserId ||
+      !hasAppleIdentity(refreshed.session.user)
+    ) {
+      throw new Error('Unable to confirm the Apple connection. Please try again.');
+    }
+    return refreshed.session;
+  }
   return data.session;
 }

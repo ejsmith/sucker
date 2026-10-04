@@ -36,6 +36,7 @@ import {
 import { getProfilesByIds, searchProfiles } from './profiles';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
+import { AppleAccountSection } from './AppleAccountSection';
 import { isLocalMultiplayerDevelopment } from './env';
 import type { LocalTestPlayer } from './auth';
 import { AppleSignInButton } from './AppleSignInButton';
@@ -1471,30 +1472,16 @@ export function MultiplayerLobby({
           <Text style={lobbyStyles.sectionTitle}>Account</Text>
           {Platform.OS === 'ios' && (
             <>
-              <View style={lobbyStyles.accountPasswordSection} testID="account-apple-section">
-                {session.user.identities?.some((identity) => identity.provider === 'apple') ? (
-                  <Text style={lobbyStyles.accountHelpText}>
-                    Apple connected. Continue with Apple to return to this account.
-                  </Text>
-                ) : (
-                  <>
-                    <Text style={lobbyStyles.accountHelpText}>
-                      Connect Apple to sign in to this account and keep your games, even with Hide My Email.
-                    </Text>
-                    <AppleSignInButton
-                      compact
-                      disabled={isBusy || isLoading}
-                      onPress={() =>
-                        void runAction(async () => {
-                          const linkedSession = await continueWithApple('link');
-                          if (linkedSession) setMessage('Apple connected. Your games stay with this account.');
-                        })
-                      }
-                      testID="connect-apple-button"
-                    />
-                  </>
-                )}
-              </View>
+              <AppleAccountSection
+                user={session.user}
+                disabled={isBusy || isLoading}
+                onConnect={() =>
+                  void runAction(async () => {
+                    const linkedSession = await continueWithApple('link');
+                    if (linkedSession) setMessage('Apple connected. Your games stay with this account.');
+                  })
+                }
+              />
               <View style={lobbyStyles.accountDivider} />
             </>
           )}

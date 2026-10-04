@@ -13,6 +13,8 @@ function compile(file) {
 const appleSource = compile('../src/multiplayer/appleAuth.ts');
 const authSource = compile('../src/multiplayer/auth.ts');
 const session = { user: { id: 'existing-player', identities: [{ provider: 'apple' }] } };
+const identityExports = {};
+vm.runInNewContext(compile('../src/multiplayer/appleIdentity.ts'), { exports: identityExports });
 
 function loadApple({
   platform = 'ios',
@@ -22,12 +24,16 @@ function loadApple({
   token = 'apple-token',
   authError,
   user = session.user,
+  linkSession = session,
+  refreshedSession = session,
+  refreshError = null,
 } = {}) {
   const calls = [];
   const activity = [];
   let nextNonce = 0;
   const authResult = { data: { session }, error: authError ?? null };
   const modules = {
+    './appleIdentity': identityExports,
     'expo-apple-authentication': {
       isAvailableAsync: async () => {
         activity.push('check-apple-availability');
@@ -62,7 +68,11 @@ function loadApple({
           },
           linkIdentity: async (credentials) => {
             calls.push(['link', credentials]);
-            return authResult;
+            return { data: { session: linkSession }, error: authError ?? null };
+          },
+          refreshSession: async () => {
+            activity.push('refresh-session');
+            return { data: { session: refreshedSession }, error: refreshError };
           },
         },
       },
@@ -108,6 +118,44 @@ test('linking requires an existing signed-in player', async () => {
   const { authenticate, calls } = loadApple({ user: null });
   await assert.rejects(authenticate('link'), /existing account/);
   assert.equal(calls.length, 0);
+});
+
+test('linking refreshes stale identity data before reporting success', async () => {
+  const stale = { user: { id: 'existing-player', identities: [{ provider: 'email' }] } };
+  const { authenticate, activity } = loadApple({ user: stale.user, linkSession: stale });
+  const linked = await authenticate('link');
+  assert.equal(linked, session);
+  assert.equal(identityExports.hasAppleIdentity(linked.user), true);
+  assert.equal(activity.filter((entry) => entry === 'refresh-session').length, 1);
+});
+
+test('linking never reports success without a confirmed Apple identity on the same account', async () => {
+  for (const refreshedSession of [
+    null,
+    { user: { id: 'existing-player', identities: [] } },
+    { user: { id: 'different-player', identities: [{ provider: 'apple' }] } },
+  ]) {
+    await assert.rejects(loadApple({ refreshedSession }).authenticate('link'), /Unable to confirm/);
+  }
+  const refreshError = new Error('Network unavailable');
+  await assert.rejects(loadApple({ refreshError }).authenticate('link'), (error) => error === refreshError);
+});
+
+test('Apple connection recognizes identity and server provider metadata, never editable user metadata', () => {
+  for (const user of [
+    session.user,
+    { app_metadata: { providers: ['email', 'apple'] } },
+    { app_metadata: { provider: 'apple' } },
+  ]) {
+    assert.equal(identityExports.hasAppleIdentity(user), true);
+  }
+  for (const user of [
+    {},
+    { identities: [{ provider: 'email' }], app_metadata: { providers: ['email'] } },
+    { user_metadata: { provider: 'apple', providers: ['apple'] } },
+  ]) {
+    assert.equal(identityExports.hasAppleIdentity(user), false);
+  }
 });
 
 test('canceling native Apple sign-in does not call Supabase', async () => {
