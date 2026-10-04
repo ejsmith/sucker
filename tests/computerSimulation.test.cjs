@@ -34,7 +34,8 @@ test('computer strategy clears a strong 1000-game average', () => {
       lowScore: result.lowScore,
       highScore: result.highScore,
     },
-    { gameCount: 1000, averageScore: 298.851, lowScore: 146, highScore: 579 },
+    // Decision rollouts include both players' banked revenge discounts.
+    { gameCount: 1000, averageScore: 298.848, lowScore: 146, highScore: 579 },
   );
 });
 

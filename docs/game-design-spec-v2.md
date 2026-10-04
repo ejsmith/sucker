@@ -214,7 +214,20 @@ When any Sucker Punch misses, the target earns one opportunity to punch back at 
 - Uses the same chance die and hit odds as a regular Sucker Punch. A hit removes the score and forces a replay; a miss leaves the score intact. Both outcomes spend the displayed token cost.
 - Starting the next turn, passing the response, or throwing a punch consumes the opportunity. It cannot be saved for a later turn.
 - Every missed counterpunch gives the other player the next discount. A hit or an unused opportunity ends the chain; the next regular punch costs 3 tokens.
+- Revenge discounts do not advance this consecutive-miss chain. A missed Revenge Punch outside a counterpunch opportunity grants the usual 2-token counterpunch.
 - The game ends immediately when both scorecards are filled. Any unused counterpunch expires; it does not delay declaring the winner.
+
+Revenge Punch
+
+Every punch that lands on a player makes their next punch 1 token cheaper, to a minimum cost of 1 token.
+
+- One hit received saves 1 token: the next punch costs 2 tokens. Two or more hits received before punching back save 2 tokens: the next punch costs 1 token.
+- Hits from any punch count, including Counterpunch and Revenge Punch. Misses do not add a revenge discount.
+- The discount survives forced replays, normal turns, passing a response, and saving/reloading the game. It stays until the player attempts a punch or the game ends.
+- Throwing any punch consumes the entire banked discount, whether it hits or misses. Opening the punch dialog or rolling the chance die does not consume it.
+- If a counterpunch discount also applies, use the cheaper price. Discounts never add together. Both opportunities are consumed by the attempt; ties use the Counterpunch label.
+- Revenge uses the normal hit odds and response timing. It can only target the opponent's immediately previous submitted turn, before starting the responding player's turn.
+- Game completion immediately expires unused revenge discounts and does not open another response window.
 
 ⸻
 
