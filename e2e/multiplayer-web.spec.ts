@@ -123,7 +123,7 @@ for (const cost of [2, 1]) {
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(dialog).toContainText(/Rolled [1-6]/);
     await page.getByTestId('sucker-punch-chance-roll-button').click();
-    await expect(dialog).toContainText(/Punch landed!|Punch blocked!/);
+    await expect(dialog).toContainText(/Your punch landed!|They blocked your punch!/);
     const after = await loadGame(game.id);
     expect(after.state.players[responderIndex].suckerTokens).toBe(0);
     expect(after.state.counterPunchPlayerId).toBeUndefined();
@@ -1004,7 +1004,7 @@ test('local computer token menu enables turn-start actions after computer scores
   await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
   await expect(suckerPunchDieTrack).toBeVisible();
   await page.getByTestId('sucker-punch-chance-roll-button').click();
-  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Punch landed!|Punch blocked!/, {
+  await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(/Your punch landed!|They blocked your punch!/, {
     timeout: 3_000,
   });
   await expect(page.getByTestId('sucker-punch-result-image')).toBeVisible();
@@ -1035,9 +1035,9 @@ test('landed Sucker Punch wipes the score after the notification', async ({ brow
 
   const notice = page.getByTestId('sucker-punch-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
-  await expect(notice).toContainText('Punch landed!');
+  await expect(notice).toContainText('You got punched!');
   await expect(page.getByTestId('sucker-punch-recipient-result-image')).toBeVisible();
-  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'Punch landed');
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'You got punched!');
   await expect(notice).toBeHidden({ timeout: 5_000 });
   await page.waitForTimeout(200);
   await expect(suckerScoreBox).toContainText('50');
@@ -1077,9 +1077,9 @@ test('blocked Sucker Punch shows the blocked artwork to the target', async ({ br
 
   const notice = page.getByTestId('sucker-punch-blocked-notice');
   await expect(notice).toBeVisible({ timeout: 10_000 });
-  await expect(notice).toContainText('Punch blocked!');
+  await expect(notice).toContainText('You blocked their punch!');
   await expect(page.getByTestId('sucker-punch-recipient-result-image')).toBeVisible();
-  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'Punch blocked');
+  await expect(page.getByTestId('sucker-punch-recipient-result-image')).toHaveAttribute('aria-label', 'You blocked their punch!');
   await expect(notice).toBeHidden({ timeout: 5_000 });
   await expect(suckerScoreBox).toContainText('50');
 });

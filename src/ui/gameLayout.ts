@@ -364,7 +364,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         borderRadius: unit(14),
         borderWidth: stroke(4),
         gap: unit(10),
-        height: unit(240),
+        minHeight: unit(240),
         padding: unit(14),
       },
       gameOverPrimaryButton: {

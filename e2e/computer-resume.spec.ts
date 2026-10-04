@@ -36,7 +36,7 @@ for (const cost of [3, 2, 1] as const) {
     await page.screenshot({ path: test.info().outputPath('prepared-chance.png') });
     await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('10%');
     await button.click();
-    await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('Punch blocked!');
+    await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText('They blocked your punch!');
     await page.reload();
     await expect(page.getByTestId('token-menu-button')).toHaveText(String(10 - cost));
   });
@@ -86,7 +86,7 @@ for (const landed of [false, true]) {
     await expect(page.getByTestId('sucker-punch-chance-roll-button')).toContainText('THROW PUNCH');
     await page.getByTestId('sucker-punch-chance-roll-button').click();
     await expect(page.getByTestId('sucker-punch-chance-dialog')).toContainText(
-      landed ? 'Punch landed!' : 'Punch blocked!',
+      landed ? 'Your punch landed!' : 'They blocked your punch!',
     );
     await page.screenshot({ path: test.info().outputPath('punch-result.png') });
     await page.reload();

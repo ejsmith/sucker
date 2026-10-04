@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  Vibration,
   View,
   type StyleProp,
   type ViewStyle,
@@ -1608,6 +1609,7 @@ export function LocalGameScreen({
 
   useEffect(() => {
     return () => {
+      Vibration.cancel();
       if (suckerRollNoticeTimer.current) {
         clearTimeout(suckerRollNoticeTimer.current);
       }
@@ -1623,6 +1625,8 @@ export function LocalGameScreen({
     }
 
     setSuckerRollNoticeTitle(title);
+    // iOS patterns space fixed pulses; Android/web alternate pauses and durations.
+    Vibration.vibrate(Platform.OS === 'ios' ? [0, 550] : [0, 120, 100, 180]);
     suckerRollNoticeTimer.current = setTimeout(() => {
       setSuckerRollNoticeTitle(null);
       suckerRollNoticeTimer.current = null;
@@ -1672,6 +1676,7 @@ export function LocalGameScreen({
   function showSuckerPunchNoticeAndWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
     setSuckerPunchWipe(createSuckerPunchWipe(details));
     setShowSuckerPunchNotice(true);
+    Vibration.vibrate(400);
   }
 
   function showSuckerPunchScoreWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
@@ -2925,6 +2930,10 @@ export function LocalGameScreen({
     setSuckerPunchChanceFace(outcome.chanceDie);
     suckerPunchResultCompletion.current = completeAfterResult;
     setSuckerPunchDialog({ ...dialog, outcome, phase: 'result' });
+    if (outcome.landed) {
+      // iOS uses its fixed system pulse; Android/web use this shorter impact.
+      Vibration.vibrate(120);
+    }
   }
 
   async function handleRematch() {
@@ -4223,10 +4232,10 @@ export function LocalGameScreen({
                   maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchChanceTitle, gameLayout.styles.suckerPunchChanceTitle]}
                 >
-                  Punch landed!
+                  You got punched!
                 </Text>
                 <View style={[styles.suckerPunchResultImageShell, gameLayout.styles.suckerPunchResultImageShell]}>
-                  <SuckerPunchResultImage landed testID="sucker-punch-recipient-result-image" />
+                  <SuckerPunchResultImage landed recipient testID="sucker-punch-recipient-result-image" />
                 </View>
               </View>
             </View>
@@ -4242,10 +4251,10 @@ export function LocalGameScreen({
                   maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                   style={[styles.suckerPunchChanceTitle, gameLayout.styles.suckerPunchChanceTitle]}
                 >
-                  Punch blocked!
+                  You blocked their punch!
                 </Text>
                 <View style={[styles.suckerPunchResultImageShell, gameLayout.styles.suckerPunchResultImageShell]}>
-                  <SuckerPunchResultImage landed={false} testID="sucker-punch-recipient-result-image" />
+                  <SuckerPunchResultImage landed={false} recipient testID="sucker-punch-recipient-result-image" />
                 </View>
               </View>
             </View>
@@ -4811,8 +4820,8 @@ function SuckerPunchChanceDialog({
   const chancePercent = suckerPunchChanceByDie[face];
   const title = isResult
     ? outcome?.landed
-      ? 'Punch landed!'
-      : 'Punch blocked!'
+      ? 'Your punch landed!'
+      : 'They blocked your punch!'
     : isRolled
       ? `Rolled ${face}`
       : isThrowing
@@ -4859,7 +4868,7 @@ function SuckerPunchChanceDialog({
         <Text
           adjustsFontSizeToFit
           maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-          numberOfLines={1}
+          numberOfLines={isResult ? 2 : 1}
           style={[styles.suckerPunchChanceTitle, layout.styles.suckerPunchChanceTitle]}
         >
           {title}
@@ -4945,10 +4954,26 @@ function SuckerPunchChanceDialog({
   );
 }
 
-function SuckerPunchResultImage({ landed, testID }: { landed: boolean; testID: string }) {
+function SuckerPunchResultImage({
+  landed,
+  recipient = false,
+  testID,
+}: {
+  landed: boolean;
+  recipient?: boolean;
+  testID: string;
+}) {
   return (
     <Image
-      accessibilityLabel={landed ? 'Punch landed' : 'Punch blocked'}
+      accessibilityLabel={
+        recipient
+          ? landed
+            ? 'You got punched!'
+            : 'You blocked their punch!'
+          : landed
+            ? 'Your punch landed!'
+            : 'They blocked your punch!'
+      }
       source={landed ? suckerPunchLandedImage : suckerPunchBlockedImage}
       style={styles.suckerPunchResultImage}
       testID={testID}
@@ -6962,7 +6987,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 4,
     gap: 10,
-    height: 240,
+    minHeight: 240,
     padding: 14,
     ...createBoxShadowStyle(0, 6, 0, 'rgba(5, 5, 5, 0.5)'),
     width: '100%',
