@@ -13,6 +13,7 @@ function compile(file) {
 const appleSource = compile('../src/multiplayer/appleAuth.ts');
 const authSource = compile('../src/multiplayer/auth.ts');
 const session = {
+  access_token: 'linked-account-access-token',
   refresh_token: 'linked-account-token',
   user: { id: 'existing-player', identities: [{ provider: 'apple' }] },
 };
@@ -32,6 +33,11 @@ function loadApple({
   refreshError = null,
   userAfterApple = user,
   storedSessionAfterLink = linkSession,
+  synchronizedUser = session.user,
+  synchronizationError = null,
+  throwRefreshError = false,
+  throwSynchronizationError = false,
+  sessionAfterSynchronization,
 } = {}) {
   const calls = [];
   const activity = [];
@@ -40,6 +46,7 @@ function loadApple({
   let storedSession = null;
   const refreshInputs = [];
   const signOutOptions = [];
+  const synchronizationTokens = [];
   const authResult = { data: { session }, error: authError ?? null };
   const modules = {
     './appleIdentity': identityExports,
@@ -67,8 +74,14 @@ function loadApple({
       isMultiplayerConfigured: configured,
       supabase: {
         auth: {
-          getUser: async () => {
+          getUser: async (accessToken) => {
             activity.push('get-user');
+            if (accessToken) {
+              synchronizationTokens.push(accessToken);
+              if (sessionAfterSynchronization !== undefined) storedSession = sessionAfterSynchronization;
+              if (throwSynchronizationError) throw synchronizationError;
+              return { data: { user: synchronizationError ? null : synchronizedUser }, error: synchronizationError };
+            }
             return { data: { user: userReads++ === 0 ? user : userAfterApple }, error: null };
           },
           signInWithIdToken: async (credentials) => {
@@ -83,9 +96,11 @@ function loadApple({
           refreshSession: async (input) => {
             activity.push('refresh-session');
             refreshInputs.push(input);
-            storedSession = input ? refreshedSession : storedSession;
-            return { data: { session: refreshedSession }, error: refreshError };
+            if (throwRefreshError) throw refreshError;
+            if (input && refreshedSession && !refreshError) storedSession = refreshedSession;
+            return { data: { session: refreshError ? null : refreshedSession }, error: refreshError };
           },
+          getSession: async () => ({ data: { session: storedSession }, error: null }),
           signOut: async (options) => {
             signOutOptions.push(options);
             storedSession = null;
@@ -109,6 +124,7 @@ function loadApple({
     activity,
     refreshInputs,
     signOutOptions,
+    synchronizationTokens,
     getStoredSession: () => storedSession,
   };
 }
@@ -153,12 +169,49 @@ test('linking refreshes stale identity data before reporting success', async () 
   assert.equal(activity.filter((entry) => entry === 'refresh-session').length, 1);
 });
 
-test('linking never reports success without a confirmed Apple identity on the same account', async () => {
-  for (const refreshedSession of [null, { user: { id: 'existing-player', identities: [] } }]) {
-    await assert.rejects(loadApple({ refreshedSession }).authenticate('link'), /Unable to confirm/);
+test('a successful link reloads the authoritative user when refresh fails or has stale identity data', async () => {
+  const stale = { ...session, user: { id: 'existing-player', identities: [{ provider: 'email' }] } };
+  for (const options of [
+    { refreshError: new Error('Network unavailable') },
+    { refreshError: new Error('Network unavailable'), throwRefreshError: true },
+    { refreshedSession: null },
+    { refreshedSession: stale },
+  ]) {
+    const auth = loadApple({ linkSession: stale, ...options });
+    const result = await auth.authenticate('link');
+    assert.equal(result.user, session.user);
+    assert.deepEqual(auth.synchronizationTokens, [session.access_token]);
+    assert.equal(auth.calls.filter(([kind]) => kind === 'link').length, 1);
+    assert.equal(auth.signOutOptions.length, 0);
   }
-  const refreshError = new Error('Network unavailable');
-  await assert.rejects(loadApple({ refreshError }).authenticate('link'), (error) => error === refreshError);
+});
+
+test('losing connectivity after linking preserves the successful session without linking again', async () => {
+  const stale = { ...session, user: { id: 'existing-player', identities: [] } };
+  for (const throwSynchronizationError of [false, true]) {
+    const auth = loadApple({
+      linkSession: stale,
+      refreshError: new Error('Offline'),
+      synchronizationError: new Error('Offline'),
+      throwSynchronizationError,
+    });
+    assert.equal(await auth.authenticate('link'), stale);
+    assert.equal(auth.getStoredSession(), stale);
+    assert.equal(auth.calls.filter(([kind]) => kind === 'link').length, 1);
+  }
+});
+
+test('follow-up user synchronization cannot return another account or restore a signed-out account', async () => {
+  const other = { ...session, user: { id: 'other-player' } };
+  for (const options of [
+    { synchronizedUser: other.user },
+    { sessionAfterSynchronization: other },
+    { sessionAfterSynchronization: null },
+  ]) {
+    const auth = loadApple({ refreshError: new Error('Offline'), ...options });
+    await assert.rejects(auth.authenticate('link'), /account changed/);
+    assert.equal(auth.getStoredSession(), null);
+  }
 });
 
 test('refresh uses the linked session even if another account becomes current during linking', async () => {

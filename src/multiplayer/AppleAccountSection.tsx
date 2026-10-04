@@ -7,16 +7,18 @@ export function AppleAccountSection({
   user,
   disabled,
   onConnect,
+  connected = hasAppleIdentity(user),
 }: {
   user: User;
   disabled: boolean;
   onConnect: () => void;
+  connected?: boolean;
 }) {
   if (Platform.OS !== 'ios') return null;
 
   return (
     <View style={styles.section} testID="account-apple-section">
-      {hasAppleIdentity(user) ? (
+      {connected ? (
         <View accessibilityLiveRegion="polite" style={styles.connected} testID="apple-connected-status">
           <Text style={styles.heading}>✓ Apple connected</Text>
           <Text style={styles.help}>You can sign in with Apple to return to this account and your games.</Text>

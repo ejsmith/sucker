@@ -103,6 +103,7 @@ export function MultiplayerLobby({
     endSession,
     error,
     isAppleAuthenticating,
+    isAppleConnected,
     isConfigured,
     isLoading,
     profile,
@@ -1474,6 +1475,7 @@ export function MultiplayerLobby({
             <>
               <AppleAccountSection
                 user={session.user}
+                connected={isAppleConnected}
                 disabled={isBusy || isLoading}
                 onConnect={() =>
                   void runAction(async () => {

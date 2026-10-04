@@ -71,15 +71,27 @@ export async function authenticateWithApple(action: AppleAuthAction = 'signIn') 
       throw new Error('Your signed-in account changed. Please sign in again before connecting Apple.');
     }
     if (data.session.user.id !== linkingUserId) return rejectAccountMismatch();
-    // The link response can carry the old user snapshot. Refresh also persists
-    // the updated account in auth storage so the connected state survives restart.
-    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession(data.session);
-    if (refreshError) throw refreshError;
+    // Linking has already succeeded. Updating its snapshot is best effort: a
+    // network failure here must not send the player through linking a second time.
+    const { data: refreshed } = await supabase.auth.refreshSession(data.session).catch(() => ({
+      data: { session: null },
+    }));
     if (refreshed.session && refreshed.session.user.id !== linkingUserId) return rejectAccountMismatch();
-    if (!refreshed.session || !hasAppleIdentity(refreshed.session.user)) {
-      throw new Error('Unable to confirm the Apple connection. Please try again.');
+    if (refreshed.session && hasAppleIdentity(refreshed.session.user)) return refreshed.session;
+
+    const linkedSession = refreshed.session ?? data.session;
+    const { data: current } = await supabase.auth.getUser(linkedSession.access_token).catch(() => ({
+      data: { user: null },
+    }));
+    if (current.user && current.user.id !== linkingUserId) return rejectAccountMismatch();
+    // Do not restore an old account after a sign-out or switch during these reads.
+    const { data: active, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    if (!active.session || active.session.user.id !== linkingUserId) return rejectAccountMismatch();
+    if (current.user) {
+      return { ...active.session, user: current.user };
     }
-    return refreshed.session;
+    return active.session;
   }
   return data.session;
 }

@@ -21,7 +21,7 @@ function load(file, modules) {
   return exports;
 }
 
-function render(user, platform = 'ios') {
+function render(user, platform = 'ios', connected) {
   const native = require('react-native-web');
   const { AppleAccountSection } = load('../src/multiplayer/AppleAccountSection.tsx', {
     'react/jsx-runtime': require('react/jsx-runtime'),
@@ -32,7 +32,9 @@ function render(user, platform = 'ios') {
         React.createElement('button', { 'data-testid': testID }, 'Continue with Apple'),
     },
   });
-  return renderToStaticMarkup(React.createElement(AppleAccountSection, { user, disabled: false, onConnect() {} }));
+  return renderToStaticMarkup(
+    React.createElement(AppleAccountSection, { user, connected, disabled: false, onConnect() {} }),
+  );
 }
 
 test('connected iOS accounts show persistent confirmation without the connect button', () => {
@@ -52,6 +54,12 @@ test('unlinked accounts retain the connect action and no false success indicator
   const html = render({ identities: [{ provider: 'email' }] });
   assert.match(html, /connect-apple-button/);
   assert.doesNotMatch(html, /apple-connected-status/);
+});
+
+test('a confirmed link hides the connect button while its user snapshot is still stale', () => {
+  const html = render({ identities: [{ provider: 'email' }] }, 'ios', true);
+  assert.match(html, /apple-connected-status/);
+  assert.doesNotMatch(html, /connect-apple-button/);
 });
 
 test('web and Android do not offer the native Apple account control', () => {
