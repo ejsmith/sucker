@@ -2,6 +2,7 @@ import { totalScore, upperBonus } from '../game';
 import type { GameState, ScoreCategory, Scorecard } from '../game';
 import { buildCompletedPlayerStats, type SuckerStatAction, type SuckerStatTurn } from '../../shared/stats';
 import { isMultiplayerConfigured, supabase } from './supabase';
+import { enqueueComputerResult, flushComputerResults } from './computerResultQueue';
 
 export type ComputerStats = Awaited<ReturnType<typeof getComputerStats>>;
 
@@ -30,22 +31,36 @@ export async function getComputerStats() {
   return data;
 }
 
-export async function recordComputerGameResult(game: GameState, actions: SuckerStatAction[], turns: SuckerStatTurn[]) {
+export async function recordComputerGameResult(
+  game: GameState,
+  actions: SuckerStatAction[],
+  turns: SuckerStatTurn[],
+  profileId?: string | null,
+) {
+  const ownerId = await queueComputerGameResult(game, actions, turns, profileId);
+  return ownerId ? flushComputerResults(ownerId) : null;
+}
+
+export async function queueComputerGameResult(
+  game: GameState,
+  actions: SuckerStatAction[],
+  turns: SuckerStatTurn[],
+  profileId?: string | null,
+) {
   if (!isMultiplayerConfigured || game.phase !== 'complete') {
     return null;
   }
 
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    throw sessionError;
+  let ownerId = profileId;
+  if (ownerId === undefined) {
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error) throw error;
+    ownerId = session?.user.id ?? null;
   }
-  if (!session) {
-    return null;
-  }
+  if (!ownerId) return null;
 
   const player = game.players[0];
   const computer = game.players[1];
@@ -64,7 +79,7 @@ export async function recordComputerGameResult(game: GameState, actions: SuckerS
     winnerId: playerScore > computerScore ? player.id : computerScore > playerScore ? computer.id : null,
   });
 
-  const { data, error } = await supabase.rpc('record_computer_game_result', {
+  await enqueueComputerResult(ownerId, game.id, {
     buzzer_beater_wins: playerResult.buzzer_beater_win,
     computer_scored_four_of_a_kind: scoredCategory(computer.scorecard, 'fourOfAKind'),
     computer_scored_full_house: scoredCategory(computer.scorecard, 'fullHouse'),
@@ -94,11 +109,7 @@ export async function recordComputerGameResult(game: GameState, actions: SuckerS
     upper_bonus_awarded: upperBonus(player.scorecard) > 0,
   });
 
-  if (error) {
-    throw error;
-  }
-
-  return data;
+  return ownerId;
 }
 
 function scoredCategory(scorecard: Scorecard, category: ScoreCategory) {

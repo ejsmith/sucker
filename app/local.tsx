@@ -6,6 +6,8 @@ import type { ComputerSession } from '../src/game/computerSession';
 import { clearComputerSession, loadComputerSession, saveComputerSession } from '../src/game/computerSessionStorage';
 import { isMultiplayerConfigured } from '../src/multiplayer';
 import { getCurrentSession } from '../src/multiplayer/auth';
+import { queueComputerGameResult } from '../src/multiplayer/computerStats';
+import { flushComputerResults } from '../src/multiplayer/computerResultQueue';
 import { useGameList } from '../src/navigation/GameListProvider';
 import { Pressable } from '../src/ui/Pressable';
 
@@ -30,7 +32,12 @@ export default function LocalGameRoute() {
         ownerResolved.current = true;
         return loadComputerSession(ownerId.current);
       })
-      .then((session) => {
+      .then(async (session) => {
+        if (!active.current) return;
+        if (session?.game.phase === 'complete' && !session.recordedGameIds.includes(session.game.id)) {
+          await queueComputerGameResult(session.game, session.actions, session.turns, ownerId.current);
+          void flushComputerResults().catch(() => undefined);
+        }
         if (!active.current) return;
         const resumable = session?.game.phase === 'complete' ? null : session;
         latestSession.current = resumable;
@@ -100,6 +107,7 @@ export default function LocalGameRoute() {
         <LocalGameScreen
           key={generation}
           initialLocalSession={loaded.session}
+          localPlayerProfileId={loaded.profileId}
           onLocalSessionChange={persist}
           onNewComputerGame={() => setConfirmNew(true)}
           localPlayerAvatarUrl={localPlayerProfile?.avatarUrl}
