@@ -482,7 +482,9 @@ test('the installed PWA document fills the large viewport when percentage height
   });
   await page.route(/\/$/, async (route) => {
     if (!route.request().isNavigationRequest()) return route.continue();
-    const response = await route.fetch();
+    // Metro can reset a connection while serving concurrent viewport tests.
+    // Retry only ECONNRESET on this read; HTTP errors and assertions still fail.
+    const response = await route.fetch({ maxRetries: 2 });
     // Model iOS's shortened percentage containing block independently from
     // its 956px large viewport. Simply resizing the page cannot catch this.
     await route.fulfill({

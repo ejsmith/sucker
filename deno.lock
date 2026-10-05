@@ -56,7 +56,7 @@
         "npm:react-native@0.86.3",
         "npm:react@19.2.3",
         "npm:sharp@~0.35.3",
-        "npm:supabase@^2.109.1",
+        "npm:supabase@2.110.0",
         "npm:typescript@~6.0.3",
         "npm:web-push@^3.6.7"
       ]

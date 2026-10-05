@@ -216,6 +216,22 @@ jobs:
       - name: Test Supabase integration
         run: npm run test:integration:supabase
 
+      - name: Capture Supabase failure diagnostics
+        if: failure()
+        run: node scripts/capture-supabase-diagnostics.cjs
+
+      - name: Upload Supabase failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supabase-integration-diagnostics
+          path: test-results/supabase
+          retention-days: 14
+
+      - name: Stop Supabase
+        if: always()
+        run: npx supabase stop --no-backup || true
+
   web-e2e:
     name: Web E2E (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
@@ -268,6 +284,10 @@ jobs:
 
       - name: Test web E2E
         run: npm run test:e2e:web -- --shard=${{ matrix.shard }}/4
+
+      - name: Capture Supabase failure diagnostics
+        if: failure()
+        run: node scripts/capture-supabase-diagnostics.cjs
 
       - name: Stop Supabase
         if: always()
