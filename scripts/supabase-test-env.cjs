@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { checkSupabaseHttp } = require('./check-supabase-http.cjs');
 
 const envFilePath = path.resolve(__dirname, '..', 'supabase', '.temp', 'e2e.env');
 const expoEnvFilePath = path.resolve(__dirname, '..', '.env.local');
@@ -232,6 +233,10 @@ function startMinimalSupabase() {
   stopSupabaseIfCi();
   useCiMinimalSupabaseConfig();
   runSupabase(['start', '--exclude', minimalSupabaseStartExclude.join(',')]);
+  const config = fs.readFileSync(supabaseConfigPath, 'utf8');
+  const projectId = /^project_id\s*=\s*"([^"]+)"/m.exec(config)?.[1];
+  if (!projectId) throw new Error('Cannot identify the local Supabase test project.');
+  checkSupabaseHttp(projectId);
 }
 
 function shouldResetSupabaseDatabase() {
