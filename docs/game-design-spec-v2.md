@@ -302,9 +302,10 @@ After a turn is submitted:
 Jab
 
 - Jab sends the waiting opponent a turn reminder.
-- Available after it has been their turn for 1 hour, with an 8-hour cooldown per game and sender.
-- Hide Jab whenever it cannot be used, including the wait period, cooldown, your own turn, and completed or inviting games.
-- After sending, show “Jab sent.” and hide the button until it is available again.
+- Available after it has been their turn for 1 hour, with an 8-hour cooldown per sender and recipient across all their games. A Jab to one opponent does not affect other opponents, and hiding or finishing a game does not reset the cooldown.
+- Hide Jab during the wait period, cooldown, your own turn, and completed or inviting games.
+- Always reserve the Jab button's space so availability changes do not move the game card contents. During an operation, keep eligible Jab buttons visible but disabled until the operation finishes.
+- After sending, show “Jab sent.” and hide Jab on every game with that opponent until it is available again.
 
 ⸻
 

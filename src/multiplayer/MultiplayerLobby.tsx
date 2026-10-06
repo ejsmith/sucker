@@ -579,7 +579,9 @@ export function MultiplayerLobby({
         onGamesChange(
           profileId,
           visibleGames.map((currentGame) =>
-            currentGame.id === game.id ? { ...currentGame, last_nudged_at: new Date().toISOString() } : currentGame,
+            currentGame.current_player_id === game.current_player_id
+              ? { ...currentGame, last_nudged_at: new Date().toISOString() }
+              : currentGame,
           ),
         );
       }
@@ -2161,7 +2163,7 @@ function GameListItem({
   const myScore = me ? totalScore(me.scorecard) : 0;
   const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
   const isMyTurn = game.current_player_id === profileId;
-  const showJab = !isBusy && canJabGame(game, profileId, now);
+  const showJab = canJabGame(game, profileId, now);
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
   const waitText =
@@ -2243,7 +2245,7 @@ function GameListItem({
                 <Text style={lobbyStyles.scoreDivider}>-</Text>
                 <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
               </View>
-              {showJab && <View style={lobbyStyles.jabButtonPlaceholder} />}
+              <View style={lobbyStyles.jabButtonPlaceholder} />
             </View>
           </View>
           <Text style={lobbyStyles.waitText}>{waitText}</Text>
@@ -2251,10 +2253,12 @@ function GameListItem({
         {showJab && (
           <Pressable
             accessibilityLabel={`Jab ${opponentName}`}
+            disabled={isBusy}
             onPress={() => onJabGame(game)}
             style={({ pressed }) => [
               lobbyStyles.jabButton,
               lobbyStyles.jabButtonOverlay,
+              isBusy && lobbyStyles.primaryButtonDisabled,
               pressed && lobbyStyles.pressed,
             ]}
             testID={`jab-game-${game.id}`}

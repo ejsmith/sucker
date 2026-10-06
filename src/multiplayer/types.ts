@@ -10,6 +10,7 @@ export type RemoteGameRow = {
   current_player_id: string | null;
   id: string;
   last_turn_id: string | null;
+  // Latest Jab this viewer sent to current_player_id across all games.
   last_nudged_at: string | null;
   state: GameState;
   status: RemoteGameStatus;

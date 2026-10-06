@@ -80,16 +80,26 @@ test('a real Realtime update reaches the board while fallback timers are paused'
   }
 });
 
-test('Jab is hidden until available and disappears after sending', async ({ browser }) => {
+test('Jab keeps cards stable and other eligible buttons visible while sending', async ({ browser }, testInfo) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`jab-alice-${runId}`, 'Alice Jab E2E');
   const bob = await createUser(`jab-bob-${runId}`, 'Bob Jab E2E');
+  const charlie = await createUser(`jab-charlie-${runId}`, 'Charlie Jab E2E');
   const game = (await invokeTestGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game;
+  const otherGame = (await invokeTestGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game;
+  const differentOpponentGame = (
+    await invokeTestGameAction(charlie, { opponentProfileId: bob.id, type: 'create_game' })
+  ).game;
   const page = await openAuthedPage(browser, bob);
   await dismissTurnNotificationPrompt(page);
   const jab = page.getByTestId(`jab-game-${game.id}`);
+  const otherJab = page.getByTestId(`jab-game-${otherGame.id}`);
+  const differentOpponentJab = page.getByTestId(`jab-game-${differentOpponentGame.id}`);
+  const card = page.getByTestId(`game-list-item-${game.id}`);
+  const otherCard = page.getByTestId(`game-list-item-${otherGame.id}`);
   await expect(page.getByTestId(`game-card-${game.id}`)).toBeVisible();
   await expect(jab).toBeHidden();
+  const hiddenCardBox = await card.boundingBox();
   // Age only the displayed turn, keeping authentication/session clocks real.
   await page.route('**/rest/v1/games?**', async (route) => {
     const response = await route.fetch();
@@ -97,7 +107,9 @@ test('Jab is hidden until available and disappears after sending', async ({ brow
     await route.fulfill({
       response,
       json: games.map((row: { id: string; updated_at: string }) =>
-        row.id === game.id ? { ...row, updated_at: new Date(Date.now() - 2 * 60 * 60 * 1_000).toISOString() } : row,
+        [game.id, otherGame.id, differentOpponentGame.id].includes(row.id)
+          ? { ...row, updated_at: new Date(Date.now() - 2 * 60 * 60 * 1_000).toISOString() }
+          : row,
       ),
     });
   });
@@ -106,6 +118,11 @@ test('Jab is hidden until available and disappears after sending', async ({ brow
   await expect(jab).toBeVisible();
   await expect(jab).toHaveText('Jab');
   await expect(jab).toHaveAccessibleName('Jab Alice Jab E2E');
+  await expect(otherJab).toBeEnabled();
+  await expect(differentOpponentJab).toBeEnabled();
+  const availableCardBox = await card.boundingBox();
+  const otherCardBox = await otherCard.boundingBox();
+  expect(availableCardBox).toEqual(hiddenCardBox);
   const [scoreBox, jabBox] = await Promise.all([
     page.getByTestId(`score-game-${game.id}`).boundingBox(),
     jab.boundingBox(),
@@ -113,13 +130,48 @@ test('Jab is hidden until available and disappears after sending', async ({ brow
   expect(jabBox!.x).toBeCloseTo(scoreBox!.x, 0);
   expect(jabBox!.width).toBeCloseTo(scoreBox!.width, 0);
   await expect(page.getByTestId(`game-list-item-${game.id}`)).toHaveScreenshot('game-list-item-with-jab.png');
-  await jab.click();
+  let releaseJab!: () => void;
+  const jabResponse = new Promise<void>((resolve) => {
+    releaseJab = resolve;
+  });
+  await page.route('**/functions/v1/game-action', async (route) => {
+    if (route.request().postDataJSON()?.type === 'nudge_turn') await jabResponse;
+    await route.continue();
+  });
+  try {
+    await jab.click();
+    await expect(jab).toBeVisible();
+    await expect(jab).toBeDisabled();
+    await expect(otherJab).toBeVisible();
+    await expect(otherJab).toBeDisabled();
+    await expect(differentOpponentJab).toBeVisible();
+    await expect(differentOpponentJab).toBeDisabled();
+    expect(await card.boundingBox()).toEqual(availableCardBox);
+    expect(await otherCard.boundingBox()).toEqual(otherCardBox);
+    await page.screenshot({ path: testInfo.outputPath('jab-sending.png') });
+  } finally {
+    releaseJab();
+  }
   await expect(page.getByText('Jab sent.')).toBeVisible();
   await expect(jab).toBeHidden();
+  await expect(otherJab).toBeHidden();
+  await expect(differentOpponentJab).toBeEnabled();
+  expect(await card.boundingBox()).toEqual(availableCardBox);
+  expect(await otherCard.boundingBox()).toEqual(otherCardBox);
   await page.reload();
   await expect(page.getByTestId(`game-card-${game.id}`)).toBeVisible();
   await expect(jab).toBeHidden();
+  await expect(otherJab).toBeHidden();
+  await expect(differentOpponentJab).toBeEnabled();
   await expect(page.getByTestId(`game-list-item-${game.id}`)).toHaveScreenshot('game-list-item-jab-cooldown.png');
+  await page.screenshot({ path: testInfo.outputPath('jab-sent.png') });
+  // Removing the originating game must not make another Jab to Alice available.
+  await invokeTestGameAction(bob, { gameId: game.id, type: 'remove_game' });
+  await page.reload();
+  await expect(page.getByTestId(`game-card-${game.id}`)).toBeHidden();
+  await expect(otherCard).toBeVisible();
+  await expect(otherJab).toBeHidden();
+  await expect(differentOpponentJab).toBeEnabled();
   await page.context().close();
 });
 

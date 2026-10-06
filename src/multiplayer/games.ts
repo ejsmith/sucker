@@ -31,6 +31,7 @@ import {
 } from './actionRecovery';
 import { createGameListRealtimeTopic } from './realtimeTopics';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
+import { jabCooldownMs } from './jab';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -74,14 +75,16 @@ export async function listMyGames() {
 
   const data = [...(activeGames ?? []), ...(completedGames ?? [])];
 
-  const gameIds = data.map((game) => game.id);
+  const currentPlayerIds = [
+    ...new Set(data.flatMap((game) => (game.current_player_id ? [game.current_player_id] : []))),
+  ];
   const completedGameIds = (completedGames ?? []).map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
-    loadLastNudges(gameIds),
+    loadLastNudges(currentPlayerIds),
     loadSuckerTokensSpent(completedGameIds),
   ]);
   return data.map((game) =>
-    toRemoteGameRow(game, lastNudges.get(game.id) ?? null, suckerTokensSpent.get(game.id) ?? {}),
+    toRemoteGameRow(game, lastNudges.get(game.current_player_id ?? '') ?? null, suckerTokensSpent.get(game.id) ?? {}),
   );
 }
 
@@ -650,8 +653,8 @@ export function subscribeToGameListChanges(
   };
 }
 
-async function loadLastNudges(gameIds: string[]) {
-  if (gameIds.length === 0) {
+async function loadLastNudges(recipientIds: string[]) {
+  if (recipientIds.length === 0) {
     return new Map<string, string>();
   }
 
@@ -664,10 +667,11 @@ async function loadLastNudges(gameIds: string[]) {
 
   const { data, error } = await supabase
     .from('turn_actions')
-    .select('game_id, created_at')
+    .select('payload, created_at')
     .eq('actor_id', user.id)
     .eq('action_type', 'nudge_turn')
-    .in('game_id', gameIds)
+    .in('payload->>targetPlayerId', recipientIds)
+    .gte('created_at', new Date(Date.now() - jabCooldownMs).toISOString())
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -675,9 +679,13 @@ async function loadLastNudges(gameIds: string[]) {
   }
 
   const lastNudges = new Map<string, string>();
-  for (const action of data as Pick<TurnActionRow, 'created_at' | 'game_id'>[]) {
-    if (!lastNudges.has(action.game_id)) {
-      lastNudges.set(action.game_id, action.created_at);
+  for (const action of data ?? []) {
+    const recipientId =
+      action.payload && typeof action.payload === 'object' && !Array.isArray(action.payload)
+        ? action.payload.targetPlayerId
+        : null;
+    if (typeof recipientId === 'string' && !lastNudges.has(recipientId)) {
+      lastNudges.set(recipientId, action.created_at);
     }
   }
 

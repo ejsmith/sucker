@@ -737,6 +737,93 @@ Deno.test('game-action jabs the current player only after the wait window and co
   );
 });
 
+Deno.test('Jab cooldown is atomic across games and remains scoped to the sender and recipient', async () => {
+  const [alice, bob, charlie] = await createUsers('jab-recipient', ['Alice', 'Bob', 'Charlie']);
+  const games: GameRow[] = [];
+  for (let index = 0; index < 3; index++) {
+    games.push((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow);
+  }
+  const otherOpponentGame = (await invokeGameAction(charlie, { opponentProfileId: bob.id, type: 'create_game' }))
+    .game as GameRow;
+  const reverseGame = (await invokeGameAction(bob, { opponentProfileId: alice.id, type: 'create_game' }))
+    .game as GameRow;
+  await delay(1_100);
+
+  const attempts = await Promise.all(
+    games.map(async (game) => {
+      const action = { gameId: game.id, type: 'nudge_turn', requestId: crypto.randomUUID() };
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${bob.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(action),
+      });
+      return { action, status: response.status, body: await response.json() };
+    }),
+  );
+  const accepted = attempts.filter((attempt) => attempt.status === 200);
+  assertEquals(accepted.length, 1);
+  for (const rejected of attempts.filter((attempt) => attempt.status !== 200)) {
+    assertEquals(rejected.status, 400);
+    assertEquals(rejected.body.error, 'You can jab this player again 8 hours after your last jab.');
+  }
+  assertEquals(accepted[0].body.notificationProfileIds, [alice.id]);
+  const replay = await invokeGameAction(bob, accepted[0].action);
+  assertEquals(replay, accepted[0].body);
+
+  const sentJabs = () =>
+    bob.client
+      .from('turn_actions')
+      .select('id, game_id, created_at, payload')
+      .eq('actor_id', bob.id)
+      .eq('action_type', 'nudge_turn')
+      .eq('payload->>targetPlayerId', alice.id);
+  const history = await sentJabs();
+  assertNoError(history.error);
+  assertEquals(history.data?.length, 1);
+
+  // A different recipient and the reverse direction have independent cooldowns.
+  const otherJab = await invokeGameAction(bob, { gameId: otherOpponentGame.id, type: 'nudge_turn' });
+  assertEquals(otherJab.notificationProfileIds, [charlie.id]);
+  const reverseJab = await invokeGameAction(alice, { gameId: reverseGame.id, type: 'nudge_turn' });
+  assertEquals(reverseJab.notificationProfileIds, [bob.id]);
+
+  // Hidden games no longer appear through game RLS, but the sender must still
+  // be able to load that reminder when rendering a different game with Alice.
+  await invokeGameAction(bob, { gameId: accepted[0].action.gameId, type: 'remove_game' });
+  const afterHiding = await sentJabs();
+  assertNoError(afterHiding.error);
+  assertEquals(afterHiding.data, history.data);
+  const otherGame = games.find((game) => game.id !== accepted[0].action.gameId)!;
+  const blocked = await invokeGameAction(bob, { gameId: otherGame.id, type: 'nudge_turn' }, 400);
+  assertEquals(blocked.error, 'You can jab this player again 8 hours after your last jab.');
+  const outsiderHistory = await charlie.client.from('turn_actions').select('id').eq('id', history.data![0].id);
+  assertNoError(outsiderHistory.error);
+  assertEquals(outsiderHistory.data, []);
+  const forbiddenInsert = await bob.client.from('turn_actions').insert({
+    game_id: otherGame.id,
+    actor_id: bob.id,
+    action_type: 'nudge_turn',
+    payload: { targetPlayerId: alice.id },
+  });
+  assertEquals(Boolean(forbiddenInsert.error), true);
+
+  // Age only the persisted reminder. Production clients cannot update actions.
+  const expired = await admin
+    .from('turn_actions')
+    .update({ created_at: new Date(Date.now() - 8 * 60 * 60 * 1_000 - 1_000).toISOString() } as never)
+    .eq('id', history.data![0].id);
+  assertNoError(expired.error);
+  const nextJab = await invokeGameAction(bob, { gameId: otherGame.id, type: 'nudge_turn' });
+  assertEquals(nextJab.notificationProfileIds, [alice.id]);
+  const afterExpiry = await sentJabs();
+  assertNoError(afterExpiry.error);
+  assertEquals(afterExpiry.data?.length, 2);
+});
+
 Deno.test('App Store direct Punch honors displayed odds and retries without charging twice', async () => {
   const [alice, bob, outsider] = await createUsers('legacy-punch', ['Alice', 'Bob', 'Outsider']);
   for (const chanceDie of [1, 6]) {

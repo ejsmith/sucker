@@ -116,7 +116,6 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
 };
 const nudgeTurnWaitMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_WAIT_MS') ?? 60 * 60 * 1_000;
-const nudgeCooldownMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_COOLDOWN_MS') ?? 8 * 60 * 60 * 1_000;
 
 Deno.serve(async (request) => {
   const timer = new ActionTimer();
@@ -1314,24 +1313,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
     throw new Error('You can jab after it has been their turn for 1 hour.');
   }
 
-  const cooldownCutoff = new Date(now - nudgeCooldownMs).toISOString();
-  const { data: recentNudge, error: recentNudgeError } = await admin
-    .from('turn_actions')
-    .select('id')
-    .eq('game_id', gameId)
-    .eq('actor_id', actorId)
-    .eq('action_type', 'nudge_turn')
-    .gte('created_at', cooldownCutoff)
-    .limit(1)
-    .maybeSingle();
-
-  if (recentNudgeError) {
-    throw recentNudgeError;
-  }
-  if (recentNudge) {
-    throw new Error('You can jab this player again 8 hours after your last jab.');
-  }
-
+  // The insert atomically enforces the sender/recipient cooldown across games.
   mutationState.mayHaveWritten = true;
   await insertAction(admin, gameId, actorId, 'nudge_turn', {
     targetPlayerId: game.current_player_id,
