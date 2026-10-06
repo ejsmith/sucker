@@ -13,6 +13,7 @@
     "src/game/**/*.ts",
     "src/haptics/patterns.ts",
     "src/haptics/player.ts",
+    "src/haptics/nativePatternPlayer.ts",
     "src/multiplayer/actionRecovery.ts",
     "src/multiplayer/gameRefresh.ts",
     "src/multiplayer/heldDice.ts",

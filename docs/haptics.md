@@ -1,51 +1,86 @@
-# Trying game haptics
+# Trying custom game haptics
 
-Open any game, open the three-dot menu, and choose **Haptics Lab**. The lab is
-available in native builds, including TestFlight. It also opens on web for layout
-and interaction checks, but web does not reproduce native haptics.
+Open a game → three-dot menu → **Haptics Lab** in the iPhone or Android app.
+Web previews the layout and game artwork, but produces no haptics.
 
-- **Punch**, **Get Hit**, and **Sucker** have independent choices.
-- Select a preset, then use **Try choice**, **Try saved**, or **Try original**.
-- **Replay game moment** shows the game's result artwork or Sucker banner. Turn
-  it off to compare effects by feel alone. Previews never roll dice, spend tokens,
-  submit a turn, or send multiplayer actions.
-- Multi-tap presets allow 50–250 ms spacing. Start delay is 0–250 ms after the
-  result appears. Both change in 25 ms increments.
-- **Use this in games** saves that event's choice on this device. Closing the lab
-  without saving leaves the previous choice active. Choose **Off** to disable
-  an event, or **Original** to restore its old vibration.
+The second lab replaces the closely related system taps with six authored
+patterns. Each event can use any pattern:
 
-Start with **Crisp** for a landed punch, **Heavy** for getting punched, and
-**Success** for a Sucker. Compare **Windup**, **Aftershock**, and **Flourish** as
-the multi-tap alternatives. These are starting points for device testing, not a
-claim about which feels best. Test repeated use as well as the first impression.
+| Effect      | Starting duration | Shape                                                         |
+| ----------- | ----------------- | ------------------------------------------------------------- |
+| Crack       | 100 ms            | Sharp strike with a short continuous burst                    |
+| Body blow   | 300 ms            | Low strike with a sustained, fading tail                      |
+| Rumble      | 450 ms            | Three continuous waves without discrete strikes               |
+| Double hit  | 300 ms            | Sharp strike, silence, then a heavier hit                     |
+| Build & pop | 450 ms            | Accelerating strikes over a rising vibration, ending in a pop |
+| Victory     | 600 ms            | Three separated bursts increasing in strength and sharpness   |
 
-Saved choices use AsyncStorage key `sucker.haptics.v1`. The native driver uses
-Expo Haptics on iOS and Android's semantic haptic feedback on Android; the
-Original preset retains React Native Vibration. iOS impact styles and Android
-effects are different platform implementations and need separate device testing.
-Feedback is suppressed while the lab is open and while the app is inactive.
-Starting a new effect, closing the lab, or backgrounding cancels queued taps.
-An impact already delivered to the hardware cannot be recalled.
+The defaults are **Crack** for landing a punch, **Body blow** for getting punched,
+and **Build & pop** for a Sucker. These are candidates for physical device testing;
+code and browser checks cannot establish which feels satisfying.
 
-## Validation
+1. Select a shape, then **Try choice**. **Try saved** and **Try original** compare
+   it with your saved choice and the vibration from before the first lab.
+2. Turn off **Replay game moment** to compare by feel alone. Previews never roll
+   dice, spend tokens, submit turns, or send multiplayer actions.
+3. Expand **Tune effect** to adjust strength (25–100%), sharpness (0–100%),
+   duration (50–900 ms), and start delay (0–250 ms after the result appears).
+   Sharpness at 50% preserves the pattern's authored texture; 0% softens it and
+   100% sharpens it. Duration scales the entire timeline, preserving its rhythm.
+4. **Reset this effect** restores the selected shape's starting values.
+5. **Use this in games** saves that event's choice on this device. The three
+   events are independent. Closing without saving discards the draft.
+6. **Off** disables an event; **Original** restores its old system vibration.
 
-`tests/haptics.test.cjs` covers saved-choice validation, event isolation, timing,
-replacement/cancellation, background suppression, and unsupported hardware.
-The normal app/Edge typechecks and tests remain required.
+The waveform shows strength over time; vertical lines mark discrete strikes.
+All graphs span their selected duration, so compare the displayed duration too.
+The preview/save buttons stay visible while the tuning controls scroll.
 
-On a physical phone:
+## Native implementation
 
-1. Compare all three events with and without the visual preview.
-2. Save different effects and timings, close/reopen the app, and confirm all three
-   choices remain selected.
-3. Verify landed-punch, received-punch, and Sucker feedback in a real game. A
-   missed punch must not trigger the landed-punch effect.
-4. Start a multi-tap preview and immediately close the lab or background the app.
-   Queued taps should stop and should not replay on return.
-5. Try Off for each event. Check iOS System Haptics and Low Power Mode if the
-   native presets produce no feedback.
+`react-native-pulsar` 1.7.0 supplies the native engine: Core Haptics on iOS and
+Pulsar's Android implementation. Patterns combine discrete strikes and continuous
+amplitude/sharpness curves. The whole pattern is submitted to native at once;
+only the optional initial delay uses a JavaScript timer. No sound is added.
 
-Adding Expo Haptics requires a new native build. Keep the app-version runtime
-separate from previously built binaries without this native dependency. Once the
-module is installed, preset/timing adjustments require only JavaScript changes.
+`driver.native.ts` accesses Pulsar's pinned `RNPulsar` bridge. The public 1.7.0
+composer hook's imperative `parse()` allocates a new native handle without
+releasing its previous handle. `nativePatternPlayer.ts` instead explicitly stops
+and releases the previous handle before creating the next, retaining at most one.
+Check this bridge contract when upgrading Pulsar. Web resolves `driver.ts`, which
+never imports the native library. Missing/unsupported engines are reported in
+the lab; custom patterns do not silently fall back to identical system taps.
+
+Starting a preview, switching choices/tabs, closing the lab, backgrounding, or
+unmounting cancels delayed starts and stops/releases the active native pattern.
+Normal game feedback is suppressed while the lab is open. An already delivered
+strike cannot be recalled. Android hardware may approximate curves and sharpness;
+test its feel separately from iPhone.
+
+Preferences use AsyncStorage `sucker.haptics.v2`. When absent, the lab reads v1:
+Off and Original survive, retired presets use the new default for their event,
+and the old tap spacing is discarded. The v1 record remains available to an older
+app version; the first explicit save writes the complete v2 preferences.
+
+## Build and validation
+
+The new native engine needs a new app binary. App version/runtime **1.3.1** keeps
+it separate from 1.3.0 binaries without Pulsar. Build and submit from the MacBook
+using the existing production EAS profile. After this engine is installed, these
+pattern data and lab controls can be adjusted in JavaScript.
+
+Required automated checks are the app/Edge typechecks and test suites.
+`tests/haptics.test.cjs` covers migration, tuning bounds, complete native timelines,
+replacement/background cancellation, and native resource cleanup.
+`e2e/haptics.spec.ts` covers phone layout, independent persistence, failed saves,
+discarded drafts, and preview isolation from gameplay. Native prebuild/codegen
+checks do not replace compiling and testing an iOS binary.
+
+On a physical phone, compare each shape both with and without artwork; save a
+different choice for each event and confirm it after relaunch. Test actual landed
+punches, received punches, and Suckers (a missed punch must not play a landed hit).
+Start a long rumble and immediately stop, close, or background: it must stop and
+must not resume later. Test Off, repeated auditions, and the tuning extremes.
+
+References: [Pulsar React Native SDK](https://docs.swmansion.com/pulsar/sdk/react-native/)
+and [Pulsar preset playground](https://docs.swmansion.com/pulsar/presets-playground/).

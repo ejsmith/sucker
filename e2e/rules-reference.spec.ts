@@ -46,7 +46,7 @@ for (const viewport of [
     await page.getByTestId('game-menu-button').click();
     const menu = page.getByTestId('game-top-menu');
     const actions = menu.getByRole('button');
-    await expect(actions).toHaveCount(3);
+    await expect(actions).toHaveCount(4);
     const boxes = await actions.evaluateAll((elements) =>
       elements.map((element) => {
         const rect = element.getBoundingClientRect();
