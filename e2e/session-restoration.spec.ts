@@ -156,6 +156,79 @@ test('restoring a persisted session never renders the login form', async ({ page
   expect(await page.evaluate(() => (window as typeof window & { loginFlashed?: boolean }).loginFlashed)).toBe(false);
 });
 
+for (const viewport of [
+  { width: 393, height: 852 },
+  { width: 375, height: 667 },
+]) {
+  test(`offline lobby keeps computer play above saved games and inside the safe area (${viewport.width}px)`, async ({
+    page,
+    context,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
+    });
+    await page.route(/\/$/, async (route) => {
+      if (!route.request().isNavigationRequest()) return route.continue();
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        body: (await response.text()).replace(
+          '</head>',
+          '<style>[style*="safe-area-inset-top"] { padding: 62px 0 34px !important; }</style></head>',
+        ),
+      });
+    });
+    const fixture = await setup(page);
+    for (let index = 0; index < 4; index++) {
+      fixture.games.push({ ...fixture.games[0], id: `00000000-0000-4000-8000-00000000001${index}` });
+    }
+    await page.goto('/');
+    await expect(page.getByText('6 active games')).toBeVisible();
+    let offline = true;
+    await page.route(`${backend}/**`, (route) => (offline ? route.abort('internetdisconnected') : route.fallback()));
+    await context.setOffline(true);
+    const notice = page.getByTestId('session-connection-notice');
+    const computer = page.getByTestId('play-computer-button');
+    const scroll = page.getByTestId('lobby-games-scroll');
+    // Valid credentials must still show the offline state immediately; no auth
+    // refresh failure or scrolling to the bottom of a long list is required.
+    await expect(notice).toContainText('You’re offline');
+    await expect(notice).toContainText('Your sign-in is saved.');
+    await expect(computer).toHaveCount(1);
+    await expect(computer).toBeInViewport({ ratio: 1 });
+    await expect(page.getByTestId('retry-session-button')).toHaveCount(0);
+    await expect(page.getByTestId('refresh-games-button')).toHaveCount(0);
+    await expect(page.getByText('Saved games', { exact: true })).toBeVisible();
+    const noticeBox = (await notice.boundingBox())!;
+    const computerBox = (await computer.boundingBox())!;
+    expect(noticeBox.y).toBeGreaterThan(62);
+    expect(computerBox.y + computerBox.height).toBeLessThan(viewport.height - 34);
+    expect(computerBox.height).toBeGreaterThanOrEqual(44);
+    expect(await notice.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect(await scroll.boundingBox()).toMatchObject({ y: 0, height: viewport.height });
+    await page.screenshot({ path: testInfo.outputPath('offline-lobby-safe-area.png') });
+    await scroll.evaluate((node) => {
+      node.scrollTop = 150;
+    });
+    await expect.poll(async () => (await notice.boundingBox())!.y).toBeLessThan(noticeBox.y - 100);
+    await scroll.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    offline = false;
+    await context.setOffline(false);
+    await expect(notice).toHaveCount(0);
+    await expect(page.getByTestId('refresh-games-button')).toBeEnabled();
+    await expect(page.getByTestId(/^game-card-/)).toHaveCount(6);
+    // Returning offline keeps the primary action usable after recovery.
+    offline = true;
+    await context.setOffline(true);
+    await expect(notice).toBeVisible();
+    await computer.click();
+    await expect(page.getByTestId('roll-button')).toBeEnabled();
+  });
+}
+
 test('reload renders the saved lobby and photos before server refresh completes', async ({ page }, testInfo) => {
   const fixture = await setup(page);
   await page.goto('/');

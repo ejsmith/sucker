@@ -121,7 +121,8 @@ export function MultiplayerLobby({
     updatePassword,
     verifySignInCode,
   } = useMultiplayerSession();
-  const { consumeRecoveredActions, recoveredActions } = useNetworkStatus();
+  const { consumeRecoveredActions, isOffline, recoveredActions } = useNetworkStatus();
+  const showConnectionNotice = isOffline || isSessionUnavailable;
   const [email, setEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [password, setPassword] = useState('');
@@ -234,35 +235,66 @@ export function MultiplayerLobby({
     );
   }
 
+  function renderConnectionNotice(showComputer = false) {
+    if (!showConnectionNotice) return null;
+    return (
+      <View
+        accessibilityLiveRegion="polite"
+        role="status"
+        style={lobbyStyles.connectionNotice}
+        testID="session-connection-notice"
+      >
+        <View style={lobbyStyles.connectionNoticeHeader}>
+          <Text style={lobbyStyles.connectionNoticeTitle}>
+            {isOffline ? 'You’re offline' : 'Connection interrupted'}
+          </Text>
+          {!isOffline && (
+            <Pressable
+              accessibilityRole="button"
+              disabled={isReconnecting}
+              onPress={() => void reconnectSession()}
+              style={({ pressed }) => [lobbyStyles.connectionRetry, pressed && lobbyStyles.pressed]}
+              testID="retry-session-button"
+            >
+              <Text style={lobbyStyles.connectionRetryText}>{isReconnecting ? 'Retrying…' : 'Retry'}</Text>
+            </Pressable>
+          )}
+        </View>
+        <Text style={lobbyStyles.connectionNoticeText}>
+          {isOffline
+            ? session
+              ? 'Your sign-in is saved. Games will refresh when you’re back online.'
+              : 'You can play the computer without an internet connection.'
+            : session
+              ? 'Your sign-in is saved. We’ll reconnect automatically. You can still play the computer.'
+              : 'We’ll check your sign-in when the connection returns. You can still play the computer.'}
+        </Text>
+        {showComputer && (
+          <Pressable
+            onPress={() =>
+              onPlayLocalDemo({
+                avatarUrl: profile?.avatar_url ?? null,
+                displayName: profile?.display_name ?? 'Player',
+              })
+            }
+            style={({ pressed }) => [lobbyStyles.primaryButton, pressed && lobbyStyles.pressed]}
+            testID="play-computer-button"
+          >
+            <Text style={lobbyStyles.primaryButtonText}>
+              {hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+
   function renderShell(children: ReactNode, scrollable = true) {
     const shell = (
       <View
         style={[lobbyStyles.shell, shellStyle, scrollable ? lobbyStyles.scrollShell : shellSafeAreaStyle]}
         testID="multiplayer-lobby-shell"
       >
-        {isSessionUnavailable && (
-          <View
-            accessibilityLiveRegion="polite"
-            role="status"
-            style={lobbyStyles.connectionNotice}
-            testID="session-connection-notice"
-          >
-            <Text style={lobbyStyles.connectionNoticeText}>
-              {session
-                ? 'Can’t reach Sucker! right now. Your sign-in is saved. Reconnecting…'
-                : 'Unable to check your sign-in. Please try again.'}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              disabled={isReconnecting}
-              onPress={() => void reconnectSession()}
-              style={lobbyStyles.refreshButton}
-              testID="retry-session-button"
-            >
-              <Text style={lobbyStyles.refreshText}>{isReconnecting ? 'Retrying…' : 'Retry'}</Text>
-            </Pressable>
-          </View>
-        )}
         {children}
       </View>
     );
@@ -520,7 +552,7 @@ export function MultiplayerLobby({
   }
 
   async function handleVisibleRefreshGames() {
-    if (isRefreshing) {
+    if (isOffline || isRefreshing) {
       return;
     }
     setIsRefreshing(true);
@@ -730,6 +762,7 @@ export function MultiplayerLobby({
       <>
         <View style={lobbyStyles.sessionRestoring} testID="session-restoring-screen">
           <SuckerLobbyTitle />
+          {renderConnectionNotice()}
           {isRestoringSession && <ActivityIndicator accessibilityLabel="Restoring your session" color="#FFD329" />}
         </View>
         {renderSoloGame()}
@@ -766,6 +799,7 @@ export function MultiplayerLobby({
     return renderShell(
       <>
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <View style={lobbyStyles.loginActionGroup}>
           <Text style={lobbyStyles.loginSectionTitle}>Play Friends</Text>
           {Platform.OS === 'ios' && (
@@ -915,8 +949,9 @@ export function MultiplayerLobby({
 
   if (session.user.app_metadata.provider === 'apple' && (!profile || profile.id !== session.user.id)) {
     return renderShell(
-      <View style={lobbyStyles.scrollContent} testID="apple-profile-loading">
+      <View style={[lobbyStyles.scrollContent, lobbyStyles.sessionRestoring]} testID="apple-profile-loading">
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ActivityIndicator color="#FFD329" />
         <Text style={lobbyStyles.message}>{message ?? error ?? 'Loading your profile...'}</Text>
         <Pressable
@@ -955,6 +990,7 @@ export function MultiplayerLobby({
         testID="profile-setup-page"
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ProfileSetupForm
           key={session.user.id}
           onSave={async (input) => {
@@ -978,6 +1014,7 @@ export function MultiplayerLobby({
   const completedGames = sortCompletedGames(visibleGames.filter((game) => game.status === 'complete')).slice(0, 25);
   const webPushPromptVisible = Boolean(
     profile &&
+    !showConnectionNotice &&
     activeGames.length > 0 &&
     !webPushPromptDismissed &&
     canOfferWebPushPrompt() &&
@@ -1006,7 +1043,7 @@ export function MultiplayerLobby({
   const pullRefreshReady = pullRefreshDistance >= pullRefreshTriggerDistance;
   const pullRefreshVisible = usesWebPullRefresh && (pullRefreshDistance > 0 || isPullRefreshActive);
   const shouldStartPullRefreshGesture = (gestureState: { dx: number; dy: number }) => {
-    if (!usesWebPullRefresh || page !== 'games' || isRefreshing || isGamesScrolled) {
+    if (!usesWebPullRefresh || page !== 'games' || isOffline || isRefreshing || isGamesScrolled) {
       return false;
     }
 
@@ -1044,6 +1081,7 @@ export function MultiplayerLobby({
         refreshControl={
           <RefreshControl
             colors={['#FFD329']}
+            enabled={!isOffline}
             onRefresh={() => void handleVisibleRefreshGames()}
             progressBackgroundColor="#210505"
             refreshing={isRefreshing}
@@ -1054,6 +1092,7 @@ export function MultiplayerLobby({
         style={lobbyStyles.scroll}
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ScreenHeader title="Completed Games" onBack={() => setPage('games')} />
         <AllTimeRecordCard record={allTimeOpponentRecord} />
 
@@ -1122,6 +1161,7 @@ export function MultiplayerLobby({
         style={lobbyStyles.scroll}
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ScreenHeader title="Score Card" onBack={() => setPage('completedGames')} />
 
         {selectedCompletedGame ? (
@@ -1192,6 +1232,7 @@ export function MultiplayerLobby({
         style={lobbyStyles.scroll}
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ScreenHeader title="Stats" onBack={() => setPage('completedGames')} />
         <View style={lobbyStyles.panel}>
           <View style={lobbyStyles.emptyState}>
@@ -1211,6 +1252,7 @@ export function MultiplayerLobby({
         style={lobbyStyles.scroll}
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ScreenHeader title="Start With Friend" onBack={() => setPage('games')} />
 
         <View style={lobbyStyles.panel}>
@@ -1349,6 +1391,7 @@ export function MultiplayerLobby({
         testID="password-page"
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ScreenHeader
           title="Password"
           onBack={() => {
@@ -1449,6 +1492,7 @@ export function MultiplayerLobby({
         style={lobbyStyles.scroll}
       >
         <SuckerLobbyTitle />
+        {renderConnectionNotice()}
         <ScreenHeader title="Profile" onBack={() => setPage('games')} />
 
         <View style={lobbyStyles.panel}>
@@ -1738,32 +1782,36 @@ export function MultiplayerLobby({
           </Pressable>
         </View>
 
+        {renderConnectionNotice(true)}
+
         <View style={lobbyStyles.panel}>
           <View style={lobbyStyles.panelHeader}>
-            <Text style={lobbyStyles.sectionTitle}>Games</Text>
-            <Pressable
-              disabled={isRefreshing}
-              onPress={() => void handleVisibleRefreshGames()}
-              style={({ pressed }) => [
-                lobbyStyles.refreshButton,
-                isRefreshing && lobbyStyles.refreshButtonRefreshing,
-                pressed && !isRefreshing && lobbyStyles.pressed,
-              ]}
-              testID="refresh-games-button"
-            >
-              {isRefreshing ? (
-                <View style={lobbyStyles.refreshButtonContent}>
-                  <ActivityIndicator color="#210505" size="small" />
+            <Text style={lobbyStyles.sectionTitle}>{showConnectionNotice ? 'Saved games' : 'Games'}</Text>
+            {!isOffline && (
+              <Pressable
+                disabled={isRefreshing}
+                onPress={() => void handleVisibleRefreshGames()}
+                style={({ pressed }) => [
+                  lobbyStyles.refreshButton,
+                  isRefreshing && lobbyStyles.refreshButtonRefreshing,
+                  pressed && !isRefreshing && lobbyStyles.pressed,
+                ]}
+                testID="refresh-games-button"
+              >
+                {isRefreshing ? (
+                  <View style={lobbyStyles.refreshButtonContent}>
+                    <ActivityIndicator color="#210505" size="small" />
+                    <Text numberOfLines={1} style={lobbyStyles.refreshText}>
+                      Refreshing
+                    </Text>
+                  </View>
+                ) : (
                   <Text numberOfLines={1} style={lobbyStyles.refreshText}>
-                    Refreshing
+                    Refresh
                   </Text>
-                </View>
-              ) : (
-                <Text numberOfLines={1} style={lobbyStyles.refreshText}>
-                  Refresh
-                </Text>
-              )}
-            </Pressable>
+                )}
+              </Pressable>
+            )}
           </View>
           {!isGameListReady ? (
             <View style={lobbyStyles.emptyState} testID="games-loading-state">
@@ -1818,24 +1866,26 @@ export function MultiplayerLobby({
           >
             <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
           </Pressable>
-          <Pressable
-            onPress={() =>
-              onPlayLocalDemo({
-                avatarUrl: profile?.avatar_url ?? null,
-                displayName: profile?.display_name ?? 'Player',
-              })
-            }
-            style={({ pressed }) => [
-              lobbyStyles.secondaryButton,
-              lobbyStyles.actionButton,
-              pressed && lobbyStyles.pressed,
-            ]}
-            testID="play-computer-button"
-          >
-            <Text style={lobbyStyles.secondaryButtonText}>
-              {hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}
-            </Text>
-          </Pressable>
+          {!showConnectionNotice && (
+            <Pressable
+              onPress={() =>
+                onPlayLocalDemo({
+                  avatarUrl: profile?.avatar_url ?? null,
+                  displayName: profile?.display_name ?? 'Player',
+                })
+              }
+              style={({ pressed }) => [
+                lobbyStyles.secondaryButton,
+                lobbyStyles.actionButton,
+                pressed && lobbyStyles.pressed,
+              ]}
+              testID="play-computer-button"
+            >
+              <Text style={lobbyStyles.secondaryButtonText}>
+                {hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {(isBusy || isLoading) && <ActivityIndicator color="#FFD329" />}
@@ -2742,21 +2792,44 @@ const lobbyStyles = StyleSheet.create({
     width: '100%',
   },
   connectionNotice: {
-    alignItems: 'center',
     backgroundColor: '#210505',
     borderColor: '#FFD329',
     borderWidth: 1,
     borderRadius: 8,
-    flexDirection: 'row',
     gap: 10,
-    margin: 12,
-    padding: 12,
+    padding: 14,
+    width: '100%',
+  },
+  connectionNoticeHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  connectionNoticeTitle: {
+    color: '#FFD329',
+    flex: 1,
+    fontSize: 20,
+    fontWeight: '900',
   },
   connectionNoticeText: {
     color: '#FFF4CE',
-    flex: 1,
     fontSize: 14,
     lineHeight: 20,
+  },
+  connectionRetry: {
+    alignItems: 'center',
+    borderColor: '#FFD329',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 64,
+    paddingHorizontal: 10,
+  },
+  connectionRetryText: {
+    color: '#FFD329',
+    fontSize: 14,
+    fontWeight: '800',
   },
   accountActionButton: {
     borderRadius: 8,

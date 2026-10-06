@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { AppState, StyleSheet, Text } from 'react-native';
+import { AppState, Platform, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCurrentSession, getStoredSessionSnapshot } from '../multiplayer/auth';
 import {
@@ -122,6 +122,22 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       appStateSubscription.remove();
     };
   }, [loadPending, recover, refresh]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    // Chromium's Network Information API can omit a change event when the
+    // browser goes offline. Refresh NetInfo on the browser events too, so all
+    // subscribers (including session recovery) see the new connectivity.
+    const updateConnection = () => {
+      void NetInfo.refresh().catch(() => undefined);
+    };
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+    };
+  }, []);
 
   const value = useMemo(
     () => ({ consumeRecoveredActions, isOffline, isRecovering, pendingActions, recoveredActions, refresh }),
