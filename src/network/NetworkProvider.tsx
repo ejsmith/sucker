@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { AppState, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getCurrentSession } from '../multiplayer/auth';
+import { getCurrentSession, getStoredSessionSnapshot } from '../multiplayer/auth';
 import {
   mergeRecoveredActions,
   type ActionRequest,
@@ -49,10 +49,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
   const loadPending = useCallback(async () => {
-    const session = await getCurrentSession();
-    const pending = session ? await listPendingMultiplayerActions(session.user.id) : [];
-    if (isMounted.current) {
-      setPendingActions(pending);
+    try {
+      // Reading local pending actions must not require an online token refresh.
+      const session = await getStoredSessionSnapshot();
+      const pending = session ? await listPendingMultiplayerActions(session.user.id) : [];
+      if (isMounted.current) setPendingActions(pending);
+    } catch (error) {
+      void reportError(error, { Operation: 'LoadPendingMultiplayerActions' });
     }
   }, []);
 

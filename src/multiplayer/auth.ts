@@ -3,6 +3,13 @@ import { isLocalMultiplayerDevelopment } from './env';
 import { signOutWithNotificationCleanup } from './notifications';
 import { supabase } from './supabase';
 import type { ProfileInput } from './types';
+import { authStorage, authStorageKey } from './authStorage';
+import {
+  isTemporarySessionError,
+  parseStoredSession,
+  SessionConnectionError,
+  withSessionTimeout,
+} from './sessionRecovery';
 
 export type LocalTestPlayer = 1 | 2;
 
@@ -22,12 +29,18 @@ const localTestPlayers = {
 } as const;
 
 export async function getCurrentSession() {
-  const { data, error } = await supabase.auth.getSession();
+  // Leave SDK token refresh running, but don't hold the UI or a player's move
+  // through its long retry/backoff cycle. No move is sent until this succeeds.
+  const { data, error } = await withSessionTimeout(supabase.auth.getSession());
   if (error) {
-    throw error;
+    throw isTemporarySessionError(error) ? new SessionConnectionError() : error;
   }
 
   return data.session;
+}
+
+export async function getStoredSessionSnapshot() {
+  return parseStoredSession(await authStorage.getItem(authStorageKey));
 }
 
 export async function signInWithEmail(email: string) {

@@ -76,7 +76,7 @@ import {
 } from './src/multiplayer/games';
 import { preserveLocalHeldDice } from './src/multiplayer/heldDice';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
-import { getProfilesByIds } from './src/multiplayer/profiles';
+import { useProfileAvatars } from './src/multiplayer/useProfileAvatars';
 import { supabase } from './src/multiplayer/supabase';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type {
@@ -1173,7 +1173,6 @@ export function LocalGameScreen({
   const [dismissedGameOverId, setDismissedGameOverId] = useState<string | null>(null);
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
-  const [playerAvatars, setPlayerAvatars] = useState<Record<string, string | null>>({});
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
@@ -1264,15 +1263,13 @@ export function LocalGameScreen({
   ).current;
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
   const incomingTauntRollNumber = remoteGame?.rollNumber ?? game.rollNumber;
-  const avatarProfileIdsKey = [
+  const avatarProfileIds = [
     ...new Set([
       ...game.players.map((player) => player.id),
       ...(nextTurnGames ?? []).flatMap((nextTurnGame) => nextTurnGame.state.players.map((player) => player.id)),
     ]),
-  ]
-    .filter(Boolean)
-    .sort()
-    .join(',');
+  ];
+  const playerAvatars = useProfileAvatars(avatarProfileIds, isRemoteGame, remoteLastTurnId);
   const liveGameRef = useRef(game);
   const myPlayerIndex = isRemoteGame
     ? Math.max(
@@ -1902,36 +1899,6 @@ export function LocalGameScreen({
       isMounted = false;
     };
   }, [isRemoteGame, opponentPlayer.id, remoteLastTurnId, remoteStatus]);
-
-  useEffect(() => {
-    if (!isRemoteGame) {
-      setPlayerAvatars({});
-      return;
-    }
-    if (!isAppActive || !avatarProfileIdsKey) {
-      return;
-    }
-
-    let isMounted = true;
-    const profileIds = avatarProfileIdsKey.split(',');
-    void getProfilesByIds(profileIds)
-      .then((profiles) => {
-        if (isMounted) {
-          const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
-          setPlayerAvatars(
-            Object.fromEntries(
-              profileIds.map((profileId) => [profileId, profilesById.get(profileId)?.avatar_url ?? null]),
-            ),
-          );
-        }
-      })
-      .catch(() => {
-        // Keep already loaded avatars visible through a transient profile error.
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [avatarProfileIdsKey, isAppActive, isRemoteGame, remoteLastTurnId]);
 
   useEffect(() => {
     if (!isRemoteGame) {

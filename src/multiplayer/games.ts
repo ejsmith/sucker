@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getRandomBytes } from 'expo-crypto';
 import { supabase } from './supabase';
+import { getCurrentSession } from './auth';
 import type { Database } from './database.types';
 import type {
   MultiplayerAction,
@@ -53,6 +54,8 @@ export class PendingMultiplayerActionError extends Error {
 }
 
 export async function listMyGames() {
+  const session = await getCurrentSession();
+  if (!session) throw new Error('Sign in to refresh your games.');
   const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
     await Promise.all([
       supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
@@ -234,9 +237,7 @@ export async function hasPendingMultiplayerAction(actorId: string, requestId: st
 }
 
 async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise<TResult> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const session = await getCurrentSession();
   if (!session?.user.id) {
     throw new Error('Sign in before making a game move.');
   }

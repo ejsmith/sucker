@@ -33,7 +33,8 @@ import {
   registerWebPushSubscription,
   syncAppBadgeCount,
 } from './notifications';
-import { getProfilesByIds, searchProfiles } from './profiles';
+import { searchProfiles } from './profiles';
+import { useProfileAvatars } from './useProfileAvatars';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import { isLocalMultiplayerDevelopment } from './env';
@@ -93,8 +94,12 @@ export function MultiplayerLobby({
     endSession,
     error,
     isLoading,
+    isRestoringSession,
+    isReconnecting,
+    isSessionUnavailable,
     profile,
     refreshProfile,
+    reconnectSession,
     saveProfile,
     sendSignInCode,
     signInAsLocalTestUser,
@@ -133,7 +138,6 @@ export function MultiplayerLobby({
   const [avatarPickerVisible, setAvatarPickerVisible] = useState(false);
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
-  const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
   const setPage = useCallback((nextPage: LobbyPage) => {
     if (nextPage !== 'profile') {
@@ -165,6 +169,14 @@ export function MultiplayerLobby({
   );
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
+  const profileAvatars = useProfileAvatars(
+    [
+      ...visibleGames.flatMap((game) => game.state.players.map((player) => player.id)),
+      ...(profileId ? [profileId] : []),
+    ],
+    Boolean(session) && !isReconnecting && !isSessionUnavailable,
+    visibleGames,
+  );
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
     fillNarrowViewport: Platform.OS !== 'web' || shouldFillWebViewport(windowWidth),
   });
@@ -189,12 +201,55 @@ export function MultiplayerLobby({
   const passwordsMatch = newPassword === confirmPassword;
   const canUpdatePassword = passwordIsLongEnough && confirmPassword.length > 0 && passwordsMatch;
 
+  function renderSoloGame() {
+    return (
+      <View style={lobbyStyles.loginActionGroup}>
+        <Text style={lobbyStyles.loginSectionTitle}>Solo Game</Text>
+        <Pressable
+          onPress={() =>
+            onPlayLocalDemo({
+              avatarUrl: profile?.avatar_url ?? null,
+              displayName: profile?.display_name ?? 'Player',
+            })
+          }
+          style={({ pressed }) => [lobbyStyles.soloButton, pressed && lobbyStyles.pressed]}
+          testID="play-computer-button"
+        >
+          <Text style={lobbyStyles.soloButtonText}>{hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   function renderShell(children: ReactNode, scrollable = true) {
     const shell = (
       <View
         style={[lobbyStyles.shell, shellStyle, scrollable ? lobbyStyles.scrollShell : shellSafeAreaStyle]}
         testID="multiplayer-lobby-shell"
       >
+        {isSessionUnavailable && (
+          <View
+            accessibilityLiveRegion="polite"
+            role="status"
+            style={lobbyStyles.connectionNotice}
+            testID="session-connection-notice"
+          >
+            <Text style={lobbyStyles.connectionNoticeText}>
+              {session
+                ? 'Can’t reach Sucker! right now. Your sign-in is saved. Reconnecting…'
+                : 'Unable to check your sign-in. Please try again.'}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isReconnecting}
+              onPress={() => void reconnectSession()}
+              style={lobbyStyles.refreshButton}
+              testID="retry-session-button"
+            >
+              <Text style={lobbyStyles.refreshText}>{isReconnecting ? 'Retrying…' : 'Retry'}</Text>
+            </Pressable>
+          </View>
+        )}
         {children}
       </View>
     );
@@ -313,14 +368,10 @@ export function MultiplayerLobby({
   }, [avatarPickerVisible, page, removeGameToConfirm, setPage]);
 
   useEffect(() => {
-    if (!isLoading && !session) {
+    if (!isLoading && !isRestoringSession && !isSessionUnavailable && !session) {
       onGamesChange(null, []);
     }
-  }, [isLoading, onGamesChange, session]);
-
-  useEffect(() => {
-    if (session) void refreshGames();
-  }, [refreshGames, session]);
+  }, [isLoading, isRestoringSession, isSessionUnavailable, onGamesChange, session]);
 
   useEffect(() => {
     if (!profile || pendingAvatarRecoveryProfileId.current === profile.id) return;
@@ -361,24 +412,6 @@ export function MultiplayerLobby({
   }, [profile, refreshProfile]);
 
   useEffect(() => {
-    const ids = visibleGames.flatMap((game) => game.state.players.map((player) => player.id));
-    if (profile?.id) ids.push(profile.id);
-    let active = true;
-    void getProfilesByIds(ids)
-      .then((profiles) => {
-        if (active) {
-          setProfileAvatars(Object.fromEntries(profiles.map((item) => [item.id, item.avatar_url])));
-        }
-      })
-      .catch(() => {
-        // Initials remain available if profile photos cannot be refreshed.
-      });
-    return () => {
-      active = false;
-    };
-  }, [profile?.avatar_url, profile?.id, visibleGames]);
-
-  useEffect(() => {
     void syncAppBadgeCount(
       profile && !isGamesProfileMismatch ? countGamesAwaitingTurn(games, profile.id) : 0,
       profileId,
@@ -386,7 +419,7 @@ export function MultiplayerLobby({
   }, [games, isGamesProfileMismatch, profile, profileId]);
 
   useEffect(() => {
-    if (!session || !isAppActive) {
+    if (!session || !isAppActive || isReconnecting || isSessionUnavailable) {
       return;
     }
 
@@ -409,7 +442,7 @@ export function MultiplayerLobby({
         realtimeRefreshTimer.current = null;
       }
     };
-  }, [isAppActive, refreshGames, session]);
+  }, [isAppActive, isReconnecting, isSessionUnavailable, refreshGames, session]);
 
   useEffect(() => {
     if (!isAppActive) {
@@ -664,6 +697,19 @@ export function MultiplayerLobby({
     }
   }
 
+  if (isRestoringSession || (!session && isSessionUnavailable)) {
+    return renderShell(
+      <>
+        <View style={lobbyStyles.sessionRestoring} testID="session-restoring-screen">
+          <SuckerLobbyTitle />
+          {isRestoringSession && <ActivityIndicator accessibilityLabel="Restoring your session" color="#FFD329" />}
+        </View>
+        {renderSoloGame()}
+      </>,
+      false,
+    );
+  }
+
   if (!session) {
     const showLocalTestLogin = isLocalMultiplayerDevelopment();
     const isCodeSent = sentCodeEmail !== null;
@@ -801,21 +847,7 @@ export function MultiplayerLobby({
           <Text style={lobbyStyles.loginDividerText}>or</Text>
           <View style={lobbyStyles.loginDivider} />
         </View>
-        <View style={lobbyStyles.loginActionGroup}>
-          <Text style={lobbyStyles.loginSectionTitle}>Solo Game</Text>
-          <Pressable
-            onPress={() =>
-              onPlayLocalDemo({
-                avatarUrl: profile?.avatar_url ?? null,
-                displayName: profile?.display_name ?? 'Player',
-              })
-            }
-            style={({ pressed }) => [lobbyStyles.soloButton, pressed && lobbyStyles.pressed]}
-            testID="play-computer-button"
-          >
-            <Text style={lobbyStyles.soloButtonText}>{hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}</Text>
-          </Pressable>
-        </View>
+        {renderSoloGame()}
         {showLocalTestLogin && (
           <View style={lobbyStyles.localTestLoginGroup} testID="local-test-login">
             <Text style={lobbyStyles.localTestLoginTitle}>Local Testing</Text>
@@ -2426,6 +2458,27 @@ function SuckerLobbyTitle() {
 }
 
 const lobbyStyles = StyleSheet.create({
+  sessionRestoring: {
+    gap: 8,
+    width: '100%',
+  },
+  connectionNotice: {
+    alignItems: 'center',
+    backgroundColor: '#210505',
+    borderColor: '#FFD329',
+    borderWidth: 1,
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 10,
+    margin: 12,
+    padding: 12,
+  },
+  connectionNoticeText: {
+    color: '#FFF4CE',
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+  },
   accountDivider: {
     backgroundColor: '#8F3B10',
     height: 1,

@@ -5,7 +5,7 @@ import { LocalGameScreen } from '../App';
 import type { ComputerSession } from '../src/game/computerSession';
 import { clearComputerSession, loadComputerSession, saveComputerSession } from '../src/game/computerSessionStorage';
 import { isMultiplayerConfigured } from '../src/multiplayer';
-import { getCurrentSession } from '../src/multiplayer/auth';
+import { getStoredSessionSnapshot } from '../src/multiplayer/auth';
 import { useGameList } from '../src/navigation/GameListProvider';
 import { Pressable } from '../src/ui/Pressable';
 
@@ -23,7 +23,9 @@ export default function LocalGameRoute() {
   const active = useRef(true);
 
   const load = useCallback(() => {
-    const authRequest = isMultiplayerConfigured ? getCurrentSession() : Promise.resolve(null);
+    // A saved identity selects this device's save slot; solo play does not need
+    // a valid server session or an online token refresh.
+    const authRequest = isMultiplayerConfigured ? getStoredSessionSnapshot() : Promise.resolve(null);
     return authRequest
       .then((auth) => {
         ownerId.current = auth?.user.id ?? null;
