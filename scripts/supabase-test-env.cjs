@@ -1,12 +1,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { checkSupabaseHttp } = require('./check-supabase-http.cjs');
 
 const envFilePath = path.resolve(__dirname, '..', 'supabase', '.temp', 'e2e.env');
 const expoEnvFilePath = path.resolve(__dirname, '..', '.env.local');
 const supabaseCliPath = path.resolve(__dirname, '..', 'node_modules', 'supabase', 'dist', 'supabase.js');
 const supabaseConfigPath = path.resolve(__dirname, '..', 'supabase', 'config.toml');
-const ciDisabledSupabaseConfigSections = new Set(['inbucket', 'realtime', 'studio']);
+const ciDisabledSupabaseConfigSections = new Set(['inbucket', 'studio']);
 const ciSupabasePortSections = new Map([
   ['api', new Map([['port', 0]])],
   [
@@ -31,7 +32,6 @@ const ciSupabasePortSections = new Map([
 const minimalSupabaseStartExclude = [
   'studio',
   'mailpit',
-  'realtime',
   'logflare',
   'vector',
   'postgres-meta',
@@ -87,7 +87,6 @@ function buildLocalTestEnv(statusEnv = readSupabaseStatusEnv()) {
     EXPO_PUBLIC_SUPABASE_ANON_KEY: anonKey,
     EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS: '1',
     SUCKER_E2E_FIXED_DIE: '1',
-    SUCKER_E2E_NUDGE_COOLDOWN_MS: '1000',
     SUCKER_E2E_NUDGE_WAIT_MS: '1000',
     SUCKER_E2E_SUCKER_PUNCH_DIE: '6',
     SUCKER_E2E_SUCKER_PUNCH_ROLL: '50',
@@ -233,6 +232,10 @@ function startMinimalSupabase() {
   stopSupabaseIfCi();
   useCiMinimalSupabaseConfig();
   runSupabase(['start', '--exclude', minimalSupabaseStartExclude.join(',')]);
+  const config = fs.readFileSync(supabaseConfigPath, 'utf8');
+  const projectId = /^project_id\s*=\s*"([^"]+)"/m.exec(config)?.[1];
+  if (!projectId) throw new Error('Cannot identify the local Supabase test project.');
+  checkSupabaseHttp(projectId);
 }
 
 function shouldResetSupabaseDatabase() {

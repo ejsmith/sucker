@@ -589,7 +589,7 @@ Deno.test('a missed-punch taunt remains available when the puncher is the active
   assertEquals(taunts[0]?.actor_id, bob.id);
 });
 
-Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, and action floods', async () => {
+Deno.test('game-action rejects direct writes, token spoofing, and action floods', async () => {
   const [alice, bob] = await createUsers('action-abuse', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
 
@@ -617,17 +617,6 @@ Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, 
   });
   assertNoError(ownWebPush.error);
 
-  const oversized = await fetch(functionUrl, {
-    body: JSON.stringify({ padding: 'x'.repeat(33_000), requestId: crypto.randomUUID(), type: 'create_invite' }),
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${alice.session.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  assertEquals(oversized.status, 413);
-
   const floodRows = Array.from({ length: 120 }, () => ({
     action_type: 'abuse-test',
     actor_id: alice.id,
@@ -639,6 +628,37 @@ Deno.test('game-action rejects direct writes, token spoofing, oversized bodies, 
   assertNoError((await admin.from('game_action_requests').insert(floodRows)).error);
   const rateLimited = await invokeGameAction(alice, { type: 'create_invite' }, 429);
   assertEquals(rateLimited.error, 'Too many game actions. Wait a moment and try again.');
+});
+
+Deno.test('game-action returns oversized-body errors promptly without claiming actions', async () => {
+  const [alice] = await createUsers('oversized-actions', ['Alice']);
+
+  for (const paddingLength of [33_000, 256_000, 33_000]) {
+    const oversized = await fetch(functionUrl, {
+      body: JSON.stringify({
+        padding: 'x'.repeat(paddingLength),
+        requestId: crypto.randomUUID(),
+        type: 'create_invite',
+      }),
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${alice.session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = await oversized.text();
+    assertEquals(oversized.status, 413);
+    assertEquals(JSON.parse(body), { error: 'Request body is too large.' });
+  }
+
+  const requests = await admin.from('game_action_requests').select('request_id').eq('actor_id', alice.id);
+  assertNoError(requests.error);
+  assertEquals(requests.data, []);
+
+  const invite = await invokeGameAction(alice, { type: 'create_invite' });
+  assertString(invite.inviteCode);
 });
 
 Deno.test('game-action removes open invites and hides started games from the actor', async () => {
@@ -715,6 +735,93 @@ Deno.test('game-action jabs the current player only after the wait window and co
     actions.filter((action) => action.action_type === 'nudge_turn').map((action) => action.actor_id),
     [bob.id],
   );
+});
+
+Deno.test('Jab cooldown is atomic across games and remains scoped to the sender and recipient', async () => {
+  const [alice, bob, charlie] = await createUsers('jab-recipient', ['Alice', 'Bob', 'Charlie']);
+  const games: GameRow[] = [];
+  for (let index = 0; index < 3; index++) {
+    games.push((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow);
+  }
+  const otherOpponentGame = (await invokeGameAction(charlie, { opponentProfileId: bob.id, type: 'create_game' }))
+    .game as GameRow;
+  const reverseGame = (await invokeGameAction(bob, { opponentProfileId: alice.id, type: 'create_game' }))
+    .game as GameRow;
+  await delay(1_100);
+
+  const attempts = await Promise.all(
+    games.map(async (game) => {
+      const action = { gameId: game.id, type: 'nudge_turn', requestId: crypto.randomUUID() };
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${bob.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(action),
+      });
+      return { action, status: response.status, body: await response.json() };
+    }),
+  );
+  const accepted = attempts.filter((attempt) => attempt.status === 200);
+  assertEquals(accepted.length, 1);
+  for (const rejected of attempts.filter((attempt) => attempt.status !== 200)) {
+    assertEquals(rejected.status, 400);
+    assertEquals(rejected.body.error, 'You can jab this player again 8 hours after your last jab.');
+  }
+  assertEquals(accepted[0].body.notificationProfileIds, [alice.id]);
+  const replay = await invokeGameAction(bob, accepted[0].action);
+  assertEquals(replay, accepted[0].body);
+
+  const sentJabs = () =>
+    bob.client
+      .from('turn_actions')
+      .select('id, game_id, created_at, payload')
+      .eq('actor_id', bob.id)
+      .eq('action_type', 'nudge_turn')
+      .eq('payload->>targetPlayerId', alice.id);
+  const history = await sentJabs();
+  assertNoError(history.error);
+  assertEquals(history.data?.length, 1);
+
+  // A different recipient and the reverse direction have independent cooldowns.
+  const otherJab = await invokeGameAction(bob, { gameId: otherOpponentGame.id, type: 'nudge_turn' });
+  assertEquals(otherJab.notificationProfileIds, [charlie.id]);
+  const reverseJab = await invokeGameAction(alice, { gameId: reverseGame.id, type: 'nudge_turn' });
+  assertEquals(reverseJab.notificationProfileIds, [bob.id]);
+
+  // Hidden games no longer appear through game RLS, but the sender must still
+  // be able to load that reminder when rendering a different game with Alice.
+  await invokeGameAction(bob, { gameId: accepted[0].action.gameId, type: 'remove_game' });
+  const afterHiding = await sentJabs();
+  assertNoError(afterHiding.error);
+  assertEquals(afterHiding.data, history.data);
+  const otherGame = games.find((game) => game.id !== accepted[0].action.gameId)!;
+  const blocked = await invokeGameAction(bob, { gameId: otherGame.id, type: 'nudge_turn' }, 400);
+  assertEquals(blocked.error, 'You can jab this player again 8 hours after your last jab.');
+  const outsiderHistory = await charlie.client.from('turn_actions').select('id').eq('id', history.data![0].id);
+  assertNoError(outsiderHistory.error);
+  assertEquals(outsiderHistory.data, []);
+  const forbiddenInsert = await bob.client.from('turn_actions').insert({
+    game_id: otherGame.id,
+    actor_id: bob.id,
+    action_type: 'nudge_turn',
+    payload: { targetPlayerId: alice.id },
+  });
+  assertEquals(Boolean(forbiddenInsert.error), true);
+
+  // Age only the persisted reminder. Production clients cannot update actions.
+  const expired = await admin
+    .from('turn_actions')
+    .update({ created_at: new Date(Date.now() - 8 * 60 * 60 * 1_000 - 1_000).toISOString() } as never)
+    .eq('id', history.data![0].id);
+  assertNoError(expired.error);
+  const nextJab = await invokeGameAction(bob, { gameId: otherGame.id, type: 'nudge_turn' });
+  assertEquals(nextJab.notificationProfileIds, [alice.id]);
+  const afterExpiry = await sentJabs();
+  assertNoError(afterExpiry.error);
+  assertEquals(afterExpiry.data?.length, 2);
 });
 
 Deno.test('App Store direct Punch honors displayed odds and retries without charging twice', async () => {
@@ -1264,6 +1371,112 @@ Deno.test('a missed punch persists a two-token counterpunch, including retries a
   );
 });
 
+for (const hits of [1, 2, 3]) {
+  for (const landed of [true, false]) {
+    Deno.test(
+      `revenge after ${hits} hit(s) persists and is consumed once on a ${landed ? 'hit' : 'miss'}`,
+      async () => {
+        const [alice, bob] = await createUsers(`revenge-${hits}-${landed}`, ['Alice', 'Bob']);
+        let game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+        for (let hit = 1; hit <= hits; hit++) {
+          await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+          game = (await invokeGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' }))
+            .game as GameRow;
+          const incoming = {
+            gameId: game.id,
+            turnId: game.last_turn_id,
+            chanceDie: 6,
+            type: 'sucker_punch',
+            requestId: crypto.randomUUID(),
+          };
+          const result = await invokeGameAction(bob, incoming);
+          game = result.game as GameRow;
+          assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'landed'), true);
+          assertEquals(game.state.players[0].revengePunchDiscount, Math.min(2, hit));
+          assertEquals(game.state.players[0].scorecard.ones, null);
+          const retry = await invokeGameAction(bob, incoming);
+          assertEquals((retry.game as GameRow).state, game.state);
+        }
+        await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+        await invokeGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' });
+        await invokeGameAction(bob, { gameId: game.id, type: 'pass_response' });
+        await invokeGameAction(bob, { gameId: game.id, type: 'roll' });
+        game = (await invokeGameAction(bob, { gameId: game.id, category: 'chance', type: 'score_category' }))
+          .game as GameRow;
+
+        // Also pass a response and complete an ordinary turn without spending revenge.
+        await invokeGameAction(alice, { gameId: game.id, type: 'pass_response' });
+        await invokeGameAction(alice, { gameId: game.id, type: 'roll' });
+        await invokeGameAction(alice, { gameId: game.id, category: 'twos', type: 'score_category' });
+        await invokeGameAction(bob, { gameId: game.id, type: 'roll' });
+        game = (await invokeGameAction(bob, { gameId: game.id, category: 'threes', type: 'score_category' }))
+          .game as GameRow;
+        const cost = hits === 1 ? 2 : 1;
+        game.state.players[0].suckerTokens = cost;
+        assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
+        game = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+        assertEquals(game.state.players[0].revengePunchDiscount, Math.min(2, hits));
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const prepared = await invokeGameAction(alice, {
+            gameId: game.id,
+            turnId: game.last_turn_id,
+            type: 'prepare_sucker_punch',
+          });
+          assertEquals((prepared.game as GameRow).state.players[0].revengePunchDiscount, Math.min(2, hits));
+          assertPlayerTokens(prepared.game as GameRow, alice.id, cost);
+        }
+        const chanceDie = landed ? 6 : 1;
+        if (!landed) {
+          assertNoError(
+            (
+              await admin
+                .from('sucker_punch_attempts')
+                .update({ chance_die: 1 })
+                .eq('game_id', game.id)
+                .eq('actor_id', alice.id)
+                .eq('turn_id', game.last_turn_id!)
+            ).error,
+          );
+        }
+        const action = {
+          gameId: game.id,
+          turnId: game.last_turn_id,
+          chanceDie,
+          chanceProtocol: 'prepared',
+          type: 'sucker_punch',
+          requestId: crypto.randomUUID(),
+        };
+        const result = await invokeGameAction(alice, action);
+        const punched = result.game as GameRow;
+        assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'landed'), landed);
+        assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'tokenCost'), cost);
+        assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'isRevengePunch'), true);
+        assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'isCounterPunch'), false);
+        assertPlayerTokens(punched, alice.id, 0);
+        assertEquals(punched.state.players[0].revengePunchDiscount, undefined);
+        assertEquals(punched.state.players[1].revengePunchDiscount, landed ? 1 : undefined);
+        assertEquals(punched.state.players[0].scorecard.ones, 5);
+        assertEquals(punched.state.players[1].scorecard.threes, landed ? null : 0);
+        assertEquals(punched.state.counterPunchCost, landed ? undefined : 2);
+        const retry = await invokeGameAction(alice, action);
+        assertEquals((retry.game as GameRow).state, punched.state);
+        assertEquals(retry.suckerPunchOutcome, result.suckerPunchOutcome);
+        const events = (await loadTokenEvents(game.id)).filter(
+          (event) => event.player_id === alice.id && event.event_type === 'sucker_punch',
+        );
+        assertEquals(events.length, 1);
+        assertEquals(events[0].token_delta, -cost);
+        const actions = (await loadActions(game.id)).filter(
+          (action) => action.actor_id === alice.id && action.action_type === 'sucker_punch',
+        );
+        assertEquals(actions.length, 1);
+        assertEquals(actionPayloadValue(actions[0].payload, 'tokenCost'), cost);
+        assertEquals(actionPayloadValue(actions[0].payload, 'isRevengePunch'), true);
+      },
+    );
+  }
+}
+
 Deno.test('consecutive misses cost 3, 2, 1, 1 and a one-token hit ends the chain', async () => {
   const window = await createCounterpunchWindow('counterpunch-chain');
   const { alice, bob } = window;
@@ -1308,6 +1521,21 @@ Deno.test('consecutive misses cost 3, 2, 1, 1 and a one-token hit ends the chain
     events.filter((event) => event.event_type === 'sucker_punch').map((event) => event.token_delta),
     [-3, -2, -1, -1, -1],
   );
+});
+
+Deno.test('revenge and counterpunch charge the lower price once without stacking discounts', async () => {
+  const { alice, bob, game } = await createCounterpunchWindow('revenge-counter');
+  game.state.players[0].revengePunchDiscount = 2;
+  game.state.players[0].suckerTokens = 1;
+  assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
+  const result = await missTestPunch(alice, game);
+  const missed = result.game as GameRow;
+  assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'tokenCost'), 1);
+  assertEquals(actionPayloadValue(result.suckerPunchOutcome, 'isRevengePunch'), true);
+  assertPlayerTokens(missed, alice.id, 0);
+  assertEquals(missed.state.players[0].revengePunchDiscount, undefined);
+  assertEquals(missed.state.counterPunchPlayerId, bob.id);
+  assertEquals(missed.state.counterPunchCost, 1);
 });
 
 Deno.test('counterpunch expires when passing, rolling, buying a roll, or scratching', async () => {
@@ -1437,6 +1665,9 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
   const gameId = (created.game as GameRow).id;
   let latestGame = created.game as GameRow;
+  latestGame.state.players[0].revengePunchDiscount = 1;
+  latestGame.state.players[1].revengePunchDiscount = 2;
+  assertNoError((await admin.from('games').update({ state: latestGame.state }).eq('id', gameId)).error);
 
   for (const category of scoreCategories) {
     latestGame = await scratchAndPass(gameId, alice, bob, category);
@@ -1447,6 +1678,10 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   assertEquals(latestGame.current_player_id, null);
   assertEquals(latestGame.winner_id, null);
   assertString(latestGame.completed_at);
+  assertEquals(
+    latestGame.state.players.map((player) => player.revengePunchDiscount),
+    [undefined, undefined],
+  );
 
   const turns = await selectMany<TurnRow>(admin.from('turns').select('*').eq('game_id', gameId));
   assertEquals(turns.length, scoreCategories.length * 2);

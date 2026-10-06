@@ -99,3 +99,16 @@ test('persistent cache stores display data without unrelated account fields', as
   await new Promise(setImmediate);
   assert.deepEqual(JSON.parse(cache.writes.at(-1)), [alice]);
 });
+
+test('avatar lookups preserve cached setup status and completing setup survives a restart', async () => {
+  const cache = loadCache();
+  cache.rememberProfiles([{ ...alice, needs_profile_setup: true }]);
+  cache.rememberProfiles([alice]);
+  assert.equal(cache.getCachedProfiles().alice.needs_profile_setup, true);
+  cache.rememberProfiles([{ ...alice, needs_profile_setup: false }]);
+  cache.rememberProfiles([alice]);
+  await new Promise(setImmediate);
+  const restored = loadCache({ read: async () => cache.writes.at(-1) });
+  await restored.hydrateProfileCache();
+  assert.equal(restored.getCachedProfiles().alice.needs_profile_setup, false);
+});

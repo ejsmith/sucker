@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
 import { isLocalMultiplayerDevelopment } from './env';
 import { signOutWithNotificationCleanup } from './notifications';
 import { supabase } from './supabase';
@@ -149,17 +150,20 @@ export async function createSessionFromAuthUrl(url: string) {
   const errorCode = params.get('error_code') ?? params.get('error');
   if (errorCode) {
     clearAuthParamsFromBrowserUrl();
+    if (errorCode === 'access_denied') {
+      return null;
+    }
     throw new Error(params.get('error_description') ?? errorCode);
   }
 
   const code = params.get('code');
   if (code) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    clearAuthParamsFromBrowserUrl();
     if (error) {
       throw error;
     }
 
-    clearAuthParamsFromBrowserUrl();
     return data.session;
   }
 
@@ -184,7 +188,15 @@ function clearAuthParamsFromBrowserUrl() {
     return;
   }
 
-  window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
+  // Keep Expo Router's route state in sync; otherwise its next state update
+  // can put an already-consumed code or error back in the address bar.
+  router.setParams({ code: undefined, error: undefined, error_code: undefined, error_description: undefined });
+  const url = new URL(window.location.href);
+  for (const key of ['code', 'error', 'error_code', 'error_description']) {
+    url.searchParams.delete(key);
+  }
+  url.hash = '';
+  window.history.replaceState(window.history.state, document.title, url.toString());
 }
 
 export async function signOut() {
@@ -195,6 +207,14 @@ export async function signOut() {
 }
 
 export async function upsertProfile(input: ProfileInput) {
+  const displayName = input.displayName.trim();
+  const username = input.username?.trim() || null;
+  if (input.completeSetup) {
+    if (!displayName) throw new Error('Choose a name to show in games.');
+    if (username && !/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
+      throw new Error('Use 3–24 letters, numbers or underscores for your username, or leave it blank.');
+    }
+  }
   const {
     data: { user },
     error: userError,
@@ -208,13 +228,17 @@ export async function upsertProfile(input: ProfileInput) {
   }
 
   const updates = {
-    display_name: input.displayName,
-    username: input.username ?? null,
+    display_name: displayName,
+    username,
+    ...(input.completeSetup ? { needs_profile_setup: false } : {}),
     ...(input.avatarUrl !== undefined ? { avatar_url: input.avatarUrl } : {}),
   };
   const { data, error } = await supabase.from('profiles').update(updates).eq('id', user.id).select().single();
 
   if (error) {
+    if (input.completeSetup && error.code === '23505') {
+      throw new Error('That username is taken. Try another, or leave it blank.');
+    }
     throw error;
   }
 

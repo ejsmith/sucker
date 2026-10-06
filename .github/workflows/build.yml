@@ -55,11 +55,56 @@ jobs:
       - name: Build production web bundle
         run: npm run build:web
         env:
-          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL || 'https://example.supabase.co' }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'test-only-public-key' }}
+          EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
+          EXPO_PUBLIC_EXCEPTIONLESS_API_KEY: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY }}
+          EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Check production web bundle budget
         run: npm run check:bundle-size
+
+      - name: Install production smoke browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Test production export
+        run: npm run test:production
+
+      - name: Upload tested production export
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-export
+          path: dist
+          retention-days: 3
+
+      - name: Upload production test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-test-results
+          path: test-results
+          retention-days: 14
+
+  computer-quality:
+    name: Computer Quality (1000 games)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --prefer-offline
+      - run: npm run test:computer-quality
+      - name: Upload strategy quality measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: computer-quality
+          path: test-results/computer-quality.json
+          retention-days: 14
 
   native-config:
     name: Native Config
@@ -171,10 +216,30 @@ jobs:
       - name: Test Supabase integration
         run: npm run test:integration:supabase
 
+      - name: Capture Supabase failure diagnostics
+        if: failure()
+        run: node scripts/capture-supabase-diagnostics.cjs
+
+      - name: Upload Supabase failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supabase-integration-diagnostics
+          path: test-results/supabase
+          retention-days: 14
+
+      - name: Stop Supabase
+        if: always()
+        run: npx supabase stop --no-backup || true
+
   web-e2e:
-    name: Web E2E
+    name: Web E2E (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout
@@ -218,22 +283,57 @@ jobs:
           docker tag docker.io/supabase/edge-runtime:v1.74.2 public.ecr.aws/supabase/edge-runtime:v1.74.2
 
       - name: Test web E2E
-        run: npm run test:e2e:web
+        run: npm run test:e2e:web -- --shard=${{ matrix.shard }}/4
+
+      - name: Capture Supabase failure diagnostics
+        if: failure()
+        run: node scripts/capture-supabase-diagnostics.cjs
 
       - name: Stop Supabase
         if: always()
         run: npx supabase stop --no-backup || true
 
       - name: Upload Playwright test results
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-test-results
-          path: test-results
+          name: playwright-test-results-${{ matrix.shard }}
+          path: |
+            test-results
+            blob-report
           if-no-files-found: ignore
+          retention-days: 14
+
+  web-e2e-report:
+    name: Browser test report
+    if: ${{ !cancelled() }}
+    needs: web-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --prefer-offline
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: playwright-test-results-*
+          path: reports
+      - name: Merge shard reports
+        run: |
+          mkdir all-blob-reports
+          find reports -name '*.zip' -path '*/blob-report/*' -exec cp {} all-blob-reports/ \;
+          npx playwright merge-reports --reporter=html all-blob-reports
+      - uses: actions/upload-artifact@v7
+        with:
+          name: browser-test-report
+          path: playwright-report
+          retention-days: 14
 
   build-pages:
     name: Build GitHub Pages
+    needs: app
     # The authoritative Punch protocol requires a coordinated backend/client
     # rollout. See docs/releases/authoritative-punch-rollout.md before enabling.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SUCKER_PUNCH_PROTOCOL_READY == 'true'
@@ -254,9 +354,6 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v6
 
-      - name: Install dependencies
-        run: npm ci --prefer-offline
-
       - name: Validate deployment config
         run: |
           test -n "$EXPO_PUBLIC_SUPABASE_URL" || { echo "::error::Set repository variable EXPO_PUBLIC_SUPABASE_URL before deploying GitHub Pages."; exit 1; }
@@ -271,15 +368,11 @@ jobs:
           EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
-      - name: Build web
-        run: npm run build:web
-        env:
-          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
-          EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
-          EXPO_PUBLIC_EXCEPTIONLESS_API_KEY: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY }}
-          EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      - name: Download tested production export
+        uses: actions/download-artifact@v8
+        with:
+          name: web-export
+          path: dist
 
       - name: Add GitHub Pages route fallback
         run: cp dist/index.html dist/404.html
@@ -321,6 +414,7 @@ jobs:
     name: Deploy GitHub Pages
     needs:
       - app
+      - computer-quality
       - edge
       - supabase-integration
       - web-e2e

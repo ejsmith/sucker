@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getProfileCacheGeneration, rememberProfiles } from './profileCache';
+import type { Database } from './database.types';
 
 const avatarPublicBase = supabase.storage.from('avatars').getPublicUrl('').data.publicUrl.replace(/\/$/, '');
 
@@ -16,8 +17,7 @@ export function getSafeAvatarUrl(value: string | null | undefined, profileId: st
   }
 }
 
-export async function getMyProfile() {
-  const generation = getProfileCacheGeneration();
+export async function getMyProfile(): Promise<Database['public']['Tables']['profiles']['Row'] | null> {
   const {
     data: { user },
     error: userError,
@@ -36,9 +36,7 @@ export async function getMyProfile() {
     throw error;
   }
 
-  const profile = { ...data, avatar_url: getSafeAvatarUrl(data.avatar_url, data.id) };
-  rememberProfiles([profile], generation);
-  return profile;
+  return { ...data, avatar_url: getSafeAvatarUrl(data.avatar_url, data.id) };
 }
 
 export async function searchProfiles(query: string) {

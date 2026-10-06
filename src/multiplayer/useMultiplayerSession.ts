@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Linking } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -21,6 +21,7 @@ import { getMyProfile, getSafeAvatarUrl } from './profiles';
 import {
   clearProfileCache,
   getCachedProfiles,
+  getProfileCacheGeneration,
   hydrateProfileCache,
   rememberProfiles,
   type CachedProfile,
@@ -31,6 +32,8 @@ import type { ProfileInput } from './types';
 import { reportError, setMonitoringUser } from '../monitoring/exceptionless';
 import { isTemporarySessionError, sessionConnectionMessage, withSessionTimeout } from './sessionRecovery';
 import { useAppActivity } from '../ui/useAppActivity';
+import { authenticateWithApple, type AppleAuthAction } from './appleAuth';
+import { hasAppleIdentity } from './appleIdentity';
 
 type Profile = CachedProfile | null;
 
@@ -40,13 +43,16 @@ export function useMultiplayerSession() {
   const [isRestoringSession, setIsRestoringSession] = useState(isMultiplayerConfigured);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isSessionUnavailable, setIsSessionUnavailable] = useState(false);
+  const [isAppleAuthenticating, setIsAppleAuthenticating] = useState(false);
+  const [confirmedAppleUserId, setConfirmedAppleUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>(null);
   const [session, setSession] = useState<Session | null>(null);
   const lastHandledAuthUrl = useRef<string | null>(null);
   const pushRegisteredProfileId = useRef<string | null>(null);
+  const profileLoadVersion = useRef(0);
   const isMounted = useRef(true);
   const sessionProfileId = useRef<string | null>(null);
-  const profileRefresh = useRef<{ id: string; promise: Promise<Profile> } | null>(null);
+  const profileRefresh = useRef<{ id: string; version: number; promise: Promise<Profile> } | null>(null);
   const reconnectInFlight = useRef<Promise<void> | null>(null);
   const authRevision = useRef(0);
   const isAppActive = useAppActivity();
@@ -56,9 +62,11 @@ export function useMultiplayerSession() {
     if (sessionProfileId.current && sessionProfileId.current !== nextId) {
       clearProfileCache();
       pushRegisteredProfileId.current = null;
+      profileLoadVersion.current++;
     }
     sessionProfileId.current = nextId;
     setSession(nextSession);
+    setConfirmedAppleUserId((current) => (current === nextId ? current : null));
     setProfile((current) => (current?.id === nextId ? current : null));
     setMonitoringUser(nextId);
   }, []);
@@ -70,21 +78,66 @@ export function useMultiplayerSession() {
     };
   }, []);
 
+  const sessionUserId = session?.user.id;
+  const sessionAccessToken = session?.access_token;
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !sessionUserId || !sessionAccessToken || isAppleAuthenticating) return;
+    let active = true;
+    let syncing = false;
+    const syncAppleConnection = async () => {
+      if (!active || syncing) return;
+      syncing = true;
+      try {
+        const { data, error } = await supabase.auth.getUser(sessionAccessToken);
+        if (!active || error || !data.user || data.user.id !== sessionUserId) return;
+        const user = data.user;
+        setSession((current) => (current?.user.id === user.id ? { ...current, user } : current));
+        setConfirmedAppleUserId(hasAppleIdentity(user) ? user.id : null);
+      } catch {
+        // Keep a successful link visible while offline. Retry on reconnect/resume.
+      } finally {
+        syncing = false;
+      }
+    };
+    void syncAppleConnection();
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) void syncAppleConnection();
+    });
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncAppleConnection();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+      subscription.remove();
+    };
+  }, [isAppleAuthenticating, sessionAccessToken, sessionUserId]);
+
   const refreshProfile = useCallback(async (): Promise<Profile> => {
     const id = sessionProfileId.current;
     if (!isMultiplayerConfigured || !id) {
       return null;
     }
-    if (profileRefresh.current?.id === id) return profileRefresh.current.promise;
+    if (profileRefresh.current?.id === id && profileRefresh.current.version === profileLoadVersion.current) {
+      return profileRefresh.current.promise;
+    }
+    const loadVersion = ++profileLoadVersion.current;
+    const cacheGeneration = getProfileCacheGeneration();
     const promise = (async () => {
       const nextProfile = await getMyProfile();
-      if (!isMounted.current || sessionProfileId.current !== id || nextProfile?.id !== id) {
+      if (
+        !isMounted.current ||
+        loadVersion !== profileLoadVersion.current ||
+        sessionProfileId.current !== id ||
+        nextProfile?.id !== id
+      ) {
         return nextProfile;
       }
+      rememberProfiles([nextProfile], cacheGeneration);
       setProfile(nextProfile);
       setIsSessionUnavailable(false);
-      setMonitoringUser(nextProfile?.id ?? null);
-      if (nextProfile && pushRegisteredProfileId.current !== nextProfile.id) {
+      setMonitoringUser(nextProfile.id);
+      if (pushRegisteredProfileId.current !== nextProfile.id) {
         pushRegisteredProfileId.current = nextProfile.id;
         void registerPushToken(nextProfile.id).catch((pushError) => {
           console.warn('Unable to register push token', pushError);
@@ -94,7 +147,7 @@ export function useMultiplayerSession() {
       }
       return nextProfile;
     })();
-    profileRefresh.current = { id, promise };
+    profileRefresh.current = { id, version: loadVersion, promise };
     try {
       return await promise;
     } finally {
@@ -201,7 +254,7 @@ export function useMultiplayerSession() {
       setIsLoading(true);
 
       try {
-        const nextSession = await createSessionFromAuthUrl(url);
+        const nextSession = (await createSessionFromAuthUrl(url)) ?? (await getCurrentSession());
         if (!isMounted) {
           return true;
         }
@@ -372,11 +425,41 @@ export function useMultiplayerSession() {
     }
   }
 
+  async function continueWithApple(action: AppleAuthAction = 'signIn') {
+    setError(null);
+    setIsLoading(true);
+    setIsAppleAuthenticating(true);
+    try {
+      const nextSession = await authenticateWithApple(action);
+      // Canceling the Apple sheet must not clear an existing account.
+      if (nextSession) {
+        acceptSession(nextSession);
+        if (action === 'link') {
+          setConfirmedAppleUserId(nextSession.user.id);
+          // Loading profile details cannot undo a successful account link.
+          await refreshProfile().catch(() => undefined);
+        } else {
+          await refreshProfile();
+        }
+      }
+      return nextSession;
+    } catch (appleError) {
+      const message = toErrorMessage(appleError);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsAppleAuthenticating(false);
+      setIsLoading(false);
+    }
+  }
+
   async function saveProfile(input: ProfileInput) {
     setError(null);
     setIsLoading(true);
     try {
       const nextProfile = await upsertProfile(input);
+      // An older refresh must not restore the pending-setup flag after saving.
+      profileLoadVersion.current++;
       setProfile(nextProfile);
       rememberProfiles([nextProfile]);
       return nextProfile;
@@ -419,9 +502,12 @@ export function useMultiplayerSession() {
   }
 
   return {
+    continueWithApple,
     endSession,
     error,
     isConfigured: isMultiplayerConfigured,
+    isAppleAuthenticating,
+    isAppleConnected: Boolean(session && (confirmedAppleUserId === session.user.id || hasAppleIdentity(session.user))),
     isLoading,
     isRestoringSession,
     isReconnecting,

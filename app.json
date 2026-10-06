@@ -4,7 +4,7 @@
     "description": "An asynchronous head-to-head dice game with tactical Sucker Tokens.",
     "slug": "sucker",
     "scheme": "sucker",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.ejsmith.sucker",
       "icon": "./assets/ios-icon.png",
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "requireFullScreen": true,
       "associatedDomains": ["applinks:play.sucker.games"],
       "config": {
@@ -40,6 +41,7 @@
       "predictiveBackGestureEnabled": true
     },
     "plugins": [
+      "expo-apple-authentication",
       "expo-router",
       "expo-image",
       "expo-status-bar",

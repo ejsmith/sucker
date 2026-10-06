@@ -6,6 +6,7 @@ export type CachedProfile = {
   display_name: string;
   username: string | null;
   avatar_url: string | null;
+  needs_profile_setup?: boolean;
 };
 
 const cacheKey = `sucker.profiles.v1:${getMultiplayerConfig().supabaseUrl}`;
@@ -50,7 +51,8 @@ export function hydrateProfileCache() {
             typeof value.id === 'string' &&
             typeof value.display_name === 'string' &&
             (value.username === null || typeof value.username === 'string') &&
-            (value.avatar_url === null || typeof value.avatar_url === 'string'),
+            (value.avatar_url === null || typeof value.avatar_url === 'string') &&
+            (value.needs_profile_setup === undefined || typeof value.needs_profile_setup === 'boolean'),
         );
         // A slow storage read must never replace a fresher server response.
         profiles = { ...Object.fromEntries(cached.map((profile) => [profile.id, profile])), ...profiles };
@@ -65,12 +67,15 @@ export function rememberProfiles(nextProfiles: CachedProfile[], startedGeneratio
   if (generation !== startedGeneration) return;
   const next = { ...profiles };
   for (const profile of nextProfiles) {
-    // Store display data only, never auth tokens or unrelated profile fields.
+    // Avatar-only lookups must preserve the account's last known setup state.
+    const needsProfileSetup = profile.needs_profile_setup ?? next[profile.id]?.needs_profile_setup;
+    // Store display/setup data only, never auth tokens or unrelated fields.
     next[profile.id] = {
       id: profile.id,
       display_name: profile.display_name,
       username: profile.username,
       avatar_url: profile.avatar_url,
+      ...(needsProfileSetup === undefined ? {} : { needs_profile_setup: needsProfileSetup }),
     };
   }
   profiles = next;

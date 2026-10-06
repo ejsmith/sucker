@@ -364,7 +364,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         borderRadius: unit(14),
         borderWidth: stroke(4),
         gap: unit(10),
-        height: unit(240),
+        minHeight: unit(240),
         padding: unit(14),
       },
       gameOverPrimaryButton: {
@@ -696,11 +696,12 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       },
       topMenu: {
         borderRadius: unit(10),
-        borderWidth: stroke(3),
-        padding: unit(6),
+        borderWidth: stroke(2),
+        gap: unit(8),
+        padding: unit(8),
         right: unit(8),
         top: unit(64),
-        width: unit(132),
+        width: unit(176),
       },
       topMenuItem: {
         borderRadius: unit(7),
