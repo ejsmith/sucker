@@ -91,7 +91,7 @@ function mountSession() {
       }
     },
   };
-  const { useMultiplayerSession } = load('../src/multiplayer/useMultiplayerSession.ts', {
+  const { useMultiplayerSession: renderSession } = load('../src/multiplayer/useMultiplayerSession.ts', {
     react,
     'react-native': {
       Platform: { OS: 'ios' },
@@ -168,7 +168,7 @@ function mountSession() {
       if (dirty) {
         dirty = false;
         cursor = 0;
-        result = useMultiplayerSession();
+        result = renderSession();
         const pending = effects;
         effects = [];
         pending.forEach((effect) => effect());

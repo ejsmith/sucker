@@ -1,37 +1,47 @@
-import { hapticSteps, type HapticChoice, type HapticEffect, type HapticEvent } from './patterns';
+import { buildHapticPattern, type HapticChoice, type HapticEvent, type HapticPattern } from './patterns';
 
-export function createHapticPlayer(driver: {
-  trigger: (effect: HapticEffect, event: HapticEvent) => void | Promise<void>;
+export type HapticDriver = {
+  playPattern: (pattern: HapticPattern) => void;
+  playOriginal: (event: HapticEvent) => void;
   cancel: () => void;
-  isActive: () => boolean;
-}) {
-  let timers: ReturnType<typeof setTimeout>[] = [];
+};
+
+export function createHapticPlayer(driver: HapticDriver & { isActive: () => boolean }) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
 
   function cancel() {
     generation++;
-    timers.forEach(clearTimeout);
-    timers = [];
-    driver.cancel();
+    clearTimeout(timer);
+    timer = undefined;
+    try {
+      driver.cancel();
+    } catch {
+      /* Optional hardware must never interrupt gameplay. */
+    }
   }
 
   function play(event: HapticEvent, choice: HapticChoice) {
     cancel();
-    if (!driver.isActive()) return;
+    if (!driver.isActive() || choice.preset === 'off') return;
     const current = generation;
-    for (const { atMs, effect } of hapticSteps(choice)) {
-      const trigger = () => {
-        if (current !== generation || !driver.isActive()) return;
-        // Haptics are optional hardware feedback and must never interrupt gameplay.
-        try {
-          void Promise.resolve(driver.trigger(effect, event)).catch(() => undefined);
-        } catch {
-          // Unsupported devices can throw before returning a promise.
+    const trigger = () => {
+      timer = undefined;
+      if (current !== generation || !driver.isActive()) return;
+      try {
+        if (choice.preset === 'original') driver.playOriginal(event);
+        else {
+          const pattern = buildHapticPattern(choice);
+          if (pattern) driver.playPattern(pattern);
         }
-      };
-      if (atMs === 0) trigger();
-      else timers.push(setTimeout(trigger, atMs));
-    }
+      } catch {
+        /* Unsupported hardware is allowed to produce no feedback. */
+      }
+    };
+    const delay = Number.isFinite(choice.delayMs) ? Math.max(0, Math.min(250, choice.delayMs)) : 0;
+    // Only the optional reveal delay uses JS. All strikes/curves run as one native timeline.
+    if (delay === 0) trigger();
+    else timer = setTimeout(trigger, delay);
   }
 
   return { play, cancel };

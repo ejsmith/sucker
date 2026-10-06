@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, Modal, Platform, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Line, Polyline } from 'react-native-svg';
 import { CloseIcon } from '../ui/ControlIcon';
 import { Pressable } from '../ui/Pressable';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from '../ui/accessibilityFocus';
@@ -10,7 +11,9 @@ import {
   hapticEventLabels,
   hapticEvents,
   hapticPresets,
-  hasAdjustableGap,
+  buildHapticPattern,
+  createHapticChoice,
+  isCustomHaptic,
   sameHapticChoice,
   type HapticChoice,
   type HapticEvent,
@@ -50,7 +53,7 @@ export function HapticsLab({
                 HAPTICS LAB
               </Text>
               <Text maxFontSizeMultiplier={1.2} style={styles.subtitle}>
-                Find your favorite feel.
+                Impacts, rumbles, and celebrations.
               </Text>
             </View>
             <Pressable accessibilityLabel="Close Haptics Lab" ref={closeRef} onPress={onClose} style={styles.close}>
@@ -76,7 +79,7 @@ export function HapticsLab({
 }
 
 function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) => ReactNode }) {
-  const { preferences, preview, cancel, save } = useHaptics();
+  const { preferences, preview, cancel, save, support } = useHaptics();
   const [event, setEvent] = useState<HapticEvent>('punchLanded');
   const [drafts, setDrafts] = useState(preferences);
   const [withVisuals, setWithVisuals] = useState(true);
@@ -84,12 +87,13 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
   const [playing, setPlaying] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [showTuning, setShowTuning] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frame = useRef<number | null>(null);
   const choice = drafts[event];
   const saved = preferences[event];
   const matchesSaved = sameHapticChoice(choice, saved);
-  const canAdjustGap = hasAdjustableGap(choice.preset);
+  const canTune = isCustomHaptic(choice.preset);
 
   const clearPlayback = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -122,7 +126,10 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
     if (withVisuals) setMoment(event);
     frame.current = requestAnimationFrame(() => {
       preview(event, candidate);
-      timer.current = setTimeout(stop, event === 'sucker' ? 1250 : 1700);
+      timer.current = setTimeout(
+        stop,
+        Math.max(event === 'sucker' ? 1250 : 1700, candidate.delayMs + candidate.durationMs + 250),
+      );
     });
   }
 
@@ -174,7 +181,7 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
           {hapticEventLabels[event]}
         </Text>
         <Text maxFontSizeMultiplier={1.2} style={styles.body}>
-          Choose an effect, then compare it with your saved favorite.
+          Compare shapes, then tune your favorite.
         </Text>
         <View accessibilityRole="radiogroup" accessibilityLabel="Haptic effect" style={styles.presets}>
           {eventPresets[event].map((preset) => (
@@ -185,7 +192,9 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
               accessibilityState={{ checked: choice.preset === preset }}
               aria-checked={choice.preset === preset}
               disabled={saving}
-              onPress={() => update({ preset })}
+              onPress={() => {
+                if (preset !== choice.preset) update({ ...createHapticChoice(preset), delayMs: choice.delayMs });
+              }}
               style={[styles.preset, choice.preset === preset && styles.selectedPreset]}
               testID={`haptic-preset-${preset}`}
             >
@@ -201,26 +210,80 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
         <Text maxFontSizeMultiplier={1.2} style={styles.description}>
           {hapticPresets[choice.preset].description}
         </Text>
-        <View style={styles.tuning}>
-          <TimingControl
-            label="Tap spacing"
-            value={choice.gapMs}
-            min={50}
-            max={250}
-            disabled={saving || !canAdjustGap}
-            hint={canAdjustGap ? undefined : 'For multi-tap effects'}
-            onChange={(gapMs) => update({ gapMs })}
-          />
-          <TimingControl
-            label="Start delay"
-            value={choice.delayMs}
-            min={0}
-            max={250}
-            disabled={saving || choice.preset === 'off'}
-            hint="After the result appears"
-            onChange={(delayMs) => update({ delayMs })}
-          />
-        </View>
+        {canTune && <PatternPreview choice={choice} />}
+        <Pressable
+          accessibilityLabel={showTuning ? 'Hide tuning controls' : 'Tune effect'}
+          accessibilityState={{ expanded: showTuning }}
+          disabled={saving || choice.preset === 'off'}
+          onPress={() => setShowTuning((value) => !value)}
+          style={[styles.tuneToggle, choice.preset === 'off' && styles.disabled]}
+        >
+          <Text maxFontSizeMultiplier={1.2} style={styles.label}>
+            {showTuning ? '− Hide tuning' : '+ Tune effect'}
+          </Text>
+          {canTune && (
+            <Text maxFontSizeMultiplier={1.2} style={styles.hint}>
+              {choice.durationMs} ms · {choice.strength}% strength
+            </Text>
+          )}
+        </Pressable>
+        {showTuning && choice.preset !== 'off' && (
+          <View style={styles.tuning}>
+            {canTune && (
+              <>
+                <TuningControl
+                  label="Strength"
+                  value={choice.strength}
+                  min={25}
+                  max={100}
+                  step={25}
+                  unit="%"
+                  disabled={saving}
+                  hint="Overall intensity"
+                  onChange={(strength) => update({ strength })}
+                />
+                <TuningControl
+                  label="Sharpness"
+                  value={choice.sharpness}
+                  min={0}
+                  max={100}
+                  step={25}
+                  unit="%"
+                  disabled={saving}
+                  hint="Soft ← 50% original → sharp"
+                  onChange={(sharpness) => update({ sharpness })}
+                />
+                <TuningControl
+                  label="Duration"
+                  value={choice.durationMs}
+                  min={50}
+                  max={900}
+                  step={50}
+                  unit=" ms"
+                  disabled={saving}
+                  hint="Stretch or shorten the whole effect"
+                  onChange={(durationMs) => update({ durationMs })}
+                />
+              </>
+            )}
+            <TuningControl
+              label="Start delay"
+              value={choice.delayMs}
+              min={0}
+              max={250}
+              step={25}
+              unit=" ms"
+              disabled={saving}
+              hint="After the result appears"
+              onChange={(delayMs) => update({ delayMs })}
+            />
+            <LabButton
+              label="Reset this effect"
+              disabled={saving}
+              onPress={() => update(createHapticChoice(choice.preset))}
+            />
+          </View>
+        )}
         <View style={styles.visualsRow}>
           <View style={styles.flex}>
             <Text maxFontSizeMultiplier={1.2} style={styles.label}>
@@ -241,13 +304,15 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
             value={withVisuals}
           />
         </View>
+      </ScrollView>
+      <View style={styles.footer}>
         <View style={styles.compare}>
           <LabButton label="Try choice" disabled={saving} onPress={() => audition(choice, 'Choice')} primary />
           <LabButton label="Try saved" disabled={saving} onPress={() => audition(saved, 'Saved')} />
           <LabButton
             label="Try original"
             disabled={saving}
-            onPress={() => audition({ ...saved, preset: 'original', delayMs: 0 }, 'Original')}
+            onPress={() => audition(createHapticChoice('original'), 'Original')}
           />
         </View>
         <Text
@@ -258,8 +323,9 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
         >
           {playing
             ? `Playing: ${playing}`
-            : `Saved: ${hapticPresets[saved.preset].label} · ${saved.delayMs} ms delay${hasAdjustableGap(saved.preset) ? ` · ${saved.gapMs} ms spacing` : ''}`}
+            : `Saved: ${hapticPresets[saved.preset].label}${isCustomHaptic(saved.preset) ? ` · ${saved.durationMs} ms · ${saved.strength}% strength · ${saved.sharpness}% sharpness` : ''}${saved.preset !== 'off' && saved.delayMs ? ` · ${saved.delayMs} ms delay` : ''}`}
         </Text>
+        {playing && !moment && <LabButton label="Stop preview" onPress={stop} />}
         <LabButton
           label={saving ? 'Saving…' : matchesSaved ? 'Saved for gameplay' : 'Use this in games'}
           disabled={saving || matchesSaved}
@@ -272,11 +338,17 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
           </Text>
         )}
         <Text maxFontSizeMultiplier={1.2} style={styles.footnote}>
-          {Platform.OS === 'web'
+          {support === 'web'
             ? 'Visual preview only. Compare the feel in the iPhone or Android app.'
-            : 'Choices stay on this phone. If you feel nothing on iPhone, check System Haptics and turn off Low Power Mode.'}
+            : support === 'missing'
+              ? 'Custom effects need a newer app build. Original still uses system vibration.'
+              : support === 'unavailable'
+                ? 'This device does not support custom haptics.'
+                : support === 'limited'
+                  ? 'This phone approximates some textures. Choices stay on this phone.'
+                  : 'Choices stay on this phone. Compare by feel, then try your favorite in a game.'}
         </Text>
-      </ScrollView>
+      </View>
       {moment && (
         <View style={styles.moment} testID="haptic-moment-preview">
           <Text maxFontSizeMultiplier={1.2} style={styles.previewLabel}>
@@ -324,11 +396,50 @@ function LabButton({
   );
 }
 
-function TimingControl({
+function PatternPreview({ choice }: { choice: HapticChoice }) {
+  const pattern = buildHapticPattern(choice);
+  if (!pattern) return null;
+  const x = (time: number) => 6 + (time / choice.durationMs) * 288;
+  const y = (amplitude: number) => 52 - amplitude * 44;
+  return (
+    <View
+      style={styles.waveform}
+      accessibilityLabel={`${choice.durationMs} millisecond pattern, ${pattern.discretePattern.length} strikes with continuous vibration`}
+    >
+      <Svg width="100%" height={52} viewBox="0 0 300 60" accessible={false} aria-hidden>
+        <Line x1={6} y1={52} x2={294} y2={52} stroke="#70392C" />
+        <Polyline
+          points={pattern.continuousPattern.amplitude.map((point) => `${x(point.time)},${y(point.value)}`).join(' ')}
+          fill="none"
+          stroke="#FFD329"
+          strokeWidth={2.5}
+        />
+        {pattern.discretePattern.map((point, index) => (
+          <Line
+            key={index}
+            x1={x(point.time)}
+            y1={52}
+            x2={x(point.time)}
+            y2={y(point.amplitude)}
+            stroke="#FFF3CE"
+            strokeWidth={3}
+          />
+        ))}
+      </Svg>
+      <Text maxFontSizeMultiplier={1.2} style={styles.waveformCaption}>
+        Strength over time · lines mark strikes
+      </Text>
+    </View>
+  );
+}
+
+function TuningControl({
   label,
   value,
   min,
   max,
+  step,
+  unit,
   disabled,
   hint,
   onChange,
@@ -337,6 +448,8 @@ function TimingControl({
   value: number;
   min: number;
   max: number;
+  step: number;
+  unit: string;
   disabled: boolean;
   hint?: string;
   onChange: (value: number) => void;
@@ -356,7 +469,7 @@ function TimingControl({
       <Pressable
         accessibilityLabel={`Decrease ${label.toLowerCase()}`}
         disabled={disabled || value <= min}
-        onPress={() => onChange(Math.max(min, value - 25))}
+        onPress={() => onChange(Math.max(min, value - step))}
         style={[styles.stepper, (disabled || value <= min) && styles.disabled]}
       >
         <Text maxFontSizeMultiplier={1.2} style={styles.stepperText}>
@@ -364,12 +477,13 @@ function TimingControl({
         </Text>
       </Pressable>
       <Text maxFontSizeMultiplier={1.2} style={[styles.value, disabled && styles.disabled]}>
-        {value} ms
+        {value}
+        {unit}
       </Text>
       <Pressable
         accessibilityLabel={`Increase ${label.toLowerCase()}`}
         disabled={disabled || value >= max}
-        onPress={() => onChange(Math.min(max, value + 25))}
+        onPress={() => onChange(Math.min(max, value + step))}
         style={[styles.stepper, (disabled || value >= max) && styles.disabled]}
       >
         <Text maxFontSizeMultiplier={1.2} style={styles.stepperText}>
@@ -395,7 +509,7 @@ const styles = StyleSheet.create({
   },
   header: { padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: '#FFD329', fontSize: 24, fontFamily: 'Inter_900Black', fontWeight: '900' },
-  subtitle: { color: '#FFF3CE', fontSize: 14, marginTop: 3 },
+  subtitle: { color: '#FFF3CE', fontSize: 12, marginTop: 3 },
   close: { height: 44, width: 44, justifyContent: 'center', alignItems: 'center' },
   tabs: { flexDirection: 'row', marginHorizontal: 16, gap: 6 },
   tab: {
@@ -410,7 +524,11 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 13, fontWeight: '900', color: '#FFF3CE' },
   darkText: { color: '#351005' },
   scroll: { flexShrink: 1 },
-  content: { padding: 16, gap: 12 },
+  content: { padding: 16, gap: 10 },
+  footer: { padding: 16, gap: 10, borderTopWidth: 1, borderColor: '#70392C' },
+  waveform: { backgroundColor: '#230704', borderRadius: 10, padding: 6 },
+  waveformCaption: { fontSize: 10, color: '#D8B29C', textAlign: 'center', paddingBottom: 3 },
+  tuneToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44, gap: 8 },
   eventTitle: { color: '#FFF3CE', fontSize: 21, fontWeight: '800' },
   body: { color: '#F4D5BC', fontSize: 14, lineHeight: 19 },
   presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
