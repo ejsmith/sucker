@@ -271,16 +271,16 @@ test('an expired rejected session shows login after restoration without cached g
   await page.goto('/');
   await expect(page.getByText('Hi, Startup Tester')).toBeVisible();
   await expect(page.getByTestId(/^game-card-/)).toHaveCount(2);
-  await page.evaluate((key) => {
-    const session = JSON.parse(localStorage.getItem(key)!);
-    session.expires_at = 1;
-    localStorage.setItem(key, JSON.stringify(session));
-  }, sessionKey);
   const refresh = deferred();
   await page.route('**/auth/v1/token?**', async (route) => {
     await refresh.promise;
     return route.fulfill({ status: 400, json: { code: 'refresh_token_not_found', message: 'Session expired' } });
   });
+  await page.evaluate((key) => {
+    const session = JSON.parse(localStorage.getItem(key)!);
+    session.expires_at = 1;
+    localStorage.setItem(key, JSON.stringify(session));
+  }, sessionKey);
   try {
     await page.reload();
     await expect(page.getByText('Hi, Startup Tester')).toBeVisible();
@@ -299,11 +299,6 @@ for (const failure of ['offline', 'server', 'rate-limited'] as const) {
     await page.goto('/');
     await expect(page.getByText('Hi, Startup Tester')).toBeVisible();
     await expect(page.getByTestId(/^game-card-/)).toHaveCount(2);
-    await page.evaluate((key) => {
-      const session = JSON.parse(localStorage.getItem(key)!);
-      session.expires_at = 1;
-      localStorage.setItem(key, JSON.stringify(session));
-    }, sessionKey);
     let available = false;
     await page.route('**/auth/v1/token?**', async (route) => {
       if (!available) {
@@ -319,6 +314,11 @@ for (const failure of ['offline', 'server', 'rate-limited'] as const) {
         json: { ...session, expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600 },
       });
     });
+    await page.evaluate((key) => {
+      const session = JSON.parse(localStorage.getItem(key)!);
+      session.expires_at = 1;
+      localStorage.setItem(key, JSON.stringify(session));
+    }, sessionKey);
     await page.reload();
     await expect(page.getByText('Hi, Startup Tester')).toBeVisible();
     await expect(page.getByTestId(/^game-card-/)).toHaveCount(2);
@@ -357,13 +357,13 @@ test('a move blocked by auth connectivity never asks the player to sign in', asy
   await page.goto('/');
   await page.getByTestId(`game-card-${fixture.games[0].id}`).click();
   await expect(page.getByTestId('roll-button')).toBeEnabled();
+  await page.route('**/auth/v1/token?**', (route) => route.abort('internetdisconnected'));
   await page.evaluate((key) => {
     const session = JSON.parse(localStorage.getItem(key)!);
     session.expires_at = 1;
     localStorage.setItem(key, JSON.stringify(session));
   }, sessionKey);
   let actionsSent = 0;
-  await page.route('**/auth/v1/token?**', (route) => route.abort('internetdisconnected'));
   await page.route('**/functions/v1/game-action', (route) => {
     actionsSent++;
     return route.fallback();
@@ -391,6 +391,11 @@ for (const signedIn of [true, false]) {
     await expect(signedIn ? page.getByText('Hi, Startup Tester') : page.getByTestId('login-email-input')).toBeVisible();
     const saveKey = `sucker.computer-session.v1.${signedIn ? actorId : 'guest'}`;
     const otherSaveKey = `sucker.computer-session.v1.${signedIn ? 'guest' : actorId}`;
+    // Block the backend before expiring credentials so a background refresh
+    // cannot hit the online fixture between expiring them and going offline.
+    await page.route(`${backend}/**`, (route) => route.abort('internetdisconnected'));
+    await context.setOffline(true);
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
     await page.evaluate(
       ({ sessionKey, signedIn, otherSaveKey }) => {
         if (signedIn) {
@@ -402,11 +407,6 @@ for (const signedIn of [true, false]) {
       },
       { sessionKey, signedIn, otherSaveKey },
     );
-    // Block the entire backend, including mocked requests, as well as the
-    // browser network. Solo play cannot depend on a successful auth refresh.
-    await page.route(`${backend}/**`, (route) => route.abort('internetdisconnected'));
-    await context.setOffline(true);
-    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
     await page.getByTestId('play-computer-button').click();
     await expect(page.getByTestId('roll-button')).toBeEnabled();
     await expect(page.getByTestId('computer-save-dialog')).toHaveCount(0);
