@@ -11,6 +11,7 @@ import { AppErrorBoundary } from '../src/ui/AppErrorBoundary';
 import { WebPortraitGuard } from '../src/ui/WebPortraitGuard';
 import { MonitoringRoute } from '../src/monitoring/MonitoringRoute';
 import { NetworkProvider, NetworkStatusBanner } from '../src/network/NetworkProvider';
+import { HapticsProvider } from '../src/haptics/HapticsProvider';
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
@@ -31,11 +32,13 @@ export default function RootLayout() {
         <WebPortraitGuard>
           <NetworkProvider>
             <NetworkStatusBanner />
-            <GameListProvider>
-              <MonitoringRoute />
-              <NotificationRouter />
-              <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
-            </GameListProvider>
+            <HapticsProvider>
+              <GameListProvider>
+                <MonitoringRoute />
+                <NotificationRouter />
+                <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
+              </GameListProvider>
+            </HapticsProvider>
           </NetworkProvider>
         </WebPortraitGuard>
       </SafeAreaProvider>

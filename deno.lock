@@ -34,6 +34,7 @@
         "npm:expo-device@~57.0.2",
         "npm:expo-doctor@^1.20.0",
         "npm:expo-font@57.0",
+        "npm:expo-haptics@~57.0.3",
         "npm:expo-image-manipulator@~57.0.20",
         "npm:expo-image-picker@~57.0.20",
         "npm:expo-image@~57.0.5",

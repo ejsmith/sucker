@@ -4,7 +4,7 @@
     "description": "An asynchronous head-to-head dice game with tactical Sucker Tokens.",
     "slug": "sucker",
     "scheme": "sucker",
-    "version": "1.1.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

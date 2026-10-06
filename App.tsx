@@ -10,7 +10,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  Vibration,
   View,
   type StyleProp,
   type ViewStyle,
@@ -113,6 +112,8 @@ import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
+import { HapticsLab } from './src/haptics/HapticsLab';
+import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
 import { Pressable } from './src/ui/Pressable';
@@ -1165,6 +1166,8 @@ export function LocalGameScreen({
   const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showHapticsLab, setShowHapticsLab] = useState(false);
+  const { play: playHaptic, cancel: cancelHaptics } = useHaptics();
   const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
   const [isSendingTaunt, setIsSendingTaunt] = useState(false);
   const [sentTauntTurnId, setSentTauntTurnId] = useState<string | null>(null);
@@ -1621,7 +1624,7 @@ export function LocalGameScreen({
 
   useEffect(() => {
     return () => {
-      Vibration.cancel();
+      cancelHaptics();
       if (suckerRollNoticeTimer.current) {
         clearTimeout(suckerRollNoticeTimer.current);
       }
@@ -1629,7 +1632,7 @@ export function LocalGameScreen({
         clearTimeout(suckerPunchWipeStartTimer.current);
       }
     };
-  }, []);
+  }, [cancelHaptics]);
 
   function showSuckerRollBanner(title: string) {
     if (suckerRollNoticeTimer.current) {
@@ -1637,8 +1640,7 @@ export function LocalGameScreen({
     }
 
     setSuckerRollNoticeTitle(title);
-    // iOS patterns space fixed pulses; Android/web alternate pauses and durations.
-    Vibration.vibrate(Platform.OS === 'ios' ? [0, 550] : [0, 120, 100, 180]);
+    playHaptic('sucker');
     suckerRollNoticeTimer.current = setTimeout(() => {
       setSuckerRollNoticeTitle(null);
       suckerRollNoticeTimer.current = null;
@@ -1688,7 +1690,7 @@ export function LocalGameScreen({
   function showSuckerPunchNoticeAndWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
     setSuckerPunchWipe(createSuckerPunchWipe(details));
     setShowSuckerPunchNotice(true);
-    Vibration.vibrate(400);
+    playHaptic('punchReceived');
   }
 
   function showSuckerPunchScoreWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
@@ -2953,8 +2955,7 @@ export function LocalGameScreen({
     suckerPunchResultCompletion.current = completeAfterResult;
     setSuckerPunchDialog({ ...dialog, outcome, phase: 'result' });
     if (outcome.landed) {
-      // iOS uses its fixed system pulse; Android/web use this shorter impact.
-      Vibration.vibrate(120);
+      playHaptic('punchLanded');
     }
   }
 
@@ -3333,6 +3334,23 @@ export function LocalGameScreen({
                 >
                   <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
                     RULES
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Open Haptics Lab"
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setShowHapticsLab(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.topMenuItem,
+                    gameLayout.styles.topMenuItem,
+                    pressed && styles.topMenuItemPressed,
+                  ]}
+                  testID="game-haptics-menu-item"
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                    HAPTICS LAB
                   </Text>
                 </Pressable>
                 {!isRemoteGame && onNewComputerGame && (
@@ -3981,6 +3999,21 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
+          {showHapticsLab && (
+            <HapticsLab
+              onClose={() => {
+                setShowHapticsLab(false);
+                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
+              }}
+              renderMoment={(event) =>
+                event === 'sucker' ? (
+                  <SuckerRollNotice title="You rolled" />
+                ) : (
+                  <SuckerPunchResultCard recipient={event === 'punchReceived'} />
+                )
+              }
+            />
+          )}
           {showRules && (
             <RulesDialog
               onClose={() => {
@@ -4328,17 +4361,7 @@ export function LocalGameScreen({
               style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
               testID="sucker-punch-notice"
             >
-              <View style={[styles.suckerPunchChancePanel, gameLayout.styles.suckerPunchChancePanel]}>
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchChanceTitle, gameLayout.styles.suckerPunchChanceTitle]}
-                >
-                  You got punched!
-                </Text>
-                <View style={[styles.suckerPunchResultImageShell, gameLayout.styles.suckerPunchResultImageShell]}>
-                  <SuckerPunchResultImage landed recipient testID="sucker-punch-recipient-result-image" />
-                </View>
-              </View>
+              <SuckerPunchResultCard recipient />
             </View>
           )}
           {suckerBlockedNotice && (
@@ -4366,27 +4389,7 @@ export function LocalGameScreen({
               style={[styles.suckerPunchNoticeOverlay, gameLayout.styles.suckerPunchNoticeOverlay]}
               testID="sucker-roll-notice"
             >
-              <View
-                style={[
-                  styles.suckerPunchNotice,
-                  gameLayout.styles.suckerPunchNotice,
-                  styles.suckerRollNotice,
-                  gameLayout.styles.suckerRollNotice,
-                ]}
-              >
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchNoticeTitle, gameLayout.styles.suckerPunchNoticeTitle]}
-                >
-                  {suckerRollNoticeTitle}
-                </Text>
-                <Text
-                  maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                  style={[styles.suckerPunchNoticeText, gameLayout.styles.suckerPunchNoticeText]}
-                >
-                  Sucker!!
-                </Text>
-              </View>
+              <SuckerRollNotice title={suckerRollNoticeTitle} />
             </View>
           )}
           {remoteError && (
@@ -5054,6 +5057,54 @@ function SuckerPunchChanceDialog({
           </Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+function SuckerPunchResultCard({ recipient }: { recipient: boolean }) {
+  const layout = useGameLayout();
+  return (
+    <View style={[styles.suckerPunchChancePanel, layout.styles.suckerPunchChancePanel]}>
+      <Text
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+        style={[styles.suckerPunchChanceTitle, layout.styles.suckerPunchChanceTitle]}
+      >
+        {recipient ? 'You got punched!' : 'Your punch landed!'}
+      </Text>
+      <View style={[styles.suckerPunchResultImageShell, layout.styles.suckerPunchResultImageShell]}>
+        <SuckerPunchResultImage
+          landed
+          recipient={recipient}
+          testID={recipient ? 'sucker-punch-recipient-result-image' : 'sucker-punch-result-image'}
+        />
+      </View>
+    </View>
+  );
+}
+
+function SuckerRollNotice({ title }: { title: string }) {
+  const layout = useGameLayout();
+  return (
+    <View
+      style={[
+        styles.suckerPunchNotice,
+        layout.styles.suckerPunchNotice,
+        styles.suckerRollNotice,
+        layout.styles.suckerRollNotice,
+      ]}
+    >
+      <Text
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+        style={[styles.suckerPunchNoticeTitle, layout.styles.suckerPunchNoticeTitle]}
+      >
+        {title}
+      </Text>
+      <Text
+        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+        style={[styles.suckerPunchNoticeText, layout.styles.suckerPunchNoticeText]}
+      >
+        Sucker!!
+      </Text>
     </View>
   );
 }
