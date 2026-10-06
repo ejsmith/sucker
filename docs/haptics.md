@@ -19,21 +19,31 @@ The defaults are **Crack** for landing a punch, **Body blow** for getting punche
 and **Build & pop** for a Sucker. These are candidates for physical device testing;
 code and browser checks cannot establish which feels satisfying.
 
-1. Select a shape, then **Try choice**. **Try saved** and **Try original** compare
+1. **Choose effect** selects a shape; **Tune effect** opens its controls. The lab
+   opens on tuning so your saved effect is ready to adjust. **Try choice**, **Try
+   saved**, and **Try original** compare
    it with your saved choice and the vibration from before the first lab.
 2. Turn off **Replay game moment** to compare by feel alone. Previews never roll
    dice, spend tokens, submit turns, or send multiplayer actions.
-3. Expand **Tune effect** to adjust strength (25–100%), sharpness (0–100%),
-   duration (50–900 ms), and start delay (0–250 ms after the result appears).
+3. Adjust strength (5–100%) and sharpness (0–100%) in 5% steps, or duration
+   (50–900 ms) and start delay (0–250 ms after the result appears) in 10 ms steps.
    Sharpness at 50% preserves the pattern's authored texture; 0% softens it and
-   100% sharpens it. Duration scales the entire timeline, preserving its rhythm.
-4. **Reset this effect** restores the selected shape's starting values.
-5. **Use this in games** saves that event's choice on this device. The three
+   100% sharpens it. Duration scales one pass, preserving its rhythm.
+4. Expand **Hits, rumble & repeats** to mix discrete strikes and continuous
+   vibration independently (0–100%, in 5% steps). Zero removes that layer. Rumble
+   has no discrete strikes, so it only shows rumble strength. Repeat a pattern
+   one to three times with 25–400 ms of silence between passes, in 25 ms steps.
+   Strength scales both layers together. The longest pattern is 3.5 seconds.
+5. **Preview changes** plays each edit immediately while keeping the controls
+   open. Turn it off to edit silently and use **Try choice** when ready.
+   **Reset this effect** restores the shape's starting values; **Restore saved**
+   returns to the saved settings for that event. Neither button saves by itself.
+6. **Use this in games** saves that event's choice on this device. The three
    events are independent. Closing without saving discards the draft.
-6. **Off** disables an event; **Original** restores its old system vibration.
+7. **Off** disables an event; **Original** restores its old system vibration.
 
 The waveform shows strength over time; vertical lines mark discrete strikes.
-All graphs span their selected duration, so compare the displayed duration too.
+Graphs span the complete timeline, including repeats and their quiet gaps.
 The preview/save buttons stay visible while the tuning controls scroll.
 
 ## Native implementation
@@ -41,7 +51,8 @@ The preview/save buttons stay visible while the tuning controls scroll.
 `react-native-pulsar` 1.7.0 supplies the native engine: Core Haptics on iOS and
 Pulsar's Android implementation. Patterns combine discrete strikes and continuous
 amplitude/sharpness curves. The whole pattern is submitted to native at once;
-only the optional initial delay uses a JavaScript timer. No sound is added.
+including repeats; only the optional initial delay uses a JavaScript timer. No
+sound is added.
 
 `driver.native.ts` accesses Pulsar's pinned `RNPulsar` bridge. The public 1.7.0
 composer hook's imperative `parse()` allocates a new native handle without
@@ -60,7 +71,9 @@ test its feel separately from iPhone.
 Preferences use AsyncStorage `sucker.haptics.v2`. When absent, the lab reads v1:
 Off and Original survive, retired presets use the new default for their event,
 and the old tap spacing is discarded. The v1 record remains available to an older
-app version; the first explicit save writes the complete v2 preferences.
+app version; the first explicit save writes the complete v2 preferences. Older
+v2 choices gain neutral defaults (100% hit and rumble levels, one pass), preserving
+their feel until edited. Mix and repeat settings are saved separately per event.
 
 ## Build and validation
 
@@ -70,10 +83,12 @@ using the existing production EAS profile. After this engine is installed, these
 pattern data and lab controls can be adjusted in JavaScript.
 
 Required automated checks are the app/Edge typechecks and test suites.
-`tests/haptics.test.cjs` covers migration, tuning bounds, complete native timelines,
+`tests/haptics.test.cjs` covers migration, layer mixing, tuning bounds, silent
+repeat gaps, complete native timelines,
 replacement/background cancellation, and native resource cleanup.
 `e2e/haptics.spec.ts` covers phone layout, independent persistence, failed saves,
-discarded drafts, and preview isolation from gameplay. Native prebuild/codegen
+discarded drafts, restoring saved choices, previews while editing, long repeated
+previews, and preview isolation from gameplay. Native prebuild/codegen
 checks do not replace compiling and testing an iOS binary.
 
 On a physical phone, compare each shape both with and without artwork; save a

@@ -8,6 +8,10 @@ export type HapticChoice = {
   sharpness: number;
   durationMs: number;
   delayMs: number;
+  hitStrength: number;
+  rumbleStrength: number;
+  repeatCount: number;
+  repeatGapMs: number;
 };
 export type HapticPreferences = Record<HapticEvent, HapticChoice>;
 
@@ -50,7 +54,17 @@ export const eventPresets: Record<HapticEvent, HapticPreset[]> = {
 };
 
 export function createHapticChoice(preset: HapticPreset): HapticChoice {
-  return { preset, strength: 100, sharpness: 50, durationMs: hapticPresets[preset].durationMs, delayMs: 0 };
+  return {
+    preset,
+    strength: 100,
+    sharpness: 50,
+    durationMs: hapticPresets[preset].durationMs,
+    delayMs: 0,
+    hitStrength: 100,
+    rumbleStrength: 100,
+    repeatCount: 1,
+    repeatGapMs: 100,
+  };
 }
 
 export const defaultHapticPreferences: HapticPreferences = {
@@ -188,25 +202,45 @@ const patterns: Record<CustomHapticPreset, HapticPattern> = {
   ),
 };
 
+export function hasHapticHits(preset: HapticPreset) {
+  return isCustomHaptic(preset) && patterns[preset].discretePattern.length > 0;
+}
+
+export function hapticDurationMs(choice: HapticChoice) {
+  if (!isCustomHaptic(choice.preset)) return hapticPresets[choice.preset].durationMs;
+  const duration = boundedNumber(choice.durationMs, 50, 900, hapticPresets[choice.preset].durationMs);
+  const repeats = boundedNumber(choice.repeatCount, 1, 3, 1);
+  const gap = boundedNumber(choice.repeatGapMs, 25, 400, 100);
+  return duration * repeats + gap * (repeats - 1);
+}
+
 export function buildHapticPattern(choice: HapticChoice): HapticPattern | null {
   if (!isCustomHaptic(choice.preset)) return null;
   const source = patterns[choice.preset];
   const duration = boundedNumber(choice.durationMs, 50, 900, hapticPresets[choice.preset].durationMs);
   const scaleTime = (time: number) => (time / hapticPresets[choice.preset].durationMs) * duration;
-  const strength = boundedNumber(choice.strength, 25, 100, 100) / 100;
+  const strength = boundedNumber(choice.strength, 5, 100, 100) / 100;
+  const hitStrength = boundedNumber(choice.hitStrength, 0, 100, 100) / 100;
+  const rumbleStrength = boundedNumber(choice.rumbleStrength, 0, 100, 100) / 100;
+  const repeats = boundedNumber(choice.repeatCount, 1, 3, 1);
+  const gap = boundedNumber(choice.repeatGapMs, 25, 400, 100);
+  if ((!source.discretePattern.length || hitStrength === 0) && rumbleStrength === 0) return null;
   const texture = (boundedNumber(choice.sharpness, 0, 100, 50) - 50) / 50;
   // 50 preserves the authored texture; 0 and 100 reach the soft/sharp extremes.
   const sharpen = (value: number) => (texture < 0 ? value * (1 + texture) : value + (1 - value) * texture);
-  return {
-    discretePattern: source.discretePattern.map((point) => ({
-      time: scaleTime(point.time),
-      amplitude: point.amplitude * strength,
-      frequency: sharpen(point.frequency),
-    })),
+  const single: HapticPattern = {
+    discretePattern:
+      hitStrength === 0
+        ? []
+        : source.discretePattern.map((point) => ({
+            time: scaleTime(point.time),
+            amplitude: point.amplitude * strength * hitStrength,
+            frequency: sharpen(point.frequency),
+          })),
     continuousPattern: {
       amplitude: source.continuousPattern.amplitude.map((point) => ({
         time: scaleTime(point.time),
-        value: point.value * strength,
+        value: point.value * strength * rumbleStrength,
       })),
       frequency: source.continuousPattern.frequency.map((point) => ({
         time: scaleTime(point.time),
@@ -214,6 +248,22 @@ export function buildHapticPattern(choice: HapticChoice): HapticPattern | null {
       })),
     },
   };
+  const repeated: HapticPattern = { discretePattern: [], continuousPattern: { amplitude: [], frequency: [] } };
+  for (let index = 0; index < repeats; index++) {
+    const offset = index * (duration + gap);
+    repeated.discretePattern.push(...single.discretePattern.map((point) => ({ ...point, time: point.time + offset })));
+    if (index > 0) {
+      // Keep the entire gap silent, rather than letting Core Haptics interpolate
+      // a rising vibration from the previous ending into the next attack.
+      repeated.continuousPattern.amplitude.push({ time: offset - 1, value: 0 });
+    }
+    for (const key of ['amplitude', 'frequency'] as const) {
+      repeated.continuousPattern[key].push(
+        ...single.continuousPattern[key].map((point) => ({ ...point, time: point.time + offset })),
+      );
+    }
+  }
+  return repeated;
 }
 
 export function sameHapticChoice(a: HapticChoice, b: HapticChoice) {
@@ -222,7 +272,13 @@ export function sameHapticChoice(a: HapticChoice, b: HapticChoice) {
     (a.preset === 'off' ||
       (a.delayMs === b.delayMs &&
         (!isCustomHaptic(a.preset) ||
-          (a.strength === b.strength && a.sharpness === b.sharpness && a.durationMs === b.durationMs))))
+          (a.strength === b.strength &&
+            a.sharpness === b.sharpness &&
+            a.durationMs === b.durationMs &&
+            (!hasHapticHits(a.preset) || a.hitStrength === b.hitStrength) &&
+            a.rumbleStrength === b.rumbleStrength &&
+            a.repeatCount === b.repeatCount &&
+            (a.repeatCount === 1 || a.repeatGapMs === b.repeatGapMs)))))
   );
 }
 
@@ -248,12 +304,16 @@ export function parseHapticPreferences(raw: string | null): HapticPreferences {
         event,
         {
           preset,
-          strength: boundedNumber(choice.strength, 25, 100, fallback.strength),
+          strength: boundedNumber(choice.strength, 5, 100, fallback.strength),
           sharpness: boundedNumber(choice.sharpness, 0, 100, fallback.sharpness),
           durationMs: isCustomHaptic(preset)
             ? boundedNumber(choice.durationMs, 50, 900, fallback.durationMs)
             : fallback.durationMs,
           delayMs: boundedNumber(choice.delayMs, 0, 250, fallback.delayMs),
+          hitStrength: boundedNumber(choice.hitStrength, 0, 100, fallback.hitStrength),
+          rumbleStrength: boundedNumber(choice.rumbleStrength, 0, 100, fallback.rumbleStrength),
+          repeatCount: boundedNumber(choice.repeatCount, 1, 3, fallback.repeatCount),
+          repeatGapMs: boundedNumber(choice.repeatGapMs, 25, 400, fallback.repeatGapMs),
         },
       ];
     }),

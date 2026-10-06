@@ -14,6 +14,8 @@ import {
   buildHapticPattern,
   createHapticChoice,
   isCustomHaptic,
+  hasHapticHits,
+  hapticDurationMs,
   sameHapticChoice,
   type HapticChoice,
   type HapticEvent,
@@ -87,7 +89,9 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
   const [playing, setPlaying] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
-  const [showTuning, setShowTuning] = useState(false);
+  const [mode, setMode] = useState<'effects' | 'tune'>('tune');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [previewEdits, setPreviewEdits] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frame = useRef<number | null>(null);
   const choice = drafts[event];
@@ -119,16 +123,16 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
     };
   }, [clearPlayback, stop]);
 
-  function audition(candidate: HapticChoice, label: string) {
+  function audition(candidate: HapticChoice, label: string, showMoment = withVisuals) {
     stop();
     setPlaying(label);
     // Mount the exact game result artwork/banner before firing its feedback.
-    if (withVisuals) setMoment(event);
+    if (showMoment) setMoment(event);
     frame.current = requestAnimationFrame(() => {
       preview(event, candidate);
       timer.current = setTimeout(
         stop,
-        Math.max(event === 'sucker' ? 1250 : 1700, candidate.delayMs + candidate.durationMs + 250),
+        Math.max(event === 'sucker' ? 1250 : 1700, candidate.delayMs + hapticDurationMs(candidate) + 250),
       );
     });
   }
@@ -136,7 +140,10 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
   function update(change: Partial<HapticChoice>) {
     stop();
     setSaveError(false);
-    setDrafts((current) => ({ ...current, [event]: { ...current[event], ...change } }));
+    const next = { ...choice, ...change };
+    setDrafts((current) => ({ ...current, [event]: next }));
+    // Audition edits by feel without covering the controls with the game artwork.
+    if (previewEdits && next.preset !== 'off') audition(next, 'Edited choice', false);
   }
 
   async function saveChoice() {
@@ -176,67 +183,74 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
           </Pressable>
         ))}
       </View>
+      <View accessibilityRole="tablist" accessibilityLabel="Lab controls" style={styles.editorTabs}>
+        {(['effects', 'tune'] as const).map((value) => (
+          <Pressable
+            key={value}
+            accessibilityRole="tab"
+            accessibilityLabel={value === 'effects' ? 'Choose effect' : 'Tune effect'}
+            accessibilityState={{ selected: mode === value }}
+            aria-selected={mode === value}
+            disabled={saving}
+            onPress={() => {
+              stop();
+              setMode(value);
+            }}
+            style={[styles.editorTab, mode === value && styles.activeEditorTab]}
+          >
+            <Text maxFontSizeMultiplier={1.2} style={styles.label}>
+              {value === 'effects' ? 'Choose effect' : 'Tune effect'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <Text maxFontSizeMultiplier={1.2} accessibilityRole="header" style={styles.eventTitle}>
-          {hapticEventLabels[event]}
+          {mode === 'effects' ? hapticEventLabels[event] : hapticPresets[choice.preset].label}
         </Text>
-        <Text maxFontSizeMultiplier={1.2} style={styles.body}>
-          Compare shapes, then tune your favorite.
-        </Text>
-        <View accessibilityRole="radiogroup" accessibilityLabel="Haptic effect" style={styles.presets}>
-          {eventPresets[event].map((preset) => (
-            <Pressable
-              key={preset}
-              accessibilityRole="radio"
-              accessibilityLabel={`${hapticPresets[preset].label} effect`}
-              accessibilityState={{ checked: choice.preset === preset }}
-              aria-checked={choice.preset === preset}
-              disabled={saving}
-              onPress={() => {
-                if (preset !== choice.preset) update({ ...createHapticChoice(preset), delayMs: choice.delayMs });
-              }}
-              style={[styles.preset, choice.preset === preset && styles.selectedPreset]}
-              testID={`haptic-preset-${preset}`}
-            >
-              <Text
-                maxFontSizeMultiplier={1.2}
-                style={[styles.presetText, choice.preset === preset && styles.darkText]}
+        {mode === 'effects' && (
+          <View accessibilityRole="radiogroup" accessibilityLabel="Haptic effect" style={styles.presets}>
+            {eventPresets[event].map((preset) => (
+              <Pressable
+                key={preset}
+                accessibilityRole="radio"
+                accessibilityLabel={`${hapticPresets[preset].label} effect`}
+                accessibilityState={{ checked: choice.preset === preset }}
+                aria-checked={choice.preset === preset}
+                disabled={saving}
+                onPress={() => {
+                  if (preset !== choice.preset) update({ ...createHapticChoice(preset), delayMs: choice.delayMs });
+                }}
+                style={[styles.preset, choice.preset === preset && styles.selectedPreset]}
+                testID={`haptic-preset-${preset}`}
               >
-                {hapticPresets[preset].label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+                <Text
+                  maxFontSizeMultiplier={1.2}
+                  style={[styles.presetText, choice.preset === preset && styles.darkText]}
+                >
+                  {hapticPresets[preset].label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
         <Text maxFontSizeMultiplier={1.2} style={styles.description}>
           {hapticPresets[choice.preset].description}
         </Text>
         {canTune && <PatternPreview choice={choice} />}
-        <Pressable
-          accessibilityLabel={showTuning ? 'Hide tuning controls' : 'Tune effect'}
-          accessibilityState={{ expanded: showTuning }}
-          disabled={saving || choice.preset === 'off'}
-          onPress={() => setShowTuning((value) => !value)}
-          style={[styles.tuneToggle, choice.preset === 'off' && styles.disabled]}
-        >
-          <Text maxFontSizeMultiplier={1.2} style={styles.label}>
-            {showTuning ? '− Hide tuning' : '+ Tune effect'}
-          </Text>
-          {canTune && (
-            <Text maxFontSizeMultiplier={1.2} style={styles.hint}>
-              {choice.durationMs} ms · {choice.strength}% strength
-            </Text>
-          )}
-        </Pressable>
-        {showTuning && choice.preset !== 'off' && (
+        {mode === 'tune' && choice.preset === 'off' && (
+          <Text style={styles.body}>Choose an effect to start tuning.</Text>
+        )}
+        {mode === 'tune' && choice.preset !== 'off' && (
           <View style={styles.tuning}>
             {canTune && (
               <>
                 <TuningControl
                   label="Strength"
                   value={choice.strength}
-                  min={25}
+                  min={5}
                   max={100}
-                  step={25}
+                  step={5}
                   unit="%"
                   disabled={saving}
                   hint="Overall intensity"
@@ -247,7 +261,7 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
                   value={choice.sharpness}
                   min={0}
                   max={100}
-                  step={25}
+                  step={5}
                   unit="%"
                   disabled={saving}
                   hint="Soft ← 50% original → sharp"
@@ -258,10 +272,10 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
                   value={choice.durationMs}
                   min={50}
                   max={900}
-                  step={50}
+                  step={10}
                   unit=" ms"
                   disabled={saving}
-                  hint="Stretch or shorten the whole effect"
+                  hint="Length of one pass"
                   onChange={(durationMs) => update({ durationMs })}
                 />
               </>
@@ -271,19 +285,110 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
               value={choice.delayMs}
               min={0}
               max={250}
-              step={25}
+              step={10}
               unit=" ms"
               disabled={saving}
               hint="After the result appears"
               onChange={(delayMs) => update({ delayMs })}
             />
-            <LabButton
-              label="Reset this effect"
-              disabled={saving}
-              onPress={() => update(createHapticChoice(choice.preset))}
-            />
+            {canTune && (
+              <>
+                <Pressable
+                  accessibilityLabel="Hits, rumble, and repeats"
+                  accessibilityState={{ expanded: showAdvanced }}
+                  aria-expanded={showAdvanced}
+                  disabled={saving}
+                  onPress={() => setShowAdvanced((value) => !value)}
+                  style={styles.tuneToggle}
+                >
+                  <Text maxFontSizeMultiplier={1.2} style={styles.label}>
+                    {showAdvanced ? '−' : '+'} Hits, rumble & repeats
+                  </Text>
+                </Pressable>
+                {showAdvanced && (
+                  <>
+                    {hasHapticHits(choice.preset) && (
+                      <TuningControl
+                        label="Hit strength"
+                        value={choice.hitStrength}
+                        min={0}
+                        max={100}
+                        step={5}
+                        unit="%"
+                        disabled={saving}
+                        hint="0% removes the sharp strikes"
+                        onChange={(hitStrength) => update({ hitStrength })}
+                      />
+                    )}
+                    <TuningControl
+                      label="Rumble strength"
+                      value={choice.rumbleStrength}
+                      min={0}
+                      max={100}
+                      step={5}
+                      unit="%"
+                      disabled={saving}
+                      hint="0% removes the continuous vibration"
+                      onChange={(rumbleStrength) => update({ rumbleStrength })}
+                    />
+                    <TuningControl
+                      label="Repeat count"
+                      value={choice.repeatCount}
+                      min={1}
+                      max={3}
+                      step={1}
+                      unit="×"
+                      disabled={saving}
+                      hint="Play the pattern one to three times"
+                      onChange={(repeatCount) => update({ repeatCount })}
+                    />
+                    {choice.repeatCount > 1 && (
+                      <TuningControl
+                        label="Repeat spacing"
+                        value={choice.repeatGapMs}
+                        min={25}
+                        max={400}
+                        step={25}
+                        unit=" ms"
+                        disabled={saving}
+                        hint="Quiet gap between passes"
+                        onChange={(repeatGapMs) => update({ repeatGapMs })}
+                      />
+                    )}
+                  </>
+                )}
+              </>
+            )}
+            <View style={styles.compare}>
+              <LabButton
+                label="Reset this effect"
+                disabled={saving}
+                onPress={() => update(createHapticChoice(choice.preset))}
+              />
+              <LabButton label="Restore saved" disabled={saving || matchesSaved} onPress={() => update(saved)} />
+            </View>
           </View>
         )}
+        <View style={styles.visualsRow}>
+          <View style={styles.flex}>
+            <Text maxFontSizeMultiplier={1.2} style={styles.label}>
+              Preview changes
+            </Text>
+            <Text maxFontSizeMultiplier={1.2} style={styles.hint}>
+              Feel each edit while the controls stay open.
+            </Text>
+          </View>
+          <Switch
+            accessibilityLabel="Preview changes"
+            disabled={saving}
+            value={previewEdits}
+            onValueChange={(value) => {
+              stop();
+              setPreviewEdits(value);
+            }}
+            trackColor={{ false: '#735348', true: '#FFD329' }}
+          />
+        </View>
         <View style={styles.visualsRow}>
           <View style={styles.flex}>
             <Text maxFontSizeMultiplier={1.2} style={styles.label}>
@@ -309,11 +414,15 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
         <View style={styles.compare}>
           <LabButton label="Try choice" disabled={saving} onPress={() => audition(choice, 'Choice')} primary />
           <LabButton label="Try saved" disabled={saving} onPress={() => audition(saved, 'Saved')} />
-          <LabButton
-            label="Try original"
-            disabled={saving}
-            onPress={() => audition(createHapticChoice('original'), 'Original')}
-          />
+          {playing && !moment ? (
+            <LabButton label="Stop preview" onPress={stop} />
+          ) : (
+            <LabButton
+              label="Try original"
+              disabled={saving}
+              onPress={() => audition(createHapticChoice('original'), 'Original')}
+            />
+          )}
         </View>
         <Text
           maxFontSizeMultiplier={1.2}
@@ -323,9 +432,8 @@ function HapticsEditor({ renderMoment }: { renderMoment: (event: HapticEvent) =>
         >
           {playing
             ? `Playing: ${playing}`
-            : `Saved: ${hapticPresets[saved.preset].label}${isCustomHaptic(saved.preset) ? ` · ${saved.durationMs} ms · ${saved.strength}% strength · ${saved.sharpness}% sharpness` : ''}${saved.preset !== 'off' && saved.delayMs ? ` · ${saved.delayMs} ms delay` : ''}`}
+            : `Saved: ${hapticPresets[saved.preset].label}${isCustomHaptic(saved.preset) ? ` · ${hapticDurationMs(saved)} ms · ${saved.strength}% strength · ${saved.sharpness}% sharpness` : ''}${saved.preset !== 'off' && saved.delayMs ? ` · ${saved.delayMs} ms delay` : ''}`}
         </Text>
-        {playing && !moment && <LabButton label="Stop preview" onPress={stop} />}
         <LabButton
           label={saving ? 'Saving…' : matchesSaved ? 'Saved for gameplay' : 'Use this in games'}
           disabled={saving || matchesSaved}
@@ -398,13 +506,16 @@ function LabButton({
 
 function PatternPreview({ choice }: { choice: HapticChoice }) {
   const pattern = buildHapticPattern(choice);
-  if (!pattern) return null;
-  const x = (time: number) => 6 + (time / choice.durationMs) * 288;
+  if (!pattern)
+    return <Text style={styles.hint}>This setting is silent. Raise the hit or rumble strength to feel it.</Text>;
+  const duration = hapticDurationMs(choice);
+  const x = (time: number) => 6 + (time / duration) * 288;
   const y = (amplitude: number) => 52 - amplitude * 44;
   return (
     <View
       style={styles.waveform}
-      accessibilityLabel={`${choice.durationMs} millisecond pattern, ${pattern.discretePattern.length} strikes with continuous vibration`}
+      accessibilityLabel={`${duration} millisecond pattern, ${pattern.discretePattern.length} strikes`}
+      testID="haptic-pattern-preview"
     >
       <Svg width="100%" height={52} viewBox="0 0 300 60" accessible={false} aria-hidden>
         <Line x1={6} y1={52} x2={294} y2={52} stroke="#70392C" />
@@ -427,7 +538,7 @@ function PatternPreview({ choice }: { choice: HapticChoice }) {
         ))}
       </Svg>
       <Text maxFontSizeMultiplier={1.2} style={styles.waveformCaption}>
-        Strength over time · lines mark strikes
+        {duration} ms total · {choice.repeatCount}× · lines mark strikes
       </Text>
     </View>
   );
@@ -521,6 +632,21 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   selectedTab: { backgroundColor: '#FFD329' },
+  editorTabs: { flexDirection: 'row', marginHorizontal: 16, marginTop: 8, gap: 6 },
+  editorTab: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 2,
+    borderColor: '#70392C',
+  },
+  activeEditorTab: {
+    borderColor: '#FFD329',
+    backgroundColor: '#5A2018',
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
   tabText: { fontSize: 13, fontWeight: '900', color: '#FFF3CE' },
   darkText: { color: '#351005' },
   scroll: { flexShrink: 1 },

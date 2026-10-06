@@ -7,6 +7,8 @@ const {
   createHapticChoice,
   eventPresets,
   isCustomHaptic,
+  hapticDurationMs,
+  sameHapticChoice,
 } = require('../.build/src/haptics/patterns.js');
 const { createHapticPlayer } = require('../.build/src/haptics/player.js');
 const { createNativePatternPlayer } = require('../.build/src/haptics/nativePatternPlayer.js');
@@ -44,20 +46,107 @@ test('invalid saved tuning cannot exceed hardware ranges or schedule unbounded f
     }),
   );
   assert.deepEqual(preferences.punchLanded, {
-    preset: 'crack',
-    strength: 25,
+    ...createHapticChoice('crack'),
+    strength: 5,
     sharpness: 100,
     durationMs: 900,
     delayMs: 0,
   });
   assert.deepEqual(preferences.punchReceived, {
-    preset: 'rumble',
+    ...createHapticChoice('rumble'),
     strength: 100,
     sharpness: 50,
     durationMs: 50,
     delayMs: 250,
   });
   assert.deepEqual(preferences.sucker, defaultHapticPreferences.sucker);
+});
+
+test('existing v2 settings gain neutral mix and repeat controls', () => {
+  const legacy = { preset: 'bodyBlow', strength: 65, sharpness: 35, durationMs: 270, delayMs: 25 };
+  const loaded = parseHapticPreferences(JSON.stringify({ punchReceived: legacy })).punchReceived;
+  assert.deepEqual(loaded, { ...createHapticChoice('bodyBlow'), ...legacy });
+  assert.deepEqual(buildHapticPattern(legacy), buildHapticPattern(loaded));
+});
+
+test('mix controls isolate hits and rumble without changing their rhythm or texture', () => {
+  const choice = createHapticChoice('bodyBlow');
+  const original = buildHapticPattern(choice);
+  const hitsOnly = buildHapticPattern({ ...choice, rumbleStrength: 0 });
+  assert.deepEqual(hitsOnly.discretePattern, original.discretePattern);
+  assert.ok(hitsOnly.continuousPattern.amplitude.every(({ value }) => value === 0));
+  const rumbleOnly = buildHapticPattern({ ...choice, hitStrength: 0, rumbleStrength: 65 });
+  assert.deepEqual(rumbleOnly.discretePattern, []);
+  assert.deepEqual(rumbleOnly.continuousPattern.frequency, original.continuousPattern.frequency);
+  original.continuousPattern.amplitude.forEach((point, index) =>
+    assert.deepEqual(rumbleOnly.continuousPattern.amplitude[index], { ...point, value: point.value * 0.65 }),
+  );
+  assert.equal(buildHapticPattern({ ...choice, hitStrength: 0, rumbleStrength: 0 }), null);
+  assert.equal(buildHapticPattern({ ...createHapticChoice('rumble'), rumbleStrength: 0 }), null);
+  assert.equal(sameHapticChoice(choice, { ...choice, rumbleStrength: 65 }), false);
+  assert.equal(sameHapticChoice(choice, { ...choice, repeatCount: 2 }), false);
+  assert.equal(
+    sameHapticChoice(choice, { ...choice, repeatGapMs: 50 }),
+    true,
+    'unused spacing does not mark a single pass as edited',
+  );
+});
+
+test('repeats run on one bounded native timeline with silent gaps', () => {
+  for (const preset of eventPresets.punchLanded.filter(isCustomHaptic)) {
+    for (const durationMs of [50, 900])
+      for (const repeatGapMs of [25, 400]) {
+        const choice = { ...createHapticChoice(preset), durationMs, repeatCount: 3, repeatGapMs };
+        const once = buildHapticPattern({ ...choice, repeatCount: 1 });
+        const repeated = buildHapticPattern(choice);
+        const end = hapticDurationMs(choice);
+        assert.ok(end <= 3500);
+        assert.equal(repeated.continuousPattern.amplitude.at(-1).time, end);
+        assert.equal(repeated.continuousPattern.amplitude.at(-1).value, 0);
+        assert.equal(repeated.discretePattern.length, once.discretePattern.length * 3);
+        for (const key of ['amplitude', 'frequency']) {
+          repeated.continuousPattern[key].forEach((point, index, points) => {
+            assert.ok(point.time <= end && point.time >= 0 && point.value >= 0 && point.value <= 1);
+            if (index) assert.ok(point.time > points[index - 1].time);
+          });
+        }
+        for (let pass = 1; pass < 3; pass++) {
+          const offset = pass * (durationMs + repeatGapMs);
+          assert.ok(
+            repeated.continuousPattern.amplitude.some(
+              ({ time, value }) => time === offset - repeatGapMs && value === 0,
+            ),
+          );
+          assert.ok(repeated.continuousPattern.amplitude.some(({ time, value }) => time === offset - 1 && value === 0));
+          once.discretePattern.forEach((point, index) =>
+            assert.deepEqual(repeated.discretePattern[pass * once.discretePattern.length + index], {
+              ...point,
+              time: point.time + offset,
+            }),
+          );
+        }
+      }
+  }
+});
+
+test('untrusted repeat and mix settings are clamped before native playback', () => {
+  const choice = {
+    ...createHapticChoice('crack'),
+    hitStrength: -50,
+    rumbleStrength: 500,
+    repeatCount: 10000,
+    repeatGapMs: 999999,
+  };
+  const loaded = parseHapticPreferences(JSON.stringify({ punchLanded: choice })).punchLanded;
+  assert.deepEqual(loaded, {
+    ...createHapticChoice('crack'),
+    hitStrength: 0,
+    rumbleStrength: 100,
+    repeatCount: 3,
+    repeatGapMs: 400,
+  });
+  assert.deepEqual(buildHapticPattern(choice), buildHapticPattern(loaded));
+  assert.equal(hapticDurationMs(choice), 1100);
 });
 
 test('the catalog has distinct bounded native timelines at every tuning extreme', () => {
@@ -68,7 +157,7 @@ test('the catalog has distinct bounded native timelines at every tuning extreme'
   );
   for (const preset of presets) {
     for (const durationMs of [50, 900])
-      for (const strength of [25, 100])
+      for (const strength of [5, 100])
         for (const sharpness of [0, 50, 100]) {
           const pattern = buildHapticPattern({ ...createHapticChoice(preset), durationMs, strength, sharpness });
           for (const points of [
