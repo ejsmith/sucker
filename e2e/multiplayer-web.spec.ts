@@ -413,7 +413,7 @@ test('auth sign-out failure restores notification ownership before reporting the
     );
     await page.getByTestId('profile-button').click();
     await page.getByTestId('sign-out-button').click();
-    await expect(page.getByText('Unable to complete the login request. Please try again.')).toBeVisible();
+    await expect(page.getByText('Unable to reach Sucker! services. Please try again.')).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('auth-signout-failure.png') });
     await expect.poll(owners).toEqual([{ profile_id: alice.id }]);
     await expect(page.getByTestId('sign-out-button')).toBeEnabled();
