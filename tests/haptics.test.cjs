@@ -69,9 +69,27 @@ test('existing v2 settings gain neutral mix and repeat controls', () => {
   assert.deepEqual(buildHapticPattern(legacy), buildHapticPattern(loaded));
 });
 
-test('Double rev is the new Sucker default without replacing saved choices or the received punch', () => {
+test('both punch defaults use the chosen 800 ms Crack tuning while Sucker keeps Double rev', () => {
+  const chosenPunch = {
+    preset: 'crack',
+    strength: 100,
+    sharpness: 50,
+    durationMs: 800,
+    delayMs: 0,
+    hitStrength: 100,
+    rumbleStrength: 100,
+    repeatCount: 1,
+    repeatGapMs: 100,
+  };
+  assert.deepEqual(defaultHapticPreferences.punchLanded, chosenPunch);
+  assert.deepEqual(defaultHapticPreferences.punchReceived, chosenPunch);
+  const pattern = buildHapticPattern(chosenPunch);
+  assert.deepEqual(pattern.discretePattern, [{ time: 0, amplitude: 1, frequency: 1 }]);
+  assert.deepEqual(
+    pattern.continuousPattern.amplitude.map(({ time }) => time),
+    [0, 120, 360, 800],
+  );
   assert.equal(defaultHapticPreferences.sucker.preset, 'doubleRev');
-  assert.equal(defaultHapticPreferences.punchReceived.preset, 'bodyBlow');
   for (const preset of ['buildPop', 'off', 'original', 'doubleRev']) {
     const choice = createHapticChoice(preset);
     assert.deepEqual(parseHapticPreferences(JSON.stringify({ sucker: choice })).sucker, choice);
@@ -185,7 +203,7 @@ test('untrusted repeat and mix settings are clamped before native playback', () 
     repeatGapMs: 400,
   });
   assert.deepEqual(buildHapticPattern(choice), buildHapticPattern(loaded));
-  assert.equal(hapticDurationMs(choice), 1100);
+  assert.equal(hapticDurationMs(choice), 3200);
 });
 
 test('the catalog has distinct bounded native timelines at every tuning extreme', () => {

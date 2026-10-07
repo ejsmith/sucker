@@ -8,7 +8,7 @@ patterns. Each event can use any pattern:
 
 | Effect      | Starting duration | Shape                                                         |
 | ----------- | ----------------- | ------------------------------------------------------------- |
-| Crack       | 100 ms            | Sharp strike with a short continuous burst                    |
+| Crack       | 800 ms            | Sharp strike with a long fading continuous burst              |
 | Body blow   | 300 ms            | Low strike with a sustained, fading tail                      |
 | Rumble      | 450 ms            | Three continuous waves without discrete strikes               |
 | Double hit  | 300 ms            | Sharp strike, silence, then a heavier hit                     |
@@ -16,9 +16,14 @@ patterns. Each event can use any pattern:
 | Victory     | 600 ms            | Three separated bursts increasing in strength and sharpness   |
 | Double rev  | 900 ms            | Short rising rev, quiet pause, then a longer, stronger rev    |
 
-The defaults are **Crack** for landing a punch, **Body blow** for getting punched,
-and **Double rev** for a Sucker. These are candidates for physical device testing;
-code and browser checks cannot establish which feels satisfying.
+Both landing a punch and getting punched default to **Crack** at **800 ms**,
+**100% strength**, **50% sharpness**, and **0 ms start delay**, with one pass and
+100% hit/rumble levels. This matches the chosen phone tuning. **Double rev** stays
+the Sucker default. Code and browser checks cannot establish which feels satisfying.
+
+Existing saved choices stay active. To apply the punch tuning on a phone with
+older settings, select **Punch** or **Get Hit → Choose effect → Crack → Tune
+effect → Reset this effect → Use this in games** for each event.
 
 Double rev aims for “vvvvvrroo… vvvvvrooom”: a 330 ms swell, 80 ms of silence,
 then a stronger 490 ms swell with a sustained peak and a smooth release. Both

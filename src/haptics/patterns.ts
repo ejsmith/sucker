@@ -32,7 +32,7 @@ export const hapticEventLabels: Record<HapticEvent, string> = {
 };
 
 export const hapticPresets: Record<HapticPreset, { label: string; description: string; durationMs: number }> = {
-  crack: { label: 'Crack', description: 'A sharp strike with a short burst behind it.', durationMs: 100 },
+  crack: { label: 'Crack', description: 'A sharp strike with a long fading burst behind it.', durationMs: 800 },
   bodyBlow: { label: 'Body blow', description: 'A low, heavy hit with a long fading tail.', durationMs: 300 },
   rumble: { label: 'Rumble', description: 'Three rolling waves of vibration, without a sharp tap.', durationMs: 450 },
   doubleHit: {
@@ -54,7 +54,7 @@ export const hapticPresets: Record<HapticPreset, { label: string; description: s
 // Each event can audition the full range; the first three emphasize its likely fits.
 export const eventPresets: Record<HapticEvent, HapticPreset[]> = {
   punchLanded: ['crack', 'doubleHit', 'bodyBlow', 'rumble', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
-  punchReceived: ['bodyBlow', 'rumble', 'doubleHit', 'crack', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
+  punchReceived: ['crack', 'bodyBlow', 'rumble', 'doubleHit', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
   sucker: ['doubleRev', 'buildPop', 'victory', 'rumble', 'crack', 'doubleHit', 'bodyBlow', 'original', 'off'],
 };
 
@@ -74,7 +74,7 @@ export function createHapticChoice(preset: HapticPreset): HapticChoice {
 
 export const defaultHapticPreferences: HapticPreferences = {
   punchLanded: createHapticChoice('crack'),
-  punchReceived: createHapticChoice('bodyBlow'),
+  punchReceived: createHapticChoice('crack'),
   sucker: createHapticChoice('doubleRev'),
 };
 
@@ -99,13 +99,13 @@ const patterns: Record<CustomHapticPreset, HapticPattern> = {
     [[0, 1, 1]],
     [
       [0, 0.85],
-      [15, 0.65],
-      [45, 0.2],
-      [100, 0],
+      [120, 0.65],
+      [360, 0.2],
+      [800, 0],
     ],
     [
       [0, 0.8],
-      [100, 0.45],
+      [800, 0.45],
     ],
   ),
   bodyBlow: pattern(

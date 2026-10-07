@@ -59,7 +59,7 @@ test('custom haptics migrate, tune, and save independently without changing the 
     'Rumble · 460 ms · 95% strength · 45% sharpness · 10 ms delay',
   );
   await page.getByRole('tab', { name: 'Landing a punch' }).click();
-  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 100 ms');
+  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 800 ms');
   await page.getByRole('tab', { name: 'Rolling a Sucker' }).click();
   await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Double rev · 900 ms');
   const panel = await page.getByTestId('haptics-lab').boundingBox();
@@ -95,6 +95,16 @@ test('failed saves and abandoned drafts leave the saved effect active', async ({
 test('mix and repeat edits preview in place, persist, and can be restored independently', async ({ page }) => {
   await page.goto('/local');
   await openLab(page);
+  for (const name of ['Getting punched', 'Landing a punch']) {
+    await page.getByRole('tab', { name, exact: true }).click();
+    await expect(page.getByTestId('haptic-saved-choice')).toHaveText(
+      'Saved: Crack · 800 ms · 100% strength · 50% sharpness',
+    );
+    await expect(page.getByTestId('haptic-pattern-preview')).toHaveAttribute(
+      'aria-label',
+      '800 millisecond pattern, 1 strikes',
+    );
+  }
   await page.getByRole('button', { name: 'Decrease strength', exact: true }).click();
   await expect(page.getByTestId('haptic-saved-choice')).toHaveText('Playing: Edited choice');
   await expect(page.getByTestId('haptic-moment-preview')).toHaveCount(0);
@@ -108,7 +118,7 @@ test('mix and repeat edits preview in place, persist, and can be restored indepe
   await page.getByRole('button', { name: 'Increase repeat spacing', exact: true }).click();
   await expect(page.getByTestId('haptic-pattern-preview')).toHaveAttribute(
     'aria-label',
-    '550 millisecond pattern, 3 strikes',
+    '2650 millisecond pattern, 3 strikes',
   );
   await expect(page.getByRole('button', { name: 'Use this in games', exact: true })).toBeInViewport();
   await page.screenshot({ path: test.info().outputPath('haptics-advanced.png') });
@@ -122,29 +132,29 @@ test('mix and repeat edits preview in place, persist, and can be restored indepe
     repeatCount: 3,
     repeatGapMs: 125,
   });
-  expect(saved.punchReceived).toMatchObject({ preset: 'bodyBlow', strength: 100, repeatCount: 1 });
+  expect(saved.punchReceived).toMatchObject({ preset: 'crack', durationMs: 800, strength: 100, repeatCount: 1 });
 
   await page.getByRole('switch', { name: 'Preview changes', exact: true }).click();
   await page.getByRole('button', { name: 'Reset this effect', exact: true }).click();
-  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 550 ms');
+  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 2650 ms');
   await expect(page.getByRole('button', { name: 'Stop preview', exact: true })).toHaveCount(0);
   await expect(page.getByTestId('haptic-pattern-preview')).toHaveAttribute(
     'aria-label',
-    '100 millisecond pattern, 1 strikes',
+    '800 millisecond pattern, 1 strikes',
   );
   await page.getByRole('button', { name: 'Restore saved', exact: true }).click();
   await expect(page.getByTestId('haptic-pattern-preview')).toHaveAttribute(
     'aria-label',
-    '550 millisecond pattern, 3 strikes',
+    '2650 millisecond pattern, 3 strikes',
   );
   await expect(page.getByRole('button', { name: 'Saved for gameplay', exact: true })).toBeDisabled();
   await page.reload();
   await openLab(page);
   await expect(page.getByTestId('haptic-pattern-preview')).toHaveAttribute(
     'aria-label',
-    '550 millisecond pattern, 3 strikes',
+    '2650 millisecond pattern, 3 strikes',
   );
-  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 550 ms · 95% strength');
+  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 2650 ms · 95% strength');
 });
 
 test('a long repeated effect keeps its preview open for the complete timeline', async ({ page }) => {
@@ -198,7 +208,7 @@ test('an existing Sucker choice can switch to Double rev, tune, and survive a re
   await page.getByRole('button', { name: 'Use this in games', exact: true }).click();
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.haptics.v2')!));
   expect(saved.sucker).toMatchObject({ preset: 'doubleRev', durationMs: 890, rumbleStrength: 95, repeatCount: 1 });
-  expect(saved.punchReceived.preset).toBe('bodyBlow');
+  expect(saved.punchReceived.preset).toBe('crack');
   await page.reload();
   await openLab(page);
   await page.getByRole('tab', { name: 'Rolling a Sucker', exact: true }).click();
