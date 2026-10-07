@@ -69,6 +69,45 @@ test('existing v2 settings gain neutral mix and repeat controls', () => {
   assert.deepEqual(buildHapticPattern(legacy), buildHapticPattern(loaded));
 });
 
+test('Double rev is the new Sucker default without replacing saved choices or the received punch', () => {
+  assert.equal(defaultHapticPreferences.sucker.preset, 'doubleRev');
+  assert.equal(defaultHapticPreferences.punchReceived.preset, 'bodyBlow');
+  for (const preset of ['buildPop', 'off', 'original', 'doubleRev']) {
+    const choice = createHapticChoice(preset);
+    assert.deepEqual(parseHapticPreferences(JSON.stringify({ sucker: choice })).sucker, choice);
+  }
+});
+
+test('Double rev has two rising continuous swells with a quiet gap and a stronger, longer finish', () => {
+  const choice = createHapticChoice('doubleRev');
+  const { discretePattern, continuousPattern } = buildHapticPattern(choice);
+  assert.deepEqual(discretePattern, [], 'the revs should not feel like impact taps');
+  const swells = [];
+  let swell;
+  for (let index = 1; index < continuousPattern.amplitude.length; index++) {
+    const point = continuousPattern.amplitude[index];
+    if (point.value > 0) {
+      swell ??= { start: continuousPattern.amplitude[index - 1].time, points: [] };
+      swell.points.push(point);
+    } else if (swell) {
+      swells.push({ ...swell, end: point.time });
+      swell = undefined;
+    }
+  }
+  assert.equal(swells.length, 2);
+  const [first, second] = swells;
+  assert.ok(second.start - first.end >= 60, 'the two revs have a perceptible quiet gap');
+  assert.ok(second.end - second.start > first.end - first.start);
+  assert.ok(Math.max(...second.points.map(({ value }) => value)) > Math.max(...first.points.map(({ value }) => value)));
+  for (const rev of swells) {
+    assert.ok(rev.points[0].value < rev.points.at(-1).value, 'each rev builds intensity');
+    const texture = continuousPattern.frequency.filter(({ time }) => time >= rev.start && time < rev.end);
+    assert.ok(texture[0].value < texture.at(-1).value, 'each rev grows brighter as it builds');
+  }
+  assert.equal(second.end, hapticDurationMs(choice));
+  assert.equal(continuousPattern.amplitude.at(-1).value, 0);
+});
+
 test('mix controls isolate hits and rumble without changing their rhythm or texture', () => {
   const choice = createHapticChoice('bodyBlow');
   const original = buildHapticPattern(choice);

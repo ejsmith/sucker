@@ -3,7 +3,7 @@
 Open a game → three-dot menu → **Haptics Lab** in the iPhone or Android app.
 Web previews the layout and game artwork, but produces no haptics.
 
-The second lab replaces the closely related system taps with six authored
+The second lab replaces the closely related system taps with seven authored
 patterns. Each event can use any pattern:
 
 | Effect      | Starting duration | Shape                                                         |
@@ -14,10 +14,18 @@ patterns. Each event can use any pattern:
 | Double hit  | 300 ms            | Sharp strike, silence, then a heavier hit                     |
 | Build & pop | 450 ms            | Accelerating strikes over a rising vibration, ending in a pop |
 | Victory     | 600 ms            | Three separated bursts increasing in strength and sharpness   |
+| Double rev  | 900 ms            | Short rising rev, quiet pause, then a longer, stronger rev    |
 
 The defaults are **Crack** for landing a punch, **Body blow** for getting punched,
-and **Build & pop** for a Sucker. These are candidates for physical device testing;
+and **Double rev** for a Sucker. These are candidates for physical device testing;
 code and browser checks cannot establish which feels satisfying.
+
+Double rev aims for “vvvvvrroo… vvvvvrooom”: a 330 ms swell, 80 ms of silence,
+then a stronger 490 ms swell with a sustained peak and a smooth release. Both
+strength and sharpness rise through each rev; there are no impact taps. Duration
+scales the whole pair, and repeats repeat the pair. If you already saved a Sucker
+choice, select **Sucker → Choose effect → Double rev → Use this in games** to
+switch to it; saved choices are preserved.
 
 1. **Choose effect** selects a shape; **Tune effect** opens its controls. The lab
    opens on tuning so your saved effect is ready to adjust. **Try choice**, **Try
@@ -31,8 +39,9 @@ code and browser checks cannot establish which feels satisfying.
    100% sharpens it. Duration scales one pass, preserving its rhythm.
 4. Expand **Hits, rumble & repeats** to mix discrete strikes and continuous
    vibration independently (0–100%, in 5% steps). Zero removes that layer. Rumble
-   has no discrete strikes, so it only shows rumble strength. Repeat a pattern
-   one to three times with 25–400 ms of silence between passes, in 25 ms steps.
+   and Double rev have no discrete strikes, so they only show rumble strength.
+   Repeat a pattern one to three times with 25–400 ms of silence between passes,
+   in 25 ms steps.
    Strength scales both layers together. The longest pattern is 3.5 seconds.
 5. **Preview changes** plays each edit immediately while keeping the controls
    open. Turn it off to edit silently and use **Try choice** when ready.

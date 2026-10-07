@@ -61,7 +61,7 @@ test('custom haptics migrate, tune, and save independently without changing the 
   await page.getByRole('tab', { name: 'Landing a punch' }).click();
   await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Crack · 100 ms');
   await page.getByRole('tab', { name: 'Rolling a Sucker' }).click();
-  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Build & pop · 450 ms');
+  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Double rev · 900 ms');
   const panel = await page.getByTestId('haptics-lab').boundingBox();
   expect(panel!.x).toBeGreaterThanOrEqual(0);
   expect(panel!.y).toBeGreaterThanOrEqual(0);
@@ -171,4 +171,37 @@ test('a long repeated effect keeps its preview open for the complete timeline', 
   await page.getByRole('button', { name: 'Stop preview', exact: true }).click();
   await expect(page.getByTestId('haptic-moment-preview')).toHaveCount(0);
   await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Build & pop · 3500 ms');
+});
+
+test('an existing Sucker choice can switch to Double rev, tune, and survive a reload', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('sucker.haptics.v2')) {
+      localStorage.setItem('sucker.haptics.v2', JSON.stringify({ sucker: { preset: 'buildPop' } }));
+    }
+  });
+  await page.goto('/local');
+  await openLab(page);
+  await page.getByRole('tab', { name: 'Rolling a Sucker', exact: true }).click();
+  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Build & pop · 450 ms');
+  await page.getByRole('tab', { name: 'Choose effect', exact: true }).click();
+  await page.getByRole('radio', { name: 'Double rev effect', exact: true }).click();
+  await page.screenshot({ path: test.info().outputPath('haptics-double-rev-choice.png') });
+  await page.getByRole('tab', { name: 'Tune effect', exact: true }).click();
+  await expect(page.getByTestId('haptic-pattern-preview')).toHaveAttribute(
+    'aria-label',
+    '900 millisecond pattern, 0 strikes',
+  );
+  await page.getByRole('button', { name: 'Hits, rumble, and repeats', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Decrease hit strength', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Decrease rumble strength', exact: true }).click();
+  await page.getByRole('button', { name: 'Decrease duration', exact: true }).click();
+  await page.getByRole('button', { name: 'Use this in games', exact: true }).click();
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.haptics.v2')!));
+  expect(saved.sucker).toMatchObject({ preset: 'doubleRev', durationMs: 890, rumbleStrength: 95, repeatCount: 1 });
+  expect(saved.punchReceived.preset).toBe('bodyBlow');
+  await page.reload();
+  await openLab(page);
+  await page.getByRole('tab', { name: 'Rolling a Sucker', exact: true }).click();
+  await expect(page.getByTestId('haptic-saved-choice')).toContainText('Saved: Double rev · 890 ms');
+  await page.screenshot({ path: test.info().outputPath('haptics-double-rev-tuning.png') });
 });
