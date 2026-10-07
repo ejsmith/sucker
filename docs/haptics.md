@@ -86,8 +86,8 @@ their feel until edited. Mix and repeat settings are saved separately per event.
 
 ## Build and validation
 
-The new native engine needs a new app binary. App version/runtime **1.3.1** keeps
-it separate from 1.3.0 binaries without Pulsar. Build and submit from the MacBook
+The native engine needs a compatible app binary. App version/runtime **1.4.2** includes
+Pulsar and the current Expo native dependencies. Build and submit from the MacBook
 using the existing production EAS profile. After this engine is installed, these
 pattern data and lab controls can be adjusted in JavaScript.
 
