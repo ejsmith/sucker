@@ -7,6 +7,12 @@ async function openLab(page: Page) {
 }
 
 test('custom haptics migrate, tune, and save independently without changing the game', async ({ page }) => {
+  const invalidAttributeErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && message.text().includes('non-boolean attribute')) {
+      invalidAttributeErrors.push(message.text());
+    }
+  });
   await page.addInitScript(() =>
     localStorage.setItem(
       'sucker.haptics.v1',
@@ -62,6 +68,7 @@ test('custom haptics migrate, tune, and save independently without changing the 
   expect(panel!.x + panel!.width).toBeLessThanOrEqual(393);
   expect(panel!.y + panel!.height).toBeLessThanOrEqual(852);
   await page.screenshot({ path: test.info().outputPath('haptics-lab.png') });
+  expect(invalidAttributeErrors).toEqual([]);
 });
 
 test('failed saves and abandoned drafts leave the saved effect active', async ({ page }) => {
