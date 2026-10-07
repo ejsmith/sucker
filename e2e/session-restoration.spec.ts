@@ -28,6 +28,14 @@ function deferred() {
 }
 
 async function setup(page: Page, signedIn = true) {
+  // Simulated network failures produce SDK logs in Metro's development toast.
+  // Dismiss only those expected logs, leaving app dialogs and other errors visible.
+  // Another retry can replace a dismissed toast immediately, so let Playwright
+  // invoke the handler again instead of waiting for all network logs to disappear.
+  const networkToast = page.locator('#error-toast [role="button"]').filter({
+    hasText: /Failed to fetch|Load failed|NetworkError/,
+  });
+  await page.addLocatorHandler(networkToast, () => networkToast.locator('button').click(), { noWaitAfter: true });
   const expiresAt = Math.floor(Date.now() / 1000) + 3600;
   const accessToken =
     [
@@ -454,12 +462,6 @@ for (const signedIn of [true, false]) {
     context,
   }, testInfo) => {
     await setup(page, signedIn);
-    // Expected SDK network errors create a development-only Metro toast over
-    // the roll button. Dismiss it normally; keep app error dialogs observable.
-    const networkToast = page.locator('#error-toast [role="button"]').filter({
-      hasText: /Failed to fetch|Load failed|NetworkError/,
-    });
-    await page.addLocatorHandler(networkToast, () => networkToast.locator('button').click());
     await page.goto('/');
     await expect(signedIn ? page.getByText('Hi, Startup Tester') : page.getByTestId('login-email-input')).toBeVisible();
     const saveKey = `sucker.computer-session.v1.${signedIn ? actorId : 'guest'}`;
