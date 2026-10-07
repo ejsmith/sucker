@@ -1,4 +1,45 @@
 import { expect, test } from '@playwright/test';
+import { createGame, scoreCategories } from '../shared/game';
+
+for (const suckerScore of [0, 50]) {
+  test(`Sucker ${suckerScore} shows and saves the correct five-of-a-kind score`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 393, height: 852 });
+    const game = createGame(['Player', 'Computer']);
+    for (const player of game.players) {
+      for (const category of scoreCategories) player.scorecard[category] = 0;
+    }
+    game.players[0].scorecard.sucker = suckerScore;
+    game.players[1].scorecard.sucker = 50;
+    game.players[0].scorecard.fives = null;
+    game.dice = [5, 5, 5, 5, 5];
+    game.rollNumber = 1;
+    game.phase = 'scoring';
+    await page.addInitScript((game) => {
+      localStorage.setItem(
+        'sucker.computer-session.v1.guest',
+        JSON.stringify({
+          version: 1,
+          game,
+          pendingTurn: null,
+          actions: [],
+          turns: [],
+          recordedGameIds: [],
+        }),
+      );
+    }, game);
+    await page.goto('/local');
+    await page.getByTestId('category-button-fives').click();
+    const scoreBox = page.getByTestId('home-score-box-fives');
+    await expect(scoreBox).toContainText('25');
+    await expect(scoreBox.getByText('+50', { exact: true })).toHaveCount(suckerScore === 50 ? 1 : 0);
+    await page.screenshot({ path: testInfo.outputPath(`sucker-${suckerScore}-bonus-preview.png`) });
+    await page.getByTestId('play-score-button').click();
+    await expect(page.getByTestId('game-over-panel')).toBeVisible();
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('sucker.computer-session.v1.guest')!).game);
+    expect(saved.players[0].scorecard.fives).toBe(suckerScore === 50 ? 75 : 25);
+    expect(saved.players[0].suckerBonusCategories).toEqual(suckerScore === 50 ? ['fives'] : []);
+  });
+}
 
 test('rules stay optional and preserve the current turn and held dice', async ({ page }) => {
   await page.goto('/');
@@ -24,7 +65,7 @@ test('rules stay optional and preserve the current turn and held dice', async ({
   await page.keyboard.press('Shift+Tab');
   expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
   await page.getByTestId('rules-section-scoring').click();
-  await expect(dialog).toContainText('even with zero or a scratch');
+  await expect(dialog).toContainText('A zero or scratch in Sucker earns no extra Sucker bonuses.');
   await page.getByTestId('rules-section-tokens').click();
   await expect(dialog).toContainText('Counterpunch');
   await page.keyboard.press('Escape');

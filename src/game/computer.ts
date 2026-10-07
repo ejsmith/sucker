@@ -3,7 +3,7 @@ import {
   applySuckerPunchOpportunity,
   getSuckerPunchCost,
   getSuckerPunchKind,
-  isSuckerRoll,
+  hasExtraSuckerBonus,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -202,7 +202,7 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
   const scorerIndex = game.currentPlayerIndex;
   const scorer = game.players[scorerIndex];
   const score = scoreCategoryForScorecard(game.dice, category, scorer.scorecard);
-  const hadSuckerBonus = category !== 'sucker' && scorer.scorecard.sucker !== null && isSuckerRoll(game.dice);
+  const hadSuckerBonus = hasExtraSuckerBonus(game.dice, category, scorer.scorecard);
   const nextGame = scoreTurn(game, category);
   const pendingTurn =
     nextGame.phase === 'complete'

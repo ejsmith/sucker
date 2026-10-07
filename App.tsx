@@ -21,6 +21,7 @@ import {
   createGame,
   getSuckerPunchCost,
   getSuckerPunchKind,
+  hasExtraSuckerBonus,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -2610,7 +2611,7 @@ export function LocalGameScreen({
     const scorer =
       previousGame.players[scorerIndex] ?? nextRemoteGame.players.find((player) => player.id === turn.player_id);
     const hadSuckerBonus =
-      turn.roll_count > 0 && scorer ? hasPreviewSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
+      turn.roll_count > 0 && scorer ? hasExtraSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
 
     setLocalPendingTurn(null);
     setSelectedCategory(null);
@@ -5211,7 +5212,7 @@ function ScoreCell({
   const selectable = canChoose && openCategories.includes(category);
   const selected = selectedCategory === category;
   const highlighted = selected || highlightCategory === category || (isChoosingSuckerDeal && selectable);
-  const previewHasSuckerBonus = selected && !locked && hasPreviewSuckerBonus(dice, category, activePlayer.scorecard);
+  const previewHasSuckerBonus = selected && !locked && hasExtraSuckerBonus(dice, category, activePlayer.scorecard);
   const previewScore =
     selected && !locked
       ? previewHasSuckerBonus
@@ -5493,14 +5494,6 @@ function displayScoreWithoutSuckerBonus(score: number | null, hasSuckerBonus: bo
   }
 
   return hasSuckerBonus ? Math.max(0, score - 50) : score;
-}
-
-function hasPreviewSuckerBonus(
-  dice: ReturnType<typeof createGame>['dice'],
-  category: ScoreCategory,
-  scorecard: PlayerView['scorecard'],
-) {
-  return category !== 'sucker' && scorecard.sucker !== null && dice.every((die) => die === dice[0]);
 }
 
 function isSuckerDice(dice: ReturnType<typeof createGame>['dice']) {

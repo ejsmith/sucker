@@ -85,6 +85,12 @@ When a player rolls a Sucker:
 
 Suckers do NOT award tokens.
 
+Extra Sucker bonuses
+
+- After scoring 50 points in the Sucker category, each later five-of-a-kind scored in another category adds 50 points to that category’s normal score.
+- If the Sucker category is empty, scored as zero, or scratched, no extra Sucker bonus is awarded. Scratching Sucker forfeits extra Sucker bonuses.
+- Scratching another category never awards a Sucker bonus, even when the dice are five-of-a-kind.
+
 ⸻
 
 Sucker Tokens

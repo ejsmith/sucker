@@ -4,6 +4,7 @@ import {
   purchaseExtraRoll,
   rollCurrentDice,
   rollsRemaining,
+  scoreCategoryForScorecard,
   scoreTurn,
   scratchScoreBox,
   startingSuckerTokens,
@@ -57,6 +58,24 @@ Deno.test('Edge shared game rules expose the Sucker Punch chance ladder', () => 
   assertEquals(suckerPunchChanceByDie[4], 45);
   assertEquals(suckerPunchChanceByDie[5], 60);
   assertEquals(suckerPunchChanceByDie[6], 75);
+});
+
+Deno.test('Edge scoring requires a scored Sucker for extra bonuses', () => {
+  for (const suckerScore of [null, 0, 50]) {
+    const game = {
+      ...createGame(['Erin', 'Sam']),
+      dice: [5, 5, 5, 5, 5] as Dice,
+      phase: 'scoring' as const,
+      rollNumber: 1,
+    };
+    game.players[0].scorecard.sucker = suckerScore;
+    const expectedScore = suckerScore === 50 ? 75 : 25;
+    assertEquals(scoreCategoryForScorecard(game.dice, 'fives', game.players[0].scorecard), expectedScore);
+    const scored = scoreTurn(game, 'fives');
+    assertEquals(scored.players[0].scorecard.fives, expectedScore);
+    assertEquals(scored.players[0].suckerBonusCategories.includes('fives'), suckerScore === 50);
+    assertEquals(scored.players[0].suckerTokens, startingSuckerTokens);
+  }
 });
 
 Deno.test('Edge shared game state defaults legacy missing extra rolls to zero', () => {

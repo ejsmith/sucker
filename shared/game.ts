@@ -503,8 +503,8 @@ function hasOfAKind(counts: Record<DieValue, number>, size: number): boolean {
   return Object.values(counts).some((count) => count >= size);
 }
 
-function hasExtraSuckerBonus(dice: Dice, category: ScoreCategory, scorecard: Scorecard): boolean {
-  return category !== 'sucker' && scorecard.sucker !== null && isSuckerRoll(dice);
+export function hasExtraSuckerBonus(dice: Dice, category: ScoreCategory, scorecard: Scorecard): boolean {
+  return category !== 'sucker' && (scorecard.sucker ?? 0) > 0 && isSuckerRoll(dice);
 }
 
 function scoreUpperCategory(counts: Record<DieValue, number>, category: UpperCategory): number {
