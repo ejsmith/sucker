@@ -1,28 +1,11 @@
-# Trying custom game haptics
+# Game haptics
 
-Haptics Lab is an internal tuning tool. In a development or internal preview
-build, open a game → three-dot menu → **Haptics Lab**.
-Web development previews the layout and game artwork, but produces no haptics.
+Haptics Lab is hidden in every build: development, internal preview, TestFlight,
+App Store, and web. The app no longer imports or renders its screen or menu item.
+Gameplay haptics and saved device choices remain active. Web produces no haptics.
+The lab component remains in source for future tuning work, but has no entry point.
 
-| Build                                                           | Haptics Lab |
-| --------------------------------------------------------------- | ----------- |
-| Local development (`npm run web` or a native development build) | Available   |
-| Native EAS `preview` build                                      | Available   |
-| Native EAS `production` build, in TestFlight or the App Store   | Hidden      |
-| Production web export / public website                          | Hidden      |
-
-Both the menu item and lab screen use the same visibility check: development
-mode, or a native build with the `preview` update channel from `eas.json`.
-Other channels and unconfigured release builds hide the lab. The channel belongs
-to the native build, so installing an OTA update keeps that build's behavior.
-Normal gameplay haptics and saved device choices remain active in release builds.
-
-TestFlight does not switch this setting automatically: promoting the same
-production build to the App Store keeps the lab hidden in both. Use the internal
-preview build for tuning, then test the production candidate without the lab.
-
-The second lab replaces the closely related system taps with seven authored
-patterns. Each event can use any pattern:
+The native game uses authored patterns instead of closely related system taps:
 
 | Effect      | Starting duration | Shape                                                         |
 | ----------- | ----------------- | ------------------------------------------------------------- |
@@ -39,16 +22,17 @@ Both landing a punch and getting punched default to **Crack** at **800 ms**,
 100% hit/rumble levels. This matches the chosen phone tuning. **Double rev** stays
 the Sucker default. Code and browser checks cannot establish which feels satisfying.
 
-Existing saved choices stay active. To apply the punch tuning in a lab-enabled
-build on a phone with older settings, select **Punch** or **Get Hit → Choose effect → Crack → Tune
-effect → Reset this effect → Use this in games** for each event.
+Existing saved choices stay active and are not reset when the lab is hidden.
 
 Double rev aims for “vvvvvrroo… vvvvvrooom”: a 330 ms swell, 80 ms of silence,
 then a stronger 490 ms swell with a sustained peak and a smooth release. Both
 strength and sharpness rise through each rev; there are no impact taps. Duration
-scales the whole pair, and repeats repeat the pair. If you already saved a Sucker
-choice, select **Sucker → Choose effect → Double rev → Use this in games** to
-switch to it; saved choices are preserved.
+scales the whole pair, and repeats repeat the pair.
+
+## Retained lab controls (currently unavailable)
+
+These notes describe the retained component for future tuning work. The current
+app does not expose these controls in any build.
 
 1. **Choose effect** selects a shape; **Tune effect** opens its controls. The lab
    opens on tuning so your saved effect is ready to adjust. **Try choice**, **Try
@@ -100,7 +84,7 @@ Normal game feedback is suppressed while the lab is open. An already delivered
 strike cannot be recalled. Android hardware may approximate curves and sharpness;
 test its feel separately from iPhone.
 
-Preferences use AsyncStorage `sucker.haptics.v2`. When absent, the lab reads v1:
+Preferences use AsyncStorage `sucker.haptics.v2`. When absent, the provider reads v1:
 Off and Original survive, retired presets use the new default for their event,
 and the old tap spacing is discarded. The v1 record remains available to an older
 app version; the first explicit save writes the complete v2 preferences. Older
@@ -118,16 +102,15 @@ Required automated checks are the app/Edge typechecks and test suites.
 `tests/haptics.test.cjs` covers migration, layer mixing, tuning bounds, silent
 repeat gaps, complete native timelines,
 replacement/background cancellation, and native resource cleanup.
-`e2e/haptics.spec.ts` covers phone layout, independent persistence, failed saves,
-discarded drafts, restoring saved choices, previews while editing, long repeated
-previews, and preview isolation from gameplay. Native prebuild/codegen
+`e2e/haptics.spec.ts` checks that the game menu hides the lab in development and
+preserves saved choices through reload and gameplay. The production export smoke
+test checks the same visibility and persistence behavior. Native prebuild/codegen
 checks do not replace compiling and testing an iOS binary.
 
-On a physical phone, compare each shape both with and without artwork; save a
-different choice for each event and confirm it after relaunch. Test actual landed
-punches, received punches, and Suckers (a missed punch must not play a landed hit).
-Start a long rumble and immediately stop, close, or background: it must stop and
-must not resume later. Test Off, repeated auditions, and the tuning extremes.
+On a physical phone, test actual landed punches, received punches, and Suckers
+(a missed punch must not play a landed hit). Confirm previously saved choices
+still apply after relaunch. Background during an effect: it must stop and must
+not resume later. Confirm the game menu has no Haptics Lab entry.
 
 References: [Pulsar React Native SDK](https://docs.swmansion.com/pulsar/sdk/react-native/)
 and [Pulsar preset playground](https://docs.swmansion.com/pulsar/presets-playground/).

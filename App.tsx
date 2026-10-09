@@ -1,5 +1,4 @@
 import { StatusBar } from 'expo-status-bar';
-import * as Updates from 'expo-updates';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -114,7 +113,6 @@ import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
-import { HapticsLab } from './src/haptics/HapticsLab';
 import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
@@ -350,9 +348,6 @@ const bonusOutlineOffsets = [
   { x: 2, y: 2 },
 ];
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
-// Use the native build's channel so OTA updates keep the same lab visibility.
-// Production builds (including TestFlight) and public web exports hide the lab.
-const hapticsLabEnabled = __DEV__ || (Platform.OS !== 'web' && Updates.channel === 'preview');
 type DevViewportPresetSelection = GameViewportPresetKey | 'responsive';
 
 function getWebLocation() {
@@ -1171,7 +1166,6 @@ export function LocalGameScreen({
   const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [showHapticsLab, setShowHapticsLab] = useState(false);
   const { play: playHaptic, cancel: cancelHaptics } = useHaptics();
   const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
   const [isSendingTaunt, setIsSendingTaunt] = useState(false);
@@ -3308,25 +3302,6 @@ export function LocalGameScreen({
                     RULES
                   </Text>
                 </Pressable>
-                {hapticsLabEnabled && (
-                  <Pressable
-                    accessibilityLabel="Open Haptics Lab"
-                    onPress={() => {
-                      setIsMenuOpen(false);
-                      setShowHapticsLab(true);
-                    }}
-                    style={({ pressed }) => [
-                      styles.topMenuItem,
-                      gameLayout.styles.topMenuItem,
-                      pressed && styles.topMenuItemPressed,
-                    ]}
-                    testID="game-haptics-menu-item"
-                  >
-                    <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
-                      HAPTICS LAB
-                    </Text>
-                  </Pressable>
-                )}
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
                     onPress={onNewComputerGame}
@@ -3973,21 +3948,6 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
-          {hapticsLabEnabled && showHapticsLab && (
-            <HapticsLab
-              onClose={() => {
-                setShowHapticsLab(false);
-                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
-              }}
-              renderMoment={(event) =>
-                event === 'sucker' ? (
-                  <SuckerRollNotice title="You rolled" />
-                ) : (
-                  <SuckerPunchResultCard recipient={event === 'punchReceived'} />
-                )
-              }
-            />
-          )}
           {showRules && (
             <RulesDialog
               onClose={() => {
