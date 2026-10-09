@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -349,6 +350,9 @@ const bonusOutlineOffsets = [
   { x: 2, y: 2 },
 ];
 const disableE2EAnimations = process.env.EXPO_PUBLIC_E2E_DISABLE_ANIMATIONS === '1';
+// Use the native build's channel so OTA updates keep the same lab visibility.
+// Production builds (including TestFlight) and public web exports hide the lab.
+const hapticsLabEnabled = __DEV__ || (Platform.OS !== 'web' && Updates.channel === 'preview');
 type DevViewportPresetSelection = GameViewportPresetKey | 'responsive';
 
 function getWebLocation() {
@@ -3304,23 +3308,25 @@ export function LocalGameScreen({
                     RULES
                   </Text>
                 </Pressable>
-                <Pressable
-                  accessibilityLabel="Open Haptics Lab"
-                  onPress={() => {
-                    setIsMenuOpen(false);
-                    setShowHapticsLab(true);
-                  }}
-                  style={({ pressed }) => [
-                    styles.topMenuItem,
-                    gameLayout.styles.topMenuItem,
-                    pressed && styles.topMenuItemPressed,
-                  ]}
-                  testID="game-haptics-menu-item"
-                >
-                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
-                    HAPTICS LAB
-                  </Text>
-                </Pressable>
+                {hapticsLabEnabled && (
+                  <Pressable
+                    accessibilityLabel="Open Haptics Lab"
+                    onPress={() => {
+                      setIsMenuOpen(false);
+                      setShowHapticsLab(true);
+                    }}
+                    style={({ pressed }) => [
+                      styles.topMenuItem,
+                      gameLayout.styles.topMenuItem,
+                      pressed && styles.topMenuItemPressed,
+                    ]}
+                    testID="game-haptics-menu-item"
+                  >
+                    <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
+                      HAPTICS LAB
+                    </Text>
+                  </Pressable>
+                )}
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
                     onPress={onNewComputerGame}
@@ -3967,7 +3973,7 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
-          {showHapticsLab && (
+          {hapticsLabEnabled && showHapticsLab && (
             <HapticsLab
               onClose={() => {
                 setShowHapticsLab(false);

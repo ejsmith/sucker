@@ -1,7 +1,25 @@
 # Trying custom game haptics
 
-Open a game → three-dot menu → **Haptics Lab** in the iPhone or Android app.
-Web previews the layout and game artwork, but produces no haptics.
+Haptics Lab is an internal tuning tool. In a development or internal preview
+build, open a game → three-dot menu → **Haptics Lab**.
+Web development previews the layout and game artwork, but produces no haptics.
+
+| Build                                                           | Haptics Lab |
+| --------------------------------------------------------------- | ----------- |
+| Local development (`npm run web` or a native development build) | Available   |
+| Native EAS `preview` build                                      | Available   |
+| Native EAS `production` build, in TestFlight or the App Store   | Hidden      |
+| Production web export / public website                          | Hidden      |
+
+Both the menu item and lab screen use the same visibility check: development
+mode, or a native build with the `preview` update channel from `eas.json`.
+Other channels and unconfigured release builds hide the lab. The channel belongs
+to the native build, so installing an OTA update keeps that build's behavior.
+Normal gameplay haptics and saved device choices remain active in release builds.
+
+TestFlight does not switch this setting automatically: promoting the same
+production build to the App Store keeps the lab hidden in both. Use the internal
+preview build for tuning, then test the production candidate without the lab.
 
 The second lab replaces the closely related system taps with seven authored
 patterns. Each event can use any pattern:
@@ -21,8 +39,8 @@ Both landing a punch and getting punched default to **Crack** at **800 ms**,
 100% hit/rumble levels. This matches the chosen phone tuning. **Double rev** stays
 the Sucker default. Code and browser checks cannot establish which feels satisfying.
 
-Existing saved choices stay active. To apply the punch tuning on a phone with
-older settings, select **Punch** or **Get Hit → Choose effect → Crack → Tune
+Existing saved choices stay active. To apply the punch tuning in a lab-enabled
+build on a phone with older settings, select **Punch** or **Get Hit → Choose effect → Crack → Tune
 effect → Reset this effect → Use this in games** for each event.
 
 Double rev aims for “vvvvvrroo… vvvvvrooom”: a 330 ms swell, 80 ms of silence,
