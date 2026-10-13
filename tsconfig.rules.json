@@ -24,6 +24,7 @@
     "src/ui/bonusVisuals.ts",
     "src/ui/gameLayout.ts",
     "src/ui/phoneStage.ts",
+    "src/ui/statsFormat.ts",
     "shared/taunts.ts"
   ]
 }
