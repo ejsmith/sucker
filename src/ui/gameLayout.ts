@@ -691,7 +691,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         lineHeight: unit(18),
       },
       tokenText: {
-        fontSize: unit(12),
+        fontSize: unit(13),
       },
       topBar: {
         borderRadius: unit(10),

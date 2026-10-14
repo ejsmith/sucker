@@ -6113,7 +6113,7 @@ const styles = StyleSheet.create({
   },
   tokenText: {
     color: '#FFD329',
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: gameFontBlack,
     fontWeight: '900',
   },
