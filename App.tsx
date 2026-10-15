@@ -50,8 +50,9 @@ import {
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
-import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import { createGameRefresh, startRecoveryRefresh } from './src/multiplayer/gameRefresh';
+import { createComputerGame } from './src/game/createComputerGame';
+import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import {
   buyRemoteExtraRoll,
   createGameAgainst,
@@ -1082,6 +1083,7 @@ export function RemoteGameScreen({
 
 export function LocalGameScreen({
   initialLocalSession,
+  localPlayerProfileId,
   onLocalSessionChange,
   onNewComputerGame,
   isRemoteBusy = false,
@@ -1104,6 +1106,7 @@ export function LocalGameScreen({
   remoteStatus,
 }: {
   initialLocalSession?: ComputerSession | null;
+  localPlayerProfileId?: string | null;
   onLocalSessionChange?: (session: ComputerSession) => void;
   onNewComputerGame?: () => void;
   isRemoteBusy?: boolean;
@@ -1130,7 +1133,7 @@ export function LocalGameScreen({
   const [devViewportPresetKey, setDevViewportPresetKey] =
     useState<DevViewportPresetSelection>(getInitialDevViewportPresetKey);
   const localPlayerNames = [localPlayerName?.trim() || playerNames[0], playerNames[1]];
-  const [localGame, setLocalGame] = useState(() => initialLocalSession?.game ?? createGame(localPlayerNames));
+  const [localGame, setLocalGame] = useState(() => initialLocalSession?.game ?? createComputerGame(localPlayerNames));
   const [localPendingTurn, setLocalPendingTurn] = useState<LocalPendingTurn | null>(
     initialLocalSession?.pendingTurn ?? null,
   );
@@ -1837,17 +1840,22 @@ export function LocalGameScreen({
       return;
     }
 
-    recordedComputerGameIds.current.add(game.id);
-    void recordComputerGameResult(game, localSuckerStatActions.current, localSuckerStatTurns.current)
+    void recordComputerGameResult(
+      game,
+      localSuckerStatActions.current,
+      localSuckerStatTurns.current,
+      localPlayerProfileId,
+    )
       .then((nextStats) => {
         if (nextStats) {
+          recordedComputerGameIds.current.add(game.id);
           setComputerStats(nextStats);
         }
       })
       .catch((statsError) => {
         console.warn('Unable to record computer stats', statsError);
       });
-  }, [game, isRemoteGame]);
+  }, [game, isRemoteGame, localPlayerProfileId]);
 
   useEffect(() => {
     if (isRemoteGame || !onLocalSessionChange) return;
@@ -2949,7 +2957,7 @@ export function LocalGameScreen({
     resolvedLocalSave.current = null;
     localSuckerStatActions.current = [];
     localSuckerStatTurns.current = [];
-    setLocalGame(createGame(localPlayerNames));
+    setLocalGame(createComputerGame(localPlayerNames));
   }
 
   function handleCloseGameOver() {

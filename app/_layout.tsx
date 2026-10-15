@@ -11,6 +11,7 @@ import { AppErrorBoundary } from '../src/ui/AppErrorBoundary';
 import { WebPortraitGuard } from '../src/ui/WebPortraitGuard';
 import { MonitoringRoute } from '../src/monitoring/MonitoringRoute';
 import { NetworkProvider, NetworkStatusBanner } from '../src/network/NetworkProvider';
+import { ComputerResultSync } from '../src/multiplayer/ComputerResultSync';
 import { HapticsProvider } from '../src/haptics/HapticsProvider';
 
 export default function RootLayout() {
@@ -35,6 +36,7 @@ export default function RootLayout() {
             <HapticsProvider>
               <GameListProvider>
                 <MonitoringRoute />
+                <ComputerResultSync />
                 <NotificationRouter />
                 <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
               </GameListProvider>
