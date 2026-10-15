@@ -108,7 +108,7 @@ test('Jab keeps cards stable and other eligible buttons visible while sending', 
       response,
       json: games.map((row: { id: string; updated_at: string }) =>
         [game.id, otherGame.id, differentOpponentGame.id].includes(row.id)
-          ? { ...row, updated_at: new Date(Date.now() - 2 * 60 * 60 * 1_000).toISOString() }
+          ? { ...row, updated_at: new Date(Date.parse(row.updated_at) - 2 * 60 * 60 * 1_000).toISOString() }
           : row,
       ),
     });
