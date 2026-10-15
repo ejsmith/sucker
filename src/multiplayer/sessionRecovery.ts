@@ -55,6 +55,8 @@ export function isTemporarySessionError(error: unknown) {
     status === 408 ||
     status === 429 ||
     (typeof status === 'number' && status >= 500) ||
-    /failed to fetch|network request failed|load failed|networkerror/i.test(message ?? '')
+    /failed to fetch|fetch failed|network request failed|load failed|networkerror|UnexpectedException: cancel(?:led|ed)/i.test(
+      message ?? '',
+    )
   );
 }

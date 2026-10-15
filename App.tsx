@@ -51,6 +51,7 @@ import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './s
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
 import { createGameRefresh, startRecoveryRefresh } from './src/multiplayer/gameRefresh';
+import { isTemporarySessionError, sessionConnectionMessage } from './src/multiplayer/sessionRecovery';
 import { createComputerGame } from './src/game/createComputerGame';
 import { latestRecoveredGameAction } from './src/multiplayer/actionRecovery';
 import {
@@ -526,10 +527,14 @@ export function RemoteGameScreen({
   }, [nextTurnPrompt, profileId, remoteGame]);
 
   const refreshRemoteGameRef = useRef<{ refresh: () => Promise<void>; invalidate: () => void } | null>(null);
+  const retryRemoteLoadRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     let hasGameSnapshot = false;
+    let isLoading = false;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const refresh = createGameRefresh(
       () => getGame(gameId),
       (nextGame) => {
@@ -541,6 +546,10 @@ export function RemoteGameScreen({
     refreshRemoteGameRef.current = refresh;
 
     async function loadRemoteGame() {
+      if (!isMounted || isLoading) return;
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      retryTimer = null;
+      isLoading = true;
       setError(null);
       try {
         const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -561,11 +570,28 @@ export function RemoteGameScreen({
         setRemoteTaunt(latestTaunt);
       } catch (loadError) {
         if (isMounted && (!hasGameSnapshot || !profileIdRef.current)) {
-          setError(loadError instanceof Error ? loadError.message : 'Unable to load game.');
+          const isTemporary = isTemporarySessionError(loadError);
+          setError(
+            isTemporary
+              ? sessionConnectionMessage
+              : loadError instanceof Error
+                ? loadError.message
+                : 'Unable to load game.',
+          );
+          if (isTemporary && retryCount < 2) {
+            retryCount += 1;
+            retryTimer = setTimeout(() => void loadRemoteGame(), retryCount * 1000);
+          }
         }
+      } finally {
+        isLoading = false;
       }
     }
 
+    retryRemoteLoadRef.current = () => {
+      retryCount = 0;
+      void loadRemoteGame();
+    };
     void loadRemoteGame();
     const unsubscribe = subscribeToGame(
       gameId,
@@ -583,6 +609,7 @@ export function RemoteGameScreen({
         if (isMounted) {
           setIsRealtimeConnected(status === 'SUBSCRIBED');
           if (status === 'SUBSCRIBED') {
+            if (!profileIdRef.current) void loadRemoteGame();
             void refresh.refresh().catch((error) => console.warn('Unable to refresh reconnected game', error));
           }
         }
@@ -625,6 +652,8 @@ export function RemoteGameScreen({
 
     return () => {
       isMounted = false;
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      retryRemoteLoadRef.current = null;
       refresh.dispose();
       refreshRemoteGameRef.current = null;
       unsubscribe();
@@ -768,6 +797,11 @@ export function RemoteGameScreen({
   useEffect(() => {
     const wasActive = wasAppActive.current;
     wasAppActive.current = isAppActive;
+
+    if (isAppActive && !wasActive && (!remoteGame || !profileId)) {
+      retryRemoteLoadRef.current?.();
+      return;
+    }
 
     if (!remoteGame || !profileId || !isAppActive || wasActive) {
       return;
@@ -988,6 +1022,18 @@ export function RemoteGameScreen({
           <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
             {error}
           </Text>
+        )}
+        {error && (
+          <Pressable
+            accessibilityLabel="Retry loading game"
+            accessibilityRole="button"
+            onPress={() => retryRemoteLoadRef.current?.()}
+            style={({ pressed }) => [styles.remoteBackButton, pressed && styles.pressed]}
+          >
+            <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteBackButtonText}>
+              Retry
+            </Text>
+          </Pressable>
         )}
         <Pressable
           accessibilityLabel="Back to games"
