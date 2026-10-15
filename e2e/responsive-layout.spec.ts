@@ -1,4 +1,53 @@
 import { devices, expect, test, type Locator, type Page } from '@playwright/test';
+import { createGame, scoreCategories } from '../shared/game';
+
+for (const width of [375, 393]) {
+  test(`game-over buttons retain bottom spacing with enlarged text (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 852 });
+    const game = createGame(['Player', 'Computer']);
+    game.phase = 'scoring';
+    game.currentPlayerIndex = 0;
+    game.rollNumber = 1;
+    game.dice = [1, 2, 3, 4, 5];
+    for (const player of game.players) {
+      for (const category of scoreCategories) player.scorecard[category] = 0;
+    }
+    game.players[1].scorecard.chance = 30;
+    game.players[0].scorecard.chance = null;
+    await page.addInitScript((game) => {
+      localStorage.setItem(
+        'sucker.computer-session.v1.guest',
+        JSON.stringify({ version: 1, game, pendingTurn: null, actions: [], turns: [], recordedGameIds: [game.id] }),
+      );
+    }, game);
+    await page.goto('/local');
+    await page.getByTestId('category-button-chance').click();
+    await page.getByTestId('play-score-button').click();
+    const panel = page.getByTestId('game-over-panel');
+    await expect(panel).toBeVisible();
+    // Web does not implement native Dynamic Type. Stress rendered text by the
+    // same allowed 20% growth, in addition to the native JSX policy check.
+    await panel.evaluate((node) => {
+      for (const element of node.querySelectorAll<HTMLElement>('*')) {
+        if (element.childElementCount === 0 && element.textContent?.trim()) {
+          element.style.fontSize = `${parseFloat(getComputedStyle(element).fontSize) * 1.2}px`;
+        }
+      }
+    });
+    for (const id of ['game-over-rematch-button', 'game-over-stats-button']) {
+      const button = page.getByTestId(id);
+      await expect(button).toBeInViewport({ ratio: 1 });
+      const panelBox = (await panel.boundingBox())!;
+      const buttonBox = (await button.boundingBox())!;
+      expect(buttonBox.height).toBeGreaterThanOrEqual(44);
+      expect(panelBox.y + panelBox.height - buttonBox.y - buttonBox.height).toBeGreaterThanOrEqual(8);
+      expect(
+        await button.evaluate((node) => node.scrollWidth <= node.clientWidth && node.scrollHeight <= node.clientHeight),
+      ).toBe(true);
+    }
+    expect(await panel.evaluate((node) => node.scrollHeight <= node.clientHeight)).toBe(true);
+  });
+}
 
 const e2eBaseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8081';
 const minimumTouchTarget = 44;
@@ -370,7 +419,12 @@ test('unequal horizontal safe-area insets size and position the game stage', asy
 test.describe('desktop window sizing', () => {
   // This case exercises desktop scrolling, not a landscape phone. The mobile
   // WebKit project's inherited iPhone identity correctly triggers the guard.
-  test.use({ isMobile: false, hasTouch: false, userAgent: devices['Desktop Chrome'].userAgent });
+  test.use({
+    isMobile: false,
+    hasTouch: false,
+    userAgent: async ({ browserName }, use) =>
+      use(devices[browserName === 'webkit' ? 'Desktop Safari' : 'Desktop Chrome'].userAgent),
+  });
 
   test('a short desktop viewport keeps the full game reachable in a vertical stage scroller', async ({ page }) => {
     await page.setViewportSize({ height: 450, width: 720 });
@@ -428,7 +482,9 @@ test('the installed PWA document fills the large viewport when percentage height
   });
   await page.route(/\/$/, async (route) => {
     if (!route.request().isNavigationRequest()) return route.continue();
-    const response = await route.fetch();
+    // Metro can reset a connection while serving concurrent viewport tests.
+    // Retry only ECONNRESET on this read; HTTP errors and assertions still fail.
+    const response = await route.fetch({ maxRetries: 2 });
     // Model iOS's shortened percentage containing block independently from
     // its 956px large viewport. Simply resizing the page cannot catch this.
     await route.fulfill({
@@ -509,7 +565,14 @@ test.describe('normal mobile web route', () => {
       insets: { top: 24, right: 0, bottom: 24, left: 0 },
     },
   ]) {
-    test(`${viewport.label} fills the safe viewport without a diagnostic preset`, async ({ browser }, testInfo) => {
+    test(`${viewport.label} fills the safe viewport without a diagnostic preset`, async ({
+      browser,
+      browserName,
+    }, testInfo) => {
+      test.skip(
+        viewport.key.startsWith('android') ? browserName !== 'chromium' : browserName !== 'webkit',
+        'Use the real platform engine.',
+      );
       const context = await browser.newContext({
         ...devices[viewport.key.startsWith('android') ? 'Pixel 7' : 'iPhone 13'],
         viewport: { width: viewport.width, height: viewport.height },

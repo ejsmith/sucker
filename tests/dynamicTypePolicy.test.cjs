@@ -2,56 +2,58 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const ts = require('typescript');
 
-const maximumFontSizeMultiplier = 1.2;
-const repositoryRoot = path.resolve(__dirname, '..');
-const gameUiSources = ['App.tsx', 'src/ui/PlayerAvatar.tsx', 'src/ui/StatsPage.tsx'];
-
-test('game UI keeps Dynamic Type enabled with bounded growth', () => {
-  for (const relativePath of gameUiSources) {
-    const source = fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
-
-    assert.doesNotMatch(
-      source,
-      /allowFontScaling\s*=\s*\{\s*false\s*\}/,
-      `${relativePath} must not disable Dynamic Type`,
+test('game Text elements permit bounded Dynamic Type growth', () => {
+  for (const file of ['App.tsx', 'src/ui/PlayerAvatar.tsx', 'src/ui/StatsPage.tsx']) {
+    const source = ts.createSourceFile(
+      file,
+      fs.readFileSync(path.join(__dirname, '..', file), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
     );
-
-    const numericConstants = new Map(
-      [...source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(\d+(?:\.\d+)?)\s*;/g)].map((match) => [
-        match[1],
-        Number(match[2]),
-      ]),
-    );
-    const multiplierProps = [...source.matchAll(/maxFontSizeMultiplier\s*=\s*\{\s*([^}\s]+)\s*\}/g)];
-    const textElements = [...source.matchAll(/<Text\b[\s\S]*?>/g)];
-
-    assert.ok(multiplierProps.length > 0, `${relativePath} must explicitly bound Dynamic Type growth`);
-    for (const [element] of textElements) {
-      assert.match(
-        element,
-        /maxFontSizeMultiplier\s*=/,
-        `${relativePath} contains game text without bounded Dynamic Type growth: ${element.replace(/\s+/g, ' ')}`,
+    const constants = new Map();
+    const walk = (node, visit) => {
+      visit(node);
+      ts.forEachChild(node, (child) => walk(child, visit));
+    };
+    walk(source, (node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        ts.isNumericLiteral(node.initializer)
+      ) {
+        constants.set(node.name.text, Number(node.initializer.text));
+      }
+    });
+    let textCount = 0;
+    walk(source, (node) => {
+      if (
+        !(ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) ||
+        node.tagName.getText(source) !== 'Text'
+      )
+        return;
+      textCount++;
+      const attrs = new Map(
+        node.attributes.properties
+          .filter(ts.isJsxAttribute)
+          .map((attr) => [attr.name.getText(source), attr.initializer]),
       );
-    }
-
-    for (const [, expression] of multiplierProps) {
-      const numericValue = Number(expression);
-      const value = Number.isFinite(numericValue) ? numericValue : numericConstants.get(expression);
-
-      assert.notEqual(value, undefined, `${relativePath} uses an unresolvable Dynamic Type policy: ${expression}`);
-      assert.ok(value > 1, `${relativePath} must permit some Dynamic Type growth`);
+      const scaling = attrs.get('allowFontScaling');
       assert.ok(
-        value <= maximumFontSizeMultiplier,
-        `${relativePath} exceeds the ${maximumFontSizeMultiplier} Dynamic Type growth limit`,
+        !scaling || !ts.isJsxExpression(scaling) || scaling.expression?.kind !== ts.SyntaxKind.FalseKeyword,
+        file + ' disables font scaling',
       );
-    }
+      const initializer = attrs.get('maxFontSizeMultiplier');
+      assert.ok(initializer && ts.isJsxExpression(initializer) && initializer.expression, file + ' has unbounded Text');
+      const expression = initializer.expression;
+      const multiplier = ts.isNumericLiteral(expression)
+        ? Number(expression.text)
+        : constants.get(expression.getText(source));
+      assert.ok(multiplier > 1 && multiplier <= 1.2, file + ' must permit bounded growth');
+    });
+    assert.ok(textCount > 0, file + ' must contain game text');
   }
-
-  const appSource = fs.readFileSync(path.join(repositoryRoot, 'App.tsx'), 'utf8');
-  assert.match(
-    appSource,
-    /const\s+gameMaxFontSizeMultiplier\s*=\s*1\.2\s*;/,
-    'App.tsx must retain the shared game text multiplier policy',
-  );
 });

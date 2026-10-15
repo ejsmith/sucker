@@ -1,8 +1,18 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, StyleSheet, Text } from 'react-native';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import { AppState, Platform, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getCurrentSession } from '../multiplayer/auth';
+import { getCurrentSession, getStoredSessionSnapshot } from '../multiplayer/auth';
 import {
   mergeRecoveredActions,
   type ActionRequest,
@@ -10,6 +20,7 @@ import {
 } from '../multiplayer/actionRecovery';
 import { listPendingMultiplayerActions, recoverPendingMultiplayerActions } from '../multiplayer/games';
 import { reportError } from '../monitoring/exceptionless';
+import { actionRequestStatus } from './actionRequestStatus';
 
 type NetworkContextValue = {
   isOffline: boolean;
@@ -38,10 +49,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
   const loadPending = useCallback(async () => {
-    const session = await getCurrentSession();
-    const pending = session ? await listPendingMultiplayerActions(session.user.id) : [];
-    if (isMounted.current) {
-      setPendingActions(pending);
+    try {
+      // Reading local pending actions must not require an online token refresh.
+      const session = await getStoredSessionSnapshot();
+      const pending = session ? await listPendingMultiplayerActions(session.user.id) : [];
+      if (isMounted.current) setPendingActions(pending);
+    } catch (error) {
+      void reportError(error, { Operation: 'LoadPendingMultiplayerActions' });
     }
   }, []);
 
@@ -109,6 +123,22 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     };
   }, [loadPending, recover, refresh]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    // Chromium's Network Information API can omit a change event when the
+    // browser goes offline. Refresh NetInfo on the browser events too, so all
+    // subscribers (including session recovery) see the new connectivity.
+    const updateConnection = () => {
+      void NetInfo.refresh().catch(() => undefined);
+    };
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+    };
+  }, []);
+
   const value = useMemo(
     () => ({ consumeRecoveredActions, isOffline, isRecovering, pendingActions, recoveredActions, refresh }),
     [consumeRecoveredActions, isOffline, isRecovering, pendingActions, recoveredActions, refresh],
@@ -117,8 +147,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 }
 
 export function NetworkStatusBanner() {
-  const { isOffline, isRecovering } = useNetworkStatus();
-  if (!isOffline && !isRecovering) {
+  const isWaitingForServer = useSyncExternalStore(
+    actionRequestStatus.subscribe,
+    actionRequestStatus.getSnapshot,
+    () => false,
+  );
+  if (!isWaitingForServer) {
     return null;
   }
 
@@ -127,11 +161,10 @@ export function NetworkStatusBanner() {
       accessibilityLiveRegion="polite"
       edges={['top']}
       role="status"
-      style={[styles.banner, isOffline && styles.offline]}
+      style={styles.banner}
+      testID="network-status-banner"
     >
-      <Text style={styles.text}>
-        {isOffline ? 'Offline — showing saved games. Actions resume when connected.' : 'Synchronizing game actions…'}
-      </Text>
+      <Text style={styles.text}>Server is taking longer than usual…</Text>
     </SafeAreaView>
   );
 }
@@ -150,9 +183,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     zIndex: 100,
-  },
-  offline: {
-    backgroundColor: '#3F3030',
   },
   text: {
     color: '#FFF8DC',

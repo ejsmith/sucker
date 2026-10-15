@@ -1,3 +1,5 @@
+import { isMobileWebDevice } from './webDevice';
+
 export const phoneStageAspectRatio = 393 / 852;
 export const phoneStageMinWidth = 320;
 // Fill mode keeps narrow native and diagnostic stages at (or just above) the
@@ -20,9 +22,7 @@ export function shouldFillWebViewport(
   // not acquire side gutters just because its status/home bars reduce height.
   // 430 is a desktop preview cap, not a maximum phone width (Pro Max is 440).
   // Preserve proportional layouts for short/zoomed desktop browser windows.
-  const isMobile =
-    /Android|iPhone|iPad|iPod/i.test(navigator?.userAgent ?? '') ||
-    (/Macintosh/i.test(navigator?.userAgent ?? '') && (navigator?.maxTouchPoints ?? 0) > 1);
+  const isMobile = isMobileWebDevice(navigator);
   return windowWidth <= phoneStageMaxWidth || (isMobile && windowWidth <= phoneViewportMaxWidth);
 }
 

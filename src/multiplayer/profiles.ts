@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import { getProfileCacheGeneration, rememberProfiles } from './profileCache';
+import type { Database } from './database.types';
 
 const avatarPublicBase = supabase.storage.from('avatars').getPublicUrl('').data.publicUrl.replace(/\/$/, '');
 
@@ -15,7 +17,7 @@ export function getSafeAvatarUrl(value: string | null | undefined, profileId: st
   }
 }
 
-export async function getMyProfile() {
+export async function getMyProfile(): Promise<Database['public']['Tables']['profiles']['Row'] | null> {
   const {
     data: { user },
     error: userError,
@@ -57,6 +59,7 @@ export async function searchProfiles(query: string) {
 }
 
 export async function getProfilesByIds(profileIds: string[]) {
+  const generation = getProfileCacheGeneration();
   const uniqueIds = [...new Set(profileIds)].filter(Boolean);
   if (!uniqueIds.length) {
     return [];
@@ -71,5 +74,10 @@ export async function getProfilesByIds(profileIds: string[]) {
     throw error;
   }
 
-  return data.map((profile) => ({ ...profile, avatar_url: getSafeAvatarUrl(profile.avatar_url, profile.id) }));
+  const profiles = data.map((profile) => ({
+    ...profile,
+    avatar_url: getSafeAvatarUrl(profile.avatar_url, profile.id),
+  }));
+  rememberProfiles(profiles, generation);
+  return profiles;
 }

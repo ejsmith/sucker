@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image } from 'expo-image';
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 
@@ -22,6 +22,21 @@ export function PlayerAvatar({
   testID?: string;
 }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const retryCount = useRef(0);
+  useEffect(() => {
+    retryCount.current = 0;
+  }, [avatarUrl]);
+  useEffect(() => {
+    if (!avatarUrl || failedUrl !== avatarUrl || retryCount.current >= 2) return;
+    const timer = setTimeout(
+      () => {
+        retryCount.current += 1;
+        setFailedUrl(null);
+      },
+      1_500 * (retryCount.current + 1),
+    );
+    return () => clearTimeout(timer);
+  }, [avatarUrl, failedUrl]);
   const showImage = Boolean(avatarUrl && failedUrl !== avatarUrl);
 
   return (

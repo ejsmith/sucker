@@ -25,7 +25,13 @@ for (const width of [393, 440]) {
       });
       await mockKeyboardTestAccount(page, 8);
       await page.goto('/');
-      await page.getByTestId('login-email-input').fill('keyboard@example.com');
+      const email = page.getByTestId('login-email-input');
+      // WebKit can acknowledge fill before the controlled input's mount/focus
+      // render settles. Type through keyboard events and verify the value.
+      await email.click();
+      await expect(email).toBeFocused();
+      await email.pressSequentially('keyboard@example.com');
+      await expect(email).toHaveValue('keyboard@example.com');
       await page.getByTestId('send-code-button').click();
       await page.getByTestId('login-code-input').fill('123456');
       await page.getByTestId('verify-code-button').click();
@@ -69,205 +75,215 @@ for (const width of [393, 440]) {
 }
 
 for (const userAgent of ['iPhone', 'Android', 'Macintosh']) {
-  for (const installed of [false, true]) {
-    test(`all text-entry screens preserve their size (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
-      page,
-    }, testInfo) => {
-      await page.addInitScript(
-        ({ installed, userAgent }) => {
-          Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent });
-          Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
-          Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
-          Object.defineProperty(screen, 'orientation', {
-            configurable: true,
-            value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
-          });
-        },
-        { installed, userAgent },
-      );
-      await mockKeyboardTestAccount(page);
-      await page.setViewportSize({ width: 393, height: 852 });
-      await page.goto('/');
-      const email = page.getByTestId('login-email-input');
-      await expect(email).toBeVisible({ timeout: 20_000 });
-      // Match actual keyboard entry. WebKit's bulk fill can race the initial
-      // focus render and return with this controlled email field still empty.
-      await email.click();
-      await expect(email).toBeFocused();
-      await email.pressSequentially('keyboard@example.com');
-      await expect(email).toHaveValue('keyboard@example.com');
-      await expect(page.getByTestId('send-code-button')).toBeEnabled();
-      await page.getByTestId('send-code-button').click();
-      await expect(page.getByTestId('login-code-input')).toBeVisible();
-      await expectFieldOverlay(page, 'login-code-input', '123456');
-      await page.getByTestId('verify-code-button').click();
-      await expect(page.getByTestId('profile-button')).toBeVisible();
-      await page.getByTestId('start-with-friend-button').click();
-      await expectFieldOverlay(page, 'profile-search-input', 'friend');
-      await expectFieldOverlay(page, 'invite-code-input', 'ABC123');
-      await page.getByRole('button', { name: 'Back from Start With Friend', exact: true }).click();
-      await page.getByTestId('profile-button').click();
-      for (const [testId, value] of [
-        ['display-name-input', 'Keyboard Test'],
-        ['username-input', 'keyboard_test'],
-        ['new-password-input', 'test-only-password'],
-        ['confirm-password-input', 'test-only-password'],
-      ]) {
-        await expectFieldOverlay(
-          page,
-          testId,
-          value,
-          installed && userAgent === 'iPhone' && testId === 'display-name-input'
-            ? testInfo.outputPath('profile-keyboard-overlay.png')
-            : undefined,
-        );
-      }
+  test.describe(userAgent, () => {
+    test.skip(
+      ({ browserName }) => (userAgent === 'Android' ? browserName !== 'chromium' : browserName !== 'webkit'),
+      'Use the real platform engine.',
+    );
+    test.use({
+      userAgent:
+        devices[userAgent === 'Android' ? 'Pixel 7' : userAgent === 'iPhone' ? 'iPhone 13' : 'Desktop Safari']
+          .userAgent,
     });
+    for (const installed of [false, true]) {
+      test(`all text-entry screens preserve their size (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
+        page,
+      }, testInfo) => {
+        await page.addInitScript(
+          ({ installed }) => {
+            Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+            Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
+            Object.defineProperty(screen, 'orientation', {
+              configurable: true,
+              value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
+            });
+          },
+          { installed },
+        );
+        await mockKeyboardTestAccount(page);
+        await page.setViewportSize({ width: 393, height: 852 });
+        await page.goto('/');
+        const email = page.getByTestId('login-email-input');
+        await expect(email).toBeVisible({ timeout: 20_000 });
+        // Match actual keyboard entry. WebKit's bulk fill can race the initial
+        // focus render and return with this controlled email field still empty.
+        await email.click();
+        await expect(email).toBeFocused();
+        await email.pressSequentially('keyboard@example.com');
+        await expect(email).toHaveValue('keyboard@example.com');
+        await expect(page.getByTestId('send-code-button')).toBeEnabled();
+        await page.getByTestId('send-code-button').click();
+        await expect(page.getByTestId('login-code-input')).toBeVisible();
+        await expectFieldOverlay(page, 'login-code-input', '123456');
+        await page.getByTestId('verify-code-button').click();
+        await expect(page.getByTestId('profile-button')).toBeVisible();
+        await page.getByTestId('start-with-friend-button').click();
+        await expectFieldOverlay(page, 'profile-search-input', 'friend');
+        await expectFieldOverlay(page, 'invite-code-input', 'ABC123');
+        await page.getByRole('button', { name: 'Back from Start With Friend', exact: true }).click();
+        await page.getByTestId('profile-button').click();
+        for (const [testId, value] of [
+          ['display-name-input', 'Keyboard Test'],
+          ['username-input', 'keyboard_test'],
+        ]) {
+          await expectFieldOverlay(
+            page,
+            testId,
+            value,
+            installed && userAgent === 'iPhone' && testId === 'display-name-input'
+              ? testInfo.outputPath('profile-keyboard-overlay.png')
+              : undefined,
+          );
+        }
+        await page.getByTestId('open-password-page-button').click();
+        await expectFieldOverlay(page, 'new-password-input', 'test-only-password');
+        await expectFieldOverlay(page, 'confirm-password-input', 'test-only-password');
+      });
 
-    test(`focus preserves the displayed frame after a viewport settles (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
-      page,
-    }, testInfo) => {
-      await page.addInitScript(
-        ({ installed, userAgent }) => {
-          Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent });
-          Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
-          Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
-          Object.defineProperty(screen, 'orientation', {
-            configurable: true,
-            value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
-          });
-        },
-        { installed, userAgent },
-      );
-      await page.setViewportSize({ width: 393, height: 852 });
-      await page.goto('/');
-      const email = page.getByTestId('login-email-input');
-      const shell = page.getByTestId('multiplayer-lobby-shell');
-      await expect(email).toBeVisible({ timeout: 20_000 });
-      await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(852, 0);
+      test(`focus preserves the displayed frame after a viewport settles (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
+        page,
+      }, testInfo) => {
+        await page.addInitScript(
+          ({ installed }) => {
+            Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+            Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
+            Object.defineProperty(screen, 'orientation', {
+              configurable: true,
+              value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
+            });
+          },
+          { installed },
+        );
+        await page.setViewportSize({ width: 393, height: 852 });
+        await page.goto('/');
+        const email = page.getByTestId('login-email-input');
+        const shell = page.getByTestId('multiplayer-lobby-shell');
+        await expect(email).toBeVisible({ timeout: 20_000 });
+        await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(852, 0);
 
-      // Browser toolbars retain the full frame; an installed PWA must instead
-      // follow its genuinely settled viewport before any field is focused.
-      await page.setViewportSize({ width: 393, height: 797 });
-      await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(installed ? 797 : 852, 0);
-      await expect.poll(async () => (await shell.boundingBox())?.width).toBeCloseTo(393, 0);
-      const displayedShell = await shell.boundingBox();
-      const displayedEmail = await email.boundingBox();
-      await email.click();
-      await expect(email).toBeFocused();
-      await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
-      await expect.poll(() => email.boundingBox()).toEqual(displayedEmail);
-      await email.pressSequentially('toolbar@example.com');
-      for (const height of [500, 350]) {
-        await page.setViewportSize({ width: 393, height });
+        // Browser toolbars retain the full frame; an installed PWA must instead
+        // follow its genuinely settled viewport before any field is focused.
+        await page.setViewportSize({ width: 393, height: 797 });
+        await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(installed ? 797 : 852, 0);
+        await expect.poll(async () => (await shell.boundingBox())?.width).toBeCloseTo(393, 0);
+        const displayedShell = await shell.boundingBox();
+        const displayedEmail = await email.boundingBox();
+        await email.click();
+        await expect(email).toBeFocused();
         await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
         await expect.poll(() => email.boundingBox()).toEqual(displayedEmail);
-        await expect(email).toBeFocused();
-        await expect(email).toHaveValue('toolbar@example.com');
-        await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
-      }
-      await page.setViewportSize({ width: 393, height: 797 });
-      await email.evaluate((node: HTMLInputElement) => node.blur());
-      await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
-      if (userAgent === 'iPhone') {
-        await page.screenshot({ path: testInfo.outputPath('settled-frame-after-keyboard.png') });
-      }
-    });
-
-    test(`login retains keyboard focus through viewport resizing (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
-      page,
-    }, testInfo) => {
-      await page.addInitScript(
-        ({ installed, userAgent }) => {
-          Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent });
-          Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
-          Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
-          Object.defineProperty(screen, 'orientation', {
-            configurable: true,
-            value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
-          });
-        },
-        { installed, userAgent },
-      );
-      await page.setViewportSize({ width: 393, height: 852 });
-      await page.goto('/');
-
-      const email = page.getByTestId('login-email-input');
-      const shell = page.getByTestId('multiplayer-lobby-shell');
-      await expect(email).toBeVisible({ timeout: 20_000 });
-      const initialShell = await shell.boundingBox();
-      const initialEmail = await email.boundingBox();
-      if (installed && userAgent === 'iPhone') {
-        await page.screenshot({ path: testInfo.outputPath('before-keyboard.png') });
-      }
-      await email.click();
-      await expect(email).toBeFocused();
-      // Changing the layout must preserve the actual input node as well as its value.
-      const originalInput = await email.elementHandle();
-      await page.keyboard.type('qa@');
-      await page.setViewportSize({ width: 393, height: 500 });
-      await expect(page.getByTestId('lobby-stage-scroll')).toHaveCount(0);
-      await expect.poll(() => shell.boundingBox()).toEqual(initialShell);
-      await expect.poll(() => email.boundingBox()).toEqual(initialEmail);
-      if (installed && userAgent === 'iPhone') {
-        await page.screenshot({ path: testInfo.outputPath('keyboard-overlay.png') });
-      }
-      await expect(email).toBeFocused();
-      await page.keyboard.type('example.com');
-      await expect(email).toHaveValue('qa@example.com');
-      expect(await email.evaluate((node, original) => node === original, originalInput)).toBe(true);
-
-      // A keyboard can also make the CSS viewport landscape while the phone stays upright.
-      await page.setViewportSize({ width: 393, height: 350 });
-      await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
-      await expect.poll(() => shell.boundingBox()).toEqual(initialShell);
-      await expect(email).toBeFocused();
-      await page.setViewportSize({ width: 393, height: 852 });
-      await expect(email).toBeFocused();
-      await expect(email).toHaveValue('qa@example.com');
-
-      await page.getByTestId('toggle-password-login').click();
-      const password = page.getByTestId('login-password-input');
-      const initialPassword = await password.boundingBox();
-      await email.click();
-      await page.setViewportSize({ width: 393, height: 500 });
-      await email.press('Tab');
-      await expect(password).toBeFocused();
-      await expect.poll(() => shell.boundingBox()).toEqual(initialShell);
-      await expect.poll(() => password.boundingBox()).toEqual(initialPassword);
-      await page.keyboard.type('test-only-password');
-      await expect(password).toHaveValue('test-only-password');
-
-      // Once editing ends, genuine viewport changes must still be respected.
-      await page.setViewportSize({ width: 393, height: 852 });
-      await password.evaluate((node: HTMLInputElement) => node.blur());
-      if (installed) {
+        await email.pressSequentially('toolbar@example.com');
+        for (const height of [500, 350]) {
+          await page.setViewportSize({ width: 393, height });
+          await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
+          await expect.poll(() => email.boundingBox()).toEqual(displayedEmail);
+          await expect(email).toBeFocused();
+          await expect(email).toHaveValue('toolbar@example.com');
+          await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+        }
         await page.setViewportSize({ width: 393, height: 797 });
-        await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(797, 0);
-      }
+        await email.evaluate((node: HTMLInputElement) => node.blur());
+        await expect.poll(() => shell.boundingBox()).toEqual(displayedShell);
+        if (userAgent === 'iPhone') {
+          await page.screenshot({ path: testInfo.outputPath('settled-frame-after-keyboard.png') });
+        }
+      });
 
-      // Actual device rotation is blocked in both browser tabs and PWAs. This
-      // is distinct from a portrait phone whose keyboard reduces its viewport.
-      await page.evaluate(() => {
-        Object.defineProperty(screen.orientation, 'type', { configurable: true, value: 'landscape-primary' });
-        screen.orientation.dispatchEvent(new Event('change'));
+      test(`login retains keyboard focus through viewport resizing (${userAgent}, ${installed ? 'installed PWA' : 'browser'})`, async ({
+        page,
+      }, testInfo) => {
+        await page.addInitScript(
+          ({ installed }) => {
+            Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+            Object.defineProperty(navigator, 'standalone', { configurable: true, value: installed });
+            Object.defineProperty(screen, 'orientation', {
+              configurable: true,
+              value: Object.assign(new EventTarget(), { type: 'portrait-primary' }),
+            });
+          },
+          { installed },
+        );
+        await page.setViewportSize({ width: 393, height: 852 });
+        await page.goto('/');
+
+        const email = page.getByTestId('login-email-input');
+        const shell = page.getByTestId('multiplayer-lobby-shell');
+        await expect(email).toBeVisible({ timeout: 20_000 });
+        const initialShell = await shell.boundingBox();
+        const initialEmail = await email.boundingBox();
+        if (installed && userAgent === 'iPhone') {
+          await page.screenshot({ path: testInfo.outputPath('before-keyboard.png') });
+        }
+        await email.click();
+        await expect(email).toBeFocused();
+        // Changing the layout must preserve the actual input node as well as its value.
+        const originalInput = await email.elementHandle();
+        await page.keyboard.type('qa@');
+        await page.setViewportSize({ width: 393, height: 500 });
+        await expect(page.getByTestId('lobby-stage-scroll')).toHaveCount(0);
+        await expect.poll(() => shell.boundingBox()).toEqual(initialShell);
+        await expect.poll(() => email.boundingBox()).toEqual(initialEmail);
+        if (installed && userAgent === 'iPhone') {
+          await page.screenshot({ path: testInfo.outputPath('keyboard-overlay.png') });
+        }
+        await expect(email).toBeFocused();
+        await page.keyboard.type('example.com');
+        await expect(email).toHaveValue('qa@example.com');
+        expect(await email.evaluate((node, original) => node === original, originalInput)).toBe(true);
+
+        // A keyboard can also make the CSS viewport landscape while the phone stays upright.
+        await page.setViewportSize({ width: 393, height: 350 });
+        await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+        await expect.poll(() => shell.boundingBox()).toEqual(initialShell);
+        await expect(email).toBeFocused();
+        await page.setViewportSize({ width: 393, height: 852 });
+        await expect(email).toBeFocused();
+        await expect(email).toHaveValue('qa@example.com');
+
+        await page.getByTestId('toggle-password-login').click();
+        const password = page.getByTestId('login-password-input');
+        const initialPassword = await password.boundingBox();
+        await email.click();
+        await page.setViewportSize({ width: 393, height: 500 });
+        await email.press('Tab');
+        await expect(password).toBeFocused();
+        await expect.poll(() => shell.boundingBox()).toEqual(initialShell);
+        await expect.poll(() => password.boundingBox()).toEqual(initialPassword);
+        await page.keyboard.type('test-only-password');
+        await expect(password).toHaveValue('test-only-password');
+
+        // Once editing ends, genuine viewport changes must still be respected.
+        await password.evaluate((node: HTMLInputElement) => node.blur());
+        await expect(password).not.toBeFocused();
+        await page.setViewportSize({ width: 393, height: 852 });
+        if (installed) {
+          await page.setViewportSize({ width: 393, height: 797 });
+          await expect.poll(async () => (await shell.boundingBox())?.height).toBeCloseTo(797, 0);
+        }
+
+        // Actual device rotation is blocked in both browser tabs and PWAs. This
+        // is distinct from a portrait phone whose keyboard reduces its viewport.
+        await page.evaluate(() => {
+          Object.defineProperty(screen.orientation, 'type', { configurable: true, value: 'landscape-primary' });
+          screen.orientation.dispatchEvent(new Event('change'));
+        });
+        await page.setViewportSize({ width: 852, height: 393 });
+        await expect(page.getByTestId('pwa-landscape-guard')).toBeVisible();
+        await expect(email).toHaveCount(1);
+        await expect(email).toBeHidden();
+        await page.evaluate(() => {
+          Object.defineProperty(screen.orientation, 'type', { configurable: true, value: 'portrait-primary' });
+          screen.orientation.dispatchEvent(new Event('change'));
+        });
+        await page.setViewportSize({ width: 393, height: 852 });
+        await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
+        await expect(page.getByTestId('login-email-input')).toBeVisible();
+        await expect(email).toHaveValue('qa@example.com');
+        await expect(password).toHaveValue('test-only-password');
+        expect(await email.evaluate((node, original) => node === original, originalInput)).toBe(true);
       });
-      await page.setViewportSize({ width: 852, height: 393 });
-      await expect(page.getByTestId('pwa-landscape-guard')).toBeVisible();
-      await expect(email).toHaveCount(1);
-      await expect(email).toBeHidden();
-      await page.evaluate(() => {
-        Object.defineProperty(screen.orientation, 'type', { configurable: true, value: 'portrait-primary' });
-        screen.orientation.dispatchEvent(new Event('change'));
-      });
-      await page.setViewportSize({ width: 393, height: 852 });
-      await expect(page.getByTestId('pwa-landscape-guard')).toHaveCount(0);
-      await expect(page.getByTestId('login-email-input')).toBeVisible();
-      await expect(email).toHaveValue('qa@example.com');
-      await expect(password).toHaveValue('test-only-password');
-      expect(await email.evaluate((node, original) => node === original, originalInput)).toBe(true);
-    });
-  }
+    }
+  });
 }
 
 for (const installed of [false, true]) {
@@ -440,11 +456,12 @@ async function mockKeyboardTestAccount(page: Page, gameCount = 0) {
 for (const hasTouch of [false, true]) {
   test(`desktop PWA follows its window orientation on a landscape monitor (touch: ${hasTouch})`, async ({
     browser,
+    browserName,
   }) => {
     const context = await browser.newContext({
       isMobile: false,
       hasTouch,
-      userAgent: devices['Desktop Chrome'].userAgent,
+      userAgent: devices[browserName === 'webkit' ? 'Desktop Safari' : 'Desktop Chrome'].userAgent,
       viewport: { width: 393, height: 852 },
     });
     try {

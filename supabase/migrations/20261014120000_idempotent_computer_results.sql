@@ -1,3 +1,4 @@
+-- Apply after the currently deployed migration history.
 create table public.computer_game_results (
   profile_id uuid not null references public.profiles(id) on delete cascade,
   game_id text not null check (length(game_id) between 1 and 200),

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
 import { getRandomBytes } from 'expo-crypto';
 import { supabase } from './supabase';
+import { getCurrentSession } from './auth';
 import type { Database } from './database.types';
 import type {
   MultiplayerAction,
@@ -21,6 +21,7 @@ import {
 } from '../game';
 import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
 import { reportError } from '../monitoring/exceptionless';
+import { actionRequestStatus } from '../network/actionRequestStatus';
 import {
   createOrReuseActionRequest,
   createUuidV4,
@@ -31,6 +32,7 @@ import {
 } from './actionRecovery';
 import { createGameListRealtimeTopic } from './realtimeTopics';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
+import { jabCooldownMs } from './jab';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -53,6 +55,8 @@ export class PendingMultiplayerActionError extends Error {
 }
 
 export async function listMyGames() {
+  const session = await getCurrentSession();
+  if (!session) throw new Error('Sign in to refresh your games.');
   const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
     await Promise.all([
       supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
@@ -74,14 +78,16 @@ export async function listMyGames() {
 
   const data = [...(activeGames ?? []), ...(completedGames ?? [])];
 
-  const gameIds = data.map((game) => game.id);
+  const currentPlayerIds = [
+    ...new Set(data.flatMap((game) => (game.current_player_id ? [game.current_player_id] : []))),
+  ];
   const completedGameIds = (completedGames ?? []).map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
-    loadLastNudges(gameIds),
+    loadLastNudges(currentPlayerIds),
     loadSuckerTokensSpent(completedGameIds),
   ]);
   return data.map((game) =>
-    toRemoteGameRow(game, lastNudges.get(game.id) ?? null, suckerTokensSpent.get(game.id) ?? {}),
+    toRemoteGameRow(game, lastNudges.get(game.current_player_id ?? '') ?? null, suckerTokensSpent.get(game.id) ?? {}),
   );
 }
 
@@ -234,14 +240,7 @@ export async function hasPendingMultiplayerAction(actorId: string, requestId: st
 }
 
 async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise<TResult> {
-  const networkState = await NetInfo.fetch();
-  if (networkState.isConnected === false || networkState.isInternetReachable === false) {
-    throw new Error('You are offline. Reconnect before making a game move.');
-  }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const session = await getCurrentSession();
   if (!session?.user.id) {
     throw new Error('Sign in before making a game move.');
   }
@@ -255,7 +254,7 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
   }
 
   try {
-    const result = await invokeActionRequest<TResult>(request);
+    const result = await actionRequestStatus.run(() => invokeActionRequest<TResult>(request));
     await removePendingAction(request.requestId);
     return result;
   } catch (error) {
@@ -519,7 +518,7 @@ export async function useRemoteMulligan(gameId: string) {
 }
 
 export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
-  return applyMultiplayerAction({ chanceDie, gameId, turnId, type: 'sucker_punch' });
+  return applyMultiplayerAction({ chanceDie, chanceProtocol: 'prepared', gameId, turnId, type: 'sucker_punch' });
 }
 
 export async function prepareRemoteSuckerPunch(gameId: string, turnId: string) {
@@ -655,8 +654,8 @@ export function subscribeToGameListChanges(
   };
 }
 
-async function loadLastNudges(gameIds: string[]) {
-  if (gameIds.length === 0) {
+async function loadLastNudges(recipientIds: string[]) {
+  if (recipientIds.length === 0) {
     return new Map<string, string>();
   }
 
@@ -669,10 +668,11 @@ async function loadLastNudges(gameIds: string[]) {
 
   const { data, error } = await supabase
     .from('turn_actions')
-    .select('game_id, created_at')
+    .select('payload, created_at')
     .eq('actor_id', user.id)
     .eq('action_type', 'nudge_turn')
-    .in('game_id', gameIds)
+    .in('payload->>targetPlayerId', recipientIds)
+    .gte('created_at', new Date(Date.now() - jabCooldownMs).toISOString())
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -680,9 +680,13 @@ async function loadLastNudges(gameIds: string[]) {
   }
 
   const lastNudges = new Map<string, string>();
-  for (const action of data as Pick<TurnActionRow, 'created_at' | 'game_id'>[]) {
-    if (!lastNudges.has(action.game_id)) {
-      lastNudges.set(action.game_id, action.created_at);
+  for (const action of data ?? []) {
+    const recipientId =
+      action.payload && typeof action.payload === 'object' && !Array.isArray(action.payload)
+        ? action.payload.targetPlayerId
+        : null;
+    if (typeof recipientId === 'string' && !lastNudges.has(recipientId)) {
+      lastNudges.set(recipientId, action.created_at);
     }
   }
 

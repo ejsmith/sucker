@@ -1,6 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { getMultiplayerConfig } from './env';
+
+// Match Supabase's existing default so installed sessions need no migration.
+export const authStorageKey = `sb-${new URL(getMultiplayerConfig().supabaseUrl || 'http://localhost').hostname.split('.')[0]}-auth-token`;
 
 export const authStorage =
   Platform.OS === 'web'

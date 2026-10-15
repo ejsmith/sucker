@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
+import { isMobileWebDevice } from './webDevice';
 
 type LockableScreenOrientation = ScreenOrientation & {
   lock?: (orientation: 'portrait') => Promise<void>;
@@ -26,10 +27,8 @@ export function WebPortraitGuard({ children }: { children: ReactNode }) {
       (window.navigator as StandaloneNavigator).standalone === true;
     const updateGuard = () => {
       const installed = isInstalledPwa();
-      const { userAgent, maxTouchPoints } = window.navigator;
       // Touch alone includes Windows laptops. iPadOS can identify as a Mac.
-      const useDeviceOrientation =
-        /Android|iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
+      const useDeviceOrientation = isMobileWebDevice(window.navigator);
       // The software keyboard can make the viewport wider than it is tall
       // without rotating the phone. Never unmount the form for that resize.
       const orientation = window.screen.orientation?.type;

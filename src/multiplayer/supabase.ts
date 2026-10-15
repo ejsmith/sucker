@@ -2,12 +2,14 @@ import 'react-native-url-polyfill/auto';
 
 import { createClient, processLock } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
-import { authStorage } from './authStorage';
+import { authStorage, authStorageKey } from './authStorage';
 import { getMultiplayerConfig } from './env';
+import { fetchWithAuthRecovery } from './authFetch';
 
 const config = getMultiplayerConfig();
 
 export const supabase = createClient(config.supabaseUrl || 'http://localhost', config.supabaseAnonKey || 'anon', {
+  global: { fetch: fetchWithAuthRecovery },
   auth: {
     autoRefreshToken: true,
     detectSessionInUrl: false,
@@ -15,6 +17,7 @@ export const supabase = createClient(config.supabaseUrl || 'http://localhost', c
     lock: processLock,
     persistSession: true,
     storage: authStorage,
+    storageKey: authStorageKey,
   },
 });
 

@@ -14,6 +14,7 @@ export type Database = {
           created_at: string;
           display_name: string;
           id: string;
+          needs_profile_setup: boolean;
           updated_at: string;
           username: string | null;
         };
@@ -22,12 +23,14 @@ export type Database = {
           created_at?: string;
           display_name: string;
           id: string;
+          needs_profile_setup?: boolean;
           updated_at?: string;
           username?: string | null;
         };
         Update: {
           avatar_url?: string | null;
           display_name?: string;
+          needs_profile_setup?: boolean;
           updated_at?: string;
           username?: string | null;
         };

@@ -1,7 +1,7 @@
 import type { RemoteGameRow } from './types';
 
 const jabTurnWaitMs = 60 * 60 * 1_000;
-const jabCooldownMs = 8 * 60 * 60 * 1_000;
+export const jabCooldownMs = 8 * 60 * 60 * 1_000;
 
 export function canJabGame(
   game: Pick<RemoteGameRow, 'status' | 'current_player_id' | 'updated_at' | 'last_nudged_at'>,

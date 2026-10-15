@@ -45,3 +45,6 @@ supabase/.branches/
 # generated native folders
 /ios
 /android
+
+blob-report/
+playwright-report/

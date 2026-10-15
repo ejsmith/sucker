@@ -12,6 +12,7 @@ import { WebPortraitGuard } from '../src/ui/WebPortraitGuard';
 import { MonitoringRoute } from '../src/monitoring/MonitoringRoute';
 import { NetworkProvider, NetworkStatusBanner } from '../src/network/NetworkProvider';
 import { ComputerResultSync } from '../src/multiplayer/ComputerResultSync';
+import { HapticsProvider } from '../src/haptics/HapticsProvider';
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({ Inter_800ExtraBold, Inter_900Black });
@@ -32,12 +33,14 @@ export default function RootLayout() {
         <WebPortraitGuard>
           <NetworkProvider>
             <NetworkStatusBanner />
-            <GameListProvider>
-              <MonitoringRoute />
-              <ComputerResultSync />
-              <NotificationRouter />
-              <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
-            </GameListProvider>
+            <HapticsProvider>
+              <GameListProvider>
+                <MonitoringRoute />
+                <ComputerResultSync />
+                <NotificationRouter />
+                <Stack screenOptions={{ animation: 'fade', headerShown: false }} />
+              </GameListProvider>
+            </HapticsProvider>
           </NetworkProvider>
         </WebPortraitGuard>
       </SafeAreaProvider>

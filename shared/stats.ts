@@ -249,6 +249,7 @@ export function buildSuckerPunchActionPayload(
           landed: outcome.landed,
           rollPercent: outcome.rollPercent,
           isCounterPunch: outcome.isCounterPunch === true,
+          isRevengePunch: outcome.isRevengePunch === true,
           tokenCost:
             outcome.tokenCost ??
             (outcome.isCounterPunch ? suckerTokenCosts.counterPunch : suckerTokenCosts.suckerPunch),

@@ -43,6 +43,9 @@ supabase secrets set WEB_PUSH_VAPID_SUBJECT=mailto:notifications@sucker.games
 
 Never put the service role key in the mobile app.
 
+For Apple login and linking Apple to existing player accounts, follow
+[Sign in with Apple setup](apple-sign-in.md).
+
 The `game-action` function also sends Expo push notifications directly through
 Expo's push API after successful server-authoritative game actions. It also
 sends standards-based Web Push notifications to PWA installs when VAPID secrets

@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { clearCachedGameList, loadCachedGameList, saveCachedGameList } from '../multiplayer/gameListCache';
 import { listMyGames } from '../multiplayer/games';
+import { supabase } from '../multiplayer/supabase';
 import type { RemoteGameRow } from '../multiplayer/types';
 
 type LocalPlayerProfile = {
@@ -28,6 +29,8 @@ export function GameListProvider({ children }: { children: ReactNode }) {
   const [localPlayerProfile, setLocalPlayerProfile] = useState<LocalPlayerProfile | null>(null);
   const hasChangedGameList = useRef(false);
   const [cacheHydrated, setCacheHydrated] = useState(false);
+  const sessionProfileId = useRef<string | null | undefined>(undefined);
+  const sessionGeneration = useRef(0);
 
   const setGames = useCallback((profileId: string | null, games: RemoteGameRow[]) => {
     hasChangedGameList.current = true;
@@ -36,12 +39,36 @@ export function GameListProvider({ children }: { children: ReactNode }) {
 
   const refreshGames = useCallback(
     async (profileId: string) => {
+      const generation = sessionGeneration.current;
       const games = await listMyGames();
-      setGames(profileId, games);
+      if (
+        generation === sessionGeneration.current &&
+        (sessionProfileId.current === undefined || sessionProfileId.current === profileId)
+      ) {
+        setGames(profileId, games);
+      }
       return games;
     },
     [setGames],
   );
+
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      // INITIAL_SESSION can be null when token refresh cannot reach Auth.
+      // Only a confirmed sign-out may discard the saved lobby here.
+      if (!session && event !== 'SIGNED_OUT') return;
+      const nextId = session?.user.id ?? null;
+      if (sessionProfileId.current !== undefined && sessionProfileId.current !== nextId) {
+        sessionGeneration.current += 1;
+        setGames(null, []);
+      }
+      sessionProfileId.current = nextId;
+      if (!nextId) setGames(null, []);
+    });
+    return () => subscription.unsubscribe();
+  }, [setGames]);
 
   const rememberGame = useCallback((profileId: string, game: RemoteGameRow) => {
     hasChangedGameList.current = true;

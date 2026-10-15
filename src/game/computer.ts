@@ -2,7 +2,8 @@ import {
   availableCategories,
   applySuckerPunchOpportunity,
   getSuckerPunchCost,
-  isSuckerRoll,
+  getSuckerPunchKind,
+  hasExtraSuckerBonus,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -201,7 +202,7 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
   const scorerIndex = game.currentPlayerIndex;
   const scorer = game.players[scorerIndex];
   const score = scoreCategoryForScorecard(game.dice, category, scorer.scorecard);
-  const hadSuckerBonus = category !== 'sucker' && scorer.scorecard.sucker !== null && isSuckerRoll(game.dice);
+  const hadSuckerBonus = hasExtraSuckerBonus(game.dice, category, scorer.scorecard);
   const nextGame = scoreTurn(game, category);
   const pendingTurn =
     nextGame.phase === 'complete'
@@ -286,11 +287,12 @@ export function applyLocalSuckerPunch(
 
   const outcome = {
     ...(chanceDie ? resolveSuckerPunchOutcome(chanceDie, random) : rollSuckerPunchOutcome(random)),
-    isCounterPunch: cost < suckerTokenCosts.suckerPunch,
+    isCounterPunch: getSuckerPunchKind(game, puncher.id) === 'counter',
+    isRevengePunch: getSuckerPunchKind(game, puncher.id) === 'revenge',
     tokenCost: cost,
   };
-  const nextGame = applySuckerPunchOpportunity(game, scorer.id, outcome);
-  const players = game.players.map((player, index) => {
+  const nextGame = applySuckerPunchOpportunity(game, puncher.id, scorer.id, outcome);
+  const players = nextGame.players.map((player, index) => {
     if (outcome.landed && index === pendingTurn.scorerIndex) {
       return {
         ...player,

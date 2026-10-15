@@ -4,11 +4,16 @@ import type { Database } from '../_shared/database.types.ts';
 import { commitGameMove, planGameMove, type GameMovePlan } from '../_shared/gameMoveTransaction.ts';
 import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '../_shared/actionRequestFailure.ts';
 import { deliverActionNotifications } from '../_shared/notificationDelivery.ts';
+import { discardRequestBody } from '../_shared/discardRequestBody.ts';
+import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import {
   createEmptyScorecard,
   applySuckerPunchOpportunity,
+  clearRevengePunchDiscount,
   expireCounterPunch,
   getSuckerPunchCost,
+  getSuckerPunchKind,
+  hasExtraSuckerBonus,
   type Dice,
   type DieValue,
   type GameState,
@@ -102,7 +107,7 @@ type ActionInput =
   | { type: 'pass_response'; gameId: string }
   | { type: 'mulligan'; gameId: string }
   | { type: 'prepare_sucker_punch'; gameId: string; turnId: string }
-  | { type: 'sucker_punch'; chanceDie?: DieValue; gameId: string; turnId: string }
+  | { type: 'sucker_punch'; chanceDie?: DieValue; chanceProtocol?: 'prepared'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string };
 type Action = ActionInput & { requestId: string };
 type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
@@ -112,7 +117,6 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
 };
 const nudgeTurnWaitMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_WAIT_MS') ?? 60 * 60 * 1_000;
-const nudgeCooldownMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_COOLDOWN_MS') ?? 8 * 60 * 60 * 1_000;
 
 Deno.serve(async (request) => {
   const timer = new ActionTimer();
@@ -128,6 +132,9 @@ Deno.serve(async (request) => {
     }
     const contentLength = Number(request.headers.get('content-length') ?? 0);
     if (contentLength > 32_768) {
+      // An unread upload can abort the Edge Runtime connection and hide the 413
+      // behind a gateway timeout. Bound the discard by both size and time.
+      await discardRequestBody(request.body);
       return json({ error: 'Request body is too large.' }, 413);
     }
 
@@ -275,9 +282,17 @@ async function applyAction(
     case 'mulligan':
       return mulliganTurn(admin, actorId, action.gameId, mutationState);
     case 'sucker_punch':
-      return suckerPunchTurn(admin, actorId, action.gameId, action.turnId, mutationState, action.chanceDie);
+      return suckerPunchTurn(
+        admin,
+        actorId,
+        action.gameId,
+        action.turnId,
+        mutationState,
+        action.chanceDie,
+        action.chanceProtocol,
+      );
     case 'prepare_sucker_punch':
-      return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId, mutationState);
+      return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     default:
@@ -713,25 +728,12 @@ function buildTurnSubmittedNotification(
   actorName: string,
   latestTurn: TurnRow | null,
 ): NotificationContent {
-  if (latestTurn && isSuckerRoll(toDice(latestTurn.dice))) {
-    return {
-      body: `${actorName} rolled a SUCKER!`,
-      title: 'SUCKER!!',
-    };
-  }
-
-  if (action.type === 'scratch_category') {
-    return {
-      body: `${actorName} scratched ${formatScoreCategory(action.category)}.`,
-      title: 'Your turn',
-    };
-  }
-
-  const scoreText = latestTurn ? ` for ${latestTurn.score}` : '';
-  return {
-    body: `${actorName} played ${formatScoreCategory(action.category)}${scoreText}.`,
-    title: 'Your turn',
-  };
+  return buildScoredTurnNotification(
+    actorName,
+    formatScoreCategory(action.category),
+    action.type === 'scratch_category',
+    latestTurn,
+  );
 }
 
 function buildGameOverNotification(game: GameRow, recipientId: string): NotificationContent {
@@ -876,12 +878,17 @@ function toAction(value: unknown): Action {
       if (chanceDie !== undefined && (!Number.isInteger(chanceDie) || Number(chanceDie) < 1 || Number(chanceDie) > 6)) {
         throw new Error('Invalid Sucker Punch chance die.');
       }
+      const chanceProtocol = action.chanceProtocol;
+      if (chanceProtocol !== undefined && chanceProtocol !== 'prepared') {
+        throw new Error('Invalid Sucker Punch chance protocol.');
+      }
       return {
         gameId: readString(action, 'gameId'),
         requestId,
         turnId: readString(action, 'turnId'),
         type,
         chanceDie: chanceDie as DieValue | undefined,
+        chanceProtocol,
       };
     }
     case 'prepare_sucker_punch':
@@ -1307,24 +1314,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
     throw new Error('You can jab after it has been their turn for 1 hour.');
   }
 
-  const cooldownCutoff = new Date(now - nudgeCooldownMs).toISOString();
-  const { data: recentNudge, error: recentNudgeError } = await admin
-    .from('turn_actions')
-    .select('id')
-    .eq('game_id', gameId)
-    .eq('actor_id', actorId)
-    .eq('action_type', 'nudge_turn')
-    .gte('created_at', cooldownCutoff)
-    .limit(1)
-    .maybeSingle();
-
-  if (recentNudgeError) {
-    throw recentNudgeError;
-  }
-  if (recentNudge) {
-    throw new Error('You can jab this player again 8 hours after your last jab.');
-  }
-
+  // The insert atomically enforces the sender/recipient cooldown across games.
   mutationState.mayHaveWritten = true;
   await insertAction(admin, gameId, actorId, 'nudge_turn', {
     targetPlayerId: game.current_player_id,
@@ -1500,8 +1490,7 @@ async function scoreRemoteTurn(
   const turnHeld = normalizeHeld(submittedHeld, state.held);
   const turnIndex = await loadNextTurnIndex(admin, gameId, game.last_turn_id);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
-  const extraSuckerBonus =
-    !scratch && category !== 'sucker' && currentPlayer.scorecard.sucker !== null && isSuckerRoll(state.dice);
+  const extraSuckerBonus = !scratch && hasExtraSuckerBonus(state.dice, category, currentPlayer.scorecard);
   const tokenDelta = scratch ? 1 : 0;
   const players = state.players.map((player) => {
     if (player.id !== actorId) {
@@ -1530,7 +1519,7 @@ async function scoreRemoteTurn(
     extraRollsAvailable: 0,
     held: [false, false, false, false, false],
     phase: complete ? 'complete' : 'rolling',
-    players,
+    players: complete ? players.map(clearRevengePunchDiscount) : players,
     rollNumber: 0,
   };
   const rankedPlayers = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard)) : [];
@@ -1687,7 +1676,7 @@ async function prepareSuckerPunchChance(
   actorId: string,
   gameId: string,
   turnId: string,
-  mutationState: ActionMutationState,
+  legacyChanceDie?: DieValue,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
@@ -1705,17 +1694,18 @@ async function prepareSuckerPunchChance(
   const cost = getSuckerPunchCost(state, actorId);
   if (actor.suckerTokens < cost) {
     throw new Error(
-      `You need ${cost} Sucker Token${cost === 1 ? '' : 's'} to ${cost < suckerTokenCosts.suckerPunch ? 'Counterpunch' : 'Sucker Punch'}.`,
+      `You need ${cost} Sucker Token${cost === 1 ? '' : 's'} to ${getSuckerPunchKind(state, actorId) === 'counter' ? 'Counterpunch' : getSuckerPunchKind(state, actorId) === 'revenge' ? 'Revenge Punch' : 'Sucker Punch'}.`,
     );
   }
 
-  mutationState.mayHaveWritten = true;
+  // This insert-once chance is safe to retry. Only the game-move commit marks
+  // a Punch as possibly applied; a failure here must release its request claim.
   const { error: insertError } = await admin.from('sucker_punch_attempts').upsert(
     {
       game_id: gameId,
       actor_id: actorId,
       turn_id: turnId,
-      chance_die: rollDie(edgeSuckerPunchDieRandom),
+      chance_die: legacyChanceDie ?? rollDie(edgeSuckerPunchDieRandom),
     },
     { onConflict: 'game_id,actor_id,turn_id', ignoreDuplicates: true },
   );
@@ -1738,8 +1728,10 @@ async function suckerPunchTurn(
   turnId: string,
   mutationState: ActionMutationState,
   displayedChanceDie?: DieValue,
+  chanceProtocol?: 'prepared',
 ) {
-  // A throw must use a chance that was prepared and shown before committing.
+  // Updated clients require server preparation. App Store 1.1.0 sends its
+  // locally displayed chance directly; retain that protocol during the rollout.
   const { data: existingChance, error: chanceError } = await admin
     .from('sucker_punch_attempts')
     .select('chance_die')
@@ -1748,11 +1740,15 @@ async function suckerPunchTurn(
     .eq('turn_id', turnId)
     .maybeSingle();
   if (chanceError) throw chanceError;
-  if (!existingChance) throw new Error('Update Sucker and roll the Sucker Punch chance before throwing.');
-  if (displayedChanceDie !== undefined && displayedChanceDie !== existingChance.chance_die) {
+  if (!existingChance && chanceProtocol === 'prepared') {
+    throw new Error('Roll the Sucker Punch chance before throwing.');
+  }
+  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, displayedChanceDie);
+  // The first stored chance wins, including when an old throw races preparation
+  // on another device. Never charge tokens for odds different from those shown.
+  if (displayedChanceDie !== undefined && displayedChanceDie !== prepared.suckerPunchChanceDie) {
     throw new Error('The Sucker Punch chance changed. Reopen Sucker Punch to see the saved chance.');
   }
-  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, mutationState);
   const game = prepared.game;
   const state = game.state;
   const turn = await loadTurn(admin, turnId);
@@ -1760,10 +1756,15 @@ async function suckerPunchTurn(
   const cost = getSuckerPunchCost(state, actorId);
   const outcome = {
     ...resolveSuckerPunchOutcome(chanceDie, edgeSuckerPunchOutcomeRandom),
-    isCounterPunch: cost < suckerTokenCosts.suckerPunch,
+    isCounterPunch: getSuckerPunchKind(state, actorId) === 'counter',
+    isRevengePunch: getSuckerPunchKind(state, actorId) === 'revenge',
     tokenCost: cost,
   };
-  let nextState = updatePlayerTokens(applySuckerPunchOpportunity(state, turn.player_id, outcome), actorId, -cost);
+  let nextState = updatePlayerTokens(
+    applySuckerPunchOpportunity(state, actorId, turn.player_id, outcome),
+    actorId,
+    -cost,
+  );
   if (outcome.landed) {
     nextState = removeScoredTurn(nextState, turn, turn.player_id, 0);
   }
@@ -1973,7 +1974,7 @@ function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tok
 
 function restoreScoredTurn(state: GameState, turn: TurnRow, tokenDelta: number): GameState {
   const category = toScoreCategory(turn.category);
-  const hasBonus = category !== 'sucker' && isSuckerRoll(toDice(turn.dice));
+  const hasBonus = turn.roll_count > 0 && category !== 'sucker' && isSuckerRoll(toDice(turn.dice));
   const players = state.players.map((player) => {
     if (player.id !== turn.player_id) {
       return player;
