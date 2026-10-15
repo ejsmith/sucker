@@ -1606,6 +1606,38 @@ Deno.test('game-action scoring zero does not award a sucker token', async () => 
   assertPlayerTokens(scored, alice.id, startingSuckerTokens);
 });
 
+Deno.test('game-action awards extra Sucker bonuses only after scoring Sucker, never after a scratch', async () => {
+  const [alice, bob] = await createUsers('extra-sucker-eligibility', ['Alice', 'Bob']);
+  for (const scratched of [true, false]) {
+    let game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    if (!scratched) {
+      const state: GameState = { ...game.state, dice: [5, 5, 5, 5, 5], phase: 'scoring', rollNumber: 1 };
+      assertNoError((await admin.from('games').update({ state }).eq('id', game.id)).error);
+    }
+    game = (
+      await invokeGameAction(alice, {
+        category: 'sucker',
+        gameId: game.id,
+        type: scratched ? 'scratch_category' : 'score_category',
+      })
+    ).game as GameRow;
+    assertEquals(game.state.players[0].scorecard.sucker, scratched ? 0 : 50);
+    game = (await invokeGameAction(bob, { category: 'ones', gameId: game.id, type: 'scratch_category' }))
+      .game as GameRow;
+    const state: GameState = { ...game.state, dice: [5, 5, 5, 5, 5], phase: 'scoring', rollNumber: 1 };
+    assertNoError((await admin.from('games').update({ state }).eq('id', game.id)).error);
+    game = (await invokeGameAction(alice, { category: 'fives', gameId: game.id, type: 'score_category' }))
+      .game as GameRow;
+    const stored = await selectSingle<GameRow>(admin.from('games').select('*').eq('id', game.id).single());
+    const expectedScore = scratched ? 25 : 75;
+    assertEquals(game.state.players[0].scorecard.fives, expectedScore);
+    assertEquals(stored.state.players[0].scorecard.fives, expectedScore);
+    assertEquals(stored.state.players[0].suckerBonusCategories, scratched ? [] : ['fives']);
+    assertEquals((await loadTurn(game.last_turn_id)).score, expectedScore);
+    assertPlayerTokens(stored, alice.id, startingSuckerTokens + (scratched ? 1 : 0));
+  }
+});
+
 Deno.test('game-action lets a punched player replay instead of blocking', async () => {
   const [alice, bob] = await createUsers('punch-replay', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;

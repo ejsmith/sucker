@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Modal, Platform, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Polyline } from 'react-native-svg';
 import { CloseIcon } from '../ui/ControlIcon';
@@ -517,7 +517,13 @@ function PatternPreview({ choice }: { choice: HapticChoice }) {
       accessibilityLabel={`${duration} millisecond pattern, ${pattern.discretePattern.length} strikes`}
       testID="haptic-pattern-preview"
     >
-      <Svg width="100%" height={52} viewBox="0 0 300 60" accessible={false} aria-hidden>
+      <Svg
+        width="100%"
+        height={52}
+        viewBox="0 0 300 60"
+        accessible={Platform.OS === 'web' ? undefined : false}
+        aria-hidden
+      >
         <Line x1={6} y1={52} x2={294} y2={52} stroke="#70392C" />
         <Polyline
           points={pattern.continuousPattern.amplitude.map((point) => `${x(point.time)},${y(point.value)}`).join(' ')}

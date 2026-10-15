@@ -21,6 +21,7 @@ import {
   createGame,
   getSuckerPunchCost,
   getSuckerPunchKind,
+  hasExtraSuckerBonus,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
@@ -112,7 +113,6 @@ import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
-import { HapticsLab } from './src/haptics/HapticsLab';
 import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
@@ -1166,7 +1166,6 @@ export function LocalGameScreen({
   const [isAwaitingRemoteRoll, setIsAwaitingRemoteRoll] = useState(false);
   const [isComputerThinking, setIsComputerThinking] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [showHapticsLab, setShowHapticsLab] = useState(false);
   const { play: playHaptic, cancel: cancelHaptics } = useHaptics();
   const [isTauntPickerOpen, setIsTauntPickerOpen] = useState(false);
   const [isSendingTaunt, setIsSendingTaunt] = useState(false);
@@ -2610,7 +2609,7 @@ export function LocalGameScreen({
     const scorer =
       previousGame.players[scorerIndex] ?? nextRemoteGame.players.find((player) => player.id === turn.player_id);
     const hadSuckerBonus =
-      turn.roll_count > 0 && scorer ? hasPreviewSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
+      turn.roll_count > 0 && scorer ? hasExtraSuckerBonus(turn.dice, turn.category, scorer.scorecard) : false;
 
     setLocalPendingTurn(null);
     setSelectedCategory(null);
@@ -3303,23 +3302,6 @@ export function LocalGameScreen({
                     RULES
                   </Text>
                 </Pressable>
-                <Pressable
-                  accessibilityLabel="Open Haptics Lab"
-                  onPress={() => {
-                    setIsMenuOpen(false);
-                    setShowHapticsLab(true);
-                  }}
-                  style={({ pressed }) => [
-                    styles.topMenuItem,
-                    gameLayout.styles.topMenuItem,
-                    pressed && styles.topMenuItemPressed,
-                  ]}
-                  testID="game-haptics-menu-item"
-                >
-                  <Text maxFontSizeMultiplier={1.2} style={[styles.topMenuText, gameLayout.styles.topMenuText]}>
-                    HAPTICS LAB
-                  </Text>
-                </Pressable>
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
                     onPress={onNewComputerGame}
@@ -3406,6 +3388,7 @@ export function LocalGameScreen({
                   <Text
                     maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
                     style={[styles.tokenText, gameLayout.styles.tokenText]}
+                    testID={isHomePlayer ? 'home-token-summary' : 'opponent-token-summary'}
                   >
                     {player.suckerTokens} Tokens
                   </Text>
@@ -3467,8 +3450,12 @@ export function LocalGameScreen({
                         scale={sectionBonusScale}
                       />
                     </View>
-                    <BonusMeter total={homeUpperTotal} />
-                    <BonusMeter total={opponentUpperTotal} />
+                    <BonusMeter playerName={homePlayer.name} testID="home-bonus-meter" total={homeUpperTotal} />
+                    <BonusMeter
+                      playerName={opponentPlayer.name}
+                      testID="opponent-bonus-meter"
+                      total={opponentUpperTotal}
+                    />
                   </View>
                 </View>
               </View>
@@ -3906,7 +3893,7 @@ export function LocalGameScreen({
 
               <View style={[styles.tokenButtonWrap, gameLayout.styles.tokenButtonWrap]}>
                 <Pressable
-                  accessibilityLabel="Sucker token menu"
+                  accessibilityLabel={`Sucker token menu, ${myTokenCount} tokens remaining`}
                   ref={tokenMenuButtonRef}
                   accessibilityRole="button"
                   accessibilityState={{ disabled: !canOpenTokenMenu }}
@@ -3966,21 +3953,6 @@ export function LocalGameScreen({
               </View>
             </View>
           </View>
-          {showHapticsLab && (
-            <HapticsLab
-              onClose={() => {
-                setShowHapticsLab(false);
-                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
-              }}
-              renderMoment={(event) =>
-                event === 'sucker' ? (
-                  <SuckerRollNotice title="You rolled" />
-                ) : (
-                  <SuckerPunchResultCard recipient={event === 'punchReceived'} />
-                )
-              }
-            />
-          )}
           {showRules && (
             <RulesDialog
               onClose={() => {
@@ -4790,6 +4762,7 @@ function BonusValueText({
         maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
         numberOfLines={1}
         style={[styles.bonusBig, layout.styles.bonusBig, styles.bonusBigFace, { color: faceColor }]}
+        testID="section-bonus-reward"
       >
         +35
       </Animated.Text>
@@ -5103,22 +5076,32 @@ function SuckerPunchResultImage({
   );
 }
 
-function BonusMeter({ total }: { total: number }) {
+function BonusMeter({ playerName, testID, total }: { playerName: string; testID: string; total: number }) {
   const layout = useGameLayout();
   const clampedTotal = Math.max(0, Math.min(upperBonusTarget, total));
   const progress = clampedTotal / upperBonusTarget;
-  const size = layout.unit(44);
-  const strokeWidth = layout.strokeWidth(5);
+  const size = layout.styles.bonusMeterFace.width;
+  const strokeWidth = layout.strokeWidth(3);
   const center = size / 2;
   const radius = center - strokeWidth / 2;
   const circumference = 2 * Math.PI * radius;
   const progressColor = '#F12D22';
 
   return (
-    <View style={[styles.bonusMeter, layout.styles.bonusMeter]}>
+    <View
+      accessible
+      accessibilityLabel={`${playerName}, section bonus`}
+      accessibilityRole="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={upperBonusTarget}
+      aria-valuenow={clampedTotal}
+      aria-valuetext={`${clampedTotal} of ${upperBonusTarget} points${clampedTotal === upperBonusTarget ? ', 35 point bonus earned' : ''}`}
+      style={[styles.bonusMeter, layout.styles.bonusMeter]}
+      testID={testID}
+    >
       <View style={[styles.bonusMeterFace, layout.styles.bonusMeterFace]}>
         <Svg height={size} style={styles.bonusMeterSvg} width={size}>
-          <Circle cx={center} cy={center} fill="#E7A845" r={radius} stroke="#5A1308" strokeWidth={strokeWidth} />
+          <Circle cx={center} cy={center} fill="#FFF3C2" r={radius} stroke="#5A1308" strokeWidth={strokeWidth} />
           {progress > 0 && (
             <Circle
               cx={center}
@@ -5135,12 +5118,17 @@ function BonusMeter({ total }: { total: number }) {
           )}
         </Svg>
         <Text
-          adjustsFontSizeToFit
           maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-          numberOfLines={1}
           style={[styles.bonusMeterText, layout.styles.bonusMeterText]}
+          testID={`${testID}-total`}
         >
-          {clampedTotal}/63
+          {clampedTotal}
+        </Text>
+        <Text
+          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+          style={[styles.bonusMeterTarget, layout.styles.bonusMeterTarget]}
+        >
+          /{upperBonusTarget}
         </Text>
       </View>
     </View>
@@ -5211,7 +5199,7 @@ function ScoreCell({
   const selectable = canChoose && openCategories.includes(category);
   const selected = selectedCategory === category;
   const highlighted = selected || highlightCategory === category || (isChoosingSuckerDeal && selectable);
-  const previewHasSuckerBonus = selected && !locked && hasPreviewSuckerBonus(dice, category, activePlayer.scorecard);
+  const previewHasSuckerBonus = selected && !locked && hasExtraSuckerBonus(dice, category, activePlayer.scorecard);
   const previewScore =
     selected && !locked
       ? previewHasSuckerBonus
@@ -5493,14 +5481,6 @@ function displayScoreWithoutSuckerBonus(score: number | null, hasSuckerBonus: bo
   }
 
   return hasSuckerBonus ? Math.max(0, score - 50) : score;
-}
-
-function hasPreviewSuckerBonus(
-  dice: ReturnType<typeof createGame>['dice'],
-  category: ScoreCategory,
-  scorecard: PlayerView['scorecard'],
-) {
-  return category !== 'sucker' && scorecard.sucker !== null && dice.every((die) => die === dice[0]);
 }
 
 function isSuckerDice(dice: ReturnType<typeof createGame>['dice']) {
@@ -6133,7 +6113,7 @@ const styles = StyleSheet.create({
   },
   tokenText: {
     color: '#FFD329',
-    fontSize: 10,
+    fontSize: 13,
     fontFamily: gameFontBlack,
     fontWeight: '900',
   },
@@ -6558,6 +6538,7 @@ const styles = StyleSheet.create({
     fontFamily: gameFontBlack,
     fontWeight: '900',
     includeFontPadding: false,
+    letterSpacing: -0.5,
     lineHeight: 27,
     textAlign: 'center',
     width: 62,
@@ -6573,17 +6554,17 @@ const styles = StyleSheet.create({
 
   bonusMeter: {
     alignItems: 'center',
-    height: 48,
+    height: 50,
     justifyContent: 'center',
     position: 'relative',
-    width: 43,
+    width: 50,
   },
   bonusMeterFace: {
     alignItems: 'center',
-    height: 44,
+    height: 50,
     justifyContent: 'center',
     position: 'relative',
-    width: 44,
+    width: 50,
   },
   bonusMeterSvg: {
     left: 0,
@@ -6592,10 +6573,22 @@ const styles = StyleSheet.create({
   },
   bonusMeterText: {
     color: '#5A1308',
-    fontSize: 10,
+    fontSize: 14,
     fontFamily: gameFontBlack,
     fontWeight: '900',
-    lineHeight: 12,
+    fontVariant: ['tabular-nums'],
+    includeFontPadding: false,
+    lineHeight: 17,
+    textAlign: 'center',
+    zIndex: 2,
+  },
+  bonusMeterTarget: {
+    color: '#5A1308',
+    fontSize: 10,
+    fontFamily: gameFontExtraBold,
+    fontWeight: '800',
+    includeFontPadding: false,
+    lineHeight: 11,
     textAlign: 'center',
     zIndex: 2,
   },
@@ -7295,22 +7288,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#8F0000',
     borderColor: '#FFF3C2',
-    borderRadius: 11,
+    borderRadius: 14,
     borderWidth: 2,
-    height: 22,
+    minHeight: 28,
     justifyContent: 'center',
-    minWidth: 22,
+    minWidth: 28,
     paddingHorizontal: 4,
+    paddingVertical: 2,
     position: 'absolute',
     right: -7,
     top: -8,
   },
   tokenCountText: {
     color: '#FFF3C2',
-    fontSize: 12,
+    fontSize: 15,
     fontFamily: gameFontBlack,
     fontWeight: '900',
-    lineHeight: 14,
+    fontVariant: ['tabular-nums'],
+    includeFontPadding: false,
+    lineHeight: 18,
   },
   tokenMenuOverlay: {
     ...absoluteFillStyle,

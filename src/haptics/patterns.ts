@@ -1,6 +1,6 @@
 export const hapticEvents = ['punchLanded', 'punchReceived', 'sucker'] as const;
 export type HapticEvent = (typeof hapticEvents)[number];
-export type CustomHapticPreset = 'crack' | 'bodyBlow' | 'rumble' | 'doubleHit' | 'buildPop' | 'victory';
+export type CustomHapticPreset = 'crack' | 'bodyBlow' | 'rumble' | 'doubleHit' | 'buildPop' | 'victory' | 'doubleRev';
 export type HapticPreset = CustomHapticPreset | 'original' | 'off';
 export type HapticChoice = {
   preset: HapticPreset;
@@ -32,7 +32,7 @@ export const hapticEventLabels: Record<HapticEvent, string> = {
 };
 
 export const hapticPresets: Record<HapticPreset, { label: string; description: string; durationMs: number }> = {
-  crack: { label: 'Crack', description: 'A sharp strike with a short burst behind it.', durationMs: 100 },
+  crack: { label: 'Crack', description: 'A sharp strike with a long fading burst behind it.', durationMs: 800 },
   bodyBlow: { label: 'Body blow', description: 'A low, heavy hit with a long fading tail.', durationMs: 300 },
   rumble: { label: 'Rumble', description: 'Three rolling waves of vibration, without a sharp tap.', durationMs: 450 },
   doubleHit: {
@@ -42,15 +42,20 @@ export const hapticPresets: Record<HapticPreset, { label: string; description: s
   },
   buildPop: { label: 'Build & pop', description: 'An accelerating buildup that ends in a sharp pop.', durationMs: 450 },
   victory: { label: 'Victory', description: 'Three separated bursts that grow into a bright finish.', durationMs: 600 },
+  doubleRev: {
+    label: 'Double rev',
+    description: 'Vrrroo… vrrrooom. A short rev, a pause, then a longer, stronger rev.',
+    durationMs: 900,
+  },
   original: { label: 'Original', description: 'The vibration from before the first Haptics Lab.', durationMs: 400 },
   off: { label: 'Off', description: 'No haptic feedback for this event.', durationMs: 0 },
 };
 
 // Each event can audition the full range; the first three emphasize its likely fits.
 export const eventPresets: Record<HapticEvent, HapticPreset[]> = {
-  punchLanded: ['crack', 'doubleHit', 'bodyBlow', 'rumble', 'buildPop', 'victory', 'original', 'off'],
-  punchReceived: ['bodyBlow', 'rumble', 'doubleHit', 'crack', 'buildPop', 'victory', 'original', 'off'],
-  sucker: ['buildPop', 'victory', 'rumble', 'crack', 'doubleHit', 'bodyBlow', 'original', 'off'],
+  punchLanded: ['crack', 'doubleHit', 'bodyBlow', 'rumble', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
+  punchReceived: ['crack', 'bodyBlow', 'rumble', 'doubleHit', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
+  sucker: ['doubleRev', 'buildPop', 'victory', 'rumble', 'crack', 'doubleHit', 'bodyBlow', 'original', 'off'],
 };
 
 export function createHapticChoice(preset: HapticPreset): HapticChoice {
@@ -69,8 +74,8 @@ export function createHapticChoice(preset: HapticPreset): HapticChoice {
 
 export const defaultHapticPreferences: HapticPreferences = {
   punchLanded: createHapticChoice('crack'),
-  punchReceived: createHapticChoice('bodyBlow'),
-  sucker: createHapticChoice('buildPop'),
+  punchReceived: createHapticChoice('crack'),
+  sucker: createHapticChoice('doubleRev'),
 };
 
 export function isCustomHaptic(preset: HapticPreset): preset is CustomHapticPreset {
@@ -94,13 +99,13 @@ const patterns: Record<CustomHapticPreset, HapticPattern> = {
     [[0, 1, 1]],
     [
       [0, 0.85],
-      [15, 0.65],
-      [45, 0.2],
-      [100, 0],
+      [120, 0.65],
+      [360, 0.2],
+      [800, 0],
     ],
     [
       [0, 0.8],
-      [100, 0.45],
+      [800, 0.45],
     ],
   ),
   bodyBlow: pattern(
@@ -198,6 +203,39 @@ const patterns: Record<CustomHapticPreset, HapticPattern> = {
       [200, 0.5],
       [400, 0.85],
       [600, 0.6],
+    ],
+  ),
+  // Two continuous revs: a 330 ms warm-up, an 80 ms quiet gap, then a
+  // stronger 490 ms swell. Sharpness rises with each rev and drops on release.
+  doubleRev: pattern(
+    [],
+    [
+      [0, 0],
+      [40, 0.18],
+      [110, 0.38],
+      [210, 0.65],
+      [280, 0.8],
+      [330, 0],
+      [410, 0],
+      [450, 0.12],
+      [530, 0.36],
+      [650, 0.78],
+      [750, 1],
+      [810, 1],
+      [900, 0],
+    ],
+    [
+      [0, 0.05],
+      [110, 0.15],
+      [210, 0.4],
+      [280, 0.7],
+      [330, 0.1],
+      [410, 0.05],
+      [530, 0.2],
+      [650, 0.5],
+      [750, 0.8],
+      [810, 0.9],
+      [900, 0.1],
     ],
   ),
 };

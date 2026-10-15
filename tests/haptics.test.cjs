@@ -69,6 +69,63 @@ test('existing v2 settings gain neutral mix and repeat controls', () => {
   assert.deepEqual(buildHapticPattern(legacy), buildHapticPattern(loaded));
 });
 
+test('both punch defaults use the chosen 800 ms Crack tuning while Sucker keeps Double rev', () => {
+  const chosenPunch = {
+    preset: 'crack',
+    strength: 100,
+    sharpness: 50,
+    durationMs: 800,
+    delayMs: 0,
+    hitStrength: 100,
+    rumbleStrength: 100,
+    repeatCount: 1,
+    repeatGapMs: 100,
+  };
+  assert.deepEqual(defaultHapticPreferences.punchLanded, chosenPunch);
+  assert.deepEqual(defaultHapticPreferences.punchReceived, chosenPunch);
+  const pattern = buildHapticPattern(chosenPunch);
+  assert.deepEqual(pattern.discretePattern, [{ time: 0, amplitude: 1, frequency: 1 }]);
+  assert.deepEqual(
+    pattern.continuousPattern.amplitude.map(({ time }) => time),
+    [0, 120, 360, 800],
+  );
+  assert.equal(defaultHapticPreferences.sucker.preset, 'doubleRev');
+  for (const preset of ['buildPop', 'off', 'original', 'doubleRev']) {
+    const choice = createHapticChoice(preset);
+    assert.deepEqual(parseHapticPreferences(JSON.stringify({ sucker: choice })).sucker, choice);
+  }
+});
+
+test('Double rev has two rising continuous swells with a quiet gap and a stronger, longer finish', () => {
+  const choice = createHapticChoice('doubleRev');
+  const { discretePattern, continuousPattern } = buildHapticPattern(choice);
+  assert.deepEqual(discretePattern, [], 'the revs should not feel like impact taps');
+  const swells = [];
+  let swell;
+  for (let index = 1; index < continuousPattern.amplitude.length; index++) {
+    const point = continuousPattern.amplitude[index];
+    if (point.value > 0) {
+      swell ??= { start: continuousPattern.amplitude[index - 1].time, points: [] };
+      swell.points.push(point);
+    } else if (swell) {
+      swells.push({ ...swell, end: point.time });
+      swell = undefined;
+    }
+  }
+  assert.equal(swells.length, 2);
+  const [first, second] = swells;
+  assert.ok(second.start - first.end >= 60, 'the two revs have a perceptible quiet gap');
+  assert.ok(second.end - second.start > first.end - first.start);
+  assert.ok(Math.max(...second.points.map(({ value }) => value)) > Math.max(...first.points.map(({ value }) => value)));
+  for (const rev of swells) {
+    assert.ok(rev.points[0].value < rev.points.at(-1).value, 'each rev builds intensity');
+    const texture = continuousPattern.frequency.filter(({ time }) => time >= rev.start && time < rev.end);
+    assert.ok(texture[0].value < texture.at(-1).value, 'each rev grows brighter as it builds');
+  }
+  assert.equal(second.end, hapticDurationMs(choice));
+  assert.equal(continuousPattern.amplitude.at(-1).value, 0);
+});
+
 test('mix controls isolate hits and rumble without changing their rhythm or texture', () => {
   const choice = createHapticChoice('bodyBlow');
   const original = buildHapticPattern(choice);
@@ -146,7 +203,7 @@ test('untrusted repeat and mix settings are clamped before native playback', () 
     repeatGapMs: 400,
   });
   assert.deepEqual(buildHapticPattern(choice), buildHapticPattern(loaded));
-  assert.equal(hapticDurationMs(choice), 1100);
+  assert.equal(hapticDurationMs(choice), 3200);
 });
 
 test('the catalog has distinct bounded native timelines at every tuning extreme', () => {

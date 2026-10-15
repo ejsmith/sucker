@@ -13,6 +13,7 @@ import {
   expireCounterPunch,
   getSuckerPunchCost,
   getSuckerPunchKind,
+  hasExtraSuckerBonus,
   type Dice,
   type DieValue,
   type GameState,
@@ -1489,8 +1490,7 @@ async function scoreRemoteTurn(
   const turnHeld = normalizeHeld(submittedHeld, state.held);
   const turnIndex = await loadNextTurnIndex(admin, gameId, game.last_turn_id);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
-  const extraSuckerBonus =
-    !scratch && category !== 'sucker' && currentPlayer.scorecard.sucker !== null && isSuckerRoll(state.dice);
+  const extraSuckerBonus = !scratch && hasExtraSuckerBonus(state.dice, category, currentPlayer.scorecard);
   const tokenDelta = scratch ? 1 : 0;
   const players = state.players.map((player) => {
     if (player.id !== actorId) {

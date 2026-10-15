@@ -95,6 +95,7 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
       },
       bonusBig: {
         fontSize: unit(25),
+        letterSpacing: unit(-0.5),
         lineHeight: unit(27),
         width: unit(62),
       },
@@ -103,16 +104,20 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         paddingLeft: unit(6),
       },
       bonusMeter: {
-        height: unit(48),
-        width: unit(43),
+        height: unit(50),
+        width: unit(50),
       },
       bonusMeterFace: {
-        height: unit(44),
-        width: unit(44),
+        height: unit(50),
+        width: unit(50),
       },
       bonusMeterText: {
+        fontSize: unit(14),
+        lineHeight: unit(17),
+      },
+      bonusMeterTarget: {
         fontSize: unit(10),
-        lineHeight: unit(12),
+        lineHeight: unit(11),
       },
       bonusSmall: {
         fontSize: unit(10),
@@ -672,20 +677,21 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         fontSize: unit(16),
       },
       tokenCountBadge: {
-        borderRadius: unit(11),
+        borderRadius: unit(14),
         borderWidth: stroke(2),
-        height: unit(22),
-        minWidth: unit(22),
+        minHeight: unit(28),
+        minWidth: unit(28),
         paddingHorizontal: unit(4),
+        paddingVertical: unit(2),
         right: unit(-7),
         top: unit(-8),
       },
       tokenCountText: {
-        fontSize: unit(12),
-        lineHeight: unit(14),
+        fontSize: unit(15),
+        lineHeight: unit(18),
       },
       tokenText: {
-        fontSize: unit(10),
+        fontSize: unit(13),
       },
       topBar: {
         borderRadius: unit(10),
