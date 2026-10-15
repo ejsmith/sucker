@@ -712,7 +712,7 @@ function HeadToHeadStatsComparison({
   return (
     <View style={styles.headToHeadComparison} testID="head-to-head-stats-comparison">
       <View style={styles.statsGrid}>
-        <StatBox label="Your Record" value={`${mine.wins}-${mine.losses}`} />
+        <StatBox label="Your Record" value={formatRecord(mine.wins, mine.losses, mine.games_played)} />
         <StatBox label="Your Win %" value={formatWinningPct(mine.wins, mine.games_played, formatNumber)} />
         <StatBox label="Your Avg" value={formatNumber(mine.average_score)} />
         <StatBox label="Their Avg" value={formatNumber(opponent?.average_score ?? 0)} />

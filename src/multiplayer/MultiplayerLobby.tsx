@@ -161,6 +161,7 @@ export function MultiplayerLobby({
     setCurrentPage(nextPage);
   }, []);
   const pendingAvatarRecoveryProfileId = useRef<string | null>(null);
+  const pendingAvatarSource = useRef<AvatarSource | null>(null);
   const completedGameStatsBackHandler = useRef<(() => void) | null>(null);
   const refreshGamesInFlight = useRef<Promise<void> | null>(null);
   const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -584,6 +585,23 @@ export function MultiplayerLobby({
       const results = await searchProfiles(query);
       setSearchResults(results.filter((result) => result.id !== profile?.id));
     });
+  }
+
+  function handleChooseAvatarSource(source: AvatarSource) {
+    if (Platform.OS === 'ios') {
+      // UIKit drops a picker presented while this modal is still dismissing,
+      // so wait for onDismiss before launching it.
+      pendingAvatarSource.current = source;
+      setAvatarPickerVisible(false);
+      return;
+    }
+    void handleSelectAvatar(source);
+  }
+
+  function handleAvatarPickerDismiss() {
+    const source = pendingAvatarSource.current;
+    pendingAvatarSource.current = null;
+    if (source) void handleSelectAvatar(source);
   }
 
   async function handleSelectAvatar(source: AvatarSource) {
@@ -1632,6 +1650,7 @@ export function MultiplayerLobby({
         {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
         <Modal
           animationType="fade"
+          onDismiss={handleAvatarPickerDismiss}
           onRequestClose={() => setAvatarPickerVisible(false)}
           transparent
           visible={avatarPickerVisible}
@@ -1645,14 +1664,14 @@ export function MultiplayerLobby({
             <View accessibilityViewIsModal role="dialog" style={lobbyStyles.avatarPickerPanel}>
               <Text style={lobbyStyles.avatarPickerTitle}>Profile Photo</Text>
               <Pressable
-                onPress={() => void handleSelectAvatar('library')}
+                onPress={() => handleChooseAvatarSource('library')}
                 style={({ pressed }) => [lobbyStyles.avatarPickerAction, pressed && lobbyStyles.pressed]}
                 testID="choose-avatar-library"
               >
                 <Text style={lobbyStyles.avatarPickerActionText}>Choose from Photos</Text>
               </Pressable>
               <Pressable
-                onPress={() => void handleSelectAvatar('camera')}
+                onPress={() => handleChooseAvatarSource('camera')}
                 style={({ pressed }) => [lobbyStyles.avatarPickerAction, pressed && lobbyStyles.pressed]}
                 testID="choose-avatar-camera"
               >

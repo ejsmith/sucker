@@ -38,7 +38,7 @@ const scoring: Rule[] = [
   {
     title: 'Extra Sucker bonus',
     value: '+50',
-    body: 'Once Sucker is filled, even with zero or a scratch, a five-of-a-kind scored in another category adds 50 to its normal score.',
+    body: 'After scoring 50 in Sucker, a five-of-a-kind scored in another category adds 50 to its normal score. A zero or scratch in Sucker earns no extra Sucker bonuses.',
   },
 ];
 

@@ -6,6 +6,7 @@ const {
   computerPlayerIndex,
   defaultComputerStrategy,
   playComputerTurn,
+  scoreLocalTurn,
   shouldComputerUseSuckerPunch,
   traceComputerDecision,
 } = require('../.build/src/game/computer');
@@ -19,6 +20,29 @@ const {
   measureComputerStrategy,
   simulateComputerScore,
 } = require('../.build/src/game/computerSimulation');
+
+for (const scorerIndex of [0, 1]) {
+  for (const suckerScore of [0, 50]) {
+    test(`local player ${scorerIndex} with Sucker ${suckerScore} records matching bonus, preview, and turn data`, () => {
+      const game = {
+        ...createGame(['Player', 'Computer']),
+        currentPlayerIndex: scorerIndex,
+        dice: [5, 5, 5, 5, 5],
+        rollNumber: 1,
+        phase: 'scoring',
+      };
+      game.players[scorerIndex].scorecard.sucker = suckerScore;
+      const result = scoreLocalTurn(game, 'fives');
+      const expectedScore = suckerScore === 50 ? 75 : 25;
+      assert.equal(result.game.players[scorerIndex].scorecard.fives, expectedScore);
+      assert.deepEqual(result.game.players[scorerIndex].suckerBonusCategories, suckerScore === 50 ? ['fives'] : []);
+      assert.equal(result.pendingTurn.score, expectedScore);
+      assert.equal(result.pendingTurn.hadSuckerBonus, suckerScore === 50);
+      assert.equal(result.scoreAnimation.score, expectedScore);
+      assert.equal(result.scoreAnimation.hadSuckerBonus, suckerScore === 50);
+    });
+  }
+}
 
 test('computer score simulation is deterministic for a seed', () => {
   assert.equal(simulateComputerScore(42), simulateComputerScore(42));
