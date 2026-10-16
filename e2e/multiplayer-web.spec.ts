@@ -1275,22 +1275,22 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
 
     await bobPage.getByTestId('game-menu-button').click();
     await bobPage.getByTestId('rage-quit-menu-item').click();
-    await bobPage.getByTestId('rage-quit-last-words-dice-broken').click();
+    await bobPage.getByTestId('rage-quit-last-words-not-trying').click();
     for (let tap = 0; tap < 8; tap += 1) {
       await bobPage.getByTestId('rage-quit-mash-button').click();
     }
 
     await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
-    await expect(bobPage.getByTestId('rage-quit-last-words')).toContainText('These dice are broken.');
+    await expect(bobPage.getByTestId('rage-quit-last-words')).toContainText("I wasn't even trying.");
     await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Breathe…');
     await expect(bobPage.getByTestId('game-over-rematch-button')).toBeDisabled();
     const saved = await loadGame(gameId);
     expect(saved.status).toBe('complete');
     expect(saved.winner_id).toBe(alice.id);
-    expect(saved.state.rageQuit).toEqual({ lastWordsId: 'dice-broken', playerId: bob.id });
+    expect(saved.state.rageQuit).toEqual({ lastWordsId: 'not-trying', playerId: bob.id });
 
     await expect(alicePage.getByTestId('game-over-title')).toHaveText('Victory by Tantrum!', { timeout: 15_000 });
-    await expect(alicePage.getByTestId('rage-quit-last-words')).toContainText('These dice are broken.');
+    await expect(alicePage.getByTestId('rage-quit-last-words')).toContainText("I wasn't even trying.");
     await alicePage.getByTestId('rage-quit-reply-need-tissue').click();
     await expect(alicePage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?');
     await expect(alicePage.getByTestId('rage-quit-replies')).toHaveCount(0);

@@ -2012,13 +2012,13 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   const freeText = await invokeGameAction(bob, { gameId, lastWordsId: 'You all suck', type: 'rage_quit' }, 400);
   assertEquals(freeText.error, 'Choose one of the available last words.');
 
-  const quit = (await invokeGameAction(bob, { gameId, lastWordsId: 'cat-rolled', type: 'rage_quit' })).game as GameRow;
+  const quit = (await invokeGameAction(bob, { gameId, lastWordsId: 'got-lucky', type: 'rage_quit' })).game as GameRow;
   assertEquals(quit.status, 'complete');
   assertEquals(quit.winner_id, alice.id);
   assertEquals(quit.current_player_id, null);
   assertString(quit.completed_at);
   assertEquals(quit.state.phase, 'complete');
-  assertEquals(quit.state.rageQuit, { lastWordsId: 'cat-rolled', playerId: bob.id });
+  assertEquals(quit.state.rageQuit, { lastWordsId: 'got-lucky', playerId: bob.id });
   assertEquals(quit.state.counterPunchPlayerId, undefined);
   assertEquals(
     quit.state.players.map((player) => player.revengePunchDiscount),
@@ -2090,7 +2090,7 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(freeReply.error, 'Choose one of the available replies.');
   const replied = (await invokeGameAction(alice, { gameId, replyId: 'need-tissue', type: 'rage_quit_reply' }))
     .game as GameRow;
-  assertEquals(replied.state.rageQuit, { lastWordsId: 'cat-rolled', playerId: bob.id, replyId: 'need-tissue' });
+  assertEquals(replied.state.rageQuit, { lastWordsId: 'got-lucky', playerId: bob.id, replyId: 'need-tissue' });
   const secondReply = await invokeGameAction(alice, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
   assertEquals(secondReply.error, 'You already said your piece.');
 
@@ -2098,7 +2098,7 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   const rageQuitAction = actions.find((action) => action.action_type === 'rage_quit');
   assertEquals(
     [rageQuitAction?.actor_id, actionPayloadValue(rageQuitAction?.payload, 'lastWordsId')],
-    [bob.id, 'cat-rolled'],
+    [bob.id, 'got-lucky'],
   );
   assertEquals(actions.filter((action) => action.action_type === 'rage_quit_reply').length, 1);
 

@@ -31,11 +31,11 @@ function leadingGame(): GameState {
 
 Deno.test('Rage Quit ends the game for the opponent even when the quitter leads', () => {
   const game = leadingGame();
-  const quit = rageQuitGame(game, game.players[0].id, 'cat-rolled');
+  const quit = rageQuitGame(game, game.players[0].id, 'got-lucky');
 
   assertEquals(quit.phase, 'complete');
   assertEquals(quit.rageQuit?.playerId, game.players[0].id);
-  assertEquals(quit.rageQuit?.lastWordsId, 'cat-rolled');
+  assertEquals(quit.rageQuit?.lastWordsId, 'got-lucky');
   assertEquals(getWinnerId(quit), game.players[1].id);
   assertEquals(getWinnerId(game), game.players[0].id);
 });
@@ -56,7 +56,7 @@ Deno.test('Rage Quit gives the quitter nothing back', () => {
 
 Deno.test('Rage Quit cannot end a finished game or be thrown by an outsider', () => {
   const game = leadingGame();
-  const quit = rageQuitGame(game, game.players[1].id, 'ill-be-back');
+  const quit = rageQuitGame(game, game.players[1].id, 'fake-win');
 
   assertThrows(() => rageQuitGame(quit, game.players[0].id, 'rigged'), 'already over');
   assertThrows(() => rageQuitGame(game, 'stranger', 'rigged'), 'not in this game');
@@ -64,10 +64,10 @@ Deno.test('Rage Quit cannot end a finished game or be thrown by an outsider', ()
 
 Deno.test('Stored rage quits survive parsing and reject impossible quitters', () => {
   const game = leadingGame();
-  const quit = { ...rageQuitGame(game, game.players[0].id, 'phone-died') };
+  const quit = { ...rageQuitGame(game, game.players[0].id, 'not-trying') };
   const replied = { ...quit, rageQuit: { ...quit.rageQuit!, replyId: 'bye-sucker' } };
 
-  assertEquals(toGameState(quit).rageQuit?.lastWordsId, 'phone-died');
+  assertEquals(toGameState(quit).rageQuit?.lastWordsId, 'not-trying');
   assertEquals(toGameState(replied).rageQuit?.replyId, 'bye-sucker');
   assertEquals(toGameState(game).rageQuit, undefined);
   assertThrows(() => toGameState({ ...quit, rageQuit: { ...quit.rageQuit, playerId: 'stranger' } }), 'rage quit');
@@ -78,11 +78,11 @@ Deno.test('Stored rage quits survive parsing and reject impossible quitters', ()
 Deno.test('Rage Quit lines are a fixed list with stable ids', () => {
   assertEquals(new Set(rageQuitLastWords.map((line) => line.id)).size, rageQuitLastWords.length);
   assertEquals(new Set(rageQuitReplies.map((reply) => reply.id)).size, rageQuitReplies.length);
-  assertEquals(isRageQuitLastWordsId('cat-rolled'), true);
-  assertEquals(isRageQuitLastWordsId('My cat rolled those.'), false);
+  assertEquals(isRageQuitLastWordsId('got-lucky'), true);
+  assertEquals(isRageQuitLastWordsId('You got lucky.'), false);
   assertEquals(isRageQuitReplyId('bye-sucker'), true);
-  assertEquals(isRageQuitReplyId('cat-rolled'), false);
-  assertEquals(getRageQuitLastWordsText('cat-rolled'), 'My cat rolled those.');
+  assertEquals(isRageQuitReplyId('got-lucky'), false);
+  assertEquals(getRageQuitLastWordsText('got-lucky'), 'You got lucky.');
   // Newer releases may add lines; older clients still render something.
   assertEquals(getRageQuitLastWordsText('from-the-future'), 'I quit.');
   assertEquals(getRageQuitReplyText('from-the-future'), 'Bye, Sucker!');

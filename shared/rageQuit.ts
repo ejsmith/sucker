@@ -2,14 +2,10 @@
 // wins, and the quitter is publicly salted for a day.
 
 export const rageQuitLastWords = [
-  { id: 'cat-rolled', text: 'My cat rolled those.' },
-  { id: 'gg-not-really', text: 'GG. (Not really.)' },
-  { id: 'dice-broken', text: 'These dice are broken.' },
   { id: 'rigged', text: 'This game is rigged.' },
-  { id: 'let-you-win', text: 'I let you win.' },
-  { id: 'phone-died', text: 'My phone died. Totally.' },
-  { id: 'somewhere-to-be', text: 'I had somewhere to be.' },
-  { id: 'ill-be-back', text: "I'll be back." },
+  { id: 'got-lucky', text: 'You got lucky.' },
+  { id: 'not-trying', text: "I wasn't even trying." },
+  { id: 'fake-win', text: 'Enjoy your fake win.' },
 ] as const;
 
 export const rageQuitReplies = [
