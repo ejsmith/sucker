@@ -18,7 +18,7 @@ const mashLabels = [
   'This game is RIGGED',
   'ARGH!!',
   'WHO MADE THESE DICE',
-  '(╯°□°)╯',
+  'NOPE NOPE NOPE',
   'FLIP IT!',
 ];
 const drainDelayMs = 700;
@@ -26,8 +26,6 @@ const drainStepMs = 260;
 const flipDurationMs = 1_350;
 const maxTokenDebris = 15;
 
-export const tableFlipKaomoji = '(╯°□°)╯︵ ┻━┻';
-export const tableRestoredKaomoji = '┬─┬ノ( º _ ºノ)';
 export const rageQuitRematchCooldownMs = 5_000;
 
 export function RageQuitDialog({
@@ -368,7 +366,7 @@ export function TableFlipDebris({
       <Animated.Text
         maxFontSizeMultiplier={1.2}
         style={[
-          styles.kaomoji,
+          styles.flipShout,
           {
             opacity: progress.interpolate({
               inputRange: [0, 0.1, 0.3, 0.85, 1],
@@ -387,7 +385,7 @@ export function TableFlipDebris({
           },
         ]}
       >
-        {tableFlipKaomoji}
+        TABLE FLIP!
       </Animated.Text>
     </View>
   );
@@ -576,9 +574,10 @@ const styles = StyleSheet.create({
     height: 40,
     width: 40,
   },
-  kaomoji: {
+  flipShout: {
     color: '#FFD329',
-    fontSize: 34,
+    fontFamily: 'Inter_900Black',
+    fontSize: 44,
     fontWeight: '900',
     position: 'absolute',
     textShadowColor: '#050505',

@@ -128,8 +128,6 @@ import {
   RageQuitDialog,
   runTableFlip,
   TableFlipDebris,
-  tableFlipKaomoji,
-  tableRestoredKaomoji,
 } from './src/ui/RageQuit';
 import {
   getRageQuitLastWordsText,
@@ -4720,7 +4718,7 @@ export function LocalGameScreen({
                   <CloseIcon color="#FFD329" size={gameLayout.unit(22)} />
                 </Pressable>
                 <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
-                  {rageQuit ? (didIRageQuit ? tableFlipKaomoji : tableRestoredKaomoji) : 'Game Over'}
+                  {rageQuit ? (didIRageQuit ? 'Table Flipped' : 'Rage Quit') : 'Game Over'}
                 </Text>
                 <Text
                   adjustsFontSizeToFit
