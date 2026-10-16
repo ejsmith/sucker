@@ -130,6 +130,7 @@ import {
   TableFlipDebris,
 } from './src/ui/RageQuit';
 import {
+  getRageQuitConfession,
   getRageQuitLastWordsText,
   getRageQuitReplyText,
   rageQuitReplies,
@@ -4755,9 +4756,22 @@ export function LocalGameScreen({
                     >
                       <Text
                         maxFontSizeMultiplier={1.2}
-                        style={[styles.rageQuitQuoteText, { fontSize: gameLayout.unit(16) }]}
+                        style={[styles.rageQuitExcuseText, { fontSize: gameLayout.unit(13) }]}
                       >
                         “{getRageQuitLastWordsText(rageQuit.lastWordsId)}”
+                      </Text>
+                      <Text
+                        maxFontSizeMultiplier={1.2}
+                        style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(10) }]}
+                      >
+                        TRANSLATION
+                      </Text>
+                      <Text
+                        maxFontSizeMultiplier={1.2}
+                        style={[styles.rageQuitQuoteText, { fontSize: gameLayout.unit(18) }]}
+                        testID="rage-quit-confession"
+                      >
+                        “{getRageQuitConfession(rageQuit.lastWordsId)}”
                       </Text>
                       <Text
                         maxFontSizeMultiplier={1.2}
@@ -7525,6 +7539,12 @@ const styles = StyleSheet.create({
     fontFamily: gameFontBlack,
     fontWeight: '900',
     textAlign: 'center',
+  },
+  rageQuitExcuseText: {
+    color: '#8F3B10',
+    fontFamily: gameFontExtraBold,
+    textAlign: 'center',
+    textDecorationLine: 'line-through',
   },
   rageQuitQuoteBy: {
     color: '#8F3B10',

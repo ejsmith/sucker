@@ -1,11 +1,12 @@
 // Rage Quit ends a game by forfeit. It never helps the quitter: the opponent
 // wins, and the quitter is publicly salted for a day.
 
+// The quitter picks an excuse. Everyone is told what it really means.
 export const rageQuitLastWords = [
-  { id: 'rigged', text: 'This game is rigged.' },
-  { id: 'got-lucky', text: 'You got lucky.' },
-  { id: 'not-trying', text: "I wasn't even trying." },
-  { id: 'fake-win', text: 'Enjoy your fake win.' },
+  { id: 'rigged', text: 'This game is rigged.', confession: "I'm a sore loser." },
+  { id: 'got-lucky', text: 'You got lucky.', confession: "You're better than me." },
+  { id: 'not-trying', text: "I wasn't even trying.", confession: 'I tried my absolute hardest.' },
+  { id: 'fake-win', text: 'Enjoy your fake win.', confession: 'I need a juice box and a nap.' },
 ] as const;
 
 export const rageQuitReplies = [
@@ -33,6 +34,10 @@ export function isRageQuitReplyId(value: unknown): value is RageQuitReplyId {
 // Stored ids may come from a newer release; fall back instead of failing.
 export function getRageQuitLastWordsText(id: string) {
   return rageQuitLastWords.find((line) => line.id === id)?.text ?? 'I quit.';
+}
+
+export function getRageQuitConfession(id: string) {
+  return rageQuitLastWords.find((line) => line.id === id)?.confession ?? "I can't handle losing.";
 }
 
 export function getRageQuitReplyText(id: string) {

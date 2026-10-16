@@ -55,6 +55,7 @@ import {
   type TauntScenario,
 } from '../_shared/taunts.ts';
 import {
+  getRageQuitConfession,
   getRageQuitLastWordsText,
   getRageQuitReplyText,
   isRageQuitLastWordsId,
@@ -696,7 +697,7 @@ function buildNotificationContent(
 
   if (action.type === 'rage_quit') {
     return {
-      body: `“${getRageQuitLastWordsText(action.lastWordsId)}” You win by tantrum.`,
+      body: `“${getRageQuitLastWordsText(action.lastWordsId)}” Translation: ${getRageQuitConfession(action.lastWordsId)} You win.`,
       title: `${actorName} flipped the table!`,
     };
   }

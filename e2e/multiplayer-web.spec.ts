@@ -1282,6 +1282,7 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
 
     await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
     await expect(bobPage.getByTestId('rage-quit-last-words')).toContainText("I wasn't even trying.");
+    await expect(bobPage.getByTestId('rage-quit-confession')).toHaveText('“I tried my absolute hardest.”');
     await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Breathe…');
     await expect(bobPage.getByTestId('game-over-rematch-button')).toBeDisabled();
     const saved = await loadGame(gameId);

@@ -126,7 +126,10 @@ export function RageQuitDialog({
             Flip the table and your opponent wins. Everyone sees the 🧂 next to your name for 24 hours.
           </Text>
           <Text maxFontSizeMultiplier={1.2} style={styles.sectionLabel}>
-            LAST WORDS
+            PICK YOUR EXCUSE
+          </Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.sectionNote}>
+            We&apos;ll tell everyone what it really means.
           </Text>
           <View accessibilityRole="radiogroup" style={styles.lastWords}>
             {rageQuitLastWords.map((line) => {
@@ -146,13 +149,16 @@ export function RageQuitDialog({
                   testID={`rage-quit-last-words-${line.id}`}
                 >
                   <Text
-                    adjustsFontSizeToFit
                     maxFontSizeMultiplier={1.2}
-                    minimumFontScale={0.75}
-                    numberOfLines={2}
                     style={[styles.lastWordsText, selected && styles.lastWordsTextSelected]}
                   >
                     {line.text}
+                  </Text>
+                  <Text
+                    maxFontSizeMultiplier={1.2}
+                    style={[styles.confessionText, selected && styles.confessionTextSelected]}
+                  >
+                    Translation: {line.confession}
                   </Text>
                 </Pressable>
               );
@@ -471,9 +477,9 @@ const styles = StyleSheet.create({
     flexBasis: '48%',
     flexGrow: 1,
     justifyContent: 'center',
-    minHeight: 44,
+    minHeight: 60,
     paddingHorizontal: 6,
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   lastWordsOptionSelected: {
     backgroundColor: '#FFF3C2',
@@ -487,6 +493,22 @@ const styles = StyleSheet.create({
   },
   lastWordsTextSelected: {
     color: '#210505',
+  },
+  confessionText: {
+    color: '#FFB000',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 11,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  confessionTextSelected: {
+    color: '#8F3B10',
+  },
+  sectionNote: {
+    color: '#FFF3C2',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 12,
+    marginTop: -6,
   },
   meterTrack: {
     backgroundColor: '#3A0C06',

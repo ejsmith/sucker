@@ -1,5 +1,6 @@
 import { createGame, getWinnerId, rageQuitGame, toGameState, type GameState } from './game.ts';
 import {
+  getRageQuitConfession,
   getRageQuitLastWordsText,
   getRageQuitReplyText,
   isRageQuitLastWordsId,
@@ -83,9 +84,12 @@ Deno.test('Rage Quit lines are a fixed list with stable ids', () => {
   assertEquals(isRageQuitReplyId('bye-sucker'), true);
   assertEquals(isRageQuitReplyId('got-lucky'), false);
   assertEquals(getRageQuitLastWordsText('got-lucky'), 'You got lucky.');
+  assertEquals(getRageQuitConfession('got-lucky'), "You're better than me.");
+  assertEquals(new Set(rageQuitLastWords.map((line) => line.confession)).size, rageQuitLastWords.length);
   // Newer releases may add lines; older clients still render something.
   assertEquals(getRageQuitLastWordsText('from-the-future'), 'I quit.');
   assertEquals(getRageQuitReplyText('from-the-future'), 'Bye, Sucker!');
+  assertEquals(getRageQuitConfession('from-the-future'), "I can't handle losing.");
 });
 
 Deno.test('The salt badge lasts 24 hours', () => {
