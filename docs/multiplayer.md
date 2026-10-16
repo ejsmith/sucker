@@ -125,6 +125,7 @@ Implemented:
   - Extra Roll
   - Mulligan
   - chance-based Sucker Punch landed/blocked outcomes
+  - Rage Quit forfeits and the winner's single reply
   - writing turn/action/token audit rows
   - recording game results and head-to-head stats at game completion
 
@@ -133,6 +134,8 @@ Production universal/app links, native build workflows, staged updates, and the 
 Game mutations include client request IDs. The Edge Function stores each request outcome in `game_action_requests`, allowing uncertain network requests to be retried without rolling, scoring, charging tokens, or notifying twice. Legacy store binaries without request IDs remain supported while newer binaries roll out.
 
 For hosted deployment, apply `20260712180000_game_action_idempotency.sql` before deploying the matching `game-action` function. Then release the updated client. This order keeps both existing and new store binaries functional throughout deployment.
+
+Rage Quit (`20261016130000_add_rage_quit.sql`) follows the same order: migration, then `game-action`, then the client. The migration adds the `rage_quit`/`rage_quit_reply` action types, the public `rage_quits` table that drives the 24-hour salt badge, and matchup columns that keep forfeits out of averages and rates. A forfeit is stored as an ordinary completed game (`status = 'complete'`, `phase = 'complete'`, `winner_id` = the player who stayed) plus an optional `state.rageQuit`. Older binaries ignore that field, so they still open the game and show it as over, but they pick the winner by score and can show a quitter who was ahead as the winner. Their lobby and history labels have the same limitation. New binaries always honor `state.rageQuit` and `winner_id`.
 
 ## Multiplayer Validation
 

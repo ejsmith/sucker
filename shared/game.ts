@@ -31,6 +31,14 @@ export type Player = {
 
 export type GamePhase = 'rolling' | 'scoring' | 'complete';
 
+// A forfeit. The other player wins no matter the score.
+export type RageQuit = {
+  playerId: string;
+  lastWordsId: string;
+  // The winner's one canned reply.
+  replyId?: string;
+};
+
 export type GameState = {
   id: string;
   // Set after any punch misses; expires when this player starts their next turn.
@@ -43,6 +51,7 @@ export type GameState = {
   held: [boolean, boolean, boolean, boolean, boolean];
   rollNumber: number;
   phase: GamePhase;
+  rageQuit?: RageQuit;
 };
 
 export const scoreCategories: ScoreCategory[] = [
@@ -145,6 +154,35 @@ export function expireCounterPunch(game: GameState, playerId: string): GameState
 
   const { counterPunchPlayerId: _expired, counterPunchCost: _expiredCost, ...nextGame } = game;
   return nextGame;
+}
+
+export function rageQuitGame(game: GameState, playerId: string, lastWordsId: string): GameState {
+  if (game.phase === 'complete') {
+    throw new Error('This game is already over.');
+  }
+  if (!game.players.some((player) => player.id === playerId)) {
+    throw new Error('Player is not in this game.');
+  }
+
+  // Unused counterpunches and revenge discounts expire like any game end.
+  const { counterPunchPlayerId: _counter, counterPunchCost: _counterCost, ...nextGame } = game;
+  return {
+    ...nextGame,
+    phase: 'complete',
+    players: game.players.map(clearRevengePunchDiscount),
+    rageQuit: { lastWordsId, playerId },
+  };
+}
+
+export function getWinnerId(game: GameState): string | null {
+  if (game.rageQuit) {
+    return game.players.find((player) => player.id !== game.rageQuit?.playerId)?.id ?? null;
+  }
+
+  const [first, second] = [...game.players].sort(
+    (left, right) => totalScore(right.scorecard) - totalScore(left.scorecard),
+  );
+  return first && second && totalScore(first.scorecard) > totalScore(second.scorecard) ? first.id : null;
 }
 
 export function applySuckerPunchOpportunity(
@@ -417,10 +455,12 @@ export function toGameState(value: unknown): GameState {
   ) {
     throw new Error('Stored game has invalid counterpunch cost.');
   }
+  const rageQuit = game.rageQuit === undefined ? undefined : toRageQuit(game.rageQuit, players);
 
   return {
     ...(typeof counterPunchPlayerId === 'string' ? { counterPunchPlayerId } : {}),
     ...(counterPunchCost === 1 || counterPunchCost === 2 ? { counterPunchCost } : {}),
+    ...(rageQuit ? { rageQuit } : {}),
     currentPlayerIndex,
     dice: toDice(game.dice),
     extraRollsAvailable: toOptionalNonNegativeInteger(
@@ -543,6 +583,24 @@ function toPlayer(value: unknown): Player {
       (category) => toScoreCategory(toString(category, 'Stored game has invalid sucker bonus category.')),
     ),
     suckerTokens: toNonNegativeInteger(player.suckerTokens, 'Stored game has invalid token count.'),
+  };
+}
+
+function toRageQuit(value: unknown, players: Player[]): RageQuit {
+  const rageQuit = toRecord(value, 'Stored game has invalid rage quit.');
+  const playerId = toString(rageQuit.playerId, 'Stored game has invalid rage quit player.');
+  if (!players.some((player) => player.id === playerId)) {
+    throw new Error('Stored game has invalid rage quit player.');
+  }
+  const replyId = rageQuit.replyId;
+  if (replyId !== undefined && typeof replyId !== 'string') {
+    throw new Error('Stored game has invalid rage quit reply.');
+  }
+
+  return {
+    lastWordsId: toString(rageQuit.lastWordsId, 'Stored game has invalid rage quit last words.'),
+    playerId,
+    ...(typeof replyId === 'string' ? { replyId } : {}),
   };
 }
 

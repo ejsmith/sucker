@@ -35,6 +35,7 @@ import {
 } from './notifications';
 import { searchProfiles } from './profiles';
 import { useProfileAvatars } from './useProfileAvatars';
+import { useSaltyProfileIds } from './useSaltyProfileIds';
 import { getAllTimeOpponentRecord, getHeadToHeadStats, type AllTimeOpponentRecord } from './stats';
 import { useMultiplayerSession } from './useMultiplayerSession';
 import { AppleAccountSection } from './AppleAccountSection';
@@ -43,12 +44,13 @@ import type { LocalTestPlayer } from './auth';
 import { AppleSignInButton } from './AppleSignInButton';
 import type { ProfileInput, RemoteGameRow } from './types';
 import { canJabGame } from './jab';
-import { categoryLabels, scoreCategories, totalScore, upperBonus } from '../game';
+import { categoryLabels, getWinnerId, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
+import { SaltBadge } from '../ui/RageQuit';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
@@ -187,6 +189,15 @@ export function MultiplayerLobby({
   const profileAvatars = useProfileAvatars(
     [
       ...visibleGames.flatMap((game) => game.state.players.map((player) => player.id)),
+      ...(profileId ? [profileId] : []),
+    ],
+    Boolean(session) && !isReconnecting && !isSessionUnavailable,
+    visibleGames,
+  );
+  const saltyProfileIds = useSaltyProfileIds(
+    [
+      ...visibleGames.flatMap((game) => game.state.players.map((player) => player.id)),
+      ...searchResults.slice(0, 5).map((result) => result.id),
       ...(profileId ? [profileId] : []),
     ],
     Boolean(session) && !isReconnecting && !isSessionUnavailable,
@@ -1159,6 +1170,7 @@ export function MultiplayerLobby({
                   setPage('completedGameDetail');
                 }}
                 onRematchGame={handleRematchGame}
+                isOpponentSalty={saltyProfileIds.has(getGamePlayers(game, activeProfileId).opponent?.id ?? '')}
                 profileId={activeProfileId}
               />
             ))
@@ -1190,6 +1202,9 @@ export function MultiplayerLobby({
             onOpenPlayerStats={(game) => void handleOpenCompletedGameStats(game, 'opponent')}
             onOpenStats={(game) => void handleOpenCompletedGameStats(game, null)}
             onRematchGame={handleRematchGame}
+            isOpponentSalty={saltyProfileIds.has(
+              getGamePlayers(selectedCompletedGame, activeProfileId).opponent?.id ?? '',
+            )}
             profileId={activeProfileId}
           />
         ) : (
@@ -1298,9 +1313,12 @@ export function MultiplayerLobby({
             <View key={result.id} style={lobbyStyles.resultRow}>
               <PlayerAvatar avatarUrl={result.avatar_url} name={result.display_name} size={34} />
               <View style={lobbyStyles.resultTextBlock}>
-                <Text numberOfLines={1} style={lobbyStyles.resultName}>
-                  {result.display_name}
-                </Text>
+                <View style={lobbyStyles.nameRow}>
+                  <Text numberOfLines={1} style={[lobbyStyles.resultName, lobbyStyles.nameRowText]}>
+                    {result.display_name}
+                  </Text>
+                  {saltyProfileIds.has(result.id) && <SaltBadge size={11} />}
+                </View>
                 {result.username && (
                   <Text numberOfLines={1} style={lobbyStyles.resultUsername}>
                     @{result.username}
@@ -1782,7 +1800,10 @@ export function MultiplayerLobby({
         )}
         <View style={lobbyStyles.topBar}>
           <View>
-            <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
+            <View style={lobbyStyles.nameRow}>
+              <Text style={lobbyStyles.welcomeText}>Hi, {playerName}</Text>
+              {profileId && saltyProfileIds.has(profileId) && <SaltBadge size={12} />}
+            </View>
             <Text style={lobbyStyles.subtleText}>
               {activeGames.length} active {activeGames.length === 1 ? 'game' : 'games'}
             </Text>
@@ -1854,6 +1875,7 @@ export function MultiplayerLobby({
                 onJabGame={handleJabGame}
                 profileId={activeProfileId}
                 isBusy={isBusy || isLoading}
+                isOpponentSalty={saltyProfileIds.has(getGamePlayers(game, activeProfileId).opponent?.id ?? '')}
               />
             ))
           )}
@@ -2245,6 +2267,7 @@ function GameListItem({
   avatarUrl,
   game,
   isBusy,
+  isOpponentSalty,
   now,
   onOpenGame,
   onRemoveGame,
@@ -2254,6 +2277,7 @@ function GameListItem({
   avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
+  isOpponentSalty: boolean;
   now: number;
   onOpenGame: (gameId: string) => void;
   onRemoveGame: (game: RemoteGameRow) => void;
@@ -2330,9 +2354,12 @@ function GameListItem({
           <View style={lobbyStyles.gameCardTop}>
             <PlayerAvatar avatarUrl={avatarUrl} name={opponentName} size={50} />
             <View style={lobbyStyles.gameSummary}>
-              <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
-                {opponentName}
-              </Text>
+              <View style={lobbyStyles.nameRow}>
+                <Text numberOfLines={1} style={[lobbyStyles.gameOpponent, lobbyStyles.nameRowText]}>
+                  {opponentName}
+                </Text>
+                {isOpponentSalty && <SaltBadge />}
+              </View>
               <Text
                 style={[
                   lobbyStyles.turnBadge,
@@ -2378,6 +2405,7 @@ function CompletedGameListItem({
   avatarUrl,
   game,
   isBusy,
+  isOpponentSalty,
   onOpenGame,
   onRematchGame,
   profileId,
@@ -2385,6 +2413,7 @@ function CompletedGameListItem({
   avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
+  isOpponentSalty: boolean;
   onOpenGame: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
   profileId: string;
@@ -2393,7 +2422,7 @@ function CompletedGameListItem({
   const opponentName = opponent?.name ?? 'Opponent';
   const myScore = me ? totalScore(me.scorecard) : 0;
   const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
-  const resultTone = getCompletedResultTone(myScore, opponentScore);
+  const resultTone = getCompletedResultTone(game, profileId);
 
   return (
     <View
@@ -2412,9 +2441,12 @@ function CompletedGameListItem({
         <View style={lobbyStyles.gameCardTop}>
           <PlayerAvatar avatarUrl={avatarUrl} name={opponentName} size={50} />
           <View style={lobbyStyles.gameSummary}>
-            <Text numberOfLines={1} style={lobbyStyles.gameOpponent}>
-              {opponentName}
-            </Text>
+            <View style={lobbyStyles.nameRow}>
+              <Text numberOfLines={1} style={[lobbyStyles.gameOpponent, lobbyStyles.nameRowText]}>
+                {opponentName}
+              </Text>
+              {isOpponentSalty && <SaltBadge />}
+            </View>
             <Text
               style={[
                 lobbyStyles.resultBadge,
@@ -2423,7 +2455,7 @@ function CompletedGameListItem({
                 resultTone === 'tie' && lobbyStyles.resultBadgeTie,
               ]}
             >
-              {getCompletedResultLabel(myScore, opponentScore)}
+              {getCompletedResultLabel(game, profileId)}
             </Text>
           </View>
           <View
@@ -2461,6 +2493,7 @@ function CompletedGameScorecard({
   avatarUrl,
   game,
   isBusy,
+  isOpponentSalty,
   onOpenPlayerStats,
   onOpenStats,
   onRematchGame,
@@ -2469,6 +2502,7 @@ function CompletedGameScorecard({
   avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
+  isOpponentSalty: boolean;
   onOpenPlayerStats: (game: RemoteGameRow) => void;
   onOpenStats: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
@@ -2488,7 +2522,7 @@ function CompletedGameScorecard({
 
   const myScore = totalScore(me.scorecard);
   const opponentScore = totalScore(opponent.scorecard);
-  const resultTone = getCompletedResultTone(myScore, opponentScore);
+  const resultTone = getCompletedResultTone(game, profileId);
 
   return (
     <View
@@ -2508,9 +2542,12 @@ function CompletedGameScorecard({
         >
           <PlayerAvatar avatarUrl={avatarUrl} decorative name={opponent.name} size={48} />
           <View style={lobbyStyles.completedScoreTitleBlock}>
-            <Text numberOfLines={1} style={lobbyStyles.completedScoreTitle}>
-              {opponent.name}
-            </Text>
+            <View style={lobbyStyles.nameRow}>
+              <Text numberOfLines={1} style={[lobbyStyles.completedScoreTitle, lobbyStyles.nameRowText]}>
+                {opponent.name}
+              </Text>
+              {isOpponentSalty && <SaltBadge />}
+            </View>
             <Text style={lobbyStyles.completedScoreDate}>
               {formatCompletedDate(game.completed_at ?? game.updated_at)}
             </Text>
@@ -2524,7 +2561,7 @@ function CompletedGameScorecard({
             resultTone === 'tie' && lobbyStyles.resultBadgeTie,
           ]}
         >
-          {getCompletedResultLabel(myScore, opponentScore)}
+          {getCompletedResultLabel(game, profileId)}
         </Text>
       </View>
 
@@ -2687,20 +2724,24 @@ function getGamePlayers(game: RemoteGameRow, profileId: string) {
   return { me, opponent };
 }
 
-function getCompletedResultLabel(myScore: number, opponentScore: number) {
-  if (myScore === opponentScore) {
-    return 'Tie';
+function getCompletedResultLabel(game: RemoteGameRow, profileId: string) {
+  const rageQuitterId = game.state.rageQuit?.playerId;
+  if (rageQuitterId) {
+    return rageQuitterId === profileId ? 'You rage quit' : 'They rage quit';
   }
 
-  return myScore > opponentScore ? 'You won' : 'You lost';
+  const tone = getCompletedResultTone(game, profileId);
+  return tone === 'tie' ? 'Tie' : tone === 'win' ? 'You won' : 'You lost';
 }
 
-function getCompletedResultTone(myScore: number, opponentScore: number) {
-  if (myScore === opponentScore) {
+// A rage quit decides the winner regardless of the partial scores.
+function getCompletedResultTone(game: RemoteGameRow, profileId: string) {
+  const winnerId = getWinnerId(game.state);
+  if (!winnerId) {
     return 'tie';
   }
 
-  return myScore > opponentScore ? 'win' : 'loss';
+  return winnerId === profileId ? 'win' : 'loss';
 }
 
 function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
@@ -3245,6 +3286,15 @@ const lobbyStyles = StyleSheet.create({
     color: '#210505',
     fontSize: 17,
     fontWeight: '900',
+  },
+  nameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    minWidth: 0,
+  },
+  nameRowText: {
+    flexShrink: 1,
   },
   gameSummary: {
     flex: 1,

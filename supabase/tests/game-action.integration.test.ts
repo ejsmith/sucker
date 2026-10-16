@@ -1967,6 +1967,158 @@ Deno.test('game-action creates one rematch and alternates the first player', asy
   );
 });
 
+Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and stays out of averages', async () => {
+  const [alice, bob, charlie] = await createUsers('rage-quit', ['Alice', 'Bob', 'Charlie']);
+  // Two earlier played-out games: 30 points total, high 20, one section bonus each.
+  for (const [player, opponent] of [
+    [alice, bob],
+    [bob, alice],
+  ]) {
+    assertNoError(
+      (
+        await admin.from('head_to_head_stats').insert({
+          average_score: 15,
+          games_played: 2,
+          highest_score: 20,
+          losses: 1,
+          opponent_id: opponent.id,
+          player_id: player.id,
+          total_score: 30,
+          upper_bonus_games: 1,
+          wins: 1,
+        })
+      ).error,
+    );
+  }
+
+  const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+  const gameId = (created.game as GameRow).id;
+  const startingState = (created.game as GameRow).state;
+  // Bob is ahead with a counterpunch and revenge in hand, and it is Alice's turn.
+  const leadingState: GameState = {
+    ...startingState,
+    counterPunchCost: 1,
+    counterPunchPlayerId: bob.id,
+    players: startingState.players.map((player) =>
+      player.id === bob.id
+        ? { ...player, revengePunchDiscount: 2, scorecard: { ...player.scorecard, chance: 30 } }
+        : player,
+    ),
+  };
+  assertNoError((await admin.from('games').update({ state: leadingState }).eq('id', gameId)).error);
+
+  const outsider = await invokeGameAction(charlie, { gameId, lastWordsId: 'rigged', type: 'rage_quit' }, 400);
+  assertEquals(outsider.error, 'You are not a player in this game.');
+  const freeText = await invokeGameAction(bob, { gameId, lastWordsId: 'You all suck', type: 'rage_quit' }, 400);
+  assertEquals(freeText.error, 'Choose one of the available last words.');
+
+  const quit = (await invokeGameAction(bob, { gameId, lastWordsId: 'cat-rolled', type: 'rage_quit' })).game as GameRow;
+  assertEquals(quit.status, 'complete');
+  assertEquals(quit.winner_id, alice.id);
+  assertEquals(quit.current_player_id, null);
+  assertString(quit.completed_at);
+  assertEquals(quit.state.phase, 'complete');
+  assertEquals(quit.state.rageQuit, { lastWordsId: 'cat-rolled', playerId: bob.id });
+  assertEquals(quit.state.counterPunchPlayerId, undefined);
+  assertEquals(
+    quit.state.players.map((player) => player.revengePunchDiscount),
+    [undefined, undefined],
+  );
+  assertPlayerTokens(quit, bob.id, startingSuckerTokens);
+
+  const again = await invokeGameAction(alice, { gameId, lastWordsId: 'rigged', type: 'rage_quit' }, 400);
+  assertEquals(again.error, 'This game is already over.');
+  const lateRoll = await invokeGameAction(alice, { gameId, held: falseHeld, type: 'roll' }, 400);
+  assertString(lateRoll.error);
+
+  // Anyone signed in can see the salt. Nobody can write or erase it.
+  const publicQuits = await charlie.client.from('rage_quits').select('game_id, player_id').eq('player_id', bob.id);
+  assertNoError(publicQuits.error);
+  assertEquals(publicQuits.data, [{ game_id: gameId, player_id: bob.id }]);
+  const forged = await charlie.client.from('rage_quits').insert({ game_id: gameId, player_id: alice.id });
+  assertEquals(Boolean(forged.error), true);
+  await bob.client.from('rage_quits').delete().eq('game_id', gameId);
+  const kept = await selectMany<{ game_id: string }>(admin.from('rage_quits').select('game_id').eq('game_id', gameId));
+  assertEquals(kept.length, 1);
+
+  const results = await selectMany<GamePlayerResultRow>(
+    admin.from('game_player_results').select('*').eq('game_id', gameId),
+  );
+  assertEquals(results.find((result) => result.player_id === alice.id)?.won, true);
+  assertEquals(results.find((result) => result.player_id === bob.id)?.won, false);
+
+  const stats = await selectMany<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+  );
+  const aliceStats = stats.find((row) => row.player_id === alice.id);
+  const bobStats = stats.find((row) => row.player_id === bob.id);
+  assertEquals([aliceStats?.games_played, aliceStats?.wins, aliceStats?.losses, aliceStats?.rage_quits], [3, 2, 1, 0]);
+  assertEquals([bobStats?.games_played, bobStats?.wins, bobStats?.losses, bobStats?.rage_quits], [3, 1, 2, 1]);
+  // Bob's 30-point partial game is not a new high, and no average moves.
+  assertEquals([bobStats?.highest_score, bobStats?.total_score, Number(bobStats?.average_score)], [20, 30, 15]);
+  assertEquals([bobStats?.rage_quit_games, aliceStats?.rage_quit_games], [1, 1]);
+
+  const { data: bobProfile, error: bobProfileError } = await charlie.client.rpc('get_profile_stat_rates', {
+    target_profile_id: bob.id,
+  });
+  assertNoError(bobProfileError);
+  assertEquals(bobProfile?.[0]?.games_played, 3);
+  assertEquals(bobProfile?.[0]?.rage_quits, 1);
+  assertEquals(Number(bobProfile?.[0]?.average_score), 15);
+  assertEquals(Number(bobProfile?.[0]?.upper_bonus_pct), 50);
+
+  const matchup = await alice.client
+    .from('head_to_head_stat_rates')
+    .select('rage_quits, upper_bonus_pct')
+    .eq('player_id', bob.id)
+    .eq('opponent_id', alice.id);
+  assertNoError(matchup.error);
+  assertEquals(matchup.data?.[0]?.rage_quits, 1);
+  assertEquals(Number(matchup.data?.[0]?.upper_bonus_pct), 50);
+
+  const { data: history, error: historyError } = await charlie.client.rpc('get_profile_recent_games', {
+    game_limit: 25,
+    target_profile_id: bob.id,
+  });
+  assertNoError(historyError);
+  assertEquals([history?.[0]?.rage_quitter_id, history?.[0]?.winner_id], [bob.id, alice.id]);
+
+  // The winner gets exactly one canned reply. The quitter gets none.
+  const quitterReply = await invokeGameAction(bob, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
+  assertEquals(quitterReply.error, 'Quitters do not get the last word.');
+  const freeReply = await invokeGameAction(alice, { gameId, replyId: 'lol', type: 'rage_quit_reply' }, 400);
+  assertEquals(freeReply.error, 'Choose one of the available replies.');
+  const replied = (await invokeGameAction(alice, { gameId, replyId: 'need-tissue', type: 'rage_quit_reply' }))
+    .game as GameRow;
+  assertEquals(replied.state.rageQuit, { lastWordsId: 'cat-rolled', playerId: bob.id, replyId: 'need-tissue' });
+  const secondReply = await invokeGameAction(alice, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
+  assertEquals(secondReply.error, 'You already said your piece.');
+
+  const actions = await loadActions(gameId);
+  const rageQuitAction = actions.find((action) => action.action_type === 'rage_quit');
+  assertEquals(
+    [rageQuitAction?.actor_id, actionPayloadValue(rageQuitAction?.payload, 'lastWordsId')],
+    [bob.id, 'cat-rolled'],
+  );
+  assertEquals(actions.filter((action) => action.action_type === 'rage_quit_reply').length, 1);
+
+  // A rematch plays out normally, and its average divides by played-out games only.
+  const rematch = (await invokeGameAction(bob, { gameId, type: 'rematch_game' })).game as GameRow;
+  const first = rematch.current_player_id === alice.id ? alice : bob;
+  const second = first === alice ? bob : alice;
+  let finished = rematch;
+  for (const category of scoreCategories) {
+    finished = await scratchAndPass(rematch.id, first, second, category);
+    finished = await scratchAndPass(rematch.id, second, first, category);
+  }
+  assertEquals(finished.status, 'complete');
+  const finalStats = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', bob.id).eq('opponent_id', alice.id).single(),
+  );
+  assertEquals(finalStats.games_played, 4);
+  assertEquals(Number(finalStats.average_score), 10);
+});
+
 Deno.test({
   name: 'cleanup Supabase clients',
   sanitizeOps: false,

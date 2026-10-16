@@ -669,6 +669,7 @@ function PlayerStatsSummary({
                 label="Avg tokens left"
                 value={formatPlayerSkillStat(stats, 'average_sucker_tokens_leftover')}
               />
+              <StatsValueLine label="Rage quits 🧂" value={String(stats.rage_quits ?? 0)} />
             </View>
             <View style={styles.statsDetailCard}>
               <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
@@ -776,6 +777,11 @@ function HeadToHeadStatsComparison({
           opponentValue={formatHeadToHeadSkillStat(opponent, 'average_sucker_tokens_leftover', formatNumber)}
           value={formatHeadToHeadSkillStat(mine, 'average_sucker_tokens_leftover', formatNumber)}
         />
+        <StatsComparisonLine
+          label="Rage quits 🧂"
+          opponentValue={String(opponent?.rage_quits ?? 0)}
+          value={String(mine.rage_quits ?? 0)}
+        />
       </View>
       <View style={styles.statsDetailCard}>
         <StatsComparisonHeader title="Category Rates" />
@@ -857,7 +863,12 @@ function PlayerGameHistory({
           </Text>
           {games.map((game) => {
             const result = getPlayerGameResult(game);
-            const resultTone = result === 'Won' ? 'win' : result === 'Lost' ? 'loss' : 'tie';
+            const resultTone =
+              result === 'Won' || result === 'Won by forfeit'
+                ? 'win'
+                : result === 'Lost' || result === 'Rage quit'
+                  ? 'loss'
+                  : 'tie';
             const resultLabel = getPlayerGameResultLabel(result, isCurrentUser);
             return (
               <Pressable
@@ -1097,6 +1108,9 @@ function GameScoreRow({
 }
 
 function getPlayerGameResult(game: ProfileRecentGame) {
+  // Rage quits are public record, whatever the partial scores say.
+  if (game.rageQuitterId) return game.rageQuitterId === game.player.id ? 'Rage quit' : 'Won by forfeit';
+  if (game.winnerId) return game.winnerId === game.player.id ? 'Won' : 'Lost';
   if (game.player.score === game.opponent.score) return 'Tied';
   return game.player.score > game.opponent.score ? 'Won' : 'Lost';
 }

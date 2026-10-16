@@ -14,6 +14,7 @@ import {
   expireCounterPunch,
   getSuckerPunchCost,
   getSuckerPunchKind,
+  getWinnerId,
   hasExtraSuckerBonus,
   type Dice,
   type DieValue,
@@ -22,6 +23,7 @@ import {
   maxRollsPerTurn,
   mulliganCurrentTurn,
   type Player,
+  rageQuitGame,
   resolveSuckerPunchOutcome,
   rollDie,
   scoreCategories,
@@ -52,6 +54,14 @@ import {
   type TauntId,
   type TauntScenario,
 } from '../_shared/taunts.ts';
+import {
+  getRageQuitLastWordsText,
+  getRageQuitReplyText,
+  isRageQuitLastWordsId,
+  isRageQuitReplyId,
+  type RageQuitLastWordsId,
+  type RageQuitReplyId,
+} from '../_shared/rageQuit.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -109,7 +119,9 @@ type ActionInput =
   | { type: 'mulligan'; gameId: string }
   | { type: 'prepare_sucker_punch'; gameId: string; turnId: string }
   | { type: 'sucker_punch'; chanceDie?: DieValue; chanceProtocol?: 'prepared'; gameId: string; turnId: string }
-  | { type: 'sucker_blocker'; gameId: string; turnId: string };
+  | { type: 'sucker_blocker'; gameId: string; turnId: string }
+  | { type: 'rage_quit'; gameId: string; lastWordsId: RageQuitLastWordsId }
+  | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
 type Action = ActionInput & { requestId: string };
 type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
 
@@ -296,6 +308,10 @@ async function applyAction(
       return prepareSuckerPunchChance(admin, actorId, action.gameId, action.turnId);
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
+    case 'rage_quit':
+      return rageQuitRemoteGame(admin, actorId, action.gameId, action.lastWordsId, mutationState);
+    case 'rage_quit_reply':
+      return replyToRageQuit(admin, actorId, action.gameId, action.replyId, mutationState);
     default:
       return assertNever(action);
   }
@@ -678,6 +694,18 @@ function buildNotificationContent(
   const actor = game.state.players.find((player) => player.id === actorId);
   const actorName = actor?.name ?? 'Your opponent';
 
+  if (action.type === 'rage_quit') {
+    return {
+      body: `“${getRageQuitLastWordsText(action.lastWordsId)}” You win by tantrum.`,
+      title: `${actorName} flipped the table!`,
+    };
+  }
+  if (action.type === 'rage_quit_reply') {
+    return {
+      body: getRageQuitReplyText(action.replyId),
+      title: `${actorName} saw you rage quit`,
+    };
+  }
   if (game.status === 'complete') {
     return buildGameOverNotification(game, recipientId);
   }
@@ -900,6 +928,20 @@ function toAction(value: unknown): Action {
         turnId: readString(action, 'turnId'),
         type,
       };
+    case 'rage_quit': {
+      const lastWordsId = readString(action, 'lastWordsId');
+      if (!isRageQuitLastWordsId(lastWordsId)) {
+        throw new Error('Choose one of the available last words.');
+      }
+      return { gameId: readString(action, 'gameId'), lastWordsId, requestId, type };
+    }
+    case 'rage_quit_reply': {
+      const replyId = readString(action, 'replyId');
+      if (!isRageQuitReplyId(replyId)) {
+        throw new Error('Choose one of the available replies.');
+      }
+      return { gameId: readString(action, 'gameId'), replyId, requestId, type };
+    }
     default:
       throw new Error('Invalid multiplayer action.');
   }
@@ -1616,6 +1658,76 @@ async function passResponse(admin: DbClient, actorId: string, gameId: string, mu
   return { game: updatedGame };
 }
 
+async function rageQuitRemoteGame(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  lastWordsId: RageQuitLastWordsId,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status === 'inviting') {
+    throw new Error('Remove the invite instead. Nobody has joined yet.');
+  }
+  if (game.status === 'complete' || game.state.phase === 'complete') {
+    throw new Error('This game is already over.');
+  }
+
+  // Either player may quit at any moment, including on the opponent's turn.
+  const nextState = rageQuitGame(game.state, actorId, lastWordsId);
+  const winnerId = getWinnerId(nextState);
+  const updatedGame = stageGameMove(mutationState, game, {
+    completed_at: new Date().toISOString(),
+    current_player_id: null,
+    state: nextState,
+    status: 'complete',
+    winner_id: winnerId,
+  });
+  mutationState.plan!.writes.push({
+    table: 'rage_quits',
+    operation: 'insert',
+    data: { game_id: gameId, player_id: actorId },
+  });
+
+  await Promise.all([
+    syncGamePlayers(admin, gameId, nextState, true, mutationState.plan),
+    insertAction(admin, gameId, actorId, 'rage_quit', { lastWordsId }, mutationState.plan),
+  ]);
+  await planCompletedGameStats(admin, gameId, nextState.players, winnerId, mutationState.plan!, actorId);
+
+  return {
+    game: updatedGame,
+    notificationProfileIds: nextState.players.map((player) => player.id),
+  };
+}
+
+async function replyToRageQuit(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  replyId: RageQuitReplyId,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  const rageQuit = game.state.rageQuit;
+  if (game.status !== 'complete' || !rageQuit) {
+    throw new Error('Nobody rage quit this game.');
+  }
+  if (rageQuit.playerId === actorId) {
+    throw new Error('Quitters do not get the last word.');
+  }
+  if (rageQuit.replyId) {
+    throw new Error('You already said your piece.');
+  }
+
+  // The game version check makes the single reply race-safe across devices.
+  const updatedGame = stageGameMove(mutationState, game, {
+    state: { ...game.state, rageQuit: { ...rageQuit, replyId } },
+  });
+  await insertAction(admin, gameId, actorId, 'rage_quit_reply', { replyId }, mutationState.plan);
+  return { game: updatedGame, notificationProfileIds: [rageQuit.playerId] };
+}
+
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if ((game.status !== 'active' && game.status !== 'response_window') || game.state.phase === 'complete') {
@@ -2142,11 +2254,35 @@ async function planCompletedGameStats(
   players: Player[],
   winnerId: string | null,
   plan: GameMovePlan,
+  rageQuitterId?: string,
 ) {
   for (const player of [...players].sort((left, right) => left.id.localeCompare(right.id))) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = await buildResult(admin, gameId, player, opponent, players, winnerId, plan);
     const lost = winnerId !== null && !result.won;
+    if (rageQuitterId) {
+      // A forfeit counts toward the record only. Its partial scores and plays
+      // never reach averages, highs, rates, or score-based achievements.
+      plan.writes.push({
+        table: 'game_player_results',
+        operation: 'upsert',
+        data: { ...result, blowout_loss: 0, blowout_win: 0, buzzer_beater_win: 0, comeback_win: 0 },
+      });
+      plan.writes.push({
+        table: 'head_to_head_stats',
+        operation: 'increment',
+        data: {
+          player_id: player.id,
+          opponent_id: opponent.id,
+          games_played: 1,
+          wins: result.won ? 1 : 0,
+          losses: lost ? 1 : 0,
+          rage_quit_games: 1,
+          rage_quits: player.id === rageQuitterId ? 1 : 0,
+        },
+      });
+      continue;
+    }
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
     const statsDelta = {
       player_id: player.id,

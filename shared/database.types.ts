@@ -165,7 +165,9 @@ export type Database = {
             | 'mulligan'
             | 'sucker_punch'
             | 'sucker_blocker'
-            | 'taunt';
+            | 'taunt'
+            | 'rage_quit'
+            | 'rage_quit_reply';
           actor_id: string;
           created_at: string;
           game_id: string;
@@ -188,7 +190,9 @@ export type Database = {
             | 'mulligan'
             | 'sucker_punch'
             | 'sucker_blocker'
-            | 'taunt';
+            | 'taunt'
+            | 'rage_quit'
+            | 'rage_quit_reply';
           actor_id: string;
           game_id: string;
           id?: string;
@@ -345,6 +349,8 @@ export type Database = {
           sucker_punches_used: number;
           sucker_tokens_leftover: number;
           sucker_tokens_spent: number;
+          rage_quit_games: number;
+          rage_quits: number;
           three_of_a_kind_games: number;
           total_score: number;
           upper_bonus_games: number;
@@ -358,13 +364,15 @@ export type Database = {
         Row: { profile_id: string; game_id: string; result: Json; recorded_at: string };
         Insert: { profile_id: string; game_id: string; result: Json; recorded_at?: string };
         Update: { result?: Json };
-        Relationships: [{
-          foreignKeyName: 'computer_game_results_profile_id_fkey';
-          columns: ['profile_id'];
-          isOneToOne: false;
-          referencedRelation: 'profiles';
-          referencedColumns: ['id'];
-        }];
+        Relationships: [
+          {
+            foreignKeyName: 'computer_game_results_profile_id_fkey';
+            columns: ['profile_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       computer_stats: {
         Row: {
@@ -519,11 +527,18 @@ export type Database = {
           sucker_punches_received: number;
           sucker_punch_landed_pct: number;
           sucker_punches_used: number;
+          rage_quit_games: number;
+          rage_quits: number;
           three_of_a_kind_pct: number;
           upper_bonus_pct: number;
           wins: number;
         };
         Insert: never;
+        Update: never;
+      };
+      rage_quits: {
+        Row: { created_at: string; game_id: string; player_id: string };
+        Insert: { created_at?: string; game_id: string; player_id: string };
         Update: never;
       };
     };
@@ -583,6 +598,8 @@ export type Database = {
           player_scorecard: Json;
           player_sucker_tokens: number;
           player_sucker_tokens_spent: number;
+          rage_quitter_id: string | null;
+          winner_id: string | null;
         }[];
       };
       get_profile_stat_rates: {
@@ -614,6 +631,7 @@ export type Database = {
           sucker_punch_landed_pct: number;
           sucker_punches_received: number;
           sucker_punches_used: number;
+          rage_quits: number;
           three_of_a_kind_pct: number;
           upper_bonus_pct: number;
           wins: number;

@@ -109,6 +109,8 @@ export function getActionKey(action: MultiplayerAction) {
     case 'taunt':
     case 'pass_response':
     case 'mulligan':
+    case 'rage_quit':
+    case 'rage_quit_reply':
       return JSON.stringify([action.type, action.gameId]);
     case 'extra_roll':
     case 'roll':
@@ -141,6 +143,10 @@ function hasMatchingActionPayload(existing: MultiplayerAction, incoming: Multipl
       );
     case 'taunt':
       return incoming.type === 'taunt' && existing.tauntId === incoming.tauntId;
+    case 'rage_quit':
+      return incoming.type === 'rage_quit' && existing.lastWordsId === incoming.lastWordsId;
+    case 'rage_quit_reply':
+      return incoming.type === 'rage_quit_reply' && existing.replyId === incoming.replyId;
     default:
       return true;
   }

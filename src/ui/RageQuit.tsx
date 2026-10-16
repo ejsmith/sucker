@@ -1,0 +1,590 @@
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Image, Modal, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import type { DieValue } from '../game';
+import { rageQuitLastWords, rageQuitMeterTaps, type RageQuitLastWordsId } from '../../shared/rageQuit';
+import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
+import { DieFace } from './DieFace';
+import { Pressable } from './Pressable';
+
+const suckerTokenImage = require('../../assets/sucker-token.png');
+
+// Each tap escalates the button. The last entry is shown once the meter is full.
+const mashLabels = [
+  'MASH TO FLIP',
+  "I'm fine.",
+  "I'm FINE.",
+  'Totally fine.',
+  'This game is RIGGED',
+  'ARGH!!',
+  'WHO MADE THESE DICE',
+  '(╯°□°)╯',
+  'FLIP IT!',
+];
+const drainDelayMs = 700;
+const drainStepMs = 260;
+const flipDurationMs = 1_350;
+const maxTokenDebris = 15;
+
+export const tableFlipKaomoji = '(╯°□°)╯︵ ┻━┻';
+export const tableRestoredKaomoji = '┬─┬ノ( º _ ºノ)';
+export const rageQuitRematchCooldownMs = 5_000;
+
+export function RageQuitDialog({
+  isBusy,
+  onCancel,
+  onFlip,
+  onTap,
+  reduceMotion,
+}: {
+  isBusy: boolean;
+  onCancel: () => void;
+  onFlip: (lastWordsId: RageQuitLastWordsId) => void;
+  onTap?: () => void;
+  reduceMotion: boolean;
+}) {
+  const [lastWordsId, setLastWordsId] = useState<RageQuitLastWordsId>(rageQuitLastWords[0].id);
+  const [level, setLevel] = useState(0);
+  const hasFlipped = useRef(false);
+  const lastTapAt = useRef(0);
+  const [shake] = useState(() => new Animated.Value(0));
+  const [fill] = useState(() => new Animated.Value(0));
+  const cancelRef = useRef<AccessibilityTargetRef | null>(null);
+  const isFull = level >= rageQuitMeterTaps;
+
+  useEffect(() => {
+    Animated.timing(fill, {
+      duration: reduceMotion ? 0 : 120,
+      easing: Easing.out(Easing.quad),
+      toValue: level / rageQuitMeterTaps,
+      useNativeDriver: false,
+    }).start();
+  }, [fill, level, reduceMotion]);
+
+  // Stop mashing and the rage drains away. That is the cancel path.
+  useEffect(() => {
+    if (level === 0 || isFull) return;
+    const sinceTap = Date.now() - lastTapAt.current;
+    const timer = setTimeout(
+      () => setLevel((current) => (current >= rageQuitMeterTaps ? current : Math.max(0, current - 1))),
+      sinceTap < drainDelayMs ? drainDelayMs - sinceTap : drainStepMs,
+    );
+    return () => clearTimeout(timer);
+  }, [isFull, level]);
+
+  useEffect(() => {
+    if (!isFull || hasFlipped.current) return;
+    hasFlipped.current = true;
+    onFlip(lastWordsId);
+  }, [isFull, lastWordsId, onFlip]);
+
+  function handleMash() {
+    if (isFull || isBusy) return;
+    lastTapAt.current = Date.now();
+    const next = Math.min(rageQuitMeterTaps, level + 1);
+    setLevel(next);
+    onTap?.();
+    if (reduceMotion) return;
+    const amplitude = 2 + next * 1.6;
+    shake.stopAnimation();
+    Animated.sequence([
+      Animated.timing(shake, { duration: 40, toValue: amplitude, useNativeDriver: true }),
+      Animated.timing(shake, { duration: 60, toValue: -amplitude, useNativeDriver: true }),
+      Animated.timing(shake, { duration: 50, toValue: amplitude * 0.5, useNativeDriver: true }),
+      Animated.timing(shake, { duration: 40, toValue: 0, useNativeDriver: true }),
+    ]).start();
+  }
+
+  const fillWidth = fill.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  const fillColor = fill.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: ['#FFD329', '#FF7A1A', '#F12D22'],
+  });
+  const label = isBusy || isFull ? 'FLIPPING…' : mashLabels[Math.min(level, mashLabels.length - 2)];
+
+  return (
+    <Modal
+      accessibilityLabel="Rage quit"
+      animationType="none"
+      navigationBarTranslucent
+      onRequestClose={onCancel}
+      onShow={() => focusAccessibilityTarget(cancelRef.current)}
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+      transparent
+      visible
+    >
+      <SafeAreaView style={styles.backdrop} testID="rage-quit-dialog">
+        <Animated.View
+          accessibilityViewIsModal
+          onAccessibilityEscape={onCancel}
+          style={[styles.panel, { transform: [{ translateX: shake }, { rotate: shake.interpolate(shakeRotate) }] }]}
+          testID="rage-quit-panel"
+        >
+          <Text accessibilityRole="header" maxFontSizeMultiplier={1.2} style={styles.title}>
+            RAGE QUIT?
+          </Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.subtitle}>
+            Flip the table and your opponent wins. Everyone sees the 🧂 next to your name for 24 hours.
+          </Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.sectionLabel}>
+            LAST WORDS
+          </Text>
+          <View accessibilityRole="radiogroup" style={styles.lastWords}>
+            {rageQuitLastWords.map((line) => {
+              const selected = line.id === lastWordsId;
+              return (
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: selected }}
+                  disabled={isBusy || isFull}
+                  key={line.id}
+                  onPress={() => setLastWordsId(line.id)}
+                  style={({ pressed }) => [
+                    styles.lastWordsOption,
+                    selected && styles.lastWordsOptionSelected,
+                    pressed && styles.pressed,
+                  ]}
+                  testID={`rage-quit-last-words-${line.id}`}
+                >
+                  <Text
+                    adjustsFontSizeToFit
+                    maxFontSizeMultiplier={1.2}
+                    minimumFontScale={0.75}
+                    numberOfLines={2}
+                    style={[styles.lastWordsText, selected && styles.lastWordsTextSelected]}
+                  >
+                    {line.text}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.meterTrack} testID="rage-quit-meter">
+            <Animated.View style={[styles.meterFill, { backgroundColor: fillColor, width: fillWidth }]} />
+            <Text maxFontSizeMultiplier={1.2} style={styles.meterText}>
+              RAGE {level}/{rageQuitMeterTaps}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityHint={`Tap ${rageQuitMeterTaps} times quickly to flip the table and forfeit.`}
+            accessibilityLabel="Flip the table"
+            accessibilityValue={{ max: rageQuitMeterTaps, min: 0, now: level }}
+            disabled={isBusy || isFull}
+            onPress={handleMash}
+            style={({ pressed }) => [styles.mashButton, pressed && styles.mashButtonPressed]}
+            testID="rage-quit-mash-button"
+          >
+            <Text
+              adjustsFontSizeToFit
+              maxFontSizeMultiplier={1.2}
+              minimumFontScale={0.6}
+              numberOfLines={1}
+              style={styles.mashText}
+            >
+              {label}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Never mind, keep playing"
+            disabled={isBusy || isFull}
+            onPress={onCancel}
+            ref={cancelRef}
+            style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+            testID="rage-quit-cancel-button"
+          >
+            <Text maxFontSizeMultiplier={1.2} style={styles.cancelText}>
+              Nah, I&apos;m good
+            </Text>
+          </Pressable>
+        </Animated.View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+const shakeRotate = { inputRange: [-20, 20], outputRange: ['-1.5deg', '1.5deg'] };
+
+export function runTableFlip(progress: Animated.Value, reduceMotion: boolean) {
+  return new Promise<void>((resolve) => {
+    if (reduceMotion) {
+      progress.setValue(1);
+      resolve();
+      return;
+    }
+    progress.setValue(0);
+    Animated.timing(progress, {
+      duration: flipDurationMs,
+      easing: Easing.linear,
+      toValue: 1,
+      useNativeDriver: true,
+    }).start(() => resolve());
+  });
+}
+
+// The scorecard is the tabletop: a short wind-up, then it heaves up and over.
+export function getTableFlipBoardStyle(progress: Animated.Value, stageHeight: number) {
+  return {
+    opacity: progress.interpolate({ inputRange: [0, 0.7, 0.9], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
+    transform: [
+      { perspective: 900 },
+      {
+        translateY: progress.interpolate({
+          inputRange: [0, 0.14, 0.3, 0.9],
+          outputRange: [0, 10, -stageHeight * 0.08, -stageHeight * 1.05],
+          extrapolate: 'clamp',
+        }),
+      },
+      {
+        rotateX: progress.interpolate({
+          inputRange: [0, 0.14, 0.9],
+          outputRange: ['0deg', '6deg', '-118deg'],
+          extrapolate: 'clamp',
+        }),
+      },
+      {
+        rotateZ: progress.interpolate({
+          inputRange: [0, 0.14, 0.9],
+          outputRange: ['0deg', '2deg', '-19deg'],
+          extrapolate: 'clamp',
+        }),
+      },
+    ],
+  } as Animated.WithAnimatedValue<ViewStyle>;
+}
+
+// The dice tray and buttons tumble off the bottom of the screen.
+export function getTableFlipTrayStyle(progress: Animated.Value, stageHeight: number) {
+  return {
+    opacity: progress.interpolate({ inputRange: [0, 0.75, 0.95], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
+    transform: [
+      {
+        translateY: progress.interpolate({
+          inputRange: [0, 0.2, 0.95],
+          outputRange: [0, -14, stageHeight * 0.65],
+          extrapolate: 'clamp',
+        }),
+      },
+      {
+        rotateZ: progress.interpolate({
+          inputRange: [0, 0.2, 0.95],
+          outputRange: ['0deg', '-3deg', '24deg'],
+          extrapolate: 'clamp',
+        }),
+      },
+    ],
+  } as Animated.WithAnimatedValue<ViewStyle>;
+}
+
+type Debris = { kind: 'die'; face: DieValue } | { kind: 'token' };
+
+// Deterministic scatter so replays and screenshots match.
+function scatter(index: number, count: number) {
+  const spread = count <= 1 ? 0.5 : index / (count - 1);
+  const wobble = ((index * 7919) % 13) / 13;
+  return {
+    delay: 0.16 + wobble * 0.12,
+    dx: (spread - 0.5) * 2 * (150 + wobble * 90),
+    peak: -(170 + ((index * 37) % 9) * 22),
+    spin: (index % 2 === 0 ? 1 : -1) * (360 + ((index * 53) % 5) * 150),
+  };
+}
+
+export function TableFlipDebris({
+  dice,
+  progress,
+  stageHeight,
+  style,
+  tokensLeft,
+}: {
+  dice: readonly DieValue[];
+  progress: Animated.Value;
+  stageHeight: number;
+  style?: StyleProp<ViewStyle>;
+  tokensLeft: number;
+}) {
+  // Hoarded tokens make the mess bigger. That is the joke.
+  const pieces: Debris[] = [
+    ...dice.map((face) => ({ face, kind: 'die' as const })),
+    ...Array.from({ length: Math.min(maxTokenDebris, Math.max(0, tokensLeft)) }, () => ({ kind: 'token' as const })),
+  ];
+
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={[styles.debrisLayer, style]}
+      testID="table-flip-debris"
+    >
+      {pieces.map((piece, index) => {
+        const { delay, dx, peak, spin } = scatter(index, pieces.length);
+        const start = Math.min(delay, 0.4);
+        const transform = [
+          {
+            translateX: progress.interpolate({
+              inputRange: [0, start, 1],
+              outputRange: [0, 0, dx],
+              extrapolate: 'clamp',
+            }),
+          },
+          {
+            translateY: progress.interpolate({
+              inputRange: [0, start, start + (1 - start) * 0.4, 1],
+              outputRange: [0, 0, peak, stageHeight * 0.75],
+              extrapolate: 'clamp',
+            }),
+          },
+          {
+            rotate: progress.interpolate({
+              inputRange: [0, start, 1],
+              outputRange: ['0deg', '0deg', `${spin}deg`],
+              extrapolate: 'clamp',
+            }),
+          },
+        ];
+        const opacity = progress.interpolate({
+          inputRange: [0, start, start + 0.01, 0.92, 1],
+          outputRange: [0, 0, 1, 1, 0],
+          extrapolate: 'clamp',
+        });
+
+        return (
+          <Animated.View key={index} style={[styles.debrisPiece, { opacity, transform }]}>
+            {piece.kind === 'die' ? (
+              <DieFace face={piece.face} style={styles.debrisDie} />
+            ) : (
+              <Image source={suckerTokenImage} style={styles.debrisToken} />
+            )}
+          </Animated.View>
+        );
+      })}
+      <Animated.Text
+        maxFontSizeMultiplier={1.2}
+        style={[
+          styles.kaomoji,
+          {
+            opacity: progress.interpolate({
+              inputRange: [0, 0.1, 0.3, 0.85, 1],
+              outputRange: [0, 0, 1, 1, 0],
+              extrapolate: 'clamp',
+            }),
+            transform: [
+              {
+                scale: progress.interpolate({
+                  inputRange: [0, 0.3, 0.4, 1],
+                  outputRange: [0.6, 1.25, 1, 1.05],
+                  extrapolate: 'clamp',
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        {tableFlipKaomoji}
+      </Animated.Text>
+    </View>
+  );
+}
+
+// Public shame: shown beside a name for 24 hours after a rage quit.
+export function SaltBadge({ size = 14, style }: { size?: number; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View
+      accessibilityLabel="Rage quit in the last 24 hours"
+      accessibilityRole="image"
+      accessible
+      style={[
+        styles.saltBadge,
+        { borderRadius: size, height: size * 1.6, minWidth: size * 1.6, paddingHorizontal: size * 0.2 },
+        style,
+      ]}
+      testID="salt-badge"
+    >
+      <Text allowFontScaling={false} style={{ fontSize: size, lineHeight: size * 1.25 }}>
+        🧂
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(40, 0, 0, 0.78)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 14,
+  },
+  panel: {
+    alignItems: 'stretch',
+    backgroundColor: '#210505',
+    borderColor: '#F12D22',
+    borderRadius: 14,
+    borderWidth: 4,
+    gap: 10,
+    maxWidth: 420,
+    padding: 14,
+    width: '100%',
+  },
+  title: {
+    color: '#FFD329',
+    fontFamily: 'Inter_900Black',
+    fontSize: 32,
+    fontWeight: '900',
+    lineHeight: 36,
+    textAlign: 'center',
+    textShadowColor: '#F12D22',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  subtitle: {
+    color: '#FFF3C2',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  sectionLabel: {
+    color: '#FFB000',
+    fontFamily: 'Inter_900Black',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  lastWords: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  lastWordsOption: {
+    alignItems: 'center',
+    backgroundColor: '#3A0C06',
+    borderColor: '#8F3B10',
+    borderRadius: 9,
+    borderWidth: 2,
+    flexBasis: '48%',
+    flexGrow: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  lastWordsOptionSelected: {
+    backgroundColor: '#FFF3C2',
+    borderColor: '#FFD329',
+  },
+  lastWordsText: {
+    color: '#FFF3C2',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  lastWordsTextSelected: {
+    color: '#210505',
+  },
+  meterTrack: {
+    backgroundColor: '#3A0C06',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderWidth: 2,
+    height: 26,
+    justifyContent: 'center',
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  meterFill: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    top: 0,
+  },
+  meterText: {
+    color: '#FFF3C2',
+    fontFamily: 'Inter_900Black',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  mashButton: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderRadius: 12,
+    borderWidth: 3,
+    justifyContent: 'center',
+    minHeight: 72,
+    paddingHorizontal: 12,
+  },
+  mashButtonPressed: {
+    backgroundColor: '#B91510',
+    transform: [{ scale: 0.96 }],
+  },
+  mashText: {
+    color: '#FFD329',
+    fontFamily: 'Inter_900Black',
+    fontSize: 26,
+    fontWeight: '900',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+  },
+  cancelButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  cancelText: {
+    color: '#FFF3C2',
+    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 15,
+    textDecorationLine: 'underline',
+  },
+  pressed: {
+    opacity: 0.75,
+  },
+  debrisLayer: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 95,
+  },
+  debrisPiece: {
+    position: 'absolute',
+  },
+  debrisDie: {
+    height: 52,
+    width: 52,
+  },
+  debrisToken: {
+    height: 40,
+    width: 40,
+  },
+  kaomoji: {
+    color: '#FFD329',
+    fontSize: 34,
+    fontWeight: '900',
+    position: 'absolute',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 0,
+    top: '18%',
+  },
+  saltBadge: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderWidth: 1.5,
+    justifyContent: 'center',
+  },
+});
