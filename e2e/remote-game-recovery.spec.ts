@@ -1,9 +1,17 @@
 import { expect, test } from '@playwright/test';
 import { createGame } from '../shared/game';
 
-for (const scenario of ['reconnect', 'initial', 'lobby-recovery'] as const) {
+for (const scenario of [
+  'reconnect',
+  'initial',
+  'lobby-recovery',
+  'auth-retry',
+  'auth-manual',
+  'auth-foreground',
+] as const) {
   const initialFails = scenario === 'reconnect';
   const lobbyRecovery = scenario === 'lobby-recovery';
+  const interruptedAuth = scenario.startsWith('auth-');
   test(
     lobbyRecovery
       ? 'a background lobby cannot consume an open game recovery'
@@ -68,6 +76,8 @@ for (const scenario of ['reconnect', 'initial', 'lobby-recovery'] as const) {
         replacementFinished = resolve;
       });
       let gameRequests = 0;
+      let blockAuth = false;
+      let authFailures = 0;
       let recovering = false;
       let releaseRecovery!: () => void;
       let recoveryRequested!: () => void;
@@ -83,7 +93,17 @@ for (const scenario of ['reconnect', 'initial', 'lobby-recovery'] as const) {
       });
       await page.route(/\/(?:auth|rest)\/v1\//, async (route) => {
         const url = new URL(route.request().url());
-        if (url.pathname === '/auth/v1/user') return route.fulfill({ json: user });
+        if (url.pathname === '/auth/v1/user') {
+          if (blockAuth) {
+            authFailures += 1;
+            if (scenario === 'auth-retry') blockAuth = false;
+            return route.fulfill({
+              status: 400,
+              json: { message: 'fetch failed: UnexpectedException: cancelled (at ExpoModulesCore/Promise.swift:56)' },
+            });
+          }
+          return route.fulfill({ json: user });
+        }
         if (url.pathname === '/rest/v1/profiles') {
           return route.fulfill({
             json: { id: user.id, display_name: 'Recovery Tester', username: 'recovery_tester', avatar_url: null },
@@ -91,6 +111,10 @@ for (const scenario of ['reconnect', 'initial', 'lobby-recovery'] as const) {
         }
         if (url.pathname === '/rest/v1/games' && url.searchParams.get('id') === `eq.${gameId}`) {
           const request = ++gameRequests;
+          if (interruptedAuth) {
+            firstRequested();
+            return route.fulfill({ json: game });
+          }
           if (lobbyRecovery) {
             firstRequested();
             if (recovering) {
@@ -125,7 +149,7 @@ for (const scenario of ['reconnect', 'initial', 'lobby-recovery'] as const) {
           if (typeof raw !== 'string') return;
           const [joinRef, ref, topic, event, payload] = JSON.parse(raw);
           if (event === 'phx_join') {
-            if (topic === `realtime:game:${gameId}`) await firstRequest;
+            if (topic === `realtime:game:${gameId}` && !interruptedAuth) await firstRequest;
             socket.send(
               JSON.stringify([
                 joinRef,
@@ -150,6 +174,32 @@ for (const scenario of ['reconnect', 'initial', 'lobby-recovery'] as const) {
 
       await page.goto('/');
       await expect(page.getByText('Hi, Recovery Tester')).toBeVisible();
+      if (interruptedAuth) {
+        blockAuth = true;
+        await page.getByTestId(`game-card-${gameId}`).click();
+        if (scenario !== 'auth-retry') {
+          await expect.poll(() => authFailures).toBeGreaterThanOrEqual(3);
+          await expect(page.getByRole('button', { name: 'Retry loading game' })).toBeVisible();
+          await expect(page.getByText('Unable to reach Sucker! services. Please try again.')).toBeVisible();
+          await expect(
+            page.getByTestId('remote-loading-screen').getByText('UnexpectedException', { exact: false }),
+          ).toHaveCount(0);
+          await page.screenshot({ path: testInfo.outputPath('interrupted-game-load.png') });
+          blockAuth = false;
+          if (scenario === 'auth-manual') {
+            await page.getByRole('button', { name: 'Retry loading game' }).click();
+          } else {
+            await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+            await page.waitForTimeout(100);
+            await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          }
+        }
+        await expect(page.getByTestId('roll-button')).toBeEnabled();
+        await expect(page.getByTestId('remote-loading-screen')).toHaveCount(0);
+        expect(authFailures).toBeGreaterThan(0);
+        await page.screenshot({ path: testInfo.outputPath('recovered-game-load.png') });
+        return;
+      }
       if (lobbyRecovery) {
         await page.getByTestId(`game-card-${gameId}`).click();
         await expect(page.getByTestId('roll-button')).toBeEnabled();

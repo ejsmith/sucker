@@ -43,6 +43,7 @@ test('connection failures remain distinct from rejected credentials', () => {
     { status: 429 },
     { status: 503 },
     { message: 'Network request failed' },
+    { message: 'fetch failed: UnexpectedException: cancelled (at ExpoModulesCore/Promise.swift:56)' },
   ])
     assert.equal(isTemporarySessionError(error), true);
   for (const error of [
