@@ -278,15 +278,21 @@ export function getTableFlipTrayStyle(progress: Animated.Value, stageHeight: num
 
 type Debris = { kind: 'die'; face: DieValue } | { kind: 'token' };
 
-// Deterministic scatter so replays and screenshots match.
-function scatter(index: number, count: number) {
-  const spread = count <= 1 ? 0.5 : index / (count - 1);
-  const wobble = ((index * 7919) % 13) / 13;
+// Deterministic noise in [0, 1) so replays and screenshots match.
+function noise(seed: number) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+// Each piece launches from a different spot on the tabletop on its own arc.
+function scatter(index: number) {
   return {
-    delay: 0.16 + wobble * 0.12,
-    dx: (spread - 0.5) * 2 * (150 + wobble * 90),
-    peak: -(170 + ((index * 37) % 9) * 22),
-    spin: (index % 2 === 0 ? 1 : -1) * (360 + ((index * 53) % 5) * 150),
+    delay: 0.12 + noise(index + 1) * 0.22,
+    dx: (noise(index + 11) * 2 - 1) * 175,
+    peak: -(120 + noise(index + 23) * 240),
+    spin: (noise(index + 37) > 0.5 ? 1 : -1) * (300 + noise(index + 51) * 600),
+    x0: (noise(index + 67) * 2 - 1) * 130,
+    y0: -60 - noise(index + 79) * 220,
   };
 }
 
@@ -318,20 +324,20 @@ export function TableFlipDebris({
       testID="table-flip-debris"
     >
       {pieces.map((piece, index) => {
-        const { delay, dx, peak, spin } = scatter(index, pieces.length);
+        const { delay, dx, peak, spin, x0, y0 } = scatter(index);
         const start = Math.min(delay, 0.4);
         const transform = [
           {
             translateX: progress.interpolate({
               inputRange: [0, start, 1],
-              outputRange: [0, 0, dx],
+              outputRange: [x0, x0, x0 + dx],
               extrapolate: 'clamp',
             }),
           },
           {
             translateY: progress.interpolate({
               inputRange: [0, start, start + (1 - start) * 0.4, 1],
-              outputRange: [0, 0, peak, stageHeight * 0.75],
+              outputRange: [y0, y0, y0 + peak, stageHeight * 0.75],
               extrapolate: 'clamp',
             }),
           },

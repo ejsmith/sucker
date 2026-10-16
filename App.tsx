@@ -4728,7 +4728,12 @@ export function LocalGameScreen({
                   maxFontSizeMultiplier={1.2}
                   minimumFontScale={0.7}
                   numberOfLines={1}
-                  style={[styles.gameOverTitle, gameLayout.styles.gameOverTitle]}
+                  style={[
+                    styles.gameOverTitle,
+                    gameLayout.styles.gameOverTitle,
+                    // Leave room for the close button beside the longer rage-quit titles.
+                    rageQuit && { fontSize: gameLayout.unit(25), lineHeight: gameLayout.unit(30) },
+                  ]}
                   testID="game-over-title"
                 >
                   {gameOverTitle}
@@ -4906,7 +4911,7 @@ export function LocalGameScreen({
                       style={[styles.gameOverPrimaryText, gameLayout.styles.gameOverPrimaryText]}
                     >
                       {rematchLockSeconds > 0
-                        ? `Take a breath… ${rematchLockSeconds}`
+                        ? `Breathe… ${rematchLockSeconds}`
                         : didIRageQuit
                           ? 'Run it back'
                           : 'Rematch'}
