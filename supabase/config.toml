@@ -49,6 +49,8 @@ enable_manual_linking = true
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
+# Local test-player logins need immediate password sign-ups. Hosted projects
+# must enable Confirm email so nobody can claim another person's address.
 enable_confirmations = false
 secure_password_change = false
 max_frequency = "1s"
@@ -56,6 +58,11 @@ otp_length = 6
 otp_expiry = 3600
 
 [auth.email.template.magic_link]
+subject = "Your Sucker! sign-in code"
+content_path = "./supabase/templates/sign-in-code.html"
+
+# With Confirm email enabled, a first email-code sign-in uses this template.
+[auth.email.template.confirmation]
 subject = "Your Sucker! sign-in code"
 content_path = "./supabase/templates/sign-in-code.html"
 

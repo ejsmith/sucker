@@ -184,6 +184,18 @@ emails show a code instead of the stock magic-link copy:
 2. Open Supabase Dashboard -> Authentication -> Emails -> Magic Link.
 3. Set the subject to `Your Sucker! sign-in code`.
 4. Paste the contents of `supabase/templates/sign-in-code.html`.
+5. Repeat steps 3-4 for the Confirm signup template. A new player's first code
+   arrives through that template.
+6. Enable Authentication -> Sign In / Providers -> Email -> Confirm email.
+
+Confirm email is required. Without it, anyone can call the public `signUp`
+endpoint with another person's address and a password, and that password keeps
+working after the real owner later signs in with a code. With it enabled, the
+`on_auth_user_email_confirmed` trigger also discards a password chosen before
+the owner confirmed the address. Verify the hosted setting with
+`curl "$SUPABASE_URL/auth/v1/settings" -H "apikey: $SUPABASE_ANON_KEY"`;
+`mailer_autoconfirm` must be `false`. Local development keeps it disabled for
+test-player logins.
 
 The important template variable is:
 

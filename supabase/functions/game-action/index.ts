@@ -6,6 +6,7 @@ import { getActionRequestFailureDisposition, isRetryableDatabaseError } from '..
 import { deliverActionNotifications } from '../_shared/notificationDelivery.ts';
 import { discardRequestBody } from '../_shared/discardRequestBody.ts';
 import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
+import { readLocalTestHook } from '../_shared/testHooks.ts';
 import {
   createEmptyScorecard,
   applySuckerPunchOpportunity,
@@ -116,7 +117,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Origin': '*',
 };
-const nudgeTurnWaitMs = readPositiveIntegerEnv('SUCKER_E2E_NUDGE_WAIT_MS') ?? 60 * 60 * 1_000;
+const nudgeTurnWaitMs = readPositiveInteger(readLocalTestHook('SUCKER_E2E_NUDGE_WAIT_MS')) ?? 60 * 60 * 1_000;
 
 Deno.serve(async (request) => {
   const timer = new ActionTimer();
@@ -1671,13 +1672,7 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   return { game: updatedGame };
 }
 
-async function prepareSuckerPunchChance(
-  admin: DbClient,
-  actorId: string,
-  gameId: string,
-  turnId: string,
-  legacyChanceDie?: DieValue,
-) {
+async function prepareSuckerPunchChance(admin: DbClient, actorId: string, gameId: string, turnId: string) {
   const game = await loadGameForActor(admin, gameId, actorId);
   if (game.status !== 'response_window' || game.last_turn_id !== turnId) {
     throw new Error('Sucker Punch can only target the opponent’s latest submitted turn.');
@@ -1705,7 +1700,7 @@ async function prepareSuckerPunchChance(
       game_id: gameId,
       actor_id: actorId,
       turn_id: turnId,
-      chance_die: legacyChanceDie ?? rollDie(edgeSuckerPunchDieRandom),
+      chance_die: rollDie(edgeSuckerPunchDieRandom),
     },
     { onConflict: 'game_id,actor_id,turn_id', ignoreDuplicates: true },
   );
@@ -1730,8 +1725,9 @@ async function suckerPunchTurn(
   displayedChanceDie?: DieValue,
   chanceProtocol?: 'prepared',
 ) {
-  // Updated clients require server preparation. App Store 1.1.0 sends its
-  // locally displayed chance directly; retain that protocol during the rollout.
+  // Updated clients require server preparation. App Store 1.1.0 threw with a
+  // locally rolled chance, which let any client choose its own odds; that
+  // protocol is retired. A client die only confirms a chance the server saved.
   const { data: existingChance, error: chanceError } = await admin
     .from('sucker_punch_attempts')
     .select('chance_die')
@@ -1743,7 +1739,10 @@ async function suckerPunchTurn(
   if (!existingChance && chanceProtocol === 'prepared') {
     throw new Error('Roll the Sucker Punch chance before throwing.');
   }
-  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId, displayedChanceDie);
+  if (!existingChance && displayedChanceDie !== undefined) {
+    throw new Error('Update Sucker! to throw a Sucker Punch.');
+  }
+  const prepared = await prepareSuckerPunchChance(admin, actorId, gameId, turnId);
   // The first stored chance wins, including when an old throw races preparation
   // on another device. Never charge tokens for odds different from those shown.
   if (displayedChanceDie !== undefined && displayedChanceDie !== prepared.suckerPunchChanceDie) {
@@ -2092,7 +2091,7 @@ function cryptoRandom(): number {
 }
 
 function edgeRollRandom(): number {
-  const fixedDie = Number(Deno.env.get('SUCKER_E2E_FIXED_DIE'));
+  const fixedDie = Number(readLocalTestHook('SUCKER_E2E_FIXED_DIE'));
   if (Number.isInteger(fixedDie) && fixedDie >= 1 && fixedDie <= 6) {
     return (fixedDie - 1) / 6;
   }
@@ -2101,7 +2100,7 @@ function edgeRollRandom(): number {
 }
 
 function edgeSuckerPunchDieRandom(): number {
-  const fixedDie = Number(Deno.env.get('SUCKER_E2E_SUCKER_PUNCH_DIE'));
+  const fixedDie = Number(readLocalTestHook('SUCKER_E2E_SUCKER_PUNCH_DIE'));
   if (Number.isInteger(fixedDie) && fixedDie >= 1 && fixedDie <= 6) {
     return (fixedDie - 1) / 6;
   }
@@ -2110,7 +2109,7 @@ function edgeSuckerPunchDieRandom(): number {
 }
 
 function edgeSuckerPunchOutcomeRandom(): number {
-  const fixedRoll = Number(Deno.env.get('SUCKER_E2E_SUCKER_PUNCH_ROLL'));
+  const fixedRoll = Number(readLocalTestHook('SUCKER_E2E_SUCKER_PUNCH_ROLL'));
   if (Number.isInteger(fixedRoll) && fixedRoll >= 1 && fixedRoll <= 100) {
     return (fixedRoll - 1) / 100;
   }
@@ -2314,8 +2313,8 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function readPositiveIntegerEnv(name: string): number | null {
-  const value = Number(Deno.env.get(name));
+function readPositiveInteger(text: string | undefined): number | null {
+  const value = Number(text);
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 

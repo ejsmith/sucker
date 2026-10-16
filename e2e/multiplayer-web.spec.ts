@@ -241,10 +241,12 @@ for (const hits of [1, 2]) {
     for (let hit = 0; hit < hits; hit++) {
       await invokeTestGameAction(alice, { gameId: game.id, type: 'roll' });
       game = (await invokeTestGameAction(alice, { gameId: game.id, category: 'ones', type: 'score_category' })).game;
+      const punch = { gameId: game.id, turnId: game.last_turn_id };
+      const prepared = await invokeTestGameAction(bob, { ...punch, type: 'prepare_sucker_punch' });
       const punched = await invokeTestGameAction(bob, {
-        gameId: game.id,
-        turnId: game.last_turn_id,
-        chanceDie: 6,
+        ...punch,
+        chanceDie: prepared.suckerPunchChanceDie,
+        chanceProtocol: 'prepared',
         type: 'sucker_punch',
       });
       expect(punched.suckerPunchOutcome.landed).toBe(true);

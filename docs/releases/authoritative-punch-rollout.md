@@ -26,8 +26,9 @@ Leave it unset or false until a separately approved rollout meets these gates:
 4. Approve the web/client release, set `SUCKER_PUNCH_PROTOCOL_READY=true`, and
    rerun the main Build workflow. Native builds and OTA updates remain manual.
 
-Legacy support deliberately retains production's existing trust in the old
-client's chance die during migration. The protocol marker is not a security
+Direct legacy throws are now retired: trusting the old client's chance die let
+any client choose its odds. Without a saved chance, the server rejects a throw
+that carries a die and charges nothing. The protocol marker is not a security
 boundary. Never substitute different odds after a player sees the chance; an
 existing saved chance wins over either client's conflicting request.
 
