@@ -105,7 +105,9 @@ create table public.turn_actions (
       'mulligan',
       'sucker_punch',
       'sucker_blocker',
-      'taunt'
+      'taunt',
+      'rage_quit',
+      'rage_quit_reply'
     )
   ),
   payload jsonb not null default '{}'::jsonb,
@@ -292,10 +294,24 @@ create table public.head_to_head_stats (
   average_sucker_tokens_spent numeric(8, 2) not null default 0,
   sucker_tokens_leftover integer not null default 0,
   average_sucker_tokens_leftover numeric(8, 2) not null default 0,
+  -- This player's quits against the opponent, and every forfeited game in the
+  -- matchup. Rates and averages divide by games_played - rage_quit_games.
+  rage_quits integer not null default 0,
+  rage_quit_games integer not null default 0,
   updated_at timestamptz not null default now(),
   primary key (player_id, opponent_id),
   check (player_id <> opponent_id)
 );
+
+-- Public, server-written shame. Any signed-in player can see who quit and when.
+create table public.rage_quits (
+  game_id uuid primary key references public.games(id) on delete cascade,
+  player_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create index rage_quits_player_created_idx
+on public.rage_quits (player_id, created_at desc);
 
 create table public.computer_stats (
   profile_id uuid primary key references public.profiles(id) on delete cascade,
@@ -363,15 +379,17 @@ select
   forced_rerolls,
   average_sucker_tokens_spent,
   average_sucker_tokens_leftover,
-  case when games_played = 0 then 0 else round(upper_bonus_games::numeric / games_played * 100, 2) end as upper_bonus_pct,
-  case when games_played = 0 then 0 else round(sucker_games::numeric / games_played * 100, 2) end as sucker_pct,
-  case when games_played = 0 then 0 else round(three_of_a_kind_games::numeric / games_played * 100, 2) end as three_of_a_kind_pct,
-  case when games_played = 0 then 0 else round(four_of_a_kind_games::numeric / games_played * 100, 2) end as four_of_a_kind_pct,
-  case when games_played = 0 then 0 else round(full_house_games::numeric / games_played * 100, 2) end as full_house_pct,
-  case when games_played = 0 then 0 else round(small_straight_games::numeric / games_played * 100, 2) end as small_straight_pct,
-  case when games_played = 0 then 0 else round(large_straight_games::numeric / games_played * 100, 2) end as large_straight_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(upper_bonus_games::numeric / (games_played - rage_quit_games) * 100, 2) end as upper_bonus_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(sucker_games::numeric / (games_played - rage_quit_games) * 100, 2) end as sucker_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(three_of_a_kind_games::numeric / (games_played - rage_quit_games) * 100, 2) end as three_of_a_kind_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(four_of_a_kind_games::numeric / (games_played - rage_quit_games) * 100, 2) end as four_of_a_kind_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(full_house_games::numeric / (games_played - rage_quit_games) * 100, 2) end as full_house_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(small_straight_games::numeric / (games_played - rage_quit_games) * 100, 2) end as small_straight_pct,
+  case when games_played - rage_quit_games <= 0 then 0 else round(large_straight_games::numeric / (games_played - rage_quit_games) * 100, 2) end as large_straight_pct,
   buzzer_beater_wins,
-  case when sucker_punches_used = 0 then 0 else round(sucker_punches_landed::numeric / sucker_punches_used * 100, 2) end as sucker_punch_landed_pct
+  case when sucker_punches_used = 0 then 0 else round(sucker_punches_landed::numeric / sucker_punches_used * 100, 2) end as sucker_punch_landed_pct,
+  rage_quits,
+  rage_quit_games
 from public.head_to_head_stats;
 
 create or replace function public.get_profile_stat_rates(target_profile_id uuid)
@@ -402,7 +420,8 @@ returns table (
   small_straight_pct numeric,
   large_straight_pct numeric,
   buzzer_beater_wins integer,
-  sucker_punch_landed_pct numeric
+  sucker_punch_landed_pct numeric,
+  rage_quits integer
 )
 language plpgsql
 security definer
@@ -418,6 +437,7 @@ begin
   with totals as (
     select
       coalesce(sum(stats.games_played), 0)::integer as games_played,
+      coalesce(sum(stats.games_played - stats.rage_quit_games), 0)::numeric as scored_games,
       coalesce(sum(stats.wins), 0)::integer as wins,
       coalesce(sum(stats.losses), 0)::integer as losses,
       coalesce(max(stats.highest_score), 0)::integer as highest_score,
@@ -443,7 +463,8 @@ begin
       coalesce(sum(stats.full_house_games), 0)::numeric as full_house_games,
       coalesce(sum(stats.small_straight_games), 0)::numeric as small_straight_games,
       coalesce(sum(stats.large_straight_games), 0)::numeric as large_straight_games,
-      coalesce(sum(stats.buzzer_beater_wins), 0)::integer as buzzer_beater_wins
+      coalesce(sum(stats.buzzer_beater_wins), 0)::integer as buzzer_beater_wins,
+      coalesce(sum(stats.rage_quits), 0)::integer as rage_quits
     from public.head_to_head_stats stats
     where stats.player_id = target_profile_id
   )
@@ -452,7 +473,7 @@ begin
     totals.wins,
     totals.losses,
     totals.highest_score,
-    round(totals.total_score / totals.games_played, 2),
+    coalesce(round(totals.total_score / nullif(totals.scored_games, 0), 2), 0),
     totals.blowout_wins,
     totals.blowout_losses,
     totals.comeback_wins,
@@ -464,20 +485,21 @@ begin
     totals.sucker_blockers_used,
     totals.mulligans_used,
     totals.forced_rerolls,
-    round(totals.sucker_tokens_spent / totals.games_played, 2),
-    round(totals.sucker_tokens_leftover / totals.games_played, 2),
-    round(totals.upper_bonus_games / totals.games_played * 100, 2),
-    round(totals.sucker_games / totals.games_played * 100, 2),
-    round(totals.three_of_a_kind_games / totals.games_played * 100, 2),
-    round(totals.four_of_a_kind_games / totals.games_played * 100, 2),
-    round(totals.full_house_games / totals.games_played * 100, 2),
-    round(totals.small_straight_games / totals.games_played * 100, 2),
-    round(totals.large_straight_games / totals.games_played * 100, 2),
+    coalesce(round(totals.sucker_tokens_spent / nullif(totals.scored_games, 0), 2), 0),
+    coalesce(round(totals.sucker_tokens_leftover / nullif(totals.scored_games, 0), 2), 0),
+    coalesce(round(totals.upper_bonus_games / nullif(totals.scored_games, 0) * 100, 2), 0),
+    coalesce(round(totals.sucker_games / nullif(totals.scored_games, 0) * 100, 2), 0),
+    coalesce(round(totals.three_of_a_kind_games / nullif(totals.scored_games, 0) * 100, 2), 0),
+    coalesce(round(totals.four_of_a_kind_games / nullif(totals.scored_games, 0) * 100, 2), 0),
+    coalesce(round(totals.full_house_games / nullif(totals.scored_games, 0) * 100, 2), 0),
+    coalesce(round(totals.small_straight_games / nullif(totals.scored_games, 0) * 100, 2), 0),
+    coalesce(round(totals.large_straight_games / nullif(totals.scored_games, 0) * 100, 2), 0),
     totals.buzzer_beater_wins,
     case
       when totals.sucker_punches_used = 0 then 0
       else round(totals.sucker_punches_landed::numeric / totals.sucker_punches_used * 100, 2)
-    end
+    end,
+    totals.rage_quits
   from totals
   where totals.games_played > 0;
 end;
@@ -503,7 +525,9 @@ returns table (
   opponent_score integer,
   opponent_scorecard jsonb,
   opponent_sucker_tokens integer,
-  opponent_sucker_tokens_spent integer
+  opponent_sucker_tokens_spent integer,
+  winner_id uuid,
+  rage_quitter_id uuid
 )
 language plpgsql
 security definer
@@ -532,7 +556,9 @@ begin
     opponent_result.final_score,
     coalesce(opponent_state.value -> 'scorecard', '{}'::jsonb),
     opponent_result.sucker_tokens_leftover,
-    opponent_result.sucker_tokens_spent
+    opponent_result.sucker_tokens_spent,
+    game.winner_id,
+    rage_quit.player_id
   from public.games game
   join public.game_players selected_player
     on selected_player.game_id = game.id
@@ -549,6 +575,7 @@ begin
     and opponent_result.player_id = opponent_player.player_id
   join public.profiles selected_profile on selected_profile.id = selected_player.player_id
   join public.profiles opponent_profile on opponent_profile.id = opponent_player.player_id
+  left join public.rage_quits rage_quit on rage_quit.game_id = game.id
   cross join lateral (
     select player.value
     from jsonb_array_elements(game.state -> 'players') player(value)
@@ -873,6 +900,7 @@ alter table public.web_push_subscriptions enable row level security;
 alter table public.game_player_results enable row level security;
 alter table public.head_to_head_stats enable row level security;
 alter table public.computer_stats enable row level security;
+alter table public.rage_quits enable row level security;
 
 alter table public.games replica identity full;
 
@@ -1014,6 +1042,11 @@ on public.head_to_head_stats for select
 to authenticated
 using ((select auth.uid()) = opponent_id);
 
+create policy "Rage quits are public to signed-in players"
+on public.rage_quits for select
+to authenticated
+using (true);
+
 create policy "Users can manage their own computer stats"
 on public.computer_stats for all
 to authenticated
@@ -1061,6 +1094,8 @@ revoke all on table public.game_action_requests from anon, authenticated;
 revoke all on public.sucker_punch_attempts from anon, authenticated;
 revoke all on public.head_to_head_stat_rates from anon, authenticated;
 grant select on public.head_to_head_stat_rates to authenticated;
+revoke all on public.rage_quits from anon, authenticated;
+grant select on public.rage_quits to authenticated;
 grant all on all routines in schema public to authenticated;
 revoke all on function public.discard_unconfirmed_password() from public, anon, authenticated;
 grant all on all sequences in schema public to authenticated;
@@ -1121,7 +1156,7 @@ begin
   for change in select value from jsonb_array_elements(p_writes) loop
     table_name := change->>'table';
     operation := change->>'operation';
-    if table_name not in ('turns','turn_actions','token_events','game_players','game_player_results','head_to_head_stats')
+    if table_name not in ('turns','turn_actions','token_events','game_players','game_player_results','head_to_head_stats','rage_quits')
       or operation not in ('insert','update','upsert','increment') then raise exception 'Invalid game move write'; end if;
     if table_name <> 'head_to_head_stats' and
       coalesce(change->'data'->>'game_id',change->'match'->>'game_id','') <> p_game_id::text then
@@ -1131,6 +1166,10 @@ begin
       not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'player_id')::uuid)
       or not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'opponent_id')::uuid)
     ) then raise exception 'Stats write must belong to this game'; end if;
+    if table_name = 'rage_quits' and (
+      operation <> 'insert'
+      or not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'player_id')::uuid)
+    ) then raise exception 'Rage quit must belong to a player in this game'; end if;
     select string_agg(format('%I',key),',') into fields from jsonb_object_keys(change->'data') key;
     if fields is null then raise exception 'Empty game move write'; end if;
 
@@ -1141,9 +1180,9 @@ begin
       select string_agg(case
         when key in ('player_id','opponent_id') then null
         when key='highest_score' then 'highest_score = greatest(target.highest_score,excluded.highest_score)'
-        when key='average_score' then 'average_score = round((target.total_score + excluded.total_score)::numeric / (target.games_played + excluded.games_played),2)'
-        when key='average_sucker_tokens_spent' then 'average_sucker_tokens_spent = round((target.sucker_tokens_spent + excluded.sucker_tokens_spent)::numeric / (target.games_played + excluded.games_played),2)'
-        when key='average_sucker_tokens_leftover' then 'average_sucker_tokens_leftover = round((target.sucker_tokens_leftover + excluded.sucker_tokens_leftover)::numeric / (target.games_played + excluded.games_played),2)'
+        when key='average_score' then 'average_score = coalesce(round((target.total_score + excluded.total_score)::numeric / nullif(target.games_played - target.rage_quit_games + excluded.games_played - excluded.rage_quit_games,0),2),0)'
+        when key='average_sucker_tokens_spent' then 'average_sucker_tokens_spent = coalesce(round((target.sucker_tokens_spent + excluded.sucker_tokens_spent)::numeric / nullif(target.games_played - target.rage_quit_games + excluded.games_played - excluded.rage_quit_games,0),2),0)'
+        when key='average_sucker_tokens_leftover' then 'average_sucker_tokens_leftover = coalesce(round((target.sucker_tokens_leftover + excluded.sucker_tokens_leftover)::numeric / nullif(target.games_played - target.rage_quit_games + excluded.games_played - excluded.rage_quit_games,0),2),0)'
         else format('%1$I = target.%1$I + excluded.%1$I',key)
       end,',') into assignments from jsonb_object_keys(change->'data') key;
       execute format('insert into public.head_to_head_stats as target (%1$s)

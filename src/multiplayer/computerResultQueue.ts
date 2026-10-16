@@ -17,7 +17,10 @@ async function readQueue(ownerId: string): Promise<PendingResult[]> {
   const raw = await AsyncStorage.getItem(queueKey(ownerId));
   if (raw !== null) {
     const legacy = JSON.parse(raw);
-    if (!Array.isArray(legacy) || legacy.some((entry) => !entry || typeof entry.gameId !== 'string' || !entry.payload)) {
+    if (
+      !Array.isArray(legacy) ||
+      legacy.some((entry) => !entry || typeof entry.gameId !== 'string' || !entry.payload)
+    ) {
       throw new Error('The saved computer result queue could not be read.');
     }
     for (const entry of legacy) {

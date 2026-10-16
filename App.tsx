@@ -21,6 +21,7 @@ import {
   createGame,
   getSuckerPunchCost,
   getSuckerPunchKind,
+  getWinnerId,
   hasExtraSuckerBonus,
   maxAvailableRolls,
   mulliganCurrentTurn,
@@ -63,11 +64,15 @@ import {
   getLatestRemoteBlockedSuckerPunch,
   getGame,
   getTurn,
+  hasSeenRageQuit,
   hasSeenRemoteTaunt,
   hasPendingMultiplayerAction,
+  markRageQuitSeen,
   markRemoteTauntSeen,
   PendingMultiplayerActionError,
   prepareRemoteSuckerPunch,
+  rageQuitRemoteGame,
+  replyToRemoteRageQuit,
   rollRemoteGame,
   scoreRemoteCategory,
   sendRemoteTaunt,
@@ -115,6 +120,23 @@ import { StatsPage } from './src/ui/StatsPage';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
+import { DieFace } from './src/ui/DieFace';
+import {
+  getTableFlipBoardStyle,
+  getTableFlipTrayStyle,
+  rageQuitRematchCooldownMs,
+  RageQuitDialog,
+  runTableFlip,
+  TableFlipDebris,
+} from './src/ui/RageQuit';
+import {
+  assignRageQuitConfession,
+  getRageQuitConfessionText,
+  getRageQuitReplyText,
+  rageQuitReplies,
+  type RageQuitConfessionId,
+  type RageQuitReplyId,
+} from './shared/rageQuit';
 import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
@@ -129,7 +151,7 @@ import {
   type SuckerStatTurn,
 } from './shared/stats';
 import { getTauntText, getTauntsForScenario, type TauntId } from './shared/taunts';
-import Svg, { Circle, Path, Rect } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 
 type ScoreFlyDie = {
   face: DieValue;
@@ -270,6 +292,8 @@ type RemoteActionHandlers = {
   onScratch: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerPunch: (turnId: string, chanceDie: DieValue) => Promise<RemoteSuckerPunchResult | null>;
   onTaunt: (tauntId: TauntId) => Promise<ReturnType<typeof createGame> | null>;
+  onRageQuit: (confessionId: RageQuitConfessionId) => Promise<ReturnType<typeof createGame> | null>;
+  onRageQuitReply: (replyId: RageQuitReplyId) => Promise<ReturnType<typeof createGame> | null>;
 };
 type RemoteGameRequest = {
   gameId: string;
@@ -1106,6 +1130,10 @@ export function RemoteGameScreen({
         preserveNextTurns: true,
         showNextTurns: false,
       }),
+    onRageQuit: (confessionId) =>
+      runRemoteAction(() => rageQuitRemoteGame(remoteGame.id, confessionId), { showNextTurns: false }),
+    onRageQuitReply: (replyId) =>
+      runRemoteAction(() => replyToRemoteRageQuit(remoteGame.id, replyId), { showNextTurns: false }),
   };
 
   return (
@@ -1228,6 +1256,14 @@ export function LocalGameScreen({
   const [playerStatsTarget, setPlayerStatsTarget] = useState<'me' | 'opponent' | null>(null);
   const [isTokenMenuOpen, setIsTokenMenuOpen] = useState(false);
   const [dismissedGameOverId, setDismissedGameOverId] = useState<string | null>(null);
+  const [isRageQuitOpen, setIsRageQuitOpen] = useState(false);
+  const [isRageQuitting, setIsRageQuitting] = useState(false);
+  const [isSendingRageReply, setIsSendingRageReply] = useState(false);
+  // Rage-quit games end with the table flipped away. Each device watches it once.
+  const [tableFlip, setTableFlip] = useState<{ gameId: string; status: 'checking' | 'flipping' | 'done' } | null>(null);
+  const [rematchUnlockAt, setRematchUnlockAt] = useState<number | null>(null);
+  const [rematchCountdownNow, setRematchCountdownNow] = useState(() => Date.now());
+  const tableFlipProgress = useRef(new Animated.Value(0)).current;
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
@@ -1292,6 +1328,7 @@ export function LocalGameScreen({
   const backSwipeStartedAtEdge = useRef(false);
   const exitGame = useCallback(() => {
     setIsMenuOpen(false);
+    setIsRageQuitOpen(false);
     setIsTauntPickerOpen(false);
     setIsTokenMenuOpen(false);
     setShowStatsPage(false);
@@ -1491,7 +1528,10 @@ export function LocalGameScreen({
   const homeScore = totalScore(homePlayer.scorecard);
   const opponentScore = totalScore(opponentPlayer.scorecard);
   const isGameOver = game.phase === 'complete';
-  const gameOverVisible = isGameOver && dismissedGameOverId !== game.id;
+  const isRageQuitFlipPending = Boolean(
+    isRemoteGame && isGameOver && game.rageQuit && (tableFlip?.gameId !== game.id || tableFlip.status !== 'done'),
+  );
+  const gameOverVisible = isGameOver && dismissedGameOverId !== game.id && !isRageQuitFlipPending;
   const hasNextTurnPrompt = nextTurnGames !== null && nextTurnGames !== undefined;
   const nextTurnsVisible = Boolean(
     isRemoteGame &&
@@ -1502,9 +1542,95 @@ export function LocalGameScreen({
     !isTauntPickerOpen &&
     !gameOverVisible,
   );
-  const winnerName =
-    homeScore === opponentScore ? null : homeScore > opponentScore ? homePlayer.name : opponentPlayer.name;
-  const gameOverTitle = winnerName ? (winnerName === 'You' ? 'You win!' : `${winnerName} wins!`) : 'Tie game!';
+  const winnerId = isGameOver ? getWinnerId(game) : null;
+  const winnerName = winnerId === homePlayer.id ? homePlayer.name : winnerId ? opponentPlayer.name : null;
+  const rageQuit = isGameOver ? game.rageQuit : undefined;
+  const didIRageQuit = Boolean(rageQuit && rageQuit.playerId === homePlayer.id);
+  const rageQuitterName = rageQuit ? (didIRageQuit ? homePlayer.name : opponentPlayer.name) : null;
+  const rageQuitWinnerName = rageQuit ? (didIRageQuit ? opponentPlayer.name : homePlayer.name) : null;
+  const gameOverTitle = rageQuit
+    ? didIRageQuit
+      ? 'You rage quit.'
+      : 'Victory by Tantrum!'
+    : winnerName
+      ? winnerName === 'You'
+        ? 'You win!'
+        : `${winnerName} wins!`
+      : 'Tie game!';
+  const isTableFlipped = Boolean(isRemoteGame && rageQuit);
+  const rageQuitter = rageQuit ? game.players.find((player) => player.id === rageQuit.playerId) : undefined;
+  const rematchLockSeconds = !didIRageQuit
+    ? 0
+    : rematchUnlockAt
+      ? Math.max(0, Math.ceil((rematchUnlockAt - rematchCountdownNow) / 1_000))
+      : rageQuitRematchCooldownMs / 1_000;
+  const canRageQuit = Boolean(
+    isRemoteGame &&
+    remoteHandlers &&
+    remoteStatus &&
+    remoteStatus !== 'inviting' &&
+    remoteStatus !== 'complete' &&
+    game.phase !== 'complete' &&
+    !isRolling &&
+    !isScoring &&
+    !suckerPunchDialog,
+  );
+  const rageQuitGameId = isRemoteGame && isGameOver && game.rageQuit ? game.id : null;
+
+  useEffect(() => {
+    if (!rageQuitGameId) {
+      tableFlipProgress.setValue(0);
+      setTableFlip(null);
+      setRematchUnlockAt(null);
+      return;
+    }
+
+    let isCurrent = true;
+    setTableFlip({ gameId: rageQuitGameId, status: 'checking' });
+    void (async () => {
+      const seen = await hasSeenRageQuit(rageQuitGameId).catch(() => false);
+      if (!isCurrent) return;
+      if (seen) {
+        tableFlipProgress.setValue(1);
+        setTableFlip({ gameId: rageQuitGameId, status: 'done' });
+        return;
+      }
+
+      setIsMenuOpen(false);
+      setIsTokenMenuOpen(false);
+      setIsTauntPickerOpen(false);
+      setSelectedCategory(null);
+      setIsChoosingSuckerDeal(false);
+      setTableFlip({ gameId: rageQuitGameId, status: 'flipping' });
+      playHaptic('tableFlip');
+      await runTableFlip(tableFlipProgress, shouldReduceMotion);
+      if (!isCurrent) return;
+      void markRageQuitSeen(rageQuitGameId).catch(() => undefined);
+      setTableFlip({ gameId: rageQuitGameId, status: 'done' });
+    })();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [playHaptic, rageQuitGameId, shouldReduceMotion, tableFlipProgress]);
+
+  // Quitters get a forced breather before they can run it back.
+  useEffect(() => {
+    if (didIRageQuit && gameOverVisible) {
+      setRematchUnlockAt((current) => current ?? Date.now() + rageQuitRematchCooldownMs);
+    }
+  }, [didIRageQuit, gameOverVisible]);
+
+  useEffect(() => {
+    if (!rematchUnlockAt) return;
+    setRematchCountdownNow(Date.now());
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setRematchCountdownNow(now);
+      if (now >= rematchUnlockAt) clearInterval(timer);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [rematchUnlockAt]);
   const remoteOpponentTurnNeedsReveal = Boolean(
     isRemoteGame &&
     remoteGame &&
@@ -2998,6 +3124,30 @@ export function LocalGameScreen({
     }
   }
 
+  async function handleRageQuit(confessionId: RageQuitConfessionId) {
+    if (!remoteHandlers) return;
+    setIsRageQuitting(true);
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setHighlightCategory(null);
+    try {
+      await remoteHandlers.onRageQuit(confessionId);
+    } finally {
+      setIsRageQuitting(false);
+      setIsRageQuitOpen(false);
+    }
+  }
+
+  async function handleRageQuitReply(replyId: RageQuitReplyId) {
+    if (!remoteHandlers || isSendingRageReply) return;
+    setIsSendingRageReply(true);
+    try {
+      await remoteHandlers.onRageQuitReply(replyId);
+    } finally {
+      setIsSendingRageReply(false);
+    }
+  }
+
   async function handleRematch() {
     setDismissedGameOverId(null);
     setIsMenuOpen(false);
@@ -3292,7 +3442,9 @@ export function LocalGameScreen({
     return (
       <GameLayoutContext.Provider value={gameLayout}>
         <View
-          aria-hidden={Platform.OS === 'web' ? showStatsPage || showRules || isTokenMenuOpen : undefined}
+          aria-hidden={
+            Platform.OS === 'web' ? showStatsPage || showRules || isTokenMenuOpen || isRageQuitOpen : undefined
+          }
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
@@ -3375,6 +3527,32 @@ export function LocalGameScreen({
                     RULES
                   </Text>
                 </Pressable>
+                {isRemoteGame && remoteStatus !== 'inviting' && remoteStatus !== 'complete' && (
+                  <Pressable
+                    accessibilityHint="Forfeit this game. Your opponent wins."
+                    accessibilityLabel="Rage quit"
+                    disabled={!canRageQuit}
+                    onPress={() => {
+                      setIsMenuOpen(false);
+                      setIsRageQuitOpen(true);
+                    }}
+                    style={({ pressed }) => [
+                      styles.topMenuItem,
+                      gameLayout.styles.topMenuItem,
+                      styles.topMenuItemDanger,
+                      pressed && styles.topMenuItemPressed,
+                      !canRageQuit && styles.topMenuItemDisabled,
+                    ]}
+                    testID="rage-quit-menu-item"
+                  >
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[styles.topMenuText, gameLayout.styles.topMenuText, styles.topMenuDangerText]}
+                    >
+                      RAGE QUIT
+                    </Text>
+                  </Pressable>
+                )}
                 {!isRemoteGame && onNewComputerGame && (
                   <Pressable
                     onPress={onNewComputerGame}
@@ -3469,7 +3647,15 @@ export function LocalGameScreen({
               );
             })}
           </View>
-          <View ref={boardRef} style={[styles.board, gameLayout.styles.board]} testID="scorecard-board">
+          <Animated.View
+            ref={boardRef}
+            style={[
+              styles.board,
+              gameLayout.styles.board,
+              isTableFlipped && getTableFlipBoardStyle(tableFlipProgress, gameStageStyle.height),
+            ]}
+            testID="scorecard-board"
+          >
             {upperCategories.map((leftCategory, index) => (
               <ScorePair
                 key={leftCategory}
@@ -3563,7 +3749,7 @@ export function LocalGameScreen({
                 suckerPunchWipe={suckerPunchWipe}
               />
             </View>
-          </View>
+          </Animated.View>
 
           {canTaunt && !isTauntPickerOpen && (
             <Pressable
@@ -3799,7 +3985,14 @@ export function LocalGameScreen({
             </View>
           )}
 
-          <View ref={rollZoneRef} style={[styles.rollZone, gameLayout.styles.rollZone]}>
+          <Animated.View
+            ref={rollZoneRef}
+            style={[
+              styles.rollZone,
+              gameLayout.styles.rollZone,
+              isTableFlipped && getTableFlipTrayStyle(tableFlipProgress, gameStageStyle.height),
+            ]}
+          >
             <View style={[styles.diceTray, { gap: diceTrayGap, height: diceSlotSize }]} testID="dice-tray">
               {game.dice.map((die, index) => {
                 const isFlying = isRolling && rollingDieIndexes.includes(index);
@@ -4025,7 +4218,29 @@ export function LocalGameScreen({
                 </Pressable>
               </View>
             </View>
-          </View>
+          </Animated.View>
+          {isTableFlipped && tableFlip?.gameId === game.id && tableFlip.status === 'flipping' && (
+            <TableFlipDebris
+              dice={game.dice}
+              progress={tableFlipProgress}
+              stageHeight={gameStageStyle.height}
+              tokensLeft={rageQuitter?.suckerTokens ?? 0}
+            />
+          )}
+          {isRageQuitOpen && (
+            <RageQuitDialog
+              isBusy={isRageQuitting}
+              onCancel={() => {
+                setIsRageQuitOpen(false);
+                requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
+              }}
+              confessionId={assignRageQuitConfession(game.id, homePlayer.id)}
+              onFlip={() => void handleRageQuit(assignRageQuitConfession(game.id, homePlayer.id))}
+              quitterName={homePlayer.name}
+              onTap={() => playHaptic('rageTap')}
+              reduceMotion={shouldReduceMotion}
+            />
+          )}
           {showRules && (
             <RulesDialog
               onClose={() => {
@@ -4506,7 +4721,7 @@ export function LocalGameScreen({
                   <CloseIcon color="#FFD329" size={gameLayout.unit(22)} />
                 </Pressable>
                 <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
-                  Game Over
+                  {rageQuit ? (didIRageQuit ? 'Table Flipped' : 'Rage Quit') : 'Game Over'}
                 </Text>
                 <Text
                   adjustsFontSizeToFit
@@ -4514,11 +4729,120 @@ export function LocalGameScreen({
                   maxFontSizeMultiplier={1.2}
                   minimumFontScale={0.7}
                   numberOfLines={1}
-                  style={[styles.gameOverTitle, gameLayout.styles.gameOverTitle]}
+                  style={[
+                    styles.gameOverTitle,
+                    gameLayout.styles.gameOverTitle,
+                    // Leave room for the close button beside the longer rage-quit titles.
+                    rageQuit && { fontSize: gameLayout.unit(25), lineHeight: gameLayout.unit(30) },
+                  ]}
                   testID="game-over-title"
                 >
                   {gameOverTitle}
                 </Text>
+                {rageQuit && (
+                  <View style={[styles.rageQuitSummary, { gap: gameLayout.unit(8) }]} testID="rage-quit-summary">
+                    <Text
+                      maxFontSizeMultiplier={1.2}
+                      style={[
+                        styles.rageQuitDetail,
+                        { fontSize: gameLayout.unit(13), lineHeight: gameLayout.unit(18) },
+                      ]}
+                    >
+                      {didIRageQuit
+                        ? `${rageQuitWinnerName} wins. Everyone sees your 🧂 for 24 hours.`
+                        : `${rageQuitterName} flipped the table. You win.`}
+                    </Text>
+                    <View
+                      style={[styles.rageQuitQuote, { borderRadius: gameLayout.unit(9), padding: gameLayout.unit(8) }]}
+                      testID="rage-quit-signed-confession"
+                    >
+                      <Text
+                        maxFontSizeMultiplier={1.2}
+                        style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(10) }]}
+                      >
+                        SIGNED CONFESSION
+                      </Text>
+                      <Text
+                        maxFontSizeMultiplier={1.2}
+                        style={[styles.rageQuitQuoteText, { fontSize: gameLayout.unit(18) }]}
+                        testID="rage-quit-confession"
+                      >
+                        “{getRageQuitConfessionText(rageQuit.confessionId)}”
+                      </Text>
+                      <Text
+                        maxFontSizeMultiplier={1.2}
+                        style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(11) }]}
+                      >
+                        — {rageQuitterName}
+                      </Text>
+                    </View>
+                    {rageQuit.replyId ? (
+                      <View
+                        style={[
+                          styles.rageQuitQuote,
+                          styles.rageQuitReplyQuote,
+                          { borderRadius: gameLayout.unit(9), padding: gameLayout.unit(8) },
+                        ]}
+                        testID="rage-quit-reply"
+                      >
+                        <Text
+                          maxFontSizeMultiplier={1.2}
+                          style={[styles.rageQuitQuoteText, { fontSize: gameLayout.unit(16) }]}
+                        >
+                          “{getRageQuitReplyText(rageQuit.replyId)}”
+                        </Text>
+                        <Text
+                          maxFontSizeMultiplier={1.2}
+                          style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(11) }]}
+                        >
+                          — {rageQuitWinnerName}
+                        </Text>
+                      </View>
+                    ) : (
+                      !didIRageQuit && (
+                        <View style={{ gap: gameLayout.unit(6) }} testID="rage-quit-replies">
+                          <Text
+                            maxFontSizeMultiplier={1.2}
+                            style={[styles.rageQuitRepliesLabel, { fontSize: gameLayout.unit(11) }]}
+                          >
+                            SAY ONE THING BACK
+                          </Text>
+                          <View style={[styles.rageQuitReplyOptions, { gap: gameLayout.unit(6) }]}>
+                            {rageQuitReplies.map((reply) => (
+                              <Pressable
+                                accessibilityLabel={`Reply: ${reply.text}`}
+                                disabled={isSendingRageReply}
+                                key={reply.id}
+                                onPress={() => void handleRageQuitReply(reply.id)}
+                                style={({ pressed }) => [
+                                  styles.rageQuitReplyOption,
+                                  {
+                                    borderRadius: gameLayout.unit(8),
+                                    minHeight: Math.max(40, gameLayout.unit(40)),
+                                    paddingHorizontal: gameLayout.unit(6),
+                                  },
+                                  pressed && styles.pressed,
+                                  isSendingRageReply && styles.disabledButton,
+                                ]}
+                                testID={`rage-quit-reply-${reply.id}`}
+                              >
+                                <Text
+                                  adjustsFontSizeToFit
+                                  maxFontSizeMultiplier={1.2}
+                                  minimumFontScale={0.75}
+                                  numberOfLines={1}
+                                  style={[styles.rageQuitReplyText, { fontSize: gameLayout.unit(13) }]}
+                                >
+                                  {reply.text}
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        </View>
+                      )
+                    )}
+                  </View>
+                )}
                 <View style={[styles.gameOverScores, gameLayout.styles.gameOverScores]}>
                   <View
                     style={[styles.gameOverScoreBox, gameLayout.styles.gameOverScoreBox]}
@@ -4567,12 +4891,20 @@ export function LocalGameScreen({
                 </View>
                 <View style={[styles.gameOverActions, gameLayout.styles.gameOverActions]}>
                   <Pressable
-                    accessibilityLabel="Start a rematch"
+                    accessibilityLabel={
+                      rematchLockSeconds > 0
+                        ? `Rematch available in ${rematchLockSeconds} seconds`
+                        : didIRageQuit
+                          ? 'Run it back with a rematch'
+                          : 'Start a rematch'
+                    }
                     accessibilityRole="button"
+                    disabled={rematchLockSeconds > 0}
                     onPress={() => void handleRematch()}
                     style={({ pressed }) => [
                       styles.gameOverPrimaryButton,
                       gameLayout.styles.gameOverPrimaryButton,
+                      rematchLockSeconds > 0 && styles.disabledButton,
                       pressed && styles.pressed,
                     ]}
                     testID="game-over-rematch-button"
@@ -4580,10 +4912,17 @@ export function LocalGameScreen({
                     <View style={[styles.buttonGloss, gameLayout.styles.buttonGloss]} />
                     <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
                     <Text
+                      adjustsFontSizeToFit
                       maxFontSizeMultiplier={1.2}
+                      minimumFontScale={0.7}
+                      numberOfLines={1}
                       style={[styles.gameOverPrimaryText, gameLayout.styles.gameOverPrimaryText]}
                     >
-                      Rematch
+                      {rematchLockSeconds > 0
+                        ? `Breathe… ${rematchLockSeconds}`
+                        : didIRageQuit
+                          ? 'Run it back'
+                          : 'Rematch'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -5621,74 +5960,6 @@ function scalePosition(position: Readonly<Record<string, number | string>>, layo
   );
 }
 
-const diePipPositions: Record<DieValue, Array<[number, number]>> = {
-  1: [[34, 34]],
-  2: [
-    [20, 20],
-    [48, 48],
-  ],
-  3: [
-    [20, 20],
-    [34, 34],
-    [48, 48],
-  ],
-  4: [
-    [20, 20],
-    [48, 20],
-    [20, 48],
-    [48, 48],
-  ],
-  5: [
-    [20, 20],
-    [48, 20],
-    [34, 34],
-    [20, 48],
-    [48, 48],
-  ],
-  6: [
-    [20, 18],
-    [48, 18],
-    [20, 34],
-    [48, 34],
-    [20, 50],
-    [48, 50],
-  ],
-};
-
-function DieFace({
-  face,
-  style,
-  variant = 'white',
-}: {
-  face: DieValue;
-  style?: StyleProp<ViewStyle>;
-  variant?: 'background' | 'pips' | 'white';
-}) {
-  const pipColor = variant === 'background' ? '#B91510' : variant === 'pips' ? '#FFFFFF' : '#414141';
-
-  return (
-    <View style={style}>
-      <Svg height="100%" viewBox="0 0 68 68" width="100%">
-        {variant === 'background' && (
-          <>
-            <Rect fill="#5A1308" height={61} rx={11} width={61} x={4} y={5} />
-            <Rect fill="#7A1208" height={61} rx={11} stroke="#5A1308" strokeWidth={1.5} width={61} x={2} y={2} />
-          </>
-        )}
-        {variant === 'white' && (
-          <>
-            <Rect fill="#EEEEEE" height={66} rx={11} stroke="#838383" strokeWidth={1.5} width={66} x={1} y={1} />
-            <Rect fill="#FFFFFF" height={60} rx={9} width={60} x={4} y={4} />
-          </>
-        )}
-        {diePipPositions[face].map(([cx, cy]) => (
-          <Circle cx={cx} cy={cy} fill={pipColor} key={`${cx}:${cy}`} r={variant === 'pips' ? 7 : 6} />
-        ))}
-      </Svg>
-    </View>
-  );
-}
-
 function CategoryTile({ category }: { category: ScoreCategory }) {
   const layout = useGameLayout();
   const upperIndex = upperCategories.indexOf(category);
@@ -6141,6 +6412,8 @@ const styles = StyleSheet.create({
   },
   topMenuItemPressed: { backgroundColor: '#C8241B' },
   topMenuItemDisabled: { opacity: 0.45 },
+  topMenuItemDanger: { backgroundColor: '#210505', borderColor: '#F12D22' },
+  topMenuDangerText: { color: '#FFD329' },
   topMenuText: {
     color: '#FFF3C2',
     fontSize: 15,
@@ -7239,6 +7512,62 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     width: '100%',
+  },
+  rageQuitSummary: {
+    alignSelf: 'stretch',
+  },
+  rageQuitDetail: {
+    color: '#FFF3C2',
+    fontFamily: gameFontExtraBold,
+    textAlign: 'center',
+  },
+  rageQuitQuote: {
+    alignItems: 'center',
+    backgroundColor: '#FFF3C2',
+    borderColor: '#8F3B10',
+    borderWidth: 2,
+  },
+  rageQuitReplyQuote: {
+    backgroundColor: '#FFD329',
+  },
+  rageQuitQuoteText: {
+    color: '#210505',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  rageQuitQuoteBy: {
+    color: '#8F3B10',
+    fontFamily: gameFontExtraBold,
+    textAlign: 'center',
+  },
+  rageQuitRepliesLabel: {
+    color: '#FFB000',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  rageQuitReplyOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  rageQuitReplyOption: {
+    alignItems: 'center',
+    backgroundColor: '#F12D22',
+    borderColor: '#FFB000',
+    borderWidth: 2,
+    flexBasis: '47%',
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  rageQuitReplyText: {
+    color: '#FFD329',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
   },
   gameOverScoreBox: {
     alignItems: 'center',

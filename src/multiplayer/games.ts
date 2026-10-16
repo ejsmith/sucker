@@ -33,12 +33,14 @@ import {
 import { createGameListRealtimeTopic } from './realtimeTopics';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
+import { rageQuitSaltDurationMs, type RageQuitConfessionId, type RageQuitReplyId } from '../../shared/rageQuit';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
 type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
 const pendingActionsKey = 'sucker:pending-multiplayer-actions:v2';
 const seenRemoteTauntKeyPrefix = 'sucker:seen-remote-taunt:v1';
+const seenRageQuitKeyPrefix = 'sucker:seen-rage-quit:v1';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
 let pendingStorageOperation: Promise<unknown> = Promise.resolve();
@@ -534,6 +536,39 @@ export async function sendRemoteTaunt(gameId: string, tauntId: TauntId) {
   return applyMultiplayerAction({ gameId, tauntId, type: 'taunt' });
 }
 
+export async function rageQuitRemoteGame(gameId: string, confessionId: RageQuitConfessionId) {
+  return applyMultiplayerAction({ confessionId, gameId, type: 'rage_quit' });
+}
+
+export async function replyToRemoteRageQuit(gameId: string, replyId: RageQuitReplyId) {
+  return applyMultiplayerAction({ gameId, replyId, type: 'rage_quit_reply' });
+}
+
+// Latest rage quit within the public salt window, keyed by player id.
+export async function getRecentRageQuits(profileIds: string[], now = Date.now()) {
+  const ids = [...new Set(profileIds)].filter(Boolean);
+  if (ids.length === 0) {
+    return {};
+  }
+
+  const { data, error } = await supabase
+    .from('rage_quits')
+    .select('player_id, created_at')
+    .in('player_id', ids)
+    .gt('created_at', new Date(now - rageQuitSaltDurationMs).toISOString())
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  const latest: Record<string, string> = {};
+  for (const row of data ?? []) {
+    latest[row.player_id] ??= row.created_at;
+  }
+  return latest;
+}
+
 export async function getLatestRemoteTaunt(gameId: string, recipientId: string) {
   const { data, error } = await supabase
     .from('turn_actions')
@@ -558,6 +593,15 @@ export async function hasSeenRemoteTaunt(gameId: string, actorId: string, tauntI
 
 export async function markRemoteTauntSeen(gameId: string, actorId: string, tauntId: string) {
   await AsyncStorage.setItem(`${seenRemoteTauntKeyPrefix}:${actorId}:${gameId}`, tauntId);
+}
+
+// The winner watches the table flip once per device.
+export async function hasSeenRageQuit(gameId: string) {
+  return (await AsyncStorage.getItem(`${seenRageQuitKeyPrefix}:${gameId}`)) === '1';
+}
+
+export async function markRageQuitSeen(gameId: string) {
+  await AsyncStorage.setItem(`${seenRageQuitKeyPrefix}:${gameId}`, '1');
 }
 
 export function subscribeToGameTaunts(

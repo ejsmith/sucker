@@ -9,7 +9,8 @@ type MoveTable =
   | 'token_events'
   | 'game_players'
   | 'game_player_results'
-  | 'head_to_head_stats';
+  | 'head_to_head_stats'
+  | 'rage_quits';
 export type GameMoveWrite = {
   table: MoveTable;
   operation: 'insert' | 'update' | 'upsert' | 'increment';

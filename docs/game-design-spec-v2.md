@@ -33,7 +33,7 @@ Dice
 
 Objective
 
-Finish with the highest score after all scorecard categories have been filled or scratched.
+Finish with the highest score after all scorecard categories have been filled or scratched. A Rage Quit ends the game early and the player who stayed wins, whatever the score.
 
 ⸻
 
@@ -315,6 +315,22 @@ Jab
 
 ⸻
 
+Rage Quit
+
+Rage Quit is surrender, made loud. Quitting must never help the quitter.
+
+- Available from the game menu in any active multiplayer game, on either player's turn and during response windows. Not available before an invite is accepted, in computer games, or after the game ends.
+- Confess first: each game assigns the quitter one random shameful confession from a fixed list (for example, “I'm a quitter.” or “I need a juice box and a nap.”). The confession is the button: tapping it admits it and unlocks the flip. The quitter cannot choose, edit, or reroll it; reopening the dialog shows the same one, and the server rejects any other.
+- Then mash to confirm: tap the rage meter 8 times quickly. Stopping drains the meter, which cancels. Copy, shake, and haptics escalate with each tap.
+- The game ends immediately. The player who stayed wins, regardless of score. Unused counterpunches and revenge discounts expire, as with any game end.
+- Both players watch the table flip once: the scorecard heaves up and away, the dice tray tumbles off, and the dice plus one Sucker Token per unspent token scatter. Hoarding tokens makes the mess bigger.
+- The quitter sees “You rage quit.” The rematch button is locked for 5 seconds (“Breathe… 5”), then reads “Run it back.”
+- Both game-over screens show the signed confession. The winner sees “Victory by Tantrum!” and may send one reply from a fixed list.
+- Public shame: a salt shaker (🧂) appears next to the quitter's name in every lobby view for 24 hours, visible to all signed-in players. Rage-quit counts appear in head-to-head and player stats, and recent game history labels the game a rage quit.
+- Stats: a rage quit counts as a game played, a win for the opponent, and a loss for the quitter. Its partial scores and plays never count toward averages, highs, category rates, or score-based achievements.
+
+⸻
+
 Notifications
 
 Examples:
@@ -337,6 +353,7 @@ Game Events
 - Opponent scratched Large Straight.
 - Opponent purchased an extra roll.
 - Game complete.
+- Opponent flipped the table! (Rage Quit, with their signed confession.)
 
 ⸻
 
