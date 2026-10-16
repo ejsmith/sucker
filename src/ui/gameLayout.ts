@@ -666,8 +666,18 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         height: unit(36),
         width: unit(36),
       },
+      tokenOptionCostBadge: {
+        borderRadius: unit(13),
+        borderWidth: stroke(2),
+        bottom: unit(-4),
+        height: unit(26),
+        minWidth: unit(26),
+        paddingHorizontal: unit(4),
+        right: unit(-4),
+      },
       tokenOptionCostText: {
-        fontSize: unit(14),
+        fontSize: unit(16),
+        lineHeight: unit(18),
       },
       tokenOptionDescription: {
         fontSize: unit(11),

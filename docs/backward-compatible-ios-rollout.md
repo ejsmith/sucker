@@ -4,12 +4,12 @@ Keep App Store 1.1.0 working while the replacement iOS version is reviewed and i
 
 ## Punch protocols
 
-- App Store 1.1.0 sends `sucker_punch` with its locally displayed `chanceDie` and no preparation request. Accept and save that chance before resolving the outcome. Retain the historical server-generated fallback when an older request omits the optional die.
+- App Store 1.1.0 sends `sucker_punch` with its locally displayed `chanceDie` and no preparation request. That direct throw is retired because it let any client choose its odds: without a saved chance, the server rejects it with an update prompt and charges nothing. Older requests that omit the die keep the server-generated fallback.
 - Updated clients first call `prepare_sucker_punch`, then throw with `chanceProtocol: 'prepared'`. Reject a marked throw without a saved chance. Both protocols use the first saved chance; reject a conflicting displayed die before charging tokens.
 - Validate participation, current responder, target turn, die range, and token balance for either protocol. Commit the game, token charge, history, and retry receipt together.
-- Supporting legacy requests temporarily retains the existing production trust in the old client's chance die. The protocol marker selects behavior; it is not proof that a client is trusted or a security boundary.
+- The server never trusts a client's chance die. The protocol marker selects behavior; it is not proof that a client is trusted or a security boundary.
 
-Old and updated players can share a game. The old app still displays a fixed three-token Punch price and cannot expose discounted counterpunches when the player has fewer than three tokens. The server applies the current cost to an accepted action. Updated clients display the discounted price and availability. Other client-side improvements, including selecting a Sucker Deal before rolling, require the updated app too.
+Old and updated players can share a game, but the old app can no longer throw a Punch. Updated clients display the discounted price and availability. Other client-side improvements, including selecting a Sucker Deal before rolling, require the updated app too.
 
 ## Release order
 
@@ -22,6 +22,6 @@ No production deployment, native build, or app update accompanies this compatibi
 
 ## Verification limits
 
-Automated mixed-version tests replay the request shapes used by App Store build 34 and the current client against one isolated backend. They cover both successful and missed legacy Punches, one-time token charges after retry, server preparation, conflicting odds, concurrent requests, and continuing a turn after the other version lands a Punch. The current browser regression verifies that the new client sends the prepared-protocol marker and displays the returned chance.
+Automated mixed-version tests replay the request shapes used by App Store build 34 and the current client against one isolated backend. They cover rejected direct Punches, one-time token charges after retry, server preparation, conflicting odds, concurrent requests, and continuing a turn after the other version lands a Punch. The current browser regression verifies that the new client sends the prepared-protocol marker and displays the returned chance.
 
 These tests supplement the installed-device check; they do not execute the App Store binary or verify native notification delivery.

@@ -323,6 +323,9 @@ const suckerPunchNoticeDurationMs = 1700;
 const suckerPunchScoreWipeDelayMs = 240;
 const suckerPunchScoreWipeDurationMs = 1250;
 const remoteRollServerHeadStartMs = 80;
+// The blocked-punch check only decides whether to show a notice; never let a
+// slow or hung request keep the opponent's turn hidden and Roll disabled.
+const remoteBlockedPunchCheckTimeoutMs = 5000;
 const rollFinalFaceHoldMs = 120;
 const sectionBonusAfterScoreDelayMs = 160;
 const sectionBonusAnimationDurationMs = 760;
@@ -1834,8 +1837,9 @@ export function LocalGameScreen({
     });
   }, [isRemoteGame, myProfileId, remoteLastTurn, remoteLastTurnId, remoteStatus]);
 
+  const remoteGameId = remoteGame?.id;
   useEffect(() => {
-    if (!shouldCheckRemoteBlockedPunchBeforeReveal || !myProfileId || !remoteGame || !remoteLastTurn) {
+    if (!shouldCheckRemoteBlockedPunchBeforeReveal || !myProfileId || !remoteGameId || !remoteLastTurn) {
       return;
     }
 
@@ -1848,11 +1852,18 @@ export function LocalGameScreen({
     setRemoteBlockedPunchRevealGate({ status: 'checking', turnId: revealTurnId });
 
     let isMounted = true;
-    void getLatestRemoteBlockedSuckerPunch(remoteGame.id, myProfileId, remoteLastTurn.turn_index - 1)
+    let isSettled = false;
+    const failOpenTimer = setTimeout(() => {
+      isSettled = true;
+      setRemoteBlockedPunchRevealGate({ status: 'clear', turnId: revealTurnId });
+    }, remoteBlockedPunchCheckTimeoutMs);
+    void getLatestRemoteBlockedSuckerPunch(remoteGameId, myProfileId, remoteLastTurn.turn_index - 1)
       .then((blockedPunch) => {
-        if (!isMounted) {
+        if (!isMounted || isSettled) {
           return;
         }
+        isSettled = true;
+        clearTimeout(failOpenTimer);
 
         if (!blockedPunch || lastRemoteBlockedPunchNoticeId.current === blockedPunch.id) {
           setRemoteBlockedPunchRevealGate({ status: 'clear', turnId: revealTurnId });
@@ -1867,15 +1878,23 @@ export function LocalGameScreen({
       })
       .catch((blockedPunchError) => {
         console.warn('Unable to load blocked Sucker Punch notice', blockedPunchError);
-        if (isMounted) {
+        if (isMounted && !isSettled) {
+          isSettled = true;
+          clearTimeout(failOpenTimer);
           setRemoteBlockedPunchRevealGate({ status: 'clear', turnId: revealTurnId });
         }
       });
 
     return () => {
       isMounted = false;
+      clearTimeout(failOpenTimer);
+      // Cancelling an unfinished check must let the next run check this turn
+      // again; otherwise the reveal, and Roll, stay on hold forever.
+      if (!isSettled && remoteBlockedPunchRevealCheckTurnId.current === revealTurnId) {
+        remoteBlockedPunchRevealCheckTurnId.current = null;
+      }
     };
-  }, [myProfileId, remoteGame, remoteLastTurn, shouldCheckRemoteBlockedPunchBeforeReveal]);
+  }, [myProfileId, remoteGameId, remoteLastTurn, shouldCheckRemoteBlockedPunchBeforeReveal]);
 
   useEffect(() => {
     if (isRemoteGame) {
@@ -4859,12 +4878,14 @@ function TokenMenuOption({
     >
       <View style={[styles.tokenOptionCost, layout.styles.tokenOptionCost]}>
         <Image source={suckerTokenImage} style={[styles.tokenOptionCostIcon, layout.styles.tokenOptionCostIcon]} />
-        <Text
-          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-          style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}
-        >
-          {costLabel ?? cost}
-        </Text>
+        <View style={[styles.tokenOptionCostBadge, layout.styles.tokenOptionCostBadge]}>
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}
+          >
+            {costLabel ?? cost}
+          </Text>
+        </View>
       </View>
       <View style={styles.tokenOptionBody}>
         <Text
@@ -7450,19 +7471,29 @@ const styles = StyleSheet.create({
   },
   tokenOptionCostIcon: {
     height: 36,
-    opacity: 0.92,
     resizeMode: 'contain',
     width: 36,
   },
+  tokenOptionCostBadge: {
+    alignItems: 'center',
+    backgroundColor: '#8F0000',
+    borderColor: '#FFF3C2',
+    borderRadius: 13,
+    borderWidth: 2,
+    bottom: -4,
+    height: 26,
+    justifyContent: 'center',
+    minWidth: 26,
+    paddingHorizontal: 4,
+    position: 'absolute',
+    right: -4,
+  },
   tokenOptionCostText: {
     color: '#FFF3C2',
-    fontSize: 14,
+    fontSize: 16,
     fontFamily: gameFontBlack,
     fontWeight: '900',
-    position: 'absolute',
-    textShadowColor: '#050505',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 0,
+    lineHeight: 18,
   },
   tokenOptionBody: {
     flex: 1,

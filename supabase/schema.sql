@@ -340,7 +340,8 @@ create table public.computer_stats (
   updated_at timestamptz not null default now()
 );
 
-create or replace view public.head_to_head_stat_rates as
+create or replace view public.head_to_head_stat_rates
+with (security_invoker = true) as
 select
   player_id,
   opponent_id,
@@ -828,6 +829,36 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
 
+-- Players only add a password after signing in. A password present when an
+-- email is confirmed by a later request was chosen before anyone proved they
+-- own the address. Admin creation and auto-confirmed sign-up confirm in the
+-- inserting transaction, so their passwords are kept.
+create or replace function public.discard_unconfirmed_password()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform set_config('sucker.inserted_auth_user_id', new.id::text, true);
+  elsif old.email_confirmed_at is null
+    and new.email_confirmed_at is not null
+    and current_setting('sucker.inserted_auth_user_id', true) is distinct from old.id::text then
+    new.encrypted_password := '';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_inserted_track_confirmation
+before insert on auth.users
+for each row execute function public.discard_unconfirmed_password();
+
+create trigger on_auth_user_email_confirmed
+before update of email_confirmed_at on auth.users
+for each row execute function public.discard_unconfirmed_password();
+
 alter table public.profiles enable row level security;
 alter table public.friendships enable row level security;
 alter table public.games enable row level security;
@@ -1028,7 +1059,10 @@ grant all on all sequences in schema public to service_role;
 grant all on all tables in schema public to authenticated;
 revoke all on table public.game_action_requests from anon, authenticated;
 revoke all on public.sucker_punch_attempts from anon, authenticated;
+revoke all on public.head_to_head_stat_rates from anon, authenticated;
+grant select on public.head_to_head_stat_rates to authenticated;
 grant all on all routines in schema public to authenticated;
+revoke all on function public.discard_unconfirmed_password() from public, anon, authenticated;
 grant all on all sequences in schema public to authenticated;
 
 -- A move is prepared by the trusted Edge Function and committed with its replay
