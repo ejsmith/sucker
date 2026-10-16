@@ -4878,12 +4878,14 @@ function TokenMenuOption({
     >
       <View style={[styles.tokenOptionCost, layout.styles.tokenOptionCost]}>
         <Image source={suckerTokenImage} style={[styles.tokenOptionCostIcon, layout.styles.tokenOptionCostIcon]} />
-        <Text
-          maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-          style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}
-        >
-          {costLabel ?? cost}
-        </Text>
+        <View style={[styles.tokenOptionCostBadge, layout.styles.tokenOptionCostBadge]}>
+          <Text
+            maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+            style={[styles.tokenOptionCostText, layout.styles.tokenOptionCostText]}
+          >
+            {costLabel ?? cost}
+          </Text>
+        </View>
       </View>
       <View style={styles.tokenOptionBody}>
         <Text
@@ -7469,19 +7471,29 @@ const styles = StyleSheet.create({
   },
   tokenOptionCostIcon: {
     height: 36,
-    opacity: 0.92,
     resizeMode: 'contain',
     width: 36,
   },
+  tokenOptionCostBadge: {
+    alignItems: 'center',
+    backgroundColor: '#8F0000',
+    borderColor: '#FFF3C2',
+    borderRadius: 13,
+    borderWidth: 2,
+    bottom: -4,
+    height: 26,
+    justifyContent: 'center',
+    minWidth: 26,
+    paddingHorizontal: 4,
+    position: 'absolute',
+    right: -4,
+  },
   tokenOptionCostText: {
     color: '#FFF3C2',
-    fontSize: 14,
+    fontSize: 16,
     fontFamily: gameFontBlack,
     fontWeight: '900',
-    position: 'absolute',
-    textShadowColor: '#050505',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 0,
+    lineHeight: 18,
   },
   tokenOptionBody: {
     flex: 1,
