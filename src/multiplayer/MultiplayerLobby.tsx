@@ -1883,7 +1883,7 @@ export function MultiplayerLobby({
             ]}
             testID="start-with-friend-button"
           >
-            <Text style={lobbyStyles.primaryButtonText}>Start With Friend</Text>
+            <Text style={[lobbyStyles.primaryButtonText, lobbyStyles.actionButtonText]}>Start With Friend</Text>
           </Pressable>
           {!showConnectionNotice && (
             <Pressable
@@ -1900,7 +1900,7 @@ export function MultiplayerLobby({
               ]}
               testID="play-computer-button"
             >
-              <Text style={lobbyStyles.secondaryButtonText}>
+              <Text style={[lobbyStyles.secondaryButtonText, lobbyStyles.actionButtonText]}>
                 {hasComputerSave ? 'Resume Computer Game' : 'Play Computer'}
               </Text>
             </Pressable>
@@ -2884,12 +2884,18 @@ const lobbyStyles = StyleSheet.create({
     width: '100%',
   },
   actionButton: {
-    flex: 1,
-    height: 60,
+    height: 'auto',
+    minHeight: 60,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    width: '100%',
+  },
+  actionButtonText: {
+    fontSize: 18,
+    textAlign: 'center',
   },
   actionGrid: {
     alignItems: 'stretch',
-    flexDirection: 'row',
     gap: 8,
     width: '100%',
   },
