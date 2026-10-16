@@ -8,6 +8,7 @@ import {
   type GameState,
   type ScoreCategory,
 } from '../functions/_shared/game.ts';
+import { assignRageQuitConfession } from '../functions/_shared/rageQuit.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -2007,18 +2008,22 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   };
   assertNoError((await admin.from('games').update({ state: leadingState }).eq('id', gameId)).error);
 
-  const outsider = await invokeGameAction(charlie, { gameId, lastWordsId: 'rigged', type: 'rage_quit' }, 400);
+  const confessionId = assignRageQuitConfession(gameId, bob.id);
+  const otherConfession = confessionId === 'sore-loser' ? 'juice-box' : 'sore-loser';
+  const outsider = await invokeGameAction(charlie, { confessionId, gameId, type: 'rage_quit' }, 400);
   assertEquals(outsider.error, 'You are not a player in this game.');
-  const freeText = await invokeGameAction(bob, { gameId, lastWordsId: 'You all suck', type: 'rage_quit' }, 400);
-  assertEquals(freeText.error, 'Choose one of the available last words.');
+  const freeText = await invokeGameAction(bob, { confessionId: 'You all suck', gameId, type: 'rage_quit' }, 400);
+  assertEquals(freeText.error, 'Agree to your confession to rage quit.');
+  const milder = await invokeGameAction(bob, { confessionId: otherConfession, gameId, type: 'rage_quit' }, 400);
+  assertEquals(milder.error, 'That is not your confession. Reopen Rage Quit and agree to the one you were given.');
 
-  const quit = (await invokeGameAction(bob, { gameId, lastWordsId: 'got-lucky', type: 'rage_quit' })).game as GameRow;
+  const quit = (await invokeGameAction(bob, { confessionId, gameId, type: 'rage_quit' })).game as GameRow;
   assertEquals(quit.status, 'complete');
   assertEquals(quit.winner_id, alice.id);
   assertEquals(quit.current_player_id, null);
   assertString(quit.completed_at);
   assertEquals(quit.state.phase, 'complete');
-  assertEquals(quit.state.rageQuit, { lastWordsId: 'got-lucky', playerId: bob.id });
+  assertEquals(quit.state.rageQuit, { confessionId, playerId: bob.id });
   assertEquals(quit.state.counterPunchPlayerId, undefined);
   assertEquals(
     quit.state.players.map((player) => player.revengePunchDiscount),
@@ -2026,7 +2031,11 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   );
   assertPlayerTokens(quit, bob.id, startingSuckerTokens);
 
-  const again = await invokeGameAction(alice, { gameId, lastWordsId: 'rigged', type: 'rage_quit' }, 400);
+  const again = await invokeGameAction(
+    alice,
+    { confessionId: assignRageQuitConfession(gameId, alice.id), gameId, type: 'rage_quit' },
+    400,
+  );
   assertEquals(again.error, 'This game is already over.');
   const lateRoll = await invokeGameAction(alice, { gameId, held: falseHeld, type: 'roll' }, 400);
   assertString(lateRoll.error);
@@ -2090,15 +2099,15 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(freeReply.error, 'Choose one of the available replies.');
   const replied = (await invokeGameAction(alice, { gameId, replyId: 'need-tissue', type: 'rage_quit_reply' }))
     .game as GameRow;
-  assertEquals(replied.state.rageQuit, { lastWordsId: 'got-lucky', playerId: bob.id, replyId: 'need-tissue' });
+  assertEquals(replied.state.rageQuit, { confessionId, playerId: bob.id, replyId: 'need-tissue' });
   const secondReply = await invokeGameAction(alice, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
   assertEquals(secondReply.error, 'You already said your piece.');
 
   const actions = await loadActions(gameId);
   const rageQuitAction = actions.find((action) => action.action_type === 'rage_quit');
   assertEquals(
-    [rageQuitAction?.actor_id, actionPayloadValue(rageQuitAction?.payload, 'lastWordsId')],
-    [bob.id, 'got-lucky'],
+    [rageQuitAction?.actor_id, actionPayloadValue(rageQuitAction?.payload, 'confessionId')],
+    [bob.id, confessionId],
   );
   assertEquals(actions.filter((action) => action.action_type === 'rage_quit_reply').length, 1);
 

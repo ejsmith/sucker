@@ -1,12 +1,20 @@
 // Rage Quit ends a game by forfeit. It never helps the quitter: the opponent
 // wins, and the quitter is publicly salted for a day.
 
-// The quitter picks an excuse. Everyone is told what it really means.
-export const rageQuitLastWords = [
-  { id: 'rigged', text: 'This game is rigged.', confession: "I'm a sore loser." },
-  { id: 'got-lucky', text: 'You got lucky.', confession: "You're better than me." },
-  { id: 'not-trying', text: "I wasn't even trying.", confession: 'I tried my absolute hardest.' },
-  { id: 'fake-win', text: 'Enjoy your fake win.', confession: 'I need a juice box and a nap.' },
+// The quitter does not choose. Each game assigns one, and they must tap it to
+// admit it before the table flips.
+export const rageQuitConfessions = [
+  { id: 'quitter', text: "I'm a quitter." },
+  { id: 'sore-loser', text: "I'm a sore loser." },
+  { id: 'cant-lose', text: "I can't handle losing." },
+  { id: 'juice-box', text: 'I need a juice box and a nap.' },
+  { id: 'tried-hardest', text: 'I was trying my absolute hardest.' },
+  { id: 'better-than-me', text: "You're better than me." },
+  { id: 'cry-in-car', text: "I'm going to go cry in the car." },
+  { id: 'blame-dice', text: "I blame the dice because I can't blame myself." },
+  { id: 'quit-when-hard', text: 'I quit things when they get hard.' },
+  { id: 'mom-says', text: "My mom says I'm still a winner." },
+  { id: 'table-flipper', text: "I flip tables. That's who I am now." },
 ] as const;
 
 export const rageQuitReplies = [
@@ -16,15 +24,26 @@ export const rageQuitReplies = [
   { id: 'same-time', text: 'Same time tomorrow?' },
 ] as const;
 
-export type RageQuitLastWordsId = (typeof rageQuitLastWords)[number]['id'];
+export type RageQuitConfessionId = (typeof rageQuitConfessions)[number]['id'];
 export type RageQuitReplyId = (typeof rageQuitReplies)[number]['id'];
 
 // Mash taps needed to fill the rage meter. Stopping drains it.
 export const rageQuitMeterTaps = 8;
 export const rageQuitSaltDurationMs = 24 * 60 * 60 * 1_000;
 
-export function isRageQuitLastWordsId(value: unknown): value is RageQuitLastWordsId {
-  return typeof value === 'string' && rageQuitLastWords.some((line) => line.id === value);
+// Stable per game and player, so reopening the dialog never rerolls a milder
+// confession. The server recomputes it and rejects anything else.
+export function assignRageQuitConfession(gameId: string, playerId: string): RageQuitConfessionId {
+  let hash = 0x811c9dc5;
+  for (const character of `${gameId}:${playerId}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return rageQuitConfessions[hash % rageQuitConfessions.length].id;
+}
+
+export function isRageQuitConfessionId(value: unknown): value is RageQuitConfessionId {
+  return typeof value === 'string' && rageQuitConfessions.some((confession) => confession.id === value);
 }
 
 export function isRageQuitReplyId(value: unknown): value is RageQuitReplyId {
@@ -32,12 +51,8 @@ export function isRageQuitReplyId(value: unknown): value is RageQuitReplyId {
 }
 
 // Stored ids may come from a newer release; fall back instead of failing.
-export function getRageQuitLastWordsText(id: string) {
-  return rageQuitLastWords.find((line) => line.id === id)?.text ?? 'I quit.';
-}
-
-export function getRageQuitConfession(id: string) {
-  return rageQuitLastWords.find((line) => line.id === id)?.confession ?? "I can't handle losing.";
+export function getRageQuitConfessionText(id: string) {
+  return rageQuitConfessions.find((confession) => confession.id === id)?.text ?? "I can't handle losing.";
 }
 
 export function getRageQuitReplyText(id: string) {

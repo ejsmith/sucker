@@ -130,11 +130,11 @@ import {
   TableFlipDebris,
 } from './src/ui/RageQuit';
 import {
-  getRageQuitConfession,
-  getRageQuitLastWordsText,
+  assignRageQuitConfession,
+  getRageQuitConfessionText,
   getRageQuitReplyText,
   rageQuitReplies,
-  type RageQuitLastWordsId,
+  type RageQuitConfessionId,
   type RageQuitReplyId,
 } from './shared/rageQuit';
 import { useHaptics } from './src/haptics/HapticsProvider';
@@ -292,7 +292,7 @@ type RemoteActionHandlers = {
   onScratch: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerPunch: (turnId: string, chanceDie: DieValue) => Promise<RemoteSuckerPunchResult | null>;
   onTaunt: (tauntId: TauntId) => Promise<ReturnType<typeof createGame> | null>;
-  onRageQuit: (lastWordsId: RageQuitLastWordsId) => Promise<ReturnType<typeof createGame> | null>;
+  onRageQuit: (confessionId: RageQuitConfessionId) => Promise<ReturnType<typeof createGame> | null>;
   onRageQuitReply: (replyId: RageQuitReplyId) => Promise<ReturnType<typeof createGame> | null>;
 };
 type RemoteGameRequest = {
@@ -1130,8 +1130,8 @@ export function RemoteGameScreen({
         preserveNextTurns: true,
         showNextTurns: false,
       }),
-    onRageQuit: (lastWordsId) =>
-      runRemoteAction(() => rageQuitRemoteGame(remoteGame.id, lastWordsId), { showNextTurns: false }),
+    onRageQuit: (confessionId) =>
+      runRemoteAction(() => rageQuitRemoteGame(remoteGame.id, confessionId), { showNextTurns: false }),
     onRageQuitReply: (replyId) =>
       runRemoteAction(() => replyToRemoteRageQuit(remoteGame.id, replyId), { showNextTurns: false }),
   };
@@ -3124,14 +3124,14 @@ export function LocalGameScreen({
     }
   }
 
-  async function handleRageQuit(lastWordsId: RageQuitLastWordsId) {
+  async function handleRageQuit(confessionId: RageQuitConfessionId) {
     if (!remoteHandlers) return;
     setIsRageQuitting(true);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
     try {
-      await remoteHandlers.onRageQuit(lastWordsId);
+      await remoteHandlers.onRageQuit(confessionId);
     } finally {
       setIsRageQuitting(false);
       setIsRageQuitOpen(false);
@@ -4234,7 +4234,9 @@ export function LocalGameScreen({
                 setIsRageQuitOpen(false);
                 requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
               }}
-              onFlip={(lastWordsId) => void handleRageQuit(lastWordsId)}
+              confessionId={assignRageQuitConfession(game.id, homePlayer.id)}
+              onFlip={() => void handleRageQuit(assignRageQuitConfession(game.id, homePlayer.id))}
+              quitterName={homePlayer.name}
               onTap={() => playHaptic('rageTap')}
               reduceMotion={shouldReduceMotion}
             />
@@ -4752,26 +4754,20 @@ export function LocalGameScreen({
                     </Text>
                     <View
                       style={[styles.rageQuitQuote, { borderRadius: gameLayout.unit(9), padding: gameLayout.unit(8) }]}
-                      testID="rage-quit-last-words"
+                      testID="rage-quit-signed-confession"
                     >
-                      <Text
-                        maxFontSizeMultiplier={1.2}
-                        style={[styles.rageQuitExcuseText, { fontSize: gameLayout.unit(13) }]}
-                      >
-                        “{getRageQuitLastWordsText(rageQuit.lastWordsId)}”
-                      </Text>
                       <Text
                         maxFontSizeMultiplier={1.2}
                         style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(10) }]}
                       >
-                        TRANSLATION
+                        SIGNED CONFESSION
                       </Text>
                       <Text
                         maxFontSizeMultiplier={1.2}
                         style={[styles.rageQuitQuoteText, { fontSize: gameLayout.unit(18) }]}
                         testID="rage-quit-confession"
                       >
-                        “{getRageQuitConfession(rageQuit.lastWordsId)}”
+                        “{getRageQuitConfessionText(rageQuit.confessionId)}”
                       </Text>
                       <Text
                         maxFontSizeMultiplier={1.2}
@@ -7539,12 +7535,6 @@ const styles = StyleSheet.create({
     fontFamily: gameFontBlack,
     fontWeight: '900',
     textAlign: 'center',
-  },
-  rageQuitExcuseText: {
-    color: '#8F3B10',
-    fontFamily: gameFontExtraBold,
-    textAlign: 'center',
-    textDecorationLine: 'line-through',
   },
   rageQuitQuoteBy: {
     color: '#8F3B10',

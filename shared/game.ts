@@ -34,7 +34,7 @@ export type GamePhase = 'rolling' | 'scoring' | 'complete';
 // A forfeit. The other player wins no matter the score.
 export type RageQuit = {
   playerId: string;
-  lastWordsId: string;
+  confessionId: string;
   // The winner's one canned reply.
   replyId?: string;
 };
@@ -156,7 +156,7 @@ export function expireCounterPunch(game: GameState, playerId: string): GameState
   return nextGame;
 }
 
-export function rageQuitGame(game: GameState, playerId: string, lastWordsId: string): GameState {
+export function rageQuitGame(game: GameState, playerId: string, confessionId: string): GameState {
   if (game.phase === 'complete') {
     throw new Error('This game is already over.');
   }
@@ -170,7 +170,7 @@ export function rageQuitGame(game: GameState, playerId: string, lastWordsId: str
     ...nextGame,
     phase: 'complete',
     players: game.players.map(clearRevengePunchDiscount),
-    rageQuit: { lastWordsId, playerId },
+    rageQuit: { confessionId, playerId },
   };
 }
 
@@ -598,7 +598,7 @@ function toRageQuit(value: unknown, players: Player[]): RageQuit {
   }
 
   return {
-    lastWordsId: toString(rageQuit.lastWordsId, 'Stored game has invalid rage quit last words.'),
+    confessionId: toString(rageQuit.confessionId, 'Stored game has invalid rage quit confession.'),
     playerId,
     ...(typeof replyId === 'string' ? { replyId } : {}),
   };

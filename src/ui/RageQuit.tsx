@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, Modal, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { DieValue } from '../game';
-import { rageQuitLastWords, rageQuitMeterTaps, type RageQuitLastWordsId } from '../../shared/rageQuit';
+import { getRageQuitConfessionText, rageQuitMeterTaps, type RageQuitConfessionId } from '../../shared/rageQuit';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { DieFace } from './DieFace';
 import { Pressable } from './Pressable';
@@ -29,19 +29,23 @@ const maxTokenDebris = 15;
 export const rageQuitRematchCooldownMs = 5_000;
 
 export function RageQuitDialog({
+  confessionId,
   isBusy,
   onCancel,
   onFlip,
   onTap,
+  quitterName,
   reduceMotion,
 }: {
+  confessionId: RageQuitConfessionId;
   isBusy: boolean;
   onCancel: () => void;
-  onFlip: (lastWordsId: RageQuitLastWordsId) => void;
+  onFlip: () => void;
   onTap?: () => void;
+  quitterName: string;
   reduceMotion: boolean;
 }) {
-  const [lastWordsId, setLastWordsId] = useState<RageQuitLastWordsId>(rageQuitLastWords[0].id);
+  const [hasAdmitted, setHasAdmitted] = useState(false);
   const [level, setLevel] = useState(0);
   const hasFlipped = useRef(false);
   const lastTapAt = useRef(0);
@@ -73,11 +77,11 @@ export function RageQuitDialog({
   useEffect(() => {
     if (!isFull || hasFlipped.current) return;
     hasFlipped.current = true;
-    onFlip(lastWordsId);
-  }, [isFull, lastWordsId, onFlip]);
+    onFlip();
+  }, [isFull, onFlip]);
 
   function handleMash() {
-    if (isFull || isBusy) return;
+    if (!hasAdmitted || isFull || isBusy) return;
     lastTapAt.current = Date.now();
     const next = Math.min(rageQuitMeterTaps, level + 1);
     setLevel(next);
@@ -98,7 +102,12 @@ export function RageQuitDialog({
     inputRange: [0, 0.5, 1],
     outputRange: ['#FFD329', '#FF7A1A', '#F12D22'],
   });
-  const label = isBusy || isFull ? 'FLIPPING…' : mashLabels[Math.min(level, mashLabels.length - 2)];
+  const label =
+    isBusy || isFull
+      ? 'FLIPPING…'
+      : hasAdmitted
+        ? mashLabels[Math.min(level, mashLabels.length - 2)]
+        : 'ADMIT IT FIRST';
 
   return (
     <Modal
@@ -123,47 +132,31 @@ export function RageQuitDialog({
             RAGE QUIT?
           </Text>
           <Text maxFontSizeMultiplier={1.2} style={styles.subtitle}>
-            Flip the table and your opponent wins. Everyone sees the 🧂 next to your name for 24 hours.
+            Your opponent wins and everyone sees the 🧂 next to your name for 24 hours.
           </Text>
           <Text maxFontSizeMultiplier={1.2} style={styles.sectionLabel}>
-            PICK YOUR EXCUSE
+            ADMIT IT TO UNLOCK THE FLIP
           </Text>
-          <Text maxFontSizeMultiplier={1.2} style={styles.sectionNote}>
-            We&apos;ll tell everyone what it really means.
-          </Text>
-          <View accessibilityRole="radiogroup" style={styles.lastWords}>
-            {rageQuitLastWords.map((line) => {
-              const selected = line.id === lastWordsId;
-              return (
-                <Pressable
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: selected }}
-                  disabled={isBusy || isFull}
-                  key={line.id}
-                  onPress={() => setLastWordsId(line.id)}
-                  style={({ pressed }) => [
-                    styles.lastWordsOption,
-                    selected && styles.lastWordsOptionSelected,
-                    pressed && styles.pressed,
-                  ]}
-                  testID={`rage-quit-last-words-${line.id}`}
-                >
-                  <Text
-                    maxFontSizeMultiplier={1.2}
-                    style={[styles.lastWordsText, selected && styles.lastWordsTextSelected]}
-                  >
-                    {line.text}
-                  </Text>
-                  <Text
-                    maxFontSizeMultiplier={1.2}
-                    style={[styles.confessionText, selected && styles.confessionTextSelected]}
-                  >
-                    Translation: {line.confession}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <Pressable
+            accessibilityHint={hasAdmitted ? undefined : 'Admits this publicly and unlocks the flip.'}
+            accessibilityLabel={getRageQuitConfessionText(confessionId)}
+            accessibilityState={{ selected: hasAdmitted }}
+            disabled={hasAdmitted || isBusy || isFull}
+            onPress={() => setHasAdmitted(true)}
+            style={({ pressed }) => [
+              styles.admitButton,
+              hasAdmitted && styles.admitButtonAdmitted,
+              pressed && styles.pressed,
+            ]}
+            testID="rage-quit-admit"
+          >
+            <Text maxFontSizeMultiplier={1.2} style={styles.admitText}>
+              {getRageQuitConfessionText(confessionId)}
+            </Text>
+            <Text maxFontSizeMultiplier={1.2} style={styles.admitCaption}>
+              {hasAdmitted ? `ADMITTED — ${quitterName}` : 'TAP TO ADMIT IT'}
+            </Text>
+          </Pressable>
           <View style={styles.meterTrack} testID="rage-quit-meter">
             <Animated.View style={[styles.meterFill, { backgroundColor: fillColor, width: fillWidth }]} />
             <Text maxFontSizeMultiplier={1.2} style={styles.meterText}>
@@ -174,9 +167,13 @@ export function RageQuitDialog({
             accessibilityHint={`Tap ${rageQuitMeterTaps} times quickly to flip the table and forfeit.`}
             accessibilityLabel="Flip the table"
             accessibilityValue={{ max: rageQuitMeterTaps, min: 0, now: level }}
-            disabled={isBusy || isFull}
+            disabled={!hasAdmitted || isBusy || isFull}
             onPress={handleMash}
-            style={({ pressed }) => [styles.mashButton, pressed && styles.mashButtonPressed]}
+            style={({ pressed }) => [
+              styles.mashButton,
+              !hasAdmitted && styles.mashButtonLocked,
+              pressed && styles.mashButtonPressed,
+            ]}
             testID="rage-quit-mash-button"
           >
             <Text
@@ -463,52 +460,34 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginTop: 2,
   },
-  lastWords: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  lastWordsOption: {
+  admitButton: {
     alignItems: 'center',
-    backgroundColor: '#3A0C06',
-    borderColor: '#8F3B10',
-    borderRadius: 9,
-    borderWidth: 2,
-    flexBasis: '48%',
-    flexGrow: 1,
-    justifyContent: 'center',
-    minHeight: 60,
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-  },
-  lastWordsOptionSelected: {
     backgroundColor: '#FFF3C2',
     borderColor: '#FFD329',
+    borderRadius: 12,
+    borderWidth: 3,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 16,
   },
-  lastWordsText: {
-    color: '#FFF3C2',
-    fontFamily: 'Inter_800ExtraBold',
-    fontSize: 13,
-    textAlign: 'center',
+  admitButtonAdmitted: {
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
   },
-  lastWordsTextSelected: {
+  admitText: {
     color: '#210505',
-  },
-  confessionText: {
-    color: '#FFB000',
-    fontFamily: 'Inter_800ExtraBold',
-    fontSize: 11,
-    marginTop: 2,
+    fontFamily: 'Inter_900Black',
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 28,
     textAlign: 'center',
   },
-  confessionTextSelected: {
+  admitCaption: {
     color: '#8F3B10',
-  },
-  sectionNote: {
-    color: '#FFF3C2',
-    fontFamily: 'Inter_800ExtraBold',
-    fontSize: 12,
-    marginTop: -6,
+    fontFamily: 'Inter_900Black',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   meterTrack: {
     backgroundColor: '#3A0C06',
@@ -546,6 +525,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 72,
     paddingHorizontal: 12,
+  },
+  mashButtonLocked: {
+    opacity: 0.45,
   },
   mashButtonPressed: {
     backgroundColor: '#B91510',

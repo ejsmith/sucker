@@ -55,12 +55,12 @@ import {
   type TauntScenario,
 } from '../_shared/taunts.ts';
 import {
-  getRageQuitConfession,
-  getRageQuitLastWordsText,
+  assignRageQuitConfession,
+  getRageQuitConfessionText,
   getRageQuitReplyText,
-  isRageQuitLastWordsId,
+  isRageQuitConfessionId,
   isRageQuitReplyId,
-  type RageQuitLastWordsId,
+  type RageQuitConfessionId,
   type RageQuitReplyId,
 } from '../_shared/rageQuit.ts';
 
@@ -121,7 +121,7 @@ type ActionInput =
   | { type: 'prepare_sucker_punch'; gameId: string; turnId: string }
   | { type: 'sucker_punch'; chanceDie?: DieValue; chanceProtocol?: 'prepared'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string }
-  | { type: 'rage_quit'; gameId: string; lastWordsId: RageQuitLastWordsId }
+  | { type: 'rage_quit'; confessionId: RageQuitConfessionId; gameId: string }
   | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
 type Action = ActionInput & { requestId: string };
 type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
@@ -310,7 +310,7 @@ async function applyAction(
     case 'sucker_blocker':
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     case 'rage_quit':
-      return rageQuitRemoteGame(admin, actorId, action.gameId, action.lastWordsId, mutationState);
+      return rageQuitRemoteGame(admin, actorId, action.gameId, action.confessionId, mutationState);
     case 'rage_quit_reply':
       return replyToRageQuit(admin, actorId, action.gameId, action.replyId, mutationState);
     default:
@@ -697,7 +697,7 @@ function buildNotificationContent(
 
   if (action.type === 'rage_quit') {
     return {
-      body: `“${getRageQuitLastWordsText(action.lastWordsId)}” Translation: ${getRageQuitConfession(action.lastWordsId)} You win.`,
+      body: `They confessed: “${getRageQuitConfessionText(action.confessionId)}” You win.`,
       title: `${actorName} flipped the table!`,
     };
   }
@@ -930,11 +930,11 @@ function toAction(value: unknown): Action {
         type,
       };
     case 'rage_quit': {
-      const lastWordsId = readString(action, 'lastWordsId');
-      if (!isRageQuitLastWordsId(lastWordsId)) {
-        throw new Error('Choose one of the available last words.');
+      const confessionId = readString(action, 'confessionId');
+      if (!isRageQuitConfessionId(confessionId)) {
+        throw new Error('Agree to your confession to rage quit.');
       }
-      return { gameId: readString(action, 'gameId'), lastWordsId, requestId, type };
+      return { confessionId, gameId: readString(action, 'gameId'), requestId, type };
     }
     case 'rage_quit_reply': {
       const replyId = readString(action, 'replyId');
@@ -1663,7 +1663,7 @@ async function rageQuitRemoteGame(
   admin: DbClient,
   actorId: string,
   gameId: string,
-  lastWordsId: RageQuitLastWordsId,
+  confessionId: RageQuitConfessionId,
   mutationState: ActionMutationState,
 ) {
   const game = await loadGameForActor(admin, gameId, actorId);
@@ -1674,8 +1674,13 @@ async function rageQuitRemoteGame(
     throw new Error('This game is already over.');
   }
 
+  // Quitters agree to the confession this game assigned them, never another.
+  if (confessionId !== assignRageQuitConfession(gameId, actorId)) {
+    throw new Error('That is not your confession. Reopen Rage Quit and agree to the one you were given.');
+  }
+
   // Either player may quit at any moment, including on the opponent's turn.
-  const nextState = rageQuitGame(game.state, actorId, lastWordsId);
+  const nextState = rageQuitGame(game.state, actorId, confessionId);
   const winnerId = getWinnerId(nextState);
   const updatedGame = stageGameMove(mutationState, game, {
     completed_at: new Date().toISOString(),
@@ -1692,7 +1697,7 @@ async function rageQuitRemoteGame(
 
   await Promise.all([
     syncGamePlayers(admin, gameId, nextState, true, mutationState.plan),
-    insertAction(admin, gameId, actorId, 'rage_quit', { lastWordsId }, mutationState.plan),
+    insertAction(admin, gameId, actorId, 'rage_quit', { confessionId }, mutationState.plan),
   ]);
   await planCompletedGameStats(admin, gameId, nextState.players, winnerId, mutationState.plan!, actorId);
 

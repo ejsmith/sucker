@@ -33,7 +33,7 @@ import {
 import { createGameListRealtimeTopic } from './realtimeTopics';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
-import { rageQuitSaltDurationMs, type RageQuitLastWordsId, type RageQuitReplyId } from '../../shared/rageQuit';
+import { rageQuitSaltDurationMs, type RageQuitConfessionId, type RageQuitReplyId } from '../../shared/rageQuit';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -536,8 +536,8 @@ export async function sendRemoteTaunt(gameId: string, tauntId: TauntId) {
   return applyMultiplayerAction({ gameId, tauntId, type: 'taunt' });
 }
 
-export async function rageQuitRemoteGame(gameId: string, lastWordsId: RageQuitLastWordsId) {
-  return applyMultiplayerAction({ gameId, lastWordsId, type: 'rage_quit' });
+export async function rageQuitRemoteGame(gameId: string, confessionId: RageQuitConfessionId) {
+  return applyMultiplayerAction({ confessionId, gameId, type: 'rage_quit' });
 }
 
 export async function replyToRemoteRageQuit(gameId: string, replyId: RageQuitReplyId) {

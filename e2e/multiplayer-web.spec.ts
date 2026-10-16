@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { assignRageQuitConfession, getRageQuitConfessionText } from '../shared/rageQuit';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type DbClient = SupabaseClient;
@@ -1262,10 +1263,15 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await openGameFromLobby(alicePage, gameId);
     await openGameFromLobby(bobPage, gameId);
 
-    // Quitting is allowed while waiting on the opponent. Walking away cancels.
+    // Quitting is allowed while waiting on the opponent, but only after
+    // admitting the assigned confession. Walking away cancels.
+    const confession = getRageQuitConfessionText(assignRageQuitConfession(gameId, bob.id));
     await bobPage.getByTestId('game-menu-button').click();
     await bobPage.getByTestId('rage-quit-menu-item').click();
     await expect(bobPage.getByTestId('rage-quit-dialog')).toBeVisible();
+    await expect(bobPage.getByTestId('rage-quit-admit')).toContainText(confession);
+    await expect(bobPage.getByTestId('rage-quit-mash-button')).toBeDisabled();
+    await bobPage.getByTestId('rage-quit-admit').click();
     await bobPage.getByTestId('rage-quit-mash-button').click();
     await expect(bobPage.getByTestId('rage-quit-meter')).toContainText('RAGE 1/8');
     await expect(bobPage.getByTestId('rage-quit-meter')).toContainText('RAGE 0/8', { timeout: 3_000 });
@@ -1273,25 +1279,29 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await expect(bobPage.getByTestId('rage-quit-dialog')).toHaveCount(0);
     expect((await loadGame(gameId)).status).toBe('active');
 
+    // Reopening never rerolls a milder confession.
     await bobPage.getByTestId('game-menu-button').click();
     await bobPage.getByTestId('rage-quit-menu-item').click();
-    await bobPage.getByTestId('rage-quit-last-words-not-trying').click();
+    await expect(bobPage.getByTestId('rage-quit-admit')).toContainText(confession);
+    await bobPage.getByTestId('rage-quit-admit').click();
     for (let tap = 0; tap < 8; tap += 1) {
       await bobPage.getByTestId('rage-quit-mash-button').click();
     }
 
     await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
-    await expect(bobPage.getByTestId('rage-quit-last-words')).toContainText("I wasn't even trying.");
-    await expect(bobPage.getByTestId('rage-quit-confession')).toHaveText('“I tried my absolute hardest.”');
+    await expect(bobPage.getByTestId('rage-quit-confession')).toHaveText(`“${confession}”`);
     await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Breathe…');
     await expect(bobPage.getByTestId('game-over-rematch-button')).toBeDisabled();
     const saved = await loadGame(gameId);
     expect(saved.status).toBe('complete');
     expect(saved.winner_id).toBe(alice.id);
-    expect(saved.state.rageQuit).toEqual({ lastWordsId: 'not-trying', playerId: bob.id });
+    expect(saved.state.rageQuit).toEqual({
+      confessionId: assignRageQuitConfession(gameId, bob.id),
+      playerId: bob.id,
+    });
 
     await expect(alicePage.getByTestId('game-over-title')).toHaveText('Victory by Tantrum!', { timeout: 15_000 });
-    await expect(alicePage.getByTestId('rage-quit-last-words')).toContainText("I wasn't even trying.");
+    await expect(alicePage.getByTestId('rage-quit-confession')).toHaveText(`“${confession}”`);
     await alicePage.getByTestId('rage-quit-reply-need-tissue').click();
     await expect(alicePage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?');
     await expect(alicePage.getByTestId('rage-quit-replies')).toHaveCount(0);
