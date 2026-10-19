@@ -1297,7 +1297,7 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await expect(alicePage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?');
     await expect(alicePage.getByTestId('rage-quit-replies')).toHaveCount(0);
     await expect(bobPage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?', { timeout: 15_000 });
-    await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Run it back', { timeout: 8_000 });
+    await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Try again, quitter', { timeout: 8_000 });
 
     // The salt is public: Bob wears it in his own lobby and in Alice's history.
     await bobPage.getByTestId('game-over-close-button').click();
