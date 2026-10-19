@@ -2009,6 +2009,10 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
 
   const outsider = await invokeGameAction(charlie, { gameId, type: 'rage_quit' }, 400);
   assertEquals(outsider.error, 'You are not a player in this game.');
+  // Nobody has joined an open invite yet, so it is removed, not rage quit.
+  const openInvite = (await invokeGameAction(alice, { type: 'create_invite' })).game as GameRow;
+  const inviteQuit = await invokeGameAction(alice, { gameId: openInvite.id, type: 'rage_quit' }, 400);
+  assertEquals(inviteQuit.error, 'Remove the invite instead. Nobody has joined yet.');
   // An unfinished game has no result to see yet.
   const later = new Date(Date.now() + 60_000).toISOString();
   await markResultSeen(bob, gameId, later);
@@ -2127,6 +2131,9 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
     finished = await scratchAndPass(rematch.id, second, first, category);
   }
   assertEquals(finished.status, 'complete');
+  // Only a rage quit can be answered with an insult.
+  const normalReply = await invokeGameAction(alice, { gameId: rematch.id, replyId: 'crybaby', type: 'rage_quit_reply' }, 400);
+  assertEquals(normalReply.error, 'Nobody rage quit this game.');
   const finalStats = await selectSingle<HeadToHeadStatsRow>(
     admin.from('head_to_head_stats').select('*').eq('player_id', bob.id).eq('opponent_id', alice.id).single(),
   );

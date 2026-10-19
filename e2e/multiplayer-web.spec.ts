@@ -1280,12 +1280,20 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await bobPage.getByTestId('rage-quit-menu-item').click();
     const rageButton = bobPage.getByTestId('rage-quit-button');
     await expect(rageButton).toHaveText('RAGE QUIT');
-    for (const _burst of [1, 2]) {
-      for (let tap = 0; tap < 6; tap += 1) {
-        await rageButton.click();
-      }
-      await bobPage.waitForTimeout(1_000);
+    for (let tap = 0; tap < 6; tap += 1) {
+      await rageButton.click();
     }
+    // The streak resets quietly: the text only changes on a tap, and the next
+    // tap taunts instead of insulting.
+    const lastInsult = (await rageButton.textContent()) ?? '';
+    await bobPage.waitForTimeout(1_000);
+    await expect(rageButton).toHaveText(lastInsult);
+    await rageButton.click();
+    await expect(rageButton).toHaveText(/^(Too slow\.|That's not rage\.|Weak\. Again\.|Is that all you got\?)$/);
+    for (let tap = 0; tap < 5; tap += 1) {
+      await rageButton.click();
+    }
+    await bobPage.waitForTimeout(1_000);
     expect((await loadGame(gameId)).status).toBe('active');
 
     // Ten fast taps in a row flip the table.

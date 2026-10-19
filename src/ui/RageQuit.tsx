@@ -7,8 +7,6 @@ import {
   StyleSheet,
   Text,
   View,
-  type StyleProp,
-  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
@@ -212,7 +210,7 @@ export function RageQuitDialog({
 const shakeRotate = { inputRange: [-20, 20], outputRange: ['-1.5deg', '1.5deg'] };
 
 // Public shame: shown beside a name for 24 hours after a rage quit.
-export function SaltBadge({ size = 14, style }: { size?: number; style?: StyleProp<ViewStyle> }) {
+export function SaltBadge({ size = 14 }: { size?: number }) {
   return (
     <View
       accessibilityLabel="Rage quit in the last 24 hours"
@@ -221,7 +219,6 @@ export function SaltBadge({ size = 14, style }: { size?: number; style?: StylePr
       style={[
         styles.saltBadge,
         { borderRadius: size, height: size * 1.6, minWidth: size * 1.6, paddingHorizontal: size * 0.2 },
-        style,
       ]}
       testID="salt-badge"
     >

@@ -646,7 +646,7 @@ export async function markRemoteGameResultSeen(gameId: string, seenUpdatedAt: st
   if (error) throw error;
 }
 
-// The winner watches the table flip once per device.
+// Each device plays the table flip once.
 export async function hasSeenRageQuit(gameId: string) {
   return (await AsyncStorage.getItem(`${seenRageQuitKeyPrefix}:${gameId}`)) === '1';
 }

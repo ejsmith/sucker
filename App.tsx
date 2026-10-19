@@ -1530,6 +1530,8 @@ export function LocalGameScreen({
   const homeScore = totalScore(homePlayer.scorecard);
   const opponentScore = totalScore(opponentPlayer.scorecard);
   const isGameOver = game.phase === 'complete';
+  // The dialog never outlives the game, even when the other player ends it first.
+  const showRageQuitDialog = isRageQuitOpen && !isGameOver;
   const isRageQuitFlipPending = Boolean(
     isRemoteGame && isGameOver && game.rageQuit && (tableFlip?.gameId !== game.id || tableFlip.status !== 'done'),
   );
@@ -3452,7 +3454,7 @@ export function LocalGameScreen({
       <GameLayoutContext.Provider value={gameLayout}>
         <View
           aria-hidden={
-            Platform.OS === 'web' ? showStatsPage || showRules || isTokenMenuOpen || isRageQuitOpen : undefined
+            Platform.OS === 'web' ? showStatsPage || showRules || isTokenMenuOpen || showRageQuitDialog : undefined
           }
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
@@ -4237,7 +4239,7 @@ export function LocalGameScreen({
               tokensLeft={rageQuitter?.suckerTokens ?? 0}
             />
           )}
-          {isRageQuitOpen && (
+          {showRageQuitDialog && (
             <RageQuitDialog
               isBusy={isRageQuitting}
               onCancel={() => {
@@ -4766,7 +4768,6 @@ export function LocalGameScreen({
                       <View
                         style={[
                           styles.rageQuitQuote,
-                          styles.rageQuitReplyQuote,
                           { borderRadius: gameLayout.unit(9), padding: gameLayout.unit(8) },
                         ]}
                         testID="rage-quit-reply"
@@ -7509,12 +7510,9 @@ const styles = StyleSheet.create({
   },
   rageQuitQuote: {
     alignItems: 'center',
-    backgroundColor: '#FFF3C2',
+    backgroundColor: '#FFD329',
     borderColor: '#8F3B10',
     borderWidth: 2,
-  },
-  rageQuitReplyQuote: {
-    backgroundColor: '#FFD329',
   },
   rageQuitQuoteText: {
     color: '#210505',
