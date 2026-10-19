@@ -1352,6 +1352,7 @@ test('a finished game stays in the games list until its result is seen', async (
     await bobPage.getByTestId(`game-card-${gameId}`).click();
     await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
     await bobPage.getByTestId('game-over-close-button').click();
+    await expect.poll(loadSeen).toEqual({ [alice.id]: false, [bob.id]: true });
     await expect(bobPage.getByTestId(`game-card-${gameId}`)).toHaveCount(0);
 
     // Alice has not looked yet. Her game waits at the top with a nudge to insult.

@@ -640,8 +640,12 @@ export type Database = {
           wins: number;
         }[];
       };
+      get_unseen_game_results: {
+        Args: Record<PropertyKey, never>;
+        Returns: { game_id: string }[];
+      };
       mark_game_result_seen: {
-        Args: { target_game_id: string };
+        Args: { target_game_id: string; seen_updated_at: string };
         Returns: undefined;
       };
       record_computer_game_result_once: {

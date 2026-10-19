@@ -513,13 +513,17 @@ export function RemoteGameScreen({
     [onRefreshGames],
   );
 
-  // Seeing a finished game's result takes it out of the active list.
+  // Seeing a finished game's result takes it out of the active list. Only the
+  // version on screen counts, and each newer one (an insult landing) gets a new
+  // callback so it is marked again once shown.
+  const seenGameId = remoteGame?.status === 'complete' ? remoteGame.id : null;
+  const seenUpdatedAt = remoteGame?.status === 'complete' ? remoteGame.updated_at : null;
   const markResultSeen = useCallback(() => {
-    if (!profileId) return;
-    void markRemoteGameResultSeen(gameId)
+    if (!profileId || !seenGameId || !seenUpdatedAt) return;
+    void markRemoteGameResultSeen(seenGameId, seenUpdatedAt)
       .then(() => syncRemoteGameList(profileId))
       .catch((seenError: unknown) => console.warn('Unable to mark game result seen', seenError));
-  }, [gameId, profileId, syncRemoteGameList]);
+  }, [profileId, seenGameId, seenUpdatedAt, syncRemoteGameList]);
 
   const syncRemoteBadgeCount = useCallback(
     async (profileId: string) => {
@@ -1630,11 +1634,12 @@ export function LocalGameScreen({
     return () => clearInterval(timer);
   }, [rematchUnlockAt]);
 
-  // An insult that lands while the quitter is watching counts as seen too.
-  const seenResultKey = isRemoteGame && gameOverVisible ? `${game.id}:${game.rageQuit?.replyId ?? ''}` : null;
+  // The callback changes with each new version of the game, so an insult that
+  // lands while the quitter is watching counts as seen too.
+  const seenResultGameId = isRemoteGame && gameOverVisible ? game.id : null;
   useEffect(() => {
-    if (seenResultKey) onRemoteResultSeen?.();
-  }, [onRemoteResultSeen, seenResultKey]);
+    if (seenResultGameId) onRemoteResultSeen?.();
+  }, [onRemoteResultSeen, seenResultGameId]);
   const remoteOpponentTurnNeedsReveal = Boolean(
     isRemoteGame &&
     remoteGame &&

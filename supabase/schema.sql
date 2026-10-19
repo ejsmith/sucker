@@ -511,7 +511,31 @@ $$;
 revoke all on function public.get_profile_stat_rates(uuid) from public;
 grant execute on function public.get_profile_stat_rates(uuid) to authenticated;
 
-create or replace function public.mark_game_result_seen(target_game_id uuid)
+-- Older app versions never mark results seen, so only recent ones resurface.
+-- Anything older shows under Completed Games as it always did.
+create or replace function public.get_unseen_game_results()
+returns table (game_id uuid)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select player.game_id
+  from public.game_players player
+  join public.games game on game.id = player.game_id
+  where player.player_id = (select auth.uid())
+    and player.hidden_at is null
+    and player.result_seen_at is null
+    and game.status = 'complete'
+    and game.completed_at > now() - interval '7 days';
+$$;
+
+revoke all on function public.get_unseen_game_results() from public, anon;
+grant execute on function public.get_unseen_game_results() to authenticated;
+
+-- Marks only the version the player was shown. A newer update, like an insult
+-- that landed after the screen loaded, stays unseen.
+create or replace function public.mark_game_result_seen(target_game_id uuid, seen_updated_at timestamptz)
 returns void
 language sql
 security definer
@@ -523,11 +547,12 @@ as $$
   where player.game_id = target_game_id
     and player.player_id = (select auth.uid())
     and game.id = player.game_id
-    and game.status = 'complete';
+    and game.status = 'complete'
+    and game.updated_at <= seen_updated_at;
 $$;
 
-revoke all on function public.mark_game_result_seen(uuid) from public, anon;
-grant execute on function public.mark_game_result_seen(uuid) to authenticated;
+revoke all on function public.mark_game_result_seen(uuid, timestamptz) from public, anon;
+grant execute on function public.mark_game_result_seen(uuid, timestamptz) to authenticated;
 
 create or replace function public.get_profile_recent_games(target_profile_id uuid, game_limit integer default 25)
 returns table (
