@@ -68,6 +68,7 @@ import {
   hasSeenRemoteTaunt,
   hasPendingMultiplayerAction,
   markRageQuitSeen,
+  markRemoteGameResultSeen,
   markRemoteTauntSeen,
   PendingMultiplayerActionError,
   prepareRemoteSuckerPunch,
@@ -511,6 +512,14 @@ export function RemoteGameScreen({
     },
     [onRefreshGames],
   );
+
+  // Seeing a finished game's result takes it out of the active list.
+  const markResultSeen = useCallback(() => {
+    if (!profileId) return;
+    void markRemoteGameResultSeen(gameId)
+      .then(() => syncRemoteGameList(profileId))
+      .catch((seenError: unknown) => console.warn('Unable to mark game result seen', seenError));
+  }, [gameId, profileId, syncRemoteGameList]);
 
   const syncRemoteBadgeCount = useCallback(
     async (profileId: string) => {
@@ -1130,6 +1139,7 @@ export function RemoteGameScreen({
       onDismissNextTurns={() => setNextTurnPrompt(null)}
       onExit={exitToLobby}
       onOpenNextTurnGame={openNextTurnGame}
+      onRemoteResultSeen={markResultSeen}
       onStartGameAgainst={startGameAgainst}
       remoteError={error}
       remoteGame={remoteGame.state}
@@ -1157,6 +1167,7 @@ export function LocalGameScreen({
   onDismissNextTurns,
   onExit,
   onOpenNextTurnGame,
+  onRemoteResultSeen,
   onStartGameAgainst,
   remoteError,
   remoteGame,
@@ -1180,6 +1191,7 @@ export function LocalGameScreen({
   onDismissNextTurns?: () => void;
   onExit?: () => void;
   onOpenNextTurnGame?: (gameId: string) => void;
+  onRemoteResultSeen?: () => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
   remoteError?: string | null;
   remoteGame?: ReturnType<typeof createGame>;
@@ -1617,6 +1629,12 @@ export function LocalGameScreen({
     }, 250);
     return () => clearInterval(timer);
   }, [rematchUnlockAt]);
+
+  // An insult that lands while the quitter is watching counts as seen too.
+  const seenResultKey = isRemoteGame && gameOverVisible ? `${game.id}:${game.rageQuit?.replyId ?? ''}` : null;
+  useEffect(() => {
+    if (seenResultKey) onRemoteResultSeen?.();
+  }, [onRemoteResultSeen, seenResultKey]);
   const remoteOpponentTurnNeedsReveal = Boolean(
     isRemoteGame &&
     remoteGame &&

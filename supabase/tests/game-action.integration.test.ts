@@ -2009,6 +2009,9 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
 
   const outsider = await invokeGameAction(charlie, { gameId, type: 'rage_quit' }, 400);
   assertEquals(outsider.error, 'You are not a player in this game.');
+  // An unfinished game has no result to see yet.
+  assertNoError((await bob.client.rpc('mark_game_result_seen', { target_game_id: gameId })).error);
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
 
   const quit = (await invokeGameAction(bob, { gameId, type: 'rage_quit' })).game as GameRow;
   assertEquals(quit.status, 'complete');
@@ -2023,6 +2026,12 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
     [undefined, undefined],
   );
   assertPlayerTokens(quit, bob.id, startingSuckerTokens);
+
+  // Each player clears only their own result.
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
+  assertNoError((await bob.client.rpc('mark_game_result_seen', { target_game_id: gameId })).error);
+  assertNoError((await charlie.client.rpc('mark_game_result_seen', { target_game_id: gameId })).error);
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: true });
 
   const again = await invokeGameAction(alice, { gameId, type: 'rage_quit' }, 400);
   assertEquals(again.error, 'This game is already over.');
@@ -2089,6 +2098,8 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   const replied = (await invokeGameAction(alice, { gameId, replyId: 'need-tissue', type: 'rage_quit_reply' }))
     .game as GameRow;
   assertEquals(replied.state.rageQuit, { playerId: bob.id, replyId: 'need-tissue' });
+  // The insult puts the game back in front of the quitter.
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
   const secondReply = await invokeGameAction(alice, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
   assertEquals(secondReply.error, 'You already said your piece.');
 
@@ -2293,6 +2304,11 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, expectedStatus
 async function loadTurn(turnId: string | null): Promise<TurnRow> {
   assertString(turnId);
   return selectSingle(admin.from('turns').select('*').eq('id', turnId).single());
+}
+
+async function loadResultSeen(gameId: string) {
+  const rows = await selectMany(admin.from('game_players').select('player_id, result_seen_at').eq('game_id', gameId));
+  return Object.fromEntries(rows.map((row) => [row.player_id, Boolean(row.result_seen_at)]));
 }
 
 async function loadActions(gameId: string): Promise<ActionRow[]> {

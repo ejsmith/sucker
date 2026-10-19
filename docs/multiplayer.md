@@ -137,6 +137,8 @@ For hosted deployment, apply `20260712180000_game_action_idempotency.sql` before
 
 Rage Quit (`20261016130000_add_rage_quit.sql`) follows the same order: migration, then `game-action`, then the client. The migration adds the `rage_quit`/`rage_quit_reply` action types, the public `rage_quits` table that drives the 24-hour salt badge, and matchup columns that keep forfeits out of averages and rates. A forfeit is stored as an ordinary completed game (`status = 'complete'`, `phase = 'complete'`, `winner_id` = the player who stayed) plus an optional `state.rageQuit`. Older binaries ignore that field, so they still open the game and show it as over, but they pick the winner by score and can show a quitter who was ahead as the winner. Their lobby and history labels have the same limitation. New binaries always honor `state.rageQuit` and `winner_id`.
 
+Unseen results (`20261018120000_keep_finished_games_until_seen.sql`) follow the same order. The migration adds `game_players.result_seen_at`, marks every game that already finished as seen, and adds the `mark_game_result_seen` RPC. `game-action` clears the quitter's mark when the winner sends a rage-quit insult, so it needs the column first. New clients keep a finished game in the games list until that player opens it. Older binaries ignore the column and move finished games to Completed immediately, as before.
+
 ## Multiplayer Validation
 
 Fast local gate for ordinary changes:

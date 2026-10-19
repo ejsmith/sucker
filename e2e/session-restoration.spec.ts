@@ -90,6 +90,7 @@ async function setup(page: Page, signedIn = true) {
       status: 'active',
       created_by: actorId,
       current_player_id: actorId,
+      has_unseen_result: false,
       created_at: user.created_at,
       updated_at: user.created_at,
       completed_at: null,

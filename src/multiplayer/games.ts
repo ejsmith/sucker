@@ -59,17 +59,22 @@ export class PendingMultiplayerActionError extends Error {
 export async function listMyGames() {
   const session = await getCurrentSession();
   if (!session) throw new Error('Sign in to refresh your games.');
-  const [{ data: activeGames, error: activeError }, { data: completedGames, error: completedError }] =
-    await Promise.all([
-      supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
-      supabase
-        .from('games')
-        .select('*')
-        .eq('status', 'complete')
-        .order('completed_at', { ascending: false, nullsFirst: false })
-        .order('updated_at', { ascending: false })
-        .limit(25),
-    ]);
+  const [
+    { data: activeGames, error: activeError },
+    { data: recentCompletedGames, error: completedError },
+    { data: unseenRows, error: unseenError },
+  ] = await Promise.all([
+    supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
+    supabase
+      .from('games')
+      .select('*')
+      .eq('status', 'complete')
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .order('updated_at', { ascending: false })
+      .limit(25),
+    // Every unfinished game is unseen too; only finished ones matter here.
+    supabase.from('game_players').select('game_id').eq('player_id', session.user.id).is('result_seen_at', null),
+  ]);
 
   if (activeError) {
     throw activeError;
@@ -77,19 +82,46 @@ export async function listMyGames() {
   if (completedError) {
     throw completedError;
   }
+  if (unseenError) {
+    throw unseenError;
+  }
 
-  const data = [...(activeGames ?? []), ...(completedGames ?? [])];
+  // A finished game stays listed until its result is seen, even if it is older
+  // than the recent completed page.
+  const unseenGameIds = new Set((unseenRows ?? []).map((row) => row.game_id));
+  const loadedGameIds = new Set([...(activeGames ?? []), ...(recentCompletedGames ?? [])].map((game) => game.id));
+  const olderUnseenIds = [...unseenGameIds].filter((gameId) => !loadedGameIds.has(gameId));
+  let olderUnseenGames: GameRow[] = [];
+  if (olderUnseenIds.length > 0) {
+    const { data: olderGames, error: olderError } = await supabase
+      .from('games')
+      .select('*')
+      .eq('status', 'complete')
+      .in('id', olderUnseenIds);
+    if (olderError) {
+      throw olderError;
+    }
+    olderUnseenGames = olderGames ?? [];
+  }
+
+  const completedGames = [...(recentCompletedGames ?? []), ...olderUnseenGames];
+  const data = [...(activeGames ?? []), ...completedGames];
 
   const currentPlayerIds = [
     ...new Set(data.flatMap((game) => (game.current_player_id ? [game.current_player_id] : []))),
   ];
-  const completedGameIds = (completedGames ?? []).map((game) => game.id);
+  const completedGameIds = completedGames.map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
     loadLastNudges(currentPlayerIds),
     loadSuckerTokensSpent(completedGameIds),
   ]);
   return data.map((game) =>
-    toRemoteGameRow(game, lastNudges.get(game.current_player_id ?? '') ?? null, suckerTokensSpent.get(game.id) ?? {}),
+    toRemoteGameRow(
+      game,
+      lastNudges.get(game.current_player_id ?? '') ?? null,
+      suckerTokensSpent.get(game.id) ?? {},
+      game.status === 'complete' && unseenGameIds.has(game.id),
+    ),
   );
 }
 
@@ -596,6 +628,11 @@ export async function markRemoteTauntSeen(gameId: string, actorId: string, taunt
 }
 
 // The winner watches the table flip once per device.
+export async function markRemoteGameResultSeen(gameId: string) {
+  const { error } = await supabase.rpc('mark_game_result_seen', { target_game_id: gameId });
+  if (error) throw error;
+}
+
 export async function hasSeenRageQuit(gameId: string) {
   return (await AsyncStorage.getItem(`${seenRageQuitKeyPrefix}:${gameId}`)) === '1';
 }
@@ -737,16 +774,20 @@ async function loadLastNudges(recipientIds: string[]) {
   return lastNudges;
 }
 
+// Rows loaded for an open game count as seen. The game screen marks the result
+// seen on the server when it shows it.
 function toRemoteGameRow(
   row: GameRow,
   lastNudgedAt: string | null = null,
   suckerTokensSpent: Record<string, number> = {},
+  hasUnseenResult = false,
 ) {
   return {
     completed_at: row.completed_at,
     created_at: row.created_at,
     created_by: row.created_by,
     current_player_id: row.current_player_id,
+    has_unseen_result: hasUnseenResult,
     id: row.id,
     last_turn_id: row.last_turn_id,
     last_nudged_at: lastNudgedAt,
