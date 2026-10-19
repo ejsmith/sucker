@@ -32,7 +32,9 @@ export function createHapticDriver(): HapticDriver & { support: HapticSupport } 
             : [0, 120, 100, 180]
           : event === 'punchLanded'
             ? 120
-            : 400,
+            : event === 'rageTap'
+              ? 40
+              : 400,
       ),
     cancel: () => {
       try {

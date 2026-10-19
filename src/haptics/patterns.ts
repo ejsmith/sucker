@@ -1,4 +1,4 @@
-export const hapticEvents = ['punchLanded', 'punchReceived', 'sucker'] as const;
+export const hapticEvents = ['punchLanded', 'punchReceived', 'sucker', 'rageTap', 'tableFlip'] as const;
 export type HapticEvent = (typeof hapticEvents)[number];
 export type CustomHapticPreset = 'crack' | 'bodyBlow' | 'rumble' | 'doubleHit' | 'buildPop' | 'victory' | 'doubleRev';
 export type HapticPreset = CustomHapticPreset | 'original' | 'off';
@@ -29,6 +29,8 @@ export const hapticEventLabels: Record<HapticEvent, string> = {
   punchLanded: 'Landing a punch',
   punchReceived: 'Getting punched',
   sucker: 'Rolling a Sucker',
+  rageTap: 'Tapping Rage Quit',
+  tableFlip: 'Flipping the table',
 };
 
 export const hapticPresets: Record<HapticPreset, { label: string; description: string; durationMs: number }> = {
@@ -56,6 +58,8 @@ export const eventPresets: Record<HapticEvent, HapticPreset[]> = {
   punchLanded: ['crack', 'doubleHit', 'bodyBlow', 'rumble', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
   punchReceived: ['crack', 'bodyBlow', 'rumble', 'doubleHit', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
   sucker: ['doubleRev', 'buildPop', 'victory', 'rumble', 'crack', 'doubleHit', 'bodyBlow', 'original', 'off'],
+  rageTap: ['bodyBlow', 'doubleHit', 'crack', 'rumble', 'buildPop', 'victory', 'doubleRev', 'original', 'off'],
+  tableFlip: ['crack', 'rumble', 'buildPop', 'bodyBlow', 'doubleHit', 'victory', 'doubleRev', 'original', 'off'],
 };
 
 export function createHapticChoice(preset: HapticPreset): HapticChoice {
@@ -76,6 +80,8 @@ export const defaultHapticPreferences: HapticPreferences = {
   punchLanded: createHapticChoice('crack'),
   punchReceived: createHapticChoice('crack'),
   sucker: createHapticChoice('doubleRev'),
+  rageTap: { ...createHapticChoice('bodyBlow'), durationMs: 150, strength: 70 },
+  tableFlip: createHapticChoice('crack'),
 };
 
 export function isCustomHaptic(preset: HapticPreset): preset is CustomHapticPreset {

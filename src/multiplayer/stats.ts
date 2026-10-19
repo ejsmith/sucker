@@ -11,6 +11,8 @@ export type ProfileRecentGame = {
   gameId: string;
   opponent: ProfileRecentGamePlayer;
   player: ProfileRecentGamePlayer;
+  rageQuitterId: string | null;
+  winnerId: string | null;
 };
 
 export type ProfileRecentGamePlayer = {
@@ -94,6 +96,8 @@ function toProfileRecentGame(row: ProfileRecentGameRow): ProfileRecentGame {
     gameId: row.game_id,
     opponent: toProfileRecentGamePlayer(row, 'opponent'),
     player: toProfileRecentGamePlayer(row, 'player'),
+    rageQuitterId: row.rage_quitter_id ?? null,
+    winnerId: row.winner_id ?? null,
   };
 }
 

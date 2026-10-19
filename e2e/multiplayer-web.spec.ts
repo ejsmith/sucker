@@ -1251,6 +1251,86 @@ test('blocked Sucker Punch shows the blocked artwork to the target', async ({ br
   await expect(suckerScoreBox).toContainText('50');
 });
 
+test('rage quit flips the table, hands the opponent the win, and salts the quitter', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`rage-alice-${runId}`, 'Alice E2E');
+  const bob = await createUser(`rage-bob-${runId}`, 'Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  try {
+    const gameId = await createAcceptedGame(alicePage, bobPage);
+    await openGameFromLobby(alicePage, gameId);
+    await openGameFromLobby(bobPage, gameId);
+
+    // Quitting is allowed while waiting on the opponent. Each tap insults the
+    // quitter instead of quitting. Walking away cancels.
+    await bobPage.getByTestId('game-menu-button').click();
+    await bobPage.getByTestId('rage-quit-menu-item').click();
+    await expect(bobPage.getByTestId('rage-quit-dialog')).toBeVisible();
+    await expect(bobPage.getByTestId('rage-quit-button')).toHaveText('RAGE QUIT');
+    await bobPage.getByTestId('rage-quit-button').click();
+    await expect(bobPage.getByTestId('rage-quit-button')).not.toHaveText('RAGE QUIT');
+    await bobPage.getByTestId('rage-quit-cancel-button').click();
+    await expect(bobPage.getByTestId('rage-quit-dialog')).toHaveCount(0);
+    expect((await loadGame(gameId)).status).toBe('active');
+
+    // Reopening starts over. Pausing resets the streak, so twelve taps with a
+    // breather in the middle still do not quit.
+    await bobPage.getByTestId('game-menu-button').click();
+    await bobPage.getByTestId('rage-quit-menu-item').click();
+    const rageButton = bobPage.getByTestId('rage-quit-button');
+    await expect(rageButton).toHaveText('RAGE QUIT');
+    for (let tap = 0; tap < 6; tap += 1) {
+      await rageButton.click();
+    }
+    // The streak resets quietly: the text only changes on a tap, and the next
+    // tap taunts instead of insulting.
+    const lastInsult = (await rageButton.textContent()) ?? '';
+    await bobPage.waitForTimeout(1_000);
+    await expect(rageButton).toHaveText(lastInsult);
+    await rageButton.click();
+    await expect(rageButton).toHaveText(/^(Too slow\.|That's not rage\.|Weak\. Again\.|Is that all you got\?)$/);
+    for (let tap = 0; tap < 5; tap += 1) {
+      await rageButton.click();
+    }
+    await bobPage.waitForTimeout(1_000);
+    expect((await loadGame(gameId)).status).toBe('active');
+
+    // Ten fast taps in a row flip the table.
+    for (let tap = 0; tap < 10; tap += 1) {
+      await rageButton.click();
+    }
+
+    await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
+    await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Breathe…');
+    await expect(bobPage.getByTestId('game-over-rematch-button')).toBeDisabled();
+    const saved = await loadGame(gameId);
+    expect(saved.status).toBe('complete');
+    expect(saved.winner_id).toBe(alice.id);
+    expect(saved.state.rageQuit).toEqual({ playerId: bob.id });
+
+    await expect(alicePage.getByTestId('game-over-title')).toHaveText('Victory by Tantrum!', { timeout: 15_000 });
+    await alicePage.getByTestId('rage-quit-reply-need-tissue').click();
+    await expect(alicePage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?');
+    await expect(alicePage.getByTestId('rage-quit-replies')).toHaveCount(0);
+    await expect(bobPage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?', { timeout: 15_000 });
+    await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Quit quitting', { timeout: 8_000 });
+
+    // The salt is public: Bob wears it in his own lobby and in Alice's history.
+    await bobPage.getByTestId('game-over-close-button').click();
+    await expect(bobPage.getByText('Hi, Bob E2E')).toBeVisible();
+    await expect(bobPage.getByTestId('salt-badge')).toBeVisible({ timeout: 15_000 });
+
+    await alicePage.getByTestId('game-over-close-button').click();
+    await alicePage.getByTestId('completed-games-button').click();
+    const completedGame = alicePage.getByTestId(`completed-game-${gameId}`);
+    await expect(completedGame).toContainText('They rage quit');
+    await expect(completedGame.getByTestId('salt-badge')).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await Promise.all([alicePage.context().close(), bobPage.context().close()]);
+  }
+});
+
 test('a player can add and remove a profile avatar in the PWA', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const player = await createUser(`avatar-${runId}`, 'Avatar E2E');

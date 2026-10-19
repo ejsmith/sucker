@@ -31,7 +31,9 @@ type ActionType =
   | 'mulligan'
   | 'sucker_punch'
   | 'sucker_blocker'
-  | 'taunt';
+  | 'taunt'
+  | 'rage_quit'
+  | 'rage_quit_reply';
 
 type TurnActionTable = {
   Row: {
@@ -150,6 +152,8 @@ type HeadToHeadStatsTable = {
     sucker_punches_used?: number;
     sucker_tokens_leftover?: number;
     sucker_tokens_spent?: number;
+    rage_quit_games?: number;
+    rage_quits?: number;
     three_of_a_kind_games?: number;
     total_score?: number;
     upper_bonus_games?: number;
