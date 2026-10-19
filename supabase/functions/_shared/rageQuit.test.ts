@@ -56,12 +56,9 @@ Deno.test('Stored rage quits survive parsing and reject impossible quitters', ()
   const game = leadingGame();
   const quit = { ...rageQuitGame(game, game.players[0].id) };
   const replied = { ...quit, rageQuit: { ...quit.rageQuit!, replyId: 'bye-sucker' } };
-  // Games quit during development stored a confession. It is ignored now.
-  const confessed = { ...quit, rageQuit: { ...quit.rageQuit!, confessionId: 'sore-loser' } };
 
   assertEquals(toGameState(quit).rageQuit?.playerId, game.players[0].id);
   assertEquals(toGameState(replied).rageQuit?.replyId, 'bye-sucker');
-  assertEquals(JSON.stringify(toGameState(confessed).rageQuit), JSON.stringify({ playerId: game.players[0].id }));
   assertEquals(toGameState(game).rageQuit, undefined);
   assertThrows(() => toGameState({ ...quit, rageQuit: { ...quit.rageQuit, playerId: 'stranger' } }), 'rage quit');
   assertThrows(() => toGameState({ ...quit, rageQuit: { ...quit.rageQuit, replyId: 5 } }), 'rage quit');

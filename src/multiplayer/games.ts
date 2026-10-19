@@ -595,7 +595,7 @@ export async function markRemoteTauntSeen(gameId: string, actorId: string, taunt
   await AsyncStorage.setItem(`${seenRemoteTauntKeyPrefix}:${actorId}:${gameId}`, tauntId);
 }
 
-// The winner watches the table flip once per device.
+// Each device plays the table flip once.
 export async function hasSeenRageQuit(gameId: string) {
   return (await AsyncStorage.getItem(`${seenRageQuitKeyPrefix}:${gameId}`)) === '1';
 }

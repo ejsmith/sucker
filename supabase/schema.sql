@@ -1042,10 +1042,12 @@ on public.head_to_head_stats for select
 to authenticated
 using ((select auth.uid()) = opponent_id);
 
-create policy "Rage quits are public to signed-in players"
+-- Only the last day matters for the badge. Counts live in stats, and game
+-- history reads this table through a security-definer function.
+create policy "Recent rage quits are public to signed-in players"
 on public.rage_quits for select
 to authenticated
-using (true);
+using (created_at > now() - interval '24 hours');
 
 create policy "Users can manage their own computer stats"
 on public.computer_stats for all

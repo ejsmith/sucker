@@ -29,7 +29,7 @@ export const hapticEventLabels: Record<HapticEvent, string> = {
   punchLanded: 'Landing a punch',
   punchReceived: 'Getting punched',
   sucker: 'Rolling a Sucker',
-  rageTap: 'Mashing the rage meter',
+  rageTap: 'Tapping Rage Quit',
   tableFlip: 'Flipping the table',
 };
 

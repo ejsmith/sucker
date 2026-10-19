@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Animated, Easing, Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Easing, Image, StyleSheet, View, type ViewStyle } from 'react-native';
 import type { DieValue } from '../game';
 import { DieFace } from './DieFace';
 
@@ -148,14 +148,12 @@ export function TableFlipDebris({
   progress,
   stageHeight,
   stageWidth,
-  style,
   tokensLeft,
 }: {
   dice: readonly DieValue[];
   progress: Animated.Value;
   stageHeight: number;
   stageWidth: number;
-  style?: StyleProp<ViewStyle>;
   tokensLeft: number;
 }) {
   const tokenCount = Math.min(maxTokenDebris, Math.max(0, tokensLeft));
@@ -176,7 +174,7 @@ export function TableFlipDebris({
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       pointerEvents="none"
-      style={[styles.debrisLayer, style]}
+      style={styles.debrisLayer}
       testID="table-flip-debris"
     >
       <Animated.View

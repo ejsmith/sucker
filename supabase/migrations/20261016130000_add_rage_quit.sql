@@ -45,10 +45,12 @@ on public.rage_quits (player_id, created_at desc);
 
 alter table public.rage_quits enable row level security;
 
-create policy "Rage quits are public to signed-in players"
+-- Only the last day matters for the badge. Counts live in stats, and game
+-- history reads this table through a security-definer function.
+create policy "Recent rage quits are public to signed-in players"
 on public.rage_quits for select
 to authenticated
-using (true);
+using (created_at > now() - interval '24 hours');
 
 revoke all on public.rage_quits from anon, authenticated;
 grant select on public.rage_quits to authenticated;
