@@ -1,11 +1,14 @@
 // Rage Quit ends a game by forfeit. It never helps the quitter: the opponent
 // wins, and the quitter is publicly salted for a day.
 
+// The player who got quit on may send one of these. The quitter gets no say.
 export const rageQuitReplies = [
   { id: 'bye-sucker', text: 'Bye, Sucker!' },
   { id: 'need-tissue', text: 'Need a tissue?' },
   { id: 'taste-salt', text: 'I can taste the salt.' },
-  { id: 'same-time', text: 'Same time tomorrow?' },
+  { id: 'crybaby', text: 'Crybaby.' },
+  { id: 'chicken', text: 'Bawk bawk bawk.' },
+  { id: 'cry-in-car', text: 'Go cry in the car.' },
 ] as const;
 
 export type RageQuitReplyId = (typeof rageQuitReplies)[number]['id'];

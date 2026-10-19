@@ -4766,12 +4766,12 @@ export function LocalGameScreen({
                             maxFontSizeMultiplier={1.2}
                             style={[styles.rageQuitRepliesLabel, { fontSize: gameLayout.unit(11) }]}
                           >
-                            SAY ONE THING BACK
+                            SEND ONE INSULT
                           </Text>
                           <View style={[styles.rageQuitReplyOptions, { gap: gameLayout.unit(6) }]}>
                             {rageQuitReplies.map((reply) => (
                               <Pressable
-                                accessibilityLabel={`Reply: ${reply.text}`}
+                                accessibilityLabel={`Send insult: ${reply.text}`}
                                 disabled={isSendingRageReply}
                                 key={reply.id}
                                 onPress={() => void handleRageQuitReply(reply.id)}
