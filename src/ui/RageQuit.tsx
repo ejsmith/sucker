@@ -1,5 +1,15 @@
-import { useRef, useState } from 'react';
-import { Animated, Modal, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  AccessibilityInfo,
+  Animated,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { Pressable } from './Pressable';
@@ -25,7 +35,14 @@ const insults = [
   'Go cry in the car.',
   'Need a juice box?',
 ];
-const tapsToFlip = 8;
+// Slowing down is not rage. The streak starts over with one of these.
+const resetTaunts = ['Too slow.', "That's not rage.", 'Weak. Again.', 'Is that all you got?'];
+const tapsToFlip = 10;
+// Each tap must land this soon after the last one, or the streak resets.
+// Screen reader double taps cannot go that fast, so they get longer. The web
+// cannot detect a screen reader (react-native-web always says yes).
+const rageWindowMs = 400;
+const screenReaderRageWindowMs = 1_500;
 
 export const rageQuitRematchCooldownMs = 5_000;
 
@@ -46,12 +63,36 @@ export function RageQuitDialog({
   const [hasFlipped, setHasFlipped] = useState(false);
   const taps = useRef(0);
   const usedInsults = useRef<string[]>([]);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isScreenReaderOn, setIsScreenReaderOn] = useState(false);
   const [shake] = useState(() => new Animated.Value(0));
   const [pop] = useState(() => new Animated.Value(1));
   const cancelRef = useRef<AccessibilityTargetRef | null>(null);
 
+  useEffect(() => {
+    let isActive = true;
+    const subscription =
+      Platform.OS === 'web'
+        ? null
+        : AccessibilityInfo.addEventListener('screenReaderChanged', setIsScreenReaderOn);
+    if (subscription) {
+      void AccessibilityInfo.isScreenReaderEnabled().then((enabled) => {
+        if (isActive) setIsScreenReaderOn(enabled);
+      });
+    }
+    return () => {
+      isActive = false;
+      subscription?.remove();
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
+
   function nextInsult() {
-    const fresh = insults.filter((insult) => !usedInsults.current.includes(insult));
+    let fresh = insults.filter((insult) => !usedInsults.current.includes(insult));
+    if (fresh.length === 0) {
+      usedInsults.current = [];
+      fresh = insults;
+    }
     const insult = fresh[Math.floor(Math.random() * fresh.length)];
     usedInsults.current.push(insult);
     return insult;
@@ -59,6 +100,7 @@ export function RageQuitDialog({
 
   function handleTap() {
     if (isBusy || taps.current >= tapsToFlip) return;
+    if (resetTimer.current) clearTimeout(resetTimer.current);
     taps.current += 1;
     onTap?.();
     if (taps.current >= tapsToFlip) {
@@ -68,6 +110,14 @@ export function RageQuitDialog({
     }
 
     setLabel(nextInsult());
+    resetTimer.current = setTimeout(
+      () => {
+        resetTimer.current = null;
+        taps.current = 0;
+        setLabel(resetTaunts[Math.floor(Math.random() * resetTaunts.length)]);
+      },
+      isScreenReaderOn ? screenReaderRageWindowMs : rageWindowMs,
+    );
     if (reduceMotion) return;
     const amplitude = 2 + taps.current * 1.8;
     shake.stopAnimation();
@@ -116,7 +166,7 @@ export function RageQuitDialog({
           </Text>
           <Animated.View style={{ transform: [{ scale: pop }] }}>
             <Pressable
-              accessibilityHint="Keep tapping to flip the table and forfeit."
+              accessibilityHint="Tap fast, over and over, to flip the table and forfeit."
               accessibilityLabel={isFlipping ? 'Flipping the table' : label}
               disabled={isFlipping}
               onPress={handleTap}
