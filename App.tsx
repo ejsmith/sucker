@@ -122,17 +122,7 @@ import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
 import { DieFace } from './src/ui/DieFace';
 import { rageQuitRematchCooldownMs, RageQuitDialog } from './src/ui/RageQuit';
-import {
-  getTableFlipBoardStyle,
-  getTableFlipStyleId,
-  getTableFlipTrayStyle,
-  isTableFlipLabEnabled,
-  runTableFlip,
-  storeTableFlipStyleId,
-  TableFlipDebris,
-  TableFlipLab,
-  type TableFlipStyleId,
-} from './src/ui/TableFlip';
+import { getTableFlipBoardStyle, getTableFlipTrayStyle, runTableFlip, TableFlipDebris } from './src/ui/TableFlip';
 import {
   assignRageQuitConfession,
   getRageQuitConfessionText,
@@ -1268,9 +1258,6 @@ export function LocalGameScreen({
   const [rematchUnlockAt, setRematchUnlockAt] = useState<number | null>(null);
   const [rematchCountdownNow, setRematchCountdownNow] = useState(() => Date.now());
   const tableFlipProgress = useRef(new Animated.Value(0)).current;
-  const [tableFlipStyleId, setTableFlipStyleId] = useState(getTableFlipStyleId);
-  const [showTableFlipLab] = useState(isTableFlipLabEnabled);
-  const [isPreviewingTableFlip, setIsPreviewingTableFlip] = useState(false);
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
   const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
@@ -1610,7 +1597,7 @@ export function LocalGameScreen({
       setIsChoosingSuckerDeal(false);
       setTableFlip({ gameId: rageQuitGameId, status: 'flipping' });
       playHaptic('tableFlip');
-      await runTableFlip(tableFlipProgress, shouldReduceMotion, getTableFlipStyleId());
+      await runTableFlip(tableFlipProgress, shouldReduceMotion);
       if (!isCurrent) return;
       void markRageQuitSeen(rageQuitGameId).catch(() => undefined);
       setTableFlip({ gameId: rageQuitGameId, status: 'done' });
@@ -3145,26 +3132,6 @@ export function LocalGameScreen({
     }
   }
 
-  // Dev-only Flip Lab: replay a style on this board without quitting.
-  async function handleReplayTableFlip(styleId: TableFlipStyleId) {
-    if (tableFlip?.status === 'flipping' || isPreviewingTableFlip) return;
-    storeTableFlipStyleId(styleId);
-    setTableFlipStyleId(styleId);
-    setIsMenuOpen(false);
-    if (rageQuitGameId) {
-      setTableFlip({ gameId: rageQuitGameId, status: 'flipping' });
-      await runTableFlip(tableFlipProgress, false, styleId);
-      setTableFlip({ gameId: rageQuitGameId, status: 'done' });
-      return;
-    }
-
-    setIsPreviewingTableFlip(true);
-    await runTableFlip(tableFlipProgress, false, styleId);
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    tableFlipProgress.setValue(0);
-    setIsPreviewingTableFlip(false);
-  }
-
   async function handleRageQuitReply(replyId: RageQuitReplyId) {
     if (!remoteHandlers || isSendingRageReply) return;
     setIsSendingRageReply(true);
@@ -3679,8 +3646,7 @@ export function LocalGameScreen({
             style={[
               styles.board,
               gameLayout.styles.board,
-              (isTableFlipped || isPreviewingTableFlip) &&
-                getTableFlipBoardStyle(tableFlipStyleId, tableFlipProgress, gameStageStyle.width, gameStageStyle.height),
+              isTableFlipped && getTableFlipBoardStyle(tableFlipProgress),
             ]}
             testID="scorecard-board"
           >
@@ -4018,8 +3984,7 @@ export function LocalGameScreen({
             style={[
               styles.rollZone,
               gameLayout.styles.rollZone,
-              (isTableFlipped || isPreviewingTableFlip) &&
-                getTableFlipTrayStyle(tableFlipStyleId, tableFlipProgress, gameStageStyle.width, gameStageStyle.height),
+              isTableFlipped && getTableFlipTrayStyle(tableFlipProgress, gameStageStyle.height),
             ]}
           >
             <View style={[styles.diceTray, { gap: diceTrayGap, height: diceSlotSize }]} testID="dice-tray">
@@ -4248,19 +4213,14 @@ export function LocalGameScreen({
               </View>
             </View>
           </Animated.View>
-          {((isTableFlipped && tableFlip?.gameId === game.id && tableFlip.status === 'flipping') ||
-            isPreviewingTableFlip) && (
+          {isTableFlipped && tableFlip?.gameId === game.id && tableFlip.status === 'flipping' && (
             <TableFlipDebris
               dice={game.dice}
               progress={tableFlipProgress}
               stageHeight={gameStageStyle.height}
               stageWidth={gameStageStyle.width}
-              styleId={tableFlipStyleId}
-              tokensLeft={rageQuitter?.suckerTokens ?? homePlayer.suckerTokens}
+              tokensLeft={rageQuitter?.suckerTokens ?? 0}
             />
-          )}
-          {showTableFlipLab && !isPreviewingTableFlip && tableFlip?.status !== 'flipping' && (
-            <TableFlipLab activeStyleId={tableFlipStyleId} onPlay={(styleId) => void handleReplayTableFlip(styleId)} />
           )}
           {isRageQuitOpen && (
             <RageQuitDialog
