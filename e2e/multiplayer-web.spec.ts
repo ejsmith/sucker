@@ -1331,6 +1331,63 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
   }
 });
 
+test('a finished game stays in the games list until its result is seen', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`seen-alice-${runId}`, 'Alice E2E');
+  const bob = await createUser(`seen-bob-${runId}`, 'Bob E2E');
+  const alicePage = await openAuthedPage(browser, alice);
+  const bobPage = await openAuthedPage(browser, bob);
+  let gameId = '';
+  const showLobby = async (page: Page) => {
+    await page.goto('/');
+    await dismissTurnNotificationPrompt(page);
+    await page.getByTestId('refresh-games-button').click();
+  };
+  const loadSeen = async () => {
+    const { data, error } = await admin.from('game_players').select('player_id, result_seen_at').eq('game_id', gameId);
+    assertNoError(error);
+    return Object.fromEntries((data ?? []).map((row) => [row.player_id, Boolean(row.result_seen_at)]));
+  };
+  try {
+    gameId = await createAcceptedGame(alicePage, bobPage);
+    // Quitting through the API means neither player has seen the result yet.
+    await invokeTestGameAction(bob, { gameId, type: 'rage_quit' });
+    expect(await loadSeen()).toEqual({ [alice.id]: false, [bob.id]: false });
+
+    // Bob looks once, and the game moves to his completed list.
+    await showLobby(bobPage);
+    await expect(bobPage.getByTestId(`game-status-${gameId}`)).toHaveText('You rage quit');
+    await bobPage.getByTestId(`game-card-${gameId}`).click();
+    await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
+    await bobPage.getByTestId('game-over-close-button').click();
+    await expect.poll(loadSeen).toEqual({ [alice.id]: false, [bob.id]: true });
+    await expect(bobPage.getByTestId(`game-card-${gameId}`)).toHaveCount(0);
+
+    // Alice has not looked yet. Her game waits at the top with a nudge to insult.
+    await showLobby(alicePage);
+    await expect(alicePage.getByTestId(`game-status-${gameId}`)).toHaveText('They rage quit');
+    await expect(alicePage.getByTestId(`game-hint-${gameId}`)).toHaveText('Tap to send an insult.');
+    await alicePage.getByTestId(`game-card-${gameId}`).click();
+    await alicePage.getByTestId('rage-quit-reply-need-tissue').click();
+    await expect(alicePage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?');
+    await alicePage.getByTestId('game-over-close-button').click();
+    await expect(alicePage.getByTestId(`game-card-${gameId}`)).toHaveCount(0);
+    await alicePage.getByTestId('completed-games-button').click();
+    await expect(alicePage.getByTestId(`completed-game-${gameId}`)).toBeVisible();
+
+    // The insult puts the game back in Bob's list until he reads it.
+    await showLobby(bobPage);
+    await expect(bobPage.getByTestId(`game-hint-${gameId}`)).toHaveText('Alice E2E: “Need a tissue?”');
+    await bobPage.getByTestId(`game-card-${gameId}`).click();
+    await expect(bobPage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?', { timeout: 15_000 });
+    await bobPage.getByTestId('game-over-close-button').click();
+    await expect(bobPage.getByTestId(`game-card-${gameId}`)).toHaveCount(0);
+    await expect.poll(loadSeen).toEqual({ [alice.id]: true, [bob.id]: true });
+  } finally {
+    await Promise.all([alicePage.context().close(), bobPage.context().close()]);
+  }
+});
+
 test('a player can add and remove a profile avatar in the PWA', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const player = await createUser(`avatar-${runId}`, 'Avatar E2E');

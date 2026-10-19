@@ -325,7 +325,7 @@ Rage Quit is surrender, made loud. Quitting must never help the quitter.
 - The game ends immediately. The player who stayed wins, regardless of score. Unused counterpunches and revenge discounts expire, as with any game end.
 - Both players watch the table blow up once (“KABOOM!”): the board trembles harder and harder, then a flash blows the scorecard apart, the dice tray falls away, and the dice plus one Sucker Token per unspent token burst outward. Hoarding tokens makes the mess bigger.
 - The quitter sees “You rage quit.” The rematch button is locked for 5 seconds (“Breathe… 5”), then reads “Quit quitting.”
-- The winner sees “Victory by Tantrum!” and may send the quitter one insult from a fixed list (“Need a tissue?”, “Bawk bawk bawk.”). It shows on both game-over screens and arrives as a push. The quitter cannot say anything.
+- The winner sees “Victory by Tantrum!” and may send the quitter one insult from a fixed list (“Need a tissue?”, “Bawk bawk bawk.”). It shows on both game-over screens and arrives as a push. It also puts the game back in the quitter's games list, with the insult on the row, until they open it. The quitter cannot say anything.
 - Public shame: a salt shaker (🧂) appears next to the quitter's name in every lobby view for 24 hours, visible to all signed-in players. Rage-quit counts appear in head-to-head and player stats, and recent game history labels the game a rage quit.
 - Stats: a rage quit counts as a game played, a win for the opponent, and a loss for the quitter. Its partial scores and plays never count toward averages, highs, category rates, or score-based achievements.
 
@@ -354,6 +354,15 @@ Game Events
 - Opponent purchased an extra roll.
 - Game complete.
 - Opponent flipped the table! (Rage Quit. They rage quit, so you win.)
+- Opponent saw you rage quit. (Their insult.)
+
+⸻
+
+Games List
+
+- A finished game stays in your games list, sorted with the games waiting on your turn, until you open it and see the final result. Then it moves to Completed Games.
+- This lasts up to 7 days after the game ends. Older unseen results go straight to Completed Games.
+- Seeing a result on one device clears it on your other devices the next time they refresh.
 
 ⸻
 

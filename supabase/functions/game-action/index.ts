@@ -1711,6 +1711,13 @@ async function replyToRageQuit(
   const updatedGame = stageGameMove(mutationState, game, {
     state: { ...game.state, rageQuit: { ...rageQuit, replyId } },
   });
+  // The quitter has not seen this yet, so the game goes back into their list.
+  mutationState.plan!.writes.push({
+    table: 'game_players',
+    operation: 'update',
+    data: { result_seen_at: null },
+    match: { game_id: gameId, player_id: rageQuit.playerId },
+  });
   await insertAction(admin, gameId, actorId, 'rage_quit_reply', { replyId }, mutationState.plan);
   return { game: updatedGame, notificationProfileIds: [rageQuit.playerId] };
 }

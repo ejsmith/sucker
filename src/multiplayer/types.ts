@@ -9,6 +9,9 @@ export type RemoteGameRow = {
   created_at: string;
   created_by: string;
   current_player_id: string | null;
+  // Finished, but this viewer has not seen the final result yet. Undefined on
+  // rows loaded outside the game list.
+  has_unseen_result?: boolean;
   id: string;
   last_turn_id: string | null;
   // Latest Jab this viewer sent to current_player_id across all games.

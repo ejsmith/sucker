@@ -31,6 +31,7 @@ export function GameListProvider({ children }: { children: ReactNode }) {
   const [cacheHydrated, setCacheHydrated] = useState(false);
   const sessionProfileId = useRef<string | null | undefined>(undefined);
   const sessionGeneration = useRef(0);
+  const latestRefresh = useRef(0);
 
   const setGames = useCallback((profileId: string | null, games: RemoteGameRow[]) => {
     hasChangedGameList.current = true;
@@ -40,8 +41,12 @@ export function GameListProvider({ children }: { children: ReactNode }) {
   const refreshGames = useCallback(
     async (profileId: string) => {
       const generation = sessionGeneration.current;
+      // A slower refresh that started earlier must not undo a newer one, such
+      // as the refresh right after a result was marked seen.
+      const refresh = ++latestRefresh.current;
       const games = await listMyGames();
       if (
+        refresh === latestRefresh.current &&
         generation === sessionGeneration.current &&
         (sessionProfileId.current === undefined || sessionProfileId.current === profileId)
       ) {
@@ -128,7 +133,11 @@ export function useGameList() {
 
 function mergeGame(games: RemoteGameRow[], game: RemoteGameRow) {
   const nextGames = games.some((current) => current.id === game.id)
-    ? games.map((current) => (current.id === game.id ? game : current))
+    ? games.map((current) =>
+        current.id === game.id
+          ? { ...game, has_unseen_result: game.has_unseen_result ?? current.has_unseen_result }
+          : current,
+      )
     : [game, ...games];
   return nextGames.sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
 }

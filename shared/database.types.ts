@@ -96,6 +96,7 @@ export type Database = {
           hidden_at: string | null;
           joined_at: string;
           player_id: string;
+          result_seen_at: string | null;
           seat_index: number;
           sucker_tokens: number;
           upper_bonus_awarded: boolean;
@@ -105,6 +106,7 @@ export type Database = {
           game_id: string;
           hidden_at?: string | null;
           player_id: string;
+          result_seen_at?: string | null;
           seat_index: number;
           sucker_tokens?: number;
           upper_bonus_awarded?: boolean;
@@ -112,6 +114,7 @@ export type Database = {
         Update: {
           final_score?: number | null;
           hidden_at?: string | null;
+          result_seen_at?: string | null;
           sucker_tokens?: number;
           upper_bonus_awarded?: boolean;
         };
@@ -636,6 +639,14 @@ export type Database = {
           upper_bonus_pct: number;
           wins: number;
         }[];
+      };
+      get_unseen_game_results: {
+        Args: Record<PropertyKey, never>;
+        Returns: { game_id: string }[];
+      };
+      mark_game_result_seen: {
+        Args: { target_game_id: string; seen_updated_at: string };
+        Returns: undefined;
       };
       record_computer_game_result_once: {
         Args: { p_owner_id: string; p_game_id: string; p_result: Json };

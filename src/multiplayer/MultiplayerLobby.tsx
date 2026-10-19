@@ -51,6 +51,7 @@ import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { SaltBadge } from '../ui/RageQuit';
+import { getRageQuitReplyText } from '../../shared/rageQuit';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
@@ -1036,15 +1037,19 @@ export function MultiplayerLobby({
 
   const activeProfileId = profileId ?? session.user.id;
   const isGameListReady = gamesProfileId === activeProfileId;
+  // Finished games stay here until this player has seen how they ended.
   const activeGames = sortActiveGames(
-    visibleGames.filter((game) => game.status !== 'complete'),
+    visibleGames.filter((game) => game.status !== 'complete' || game.has_unseen_result),
     activeProfileId,
   );
-  const completedGames = sortCompletedGames(visibleGames.filter((game) => game.status === 'complete')).slice(0, 25);
+  const completedGames = sortCompletedGames(
+    visibleGames.filter((game) => game.status === 'complete' && !game.has_unseen_result),
+  ).slice(0, 25);
+  const unfinishedGameCount = activeGames.filter((game) => game.status !== 'complete').length;
   const webPushPromptVisible = Boolean(
     profile &&
     !showConnectionNotice &&
-    activeGames.length > 0 &&
+    unfinishedGameCount > 0 &&
     !webPushPromptDismissed &&
     canOfferWebPushPrompt() &&
     getWebNotificationPermission() === 'default',
@@ -1805,7 +1810,7 @@ export function MultiplayerLobby({
               {profileId && saltyProfileIds.has(profileId) && <SaltBadge size={12} />}
             </View>
             <Text style={lobbyStyles.subtleText}>
-              {activeGames.length} active {activeGames.length === 1 ? 'game' : 'games'}
+              {unfinishedGameCount} active {unfinishedGameCount === 1 ? 'game' : 'games'}
             </Text>
           </View>
           <Pressable
@@ -2290,11 +2295,15 @@ function GameListItem({
   const myScore = me ? totalScore(me.scorecard) : 0;
   const opponentScore = opponent ? totalScore(opponent.scorecard) : 0;
   const isMyTurn = game.current_player_id === profileId;
+  // Only finished games this player has not seen yet are listed here.
+  const isUnseenResult = game.status === 'complete';
+  const needsMe = isMyTurn || isUnseenResult;
   const showJab = canJabGame(game, profileId, now);
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
-  const waitText =
-    game.status === 'inviting'
+  const waitText = isUnseenResult
+    ? getUnseenResultHint(game, profileId, opponentName)
+    : game.status === 'inviting'
       ? `Open invite for ${formatElapsed(now, game.updated_at)}`
       : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
   const [translateX] = useState(() => new Animated.Value(0));
@@ -2346,7 +2355,7 @@ function GameListItem({
           onPress={() => onOpenGame(game.id)}
           style={({ pressed }) => [
             lobbyStyles.gameCard,
-            isMyTurn && lobbyStyles.gameCardMyTurn,
+            needsMe && lobbyStyles.gameCardMyTurn,
             pressed && lobbyStyles.pressed,
           ]}
           testID={`game-card-${game.id}`}
@@ -2363,8 +2372,9 @@ function GameListItem({
               <Text
                 style={[
                   lobbyStyles.turnBadge,
-                  isMyTurn ? lobbyStyles.turnBadgeYourTurn : status === 'Their turn' && lobbyStyles.turnBadgeTheirTurn,
+                  needsMe ? lobbyStyles.turnBadgeYourTurn : status === 'Their turn' && lobbyStyles.turnBadgeTheirTurn,
                 ]}
+                testID={`game-status-${game.id}`}
               >
                 {status}
               </Text>
@@ -2378,7 +2388,9 @@ function GameListItem({
               <View style={lobbyStyles.jabButtonPlaceholder} />
             </View>
           </View>
-          <Text style={lobbyStyles.waitText}>{waitText}</Text>
+          <Text style={lobbyStyles.waitText} testID={`game-hint-${game.id}`}>
+            {waitText}
+          </Text>
         </Pressable>
         {showJab && (
           <Pressable
@@ -2687,10 +2699,11 @@ function StatTile({ label, value }: { label: string; value: string }) {
   );
 }
 
+// Games waiting on this player, including results they have not seen, come first.
 function sortActiveGames(games: RemoteGameRow[], profileId: string) {
   return [...games].sort((left, right) => {
-    const leftTurnRank = left.current_player_id === profileId ? 0 : 1;
-    const rightTurnRank = right.current_player_id === profileId ? 0 : 1;
+    const leftTurnRank = left.current_player_id === profileId || left.status === 'complete' ? 0 : 1;
+    const rightTurnRank = right.current_player_id === profileId || right.status === 'complete' ? 0 : 1;
     if (leftTurnRank !== rightTurnRank) {
       return leftTurnRank - rightTurnRank;
     }
@@ -2748,8 +2761,23 @@ function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
   if (game.status === 'inviting') {
     return 'Waiting for friend';
   }
+  if (game.status === 'complete') {
+    return getCompletedResultLabel(game, profileId);
+  }
 
   return game.current_player_id === profileId ? 'Your turn' : 'Their turn';
+}
+
+function getUnseenResultHint(game: RemoteGameRow, profileId: string, opponentName: string) {
+  const rageQuit = game.state.rageQuit;
+  if (rageQuit?.replyId && rageQuit.playerId === profileId) {
+    return `${opponentName}: “${getRageQuitReplyText(rageQuit.replyId)}”`;
+  }
+  if (rageQuit && rageQuit.playerId !== profileId && !rageQuit.replyId) {
+    return 'Tap to send an insult.';
+  }
+
+  return 'Tap to see the final score.';
 }
 
 function formatElapsed(now: number, updatedAt: string) {

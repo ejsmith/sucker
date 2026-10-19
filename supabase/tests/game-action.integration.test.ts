@@ -2013,6 +2013,10 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   const openInvite = (await invokeGameAction(alice, { type: 'create_invite' })).game as GameRow;
   const inviteQuit = await invokeGameAction(alice, { gameId: openInvite.id, type: 'rage_quit' }, 400);
   assertEquals(inviteQuit.error, 'Remove the invite instead. Nobody has joined yet.');
+  // An unfinished game has no result to see yet.
+  const later = new Date(Date.now() + 60_000).toISOString();
+  await markResultSeen(bob, gameId, later);
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
 
   const quit = (await invokeGameAction(bob, { gameId, type: 'rage_quit' })).game as GameRow;
   assertEquals(quit.status, 'complete');
@@ -2027,6 +2031,14 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
     [undefined, undefined],
   );
   assertPlayerTokens(quit, bob.id, startingSuckerTokens);
+
+  // Each player clears only their own result.
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
+  assertEquals(await loadUnseenResults(alice), [gameId]);
+  await markResultSeen(bob, gameId, quit.updated_at);
+  await markResultSeen(charlie, gameId, later);
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: true });
+  assertEquals(await loadUnseenResults(bob), []);
 
   const again = await invokeGameAction(alice, { gameId, type: 'rage_quit' }, 400);
   assertEquals(again.error, 'This game is already over.');
@@ -2093,6 +2105,14 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   const replied = (await invokeGameAction(alice, { gameId, replyId: 'need-tissue', type: 'rage_quit_reply' }))
     .game as GameRow;
   assertEquals(replied.state.rageQuit, { playerId: bob.id, replyId: 'need-tissue' });
+  // The insult puts the game back in front of the quitter. Marking the version
+  // from before the insult does not count as seeing it.
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
+  assertEquals(await loadUnseenResults(bob), [gameId]);
+  await markResultSeen(bob, gameId, quit.updated_at);
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: false });
+  await markResultSeen(bob, gameId, replied.updated_at);
+  assertEquals(await loadResultSeen(gameId), { [alice.id]: false, [bob.id]: true });
   const secondReply = await invokeGameAction(alice, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
   assertEquals(secondReply.error, 'You already said your piece.');
 
@@ -2300,6 +2320,23 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, expectedStatus
 async function loadTurn(turnId: string | null): Promise<TurnRow> {
   assertString(turnId);
   return selectSingle(admin.from('turns').select('*').eq('id', turnId).single());
+}
+
+async function markResultSeen(user: TestUser, gameId: string, seenUpdatedAt: string) {
+  assertNoError(
+    (await user.client.rpc('mark_game_result_seen', { seen_updated_at: seenUpdatedAt, target_game_id: gameId })).error,
+  );
+}
+
+async function loadUnseenResults(user: TestUser) {
+  const { data, error } = await user.client.rpc('get_unseen_game_results');
+  assertNoError(error);
+  return ((data ?? []) as { game_id: string }[]).map((row) => row.game_id);
+}
+
+async function loadResultSeen(gameId: string) {
+  const rows = await selectMany(admin.from('game_players').select('player_id, result_seen_at').eq('game_id', gameId));
+  return Object.fromEntries(rows.map((row) => [row.player_id, Boolean(row.result_seen_at)]));
 }
 
 async function loadActions(gameId: string): Promise<ActionRow[]> {
