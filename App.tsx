@@ -4858,7 +4858,7 @@ export function LocalGameScreen({
                       rematchLockSeconds > 0
                         ? `Rematch available in ${rematchLockSeconds} seconds`
                         : didIRageQuit
-                          ? 'Try again, quitter. Starts a rematch.'
+                          ? 'Quit quitting. Starts a rematch.'
                           : 'Start a rematch'
                     }
                     accessibilityRole="button"
@@ -4878,23 +4878,13 @@ export function LocalGameScreen({
                       adjustsFontSizeToFit
                       maxFontSizeMultiplier={1.2}
                       minimumFontScale={0.7}
-                      numberOfLines={didIRageQuit && rematchLockSeconds === 0 ? 2 : 1}
-                      style={[
-                        styles.gameOverPrimaryText,
-                        gameLayout.styles.gameOverPrimaryText,
-                        // "Try again, quitter" wraps onto two lines.
-                        didIRageQuit &&
-                          rematchLockSeconds === 0 && {
-                            fontSize: gameLayout.unit(18),
-                            lineHeight: gameLayout.unit(20),
-                            textAlign: 'center',
-                          },
-                      ]}
+                      numberOfLines={1}
+                      style={[styles.gameOverPrimaryText, gameLayout.styles.gameOverPrimaryText]}
                     >
                       {rematchLockSeconds > 0
                         ? `Breathe… ${rematchLockSeconds}`
                         : didIRageQuit
-                          ? 'Try again, quitter'
+                          ? 'Quit quitting'
                           : 'Rematch'}
                     </Text>
                   </Pressable>
