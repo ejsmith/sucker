@@ -35,7 +35,8 @@ const insults = [
   'Go cry in the car.',
   'Need a juice box?',
 ];
-// Slowing down is not rage. The streak starts over with one of these.
+// Slowing down is not rage. The streak starts over quietly, and the next tap
+// answers with one of these instead of an insult.
 const resetTaunts = ['Too slow.', "That's not rage.", 'Weak. Again.', 'Is that all you got?'];
 const tapsToFlip = 10;
 // Each tap must land this soon after the last one, or the streak resets.
@@ -64,6 +65,7 @@ export function RageQuitDialog({
   const taps = useRef(0);
   const usedInsults = useRef<string[]>([]);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didStreakReset = useRef(false);
   const [isScreenReaderOn, setIsScreenReaderOn] = useState(false);
   const [shake] = useState(() => new Animated.Value(0));
   const [pop] = useState(() => new Animated.Value(1));
@@ -109,12 +111,19 @@ export function RageQuitDialog({
       return;
     }
 
-    setLabel(nextInsult());
+    // The text only changes when they tap, so every line stays up until then.
+    if (didStreakReset.current) {
+      didStreakReset.current = false;
+      const taunts = resetTaunts.filter((taunt) => taunt !== label);
+      setLabel(taunts[Math.floor(Math.random() * taunts.length)]);
+    } else {
+      setLabel(nextInsult());
+    }
     resetTimer.current = setTimeout(
       () => {
         resetTimer.current = null;
         taps.current = 0;
-        setLabel(resetTaunts[Math.floor(Math.random() * resetTaunts.length)]);
+        didStreakReset.current = true;
       },
       isScreenReaderOn ? screenReaderRageWindowMs : rageWindowMs,
     );

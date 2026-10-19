@@ -321,7 +321,7 @@ Rage Quit is surrender, made loud. Quitting must never help the quitter.
 
 - Available from the game menu in any active multiplayer game, on either player's turn and during response windows. Not available before an invite is accepted, in computer games, or after the game ends.
 - One button, labeled “Rage Quit.” Tapping it does not quit. Each tap answers with a random insult instead (“Crybaby.”, “Bawk bawk bawk.”), and nothing says how many taps it takes. The shake and haptics escalate with each tap.
-- It takes real rage: 10 taps in a row, each within 0.4 seconds of the last (1.5 seconds with a screen reader on iOS or Android). Slow down and the streak resets with a taunt (“Too slow.”, “That's not rage.”). Closing the dialog cancels, and reopening it starts over.
+- It takes real rage: 10 taps in a row, each within 0.4 seconds of the last (1.5 seconds with a screen reader on iOS or Android). Slow down and the streak quietly resets, and the next tap answers with a taunt instead of an insult (“Too slow.”, “That's not rage.”). The text only changes when they tap. Closing the dialog cancels, and reopening it starts over.
 - The game ends immediately. The player who stayed wins, regardless of score. Unused counterpunches and revenge discounts expire, as with any game end.
 - Both players watch the table blow up once (“KABOOM!”): the board trembles harder and harder, then a flash blows the scorecard apart, the dice tray falls away, and the dice plus one Sucker Token per unspent token burst outward. Hoarding tokens makes the mess bigger.
 - The quitter sees “You rage quit.” The rematch button is locked for 5 seconds (“Breathe… 5”), then reads “Quit quitting.”
