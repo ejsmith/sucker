@@ -320,12 +320,11 @@ Rage Quit
 Rage Quit is surrender, made loud. Quitting must never help the quitter.
 
 - Available from the game menu in any active multiplayer game, on either player's turn and during response windows. Not available before an invite is accepted, in computer games, or after the game ends.
-- One button, labeled “Rage Quit.” Tapping it does not quit. Each tap answers with a random insult instead (“Crybaby.”, “Bawk bawk bawk.”), and nothing says how many taps it takes. The shake and haptics escalate with each tap.
-- The 7th tap turns the button into the quitter's confession, a random shameful line from a fixed list that each game assigns (for example, “I'm a quitter.” or “I need a juice box and a nap.”). Tapping it is the 8th tap, which flips the table. The quitter cannot choose, edit, or reroll it. Reopening the dialog starts the taps over but keeps the same confession, and the server rejects any other.
+- One button, labeled “Rage Quit.” Tapping it does not quit. Each tap answers with a random insult instead (“Crybaby.”, “Bawk bawk bawk.”), and nothing says how many taps it takes. The shake and haptics escalate with each tap. The 8th tap flips the table. Closing the dialog cancels, and reopening it starts the taps over.
 - The game ends immediately. The player who stayed wins, regardless of score. Unused counterpunches and revenge discounts expire, as with any game end.
 - Both players watch the table blow up once (“KABOOM!”): the board trembles harder and harder, then a flash blows the scorecard apart, the dice tray falls away, and the dice plus one Sucker Token per unspent token burst outward. Hoarding tokens makes the mess bigger.
 - The quitter sees “You rage quit.” The rematch button is locked for 5 seconds (“Breathe… 5”), then reads “Run it back.”
-- Both game-over screens show the signed confession. The winner sees “Victory by Tantrum!” and may send one reply from a fixed list.
+- The winner sees “Victory by Tantrum!” and may send one reply from a fixed list.
 - Public shame: a salt shaker (🧂) appears next to the quitter's name in every lobby view for 24 hours, visible to all signed-in players. Rage-quit counts appear in head-to-head and player stats, and recent game history labels the game a rage quit.
 - Stats: a rage quit counts as a game played, a win for the opponent, and a loss for the quitter. Its partial scores and plays never count toward averages, highs, category rates, or score-based achievements.
 
@@ -353,7 +352,7 @@ Game Events
 - Opponent scratched Large Straight.
 - Opponent purchased an extra roll.
 - Game complete.
-- Opponent flipped the table! (Rage Quit, with their signed confession.)
+- Opponent flipped the table! (Rage Quit. They rage quit, so you win.)
 
 ⸻
 

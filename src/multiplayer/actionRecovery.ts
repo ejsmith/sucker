@@ -143,8 +143,6 @@ function hasMatchingActionPayload(existing: MultiplayerAction, incoming: Multipl
       );
     case 'taunt':
       return incoming.type === 'taunt' && existing.tauntId === incoming.tauntId;
-    case 'rage_quit':
-      return incoming.type === 'rage_quit' && existing.confessionId === incoming.confessionId;
     case 'rage_quit_reply':
       return incoming.type === 'rage_quit_reply' && existing.replyId === incoming.replyId;
     default:

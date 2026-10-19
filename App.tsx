@@ -123,14 +123,7 @@ import { RulesDialog } from './src/ui/RulesDialog';
 import { DieFace } from './src/ui/DieFace';
 import { rageQuitRematchCooldownMs, RageQuitDialog } from './src/ui/RageQuit';
 import { getTableFlipBoardStyle, getTableFlipTrayStyle, runTableFlip, TableFlipDebris } from './src/ui/TableFlip';
-import {
-  assignRageQuitConfession,
-  getRageQuitConfessionText,
-  getRageQuitReplyText,
-  rageQuitReplies,
-  type RageQuitConfessionId,
-  type RageQuitReplyId,
-} from './shared/rageQuit';
+import { getRageQuitReplyText, rageQuitReplies, type RageQuitReplyId } from './shared/rageQuit';
 import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
@@ -286,7 +279,7 @@ type RemoteActionHandlers = {
   onScratch: (category: ScoreCategory, held: GameState['held']) => Promise<ReturnType<typeof createGame> | null>;
   onSuckerPunch: (turnId: string, chanceDie: DieValue) => Promise<RemoteSuckerPunchResult | null>;
   onTaunt: (tauntId: TauntId) => Promise<ReturnType<typeof createGame> | null>;
-  onRageQuit: (confessionId: RageQuitConfessionId) => Promise<ReturnType<typeof createGame> | null>;
+  onRageQuit: () => Promise<ReturnType<typeof createGame> | null>;
   onRageQuitReply: (replyId: RageQuitReplyId) => Promise<ReturnType<typeof createGame> | null>;
 };
 type RemoteGameRequest = {
@@ -1124,8 +1117,7 @@ export function RemoteGameScreen({
         preserveNextTurns: true,
         showNextTurns: false,
       }),
-    onRageQuit: (confessionId) =>
-      runRemoteAction(() => rageQuitRemoteGame(remoteGame.id, confessionId), { showNextTurns: false }),
+    onRageQuit: () => runRemoteAction(() => rageQuitRemoteGame(remoteGame.id), { showNextTurns: false }),
     onRageQuitReply: (replyId) =>
       runRemoteAction(() => replyToRemoteRageQuit(remoteGame.id, replyId), { showNextTurns: false }),
   };
@@ -3118,14 +3110,14 @@ export function LocalGameScreen({
     }
   }
 
-  async function handleRageQuit(confessionId: RageQuitConfessionId) {
+  async function handleRageQuit() {
     if (!remoteHandlers) return;
     setIsRageQuitting(true);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
     try {
-      await remoteHandlers.onRageQuit(confessionId);
+      await remoteHandlers.onRageQuit();
     } finally {
       setIsRageQuitting(false);
       setIsRageQuitOpen(false);
@@ -4229,8 +4221,7 @@ export function LocalGameScreen({
                 setIsRageQuitOpen(false);
                 requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
               }}
-              confessionId={assignRageQuitConfession(game.id, homePlayer.id)}
-              onFlip={() => void handleRageQuit(assignRageQuitConfession(game.id, homePlayer.id))}
+              onFlip={() => void handleRageQuit()}
               onTap={() => playHaptic('rageTap')}
               reduceMotion={shouldReduceMotion}
             />
@@ -4746,30 +4737,6 @@ export function LocalGameScreen({
                         ? `${rageQuitWinnerName} wins. Everyone sees your 🧂 for 24 hours.`
                         : `${rageQuitterName} flipped the table. You win.`}
                     </Text>
-                    <View
-                      style={[styles.rageQuitQuote, { borderRadius: gameLayout.unit(9), padding: gameLayout.unit(8) }]}
-                      testID="rage-quit-signed-confession"
-                    >
-                      <Text
-                        maxFontSizeMultiplier={1.2}
-                        style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(10) }]}
-                      >
-                        SIGNED CONFESSION
-                      </Text>
-                      <Text
-                        maxFontSizeMultiplier={1.2}
-                        style={[styles.rageQuitQuoteText, { fontSize: gameLayout.unit(18) }]}
-                        testID="rage-quit-confession"
-                      >
-                        “{getRageQuitConfessionText(rageQuit.confessionId)}”
-                      </Text>
-                      <Text
-                        maxFontSizeMultiplier={1.2}
-                        style={[styles.rageQuitQuoteBy, { fontSize: gameLayout.unit(11) }]}
-                      >
-                        — {rageQuitterName}
-                      </Text>
-                    </View>
                     {rageQuit.replyId ? (
                       <View
                         style={[

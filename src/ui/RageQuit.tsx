@@ -1,12 +1,10 @@
 import { useRef, useState } from 'react';
 import { Animated, Modal, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getRageQuitConfessionText, type RageQuitConfessionId } from '../../shared/rageQuit';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { Pressable } from './Pressable';
 
-// Every tap answers with an insult, and nothing says how many it takes. The
-// last thing the quitter taps is the confession this game assigned them.
+// Every tap answers with an insult, and nothing says how many it takes.
 const insults = [
   'Crybaby.',
   'Waaah.',
@@ -24,20 +22,20 @@ const insults = [
   'Wow. Really?',
   'Tap harder, crybaby.',
   'Pathetic.',
+  'Go cry in the car.',
+  'Need a juice box?',
 ];
 const tapsToFlip = 8;
 
 export const rageQuitRematchCooldownMs = 5_000;
 
 export function RageQuitDialog({
-  confessionId,
   isBusy,
   onCancel,
   onFlip,
   onTap,
   reduceMotion,
 }: {
-  confessionId: RageQuitConfessionId;
   isBusy: boolean;
   onCancel: () => void;
   onFlip: () => void;
@@ -69,7 +67,7 @@ export function RageQuitDialog({
       return;
     }
 
-    setLabel(taps.current === tapsToFlip - 1 ? getRageQuitConfessionText(confessionId) : nextInsult());
+    setLabel(nextInsult());
     if (reduceMotion) return;
     const amplitude = 2 + taps.current * 1.8;
     shake.stopAnimation();

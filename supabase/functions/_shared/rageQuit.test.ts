@@ -1,15 +1,5 @@
 import { createGame, getWinnerId, rageQuitGame, toGameState, type GameState } from './game.ts';
-import {
-  assignRageQuitConfession,
-  getRageQuitConfessionText,
-  getRageQuitReplyText,
-  isRageQuitConfessionId,
-  isRageQuitReplyId,
-  isSaltyAt,
-  rageQuitConfessions,
-  rageQuitReplies,
-  rageQuitSaltDurationMs,
-} from './rageQuit.ts';
+import { getRageQuitReplyText, isRageQuitReplyId, isSaltyAt, rageQuitReplies, rageQuitSaltDurationMs } from './rageQuit.ts';
 
 function leadingGame(): GameState {
   const game = createGame(['Quitter', 'Stayer']);
@@ -32,18 +22,17 @@ function leadingGame(): GameState {
 
 Deno.test('Rage Quit ends the game for the opponent even when the quitter leads', () => {
   const game = leadingGame();
-  const quit = rageQuitGame(game, game.players[0].id, 'better-than-me');
+  const quit = rageQuitGame(game, game.players[0].id);
 
   assertEquals(quit.phase, 'complete');
   assertEquals(quit.rageQuit?.playerId, game.players[0].id);
-  assertEquals(quit.rageQuit?.confessionId, 'better-than-me');
   assertEquals(getWinnerId(quit), game.players[1].id);
   assertEquals(getWinnerId(game), game.players[0].id);
 });
 
 Deno.test('Rage Quit gives the quitter nothing back', () => {
   const game = leadingGame();
-  const quit = rageQuitGame(game, game.players[0].id, 'sore-loser');
+  const quit = rageQuitGame(game, game.players[0].id);
 
   // Tokens, scores, and dice stay exactly as they were. Unused punch
   // opportunities expire like any other game end.
@@ -57,53 +46,34 @@ Deno.test('Rage Quit gives the quitter nothing back', () => {
 
 Deno.test('Rage Quit cannot end a finished game or be thrown by an outsider', () => {
   const game = leadingGame();
-  const quit = rageQuitGame(game, game.players[1].id, 'juice-box');
+  const quit = rageQuitGame(game, game.players[1].id);
 
-  assertThrows(() => rageQuitGame(quit, game.players[0].id, 'sore-loser'), 'already over');
-  assertThrows(() => rageQuitGame(game, 'stranger', 'sore-loser'), 'not in this game');
+  assertThrows(() => rageQuitGame(quit, game.players[0].id), 'already over');
+  assertThrows(() => rageQuitGame(game, 'stranger'), 'not in this game');
 });
 
 Deno.test('Stored rage quits survive parsing and reject impossible quitters', () => {
   const game = leadingGame();
-  const quit = { ...rageQuitGame(game, game.players[0].id, 'tried-hardest') };
+  const quit = { ...rageQuitGame(game, game.players[0].id) };
   const replied = { ...quit, rageQuit: { ...quit.rageQuit!, replyId: 'bye-sucker' } };
+  // Games quit during development stored a confession. It is ignored now.
+  const confessed = { ...quit, rageQuit: { ...quit.rageQuit!, confessionId: 'sore-loser' } };
 
-  assertEquals(toGameState(quit).rageQuit?.confessionId, 'tried-hardest');
+  assertEquals(toGameState(quit).rageQuit?.playerId, game.players[0].id);
   assertEquals(toGameState(replied).rageQuit?.replyId, 'bye-sucker');
+  assertEquals(JSON.stringify(toGameState(confessed).rageQuit), JSON.stringify({ playerId: game.players[0].id }));
   assertEquals(toGameState(game).rageQuit, undefined);
   assertThrows(() => toGameState({ ...quit, rageQuit: { ...quit.rageQuit, playerId: 'stranger' } }), 'rage quit');
   assertThrows(() => toGameState({ ...quit, rageQuit: { ...quit.rageQuit, replyId: 5 } }), 'rage quit');
   assertThrows(() => toGameState({ ...quit, rageQuit: 'yes' }), 'rage quit');
 });
 
-Deno.test('Confessions and replies are fixed lists with stable ids', () => {
-  assertEquals(new Set(rageQuitConfessions.map((line) => line.id)).size, rageQuitConfessions.length);
-  assertEquals(new Set(rageQuitConfessions.map((line) => line.text)).size, rageQuitConfessions.length);
+Deno.test('Replies are a fixed list with stable ids', () => {
   assertEquals(new Set(rageQuitReplies.map((reply) => reply.id)).size, rageQuitReplies.length);
-  assertEquals(isRageQuitConfessionId('sore-loser'), true);
-  assertEquals(isRageQuitConfessionId("I'm a sore loser."), false);
   assertEquals(isRageQuitReplyId('bye-sucker'), true);
-  assertEquals(isRageQuitReplyId('sore-loser'), false);
-  assertEquals(getRageQuitConfessionText('juice-box'), 'I need a juice box and a nap.');
-  // Newer releases may add lines; older clients still render something.
-  assertEquals(getRageQuitConfessionText('from-the-future'), "I can't handle losing.");
+  assertEquals(isRageQuitReplyId('Bye, Sucker!'), false);
+  // Newer releases may add replies; older clients still render something.
   assertEquals(getRageQuitReplyText('from-the-future'), 'Bye, Sucker!');
-});
-
-Deno.test('Each game assigns one stable confession per player', () => {
-  const gameId = '6f0c2a54-1f9b-4d6e-9a43-5d8f0e7b2c11';
-  const playerId = 'b3d1e9a2-7c44-4f0a-8e6b-2a9d5c1f7e30';
-  const assigned = assignRageQuitConfession(gameId, playerId);
-
-  assertEquals(isRageQuitConfessionId(assigned), true);
-  assertEquals(assignRageQuitConfession(gameId, playerId), assigned);
-
-  // Across many games every confession comes up, so nobody can count on a mild one.
-  const seen = new Set<string>();
-  for (let index = 0; index < 500; index += 1) {
-    seen.add(assignRageQuitConfession(`game-${index}`, playerId));
-  }
-  assertEquals(seen.size, rageQuitConfessions.length);
 });
 
 Deno.test('The salt badge lasts 24 hours', () => {
