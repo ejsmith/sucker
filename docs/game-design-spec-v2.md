@@ -320,8 +320,8 @@ Rage Quit
 Rage Quit is surrender, made loud. Quitting must never help the quitter.
 
 - Available from the game menu in any active multiplayer game, on either player's turn and during response windows. Not available before an invite is accepted, in computer games, or after the game ends.
-- Confess first: each game assigns the quitter one random shameful confession from a fixed list (for example, “I'm a quitter.” or “I need a juice box and a nap.”). The confession is the button: tapping it admits it and unlocks the flip. The quitter cannot choose, edit, or reroll it; reopening the dialog shows the same one, and the server rejects any other.
-- Then mash to confirm: tap the rage meter 8 times quickly. Stopping drains the meter, which cancels. Copy, shake, and haptics escalate with each tap.
+- One button, labeled “Rage Quit.” Tapping it does not quit. Each tap answers with a random insult instead (“Crybaby.”, “Bawk bawk bawk.”), and nothing says how many taps it takes. The shake and haptics escalate with each tap.
+- The 7th tap turns the button into the quitter's confession, a random shameful line from a fixed list that each game assigns (for example, “I'm a quitter.” or “I need a juice box and a nap.”). Tapping it is the 8th tap, which flips the table. The quitter cannot choose, edit, or reroll it. Reopening the dialog starts the taps over but keeps the same confession, and the server rejects any other.
 - The game ends immediately. The player who stayed wins, regardless of score. Unused counterpunches and revenge discounts expire, as with any game end.
 - Both players watch the table flip once: the scorecard heaves up and away, the dice tray tumbles off, and the dice plus one Sucker Token per unspent token scatter. Hoarding tokens makes the mess bigger.
 - The quitter sees “You rage quit.” The rematch button is locked for 5 seconds (“Breathe… 5”), then reads “Run it back.”

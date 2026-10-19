@@ -1,8 +1,8 @@
 // Rage Quit ends a game by forfeit. It never helps the quitter: the opponent
 // wins, and the quitter is publicly salted for a day.
 
-// The quitter does not choose. Each game assigns one, and they must tap it to
-// admit it before the table flips.
+// The quitter does not choose. Each game assigns one, and it is the last thing
+// they tap before the table flips.
 export const rageQuitConfessions = [
   { id: 'quitter', text: "I'm a quitter." },
   { id: 'sore-loser', text: "I'm a sore loser." },
@@ -27,8 +27,6 @@ export const rageQuitReplies = [
 export type RageQuitConfessionId = (typeof rageQuitConfessions)[number]['id'];
 export type RageQuitReplyId = (typeof rageQuitReplies)[number]['id'];
 
-// Mash taps needed to fill the rage meter. Stopping drains it.
-export const rageQuitMeterTaps = 8;
 export const rageQuitSaltDurationMs = 24 * 60 * 60 * 1_000;
 
 // Stable per game and player, so reopening the dialog never rerolls a milder

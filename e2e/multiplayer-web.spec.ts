@@ -1263,30 +1263,28 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await openGameFromLobby(alicePage, gameId);
     await openGameFromLobby(bobPage, gameId);
 
-    // Quitting is allowed while waiting on the opponent, but only after
-    // admitting the assigned confession. Walking away cancels.
+    // Quitting is allowed while waiting on the opponent. Each tap insults the
+    // quitter instead of quitting. Walking away cancels.
     const confession = getRageQuitConfessionText(assignRageQuitConfession(gameId, bob.id));
     await bobPage.getByTestId('game-menu-button').click();
     await bobPage.getByTestId('rage-quit-menu-item').click();
     await expect(bobPage.getByTestId('rage-quit-dialog')).toBeVisible();
-    await expect(bobPage.getByTestId('rage-quit-admit')).toContainText(confession);
-    await expect(bobPage.getByTestId('rage-quit-mash-button')).toBeDisabled();
-    await bobPage.getByTestId('rage-quit-admit').click();
-    await bobPage.getByTestId('rage-quit-mash-button').click();
-    await expect(bobPage.getByTestId('rage-quit-meter')).toContainText('RAGE 1/8');
-    await expect(bobPage.getByTestId('rage-quit-meter')).toContainText('RAGE 0/8', { timeout: 3_000 });
+    await expect(bobPage.getByTestId('rage-quit-button')).toHaveText('RAGE QUIT');
+    await bobPage.getByTestId('rage-quit-button').click();
+    await expect(bobPage.getByTestId('rage-quit-button')).not.toHaveText('RAGE QUIT');
     await bobPage.getByTestId('rage-quit-cancel-button').click();
     await expect(bobPage.getByTestId('rage-quit-dialog')).toHaveCount(0);
     expect((await loadGame(gameId)).status).toBe('active');
 
-    // Reopening never rerolls a milder confession.
+    // Reopening starts over, and the last tap is always the assigned confession.
     await bobPage.getByTestId('game-menu-button').click();
     await bobPage.getByTestId('rage-quit-menu-item').click();
-    await expect(bobPage.getByTestId('rage-quit-admit')).toContainText(confession);
-    await bobPage.getByTestId('rage-quit-admit').click();
-    for (let tap = 0; tap < 8; tap += 1) {
-      await bobPage.getByTestId('rage-quit-mash-button').click();
+    await expect(bobPage.getByTestId('rage-quit-button')).toHaveText('RAGE QUIT');
+    for (let tap = 0; tap < 7; tap += 1) {
+      await bobPage.getByTestId('rage-quit-button').click();
     }
+    await expect(bobPage.getByTestId('rage-quit-button')).toHaveText(confession);
+    await bobPage.getByTestId('rage-quit-button').click();
 
     await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
     await expect(bobPage.getByTestId('rage-quit-confession')).toHaveText(`“${confession}”`);
