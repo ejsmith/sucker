@@ -4705,9 +4705,11 @@ export function LocalGameScreen({
                 >
                   <CloseIcon color="#FFD329" size={gameLayout.unit(22)} />
                 </Pressable>
-                <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
-                  {rageQuit ? (didIRageQuit ? 'Table Flipped' : 'Rage Quit') : 'Game Over'}
-                </Text>
+                {!didIRageQuit && (
+                  <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
+                    {rageQuit ? 'Rage Quit' : 'Game Over'}
+                  </Text>
+                )}
                 <Text
                   adjustsFontSizeToFit
                   ellipsizeMode="tail"
