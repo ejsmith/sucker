@@ -1274,15 +1274,24 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await expect(bobPage.getByTestId('rage-quit-dialog')).toHaveCount(0);
     expect((await loadGame(gameId)).status).toBe('active');
 
-    // Reopening starts over. The 8th tap flips the table.
+    // Reopening starts over. Pausing resets the streak, so twelve taps with a
+    // breather in the middle still do not quit.
     await bobPage.getByTestId('game-menu-button').click();
     await bobPage.getByTestId('rage-quit-menu-item').click();
-    await expect(bobPage.getByTestId('rage-quit-button')).toHaveText('RAGE QUIT');
-    for (let tap = 0; tap < 7; tap += 1) {
-      await bobPage.getByTestId('rage-quit-button').click();
+    const rageButton = bobPage.getByTestId('rage-quit-button');
+    await expect(rageButton).toHaveText('RAGE QUIT');
+    for (const _burst of [1, 2]) {
+      for (let tap = 0; tap < 6; tap += 1) {
+        await rageButton.click();
+      }
+      await bobPage.waitForTimeout(1_000);
     }
     expect((await loadGame(gameId)).status).toBe('active');
-    await bobPage.getByTestId('rage-quit-button').click();
+
+    // Ten fast taps in a row flip the table.
+    for (let tap = 0; tap < 10; tap += 1) {
+      await rageButton.click();
+    }
 
     await expect(bobPage.getByTestId('game-over-title')).toHaveText('You rage quit.', { timeout: 15_000 });
     await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Breathe…');
