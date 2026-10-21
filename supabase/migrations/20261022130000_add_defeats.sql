@@ -213,11 +213,13 @@ with ordered as (
 streaks as (
   select
     ordered.*,
+    -- A run key is only unique together with its outcome, so partition by both.
     row_number() over (
-      partition by ordered.player_id, ordered.overall_run order by ordered.completed_at, ordered.game_id
+      partition by ordered.player_id, ordered.lost, ordered.overall_run order by ordered.completed_at, ordered.game_id
     ) as overall_length,
     row_number() over (
-      partition by ordered.player_id, ordered.opponent_id, ordered.pair_run order by ordered.completed_at, ordered.game_id
+      partition by ordered.player_id, ordered.opponent_id, ordered.lost, ordered.pair_run
+      order by ordered.completed_at, ordered.game_id
     ) as pair_length,
     row_number() over (
       partition by ordered.player_id, ordered.lost order by ordered.completed_at, ordered.game_id

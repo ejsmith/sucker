@@ -127,6 +127,14 @@ Deno.test('Walk-Off and Last Gasp need the game-ending turn to turn a deficit in
   assertEquals(rolledOut.includes('last_gasp'), true);
   assertEquals(rolledOut.includes('photo_finish'), true);
 
+  // The same, with the game-ending submission included as the Edge Function now loads it.
+  const submitted = featsFor(
+    'player',
+    [roll('player', [1, 1, 1, 2, 3]), scored('player', 'ones'), ...fourRolls, scored('player', 'chance')],
+    { ...board, winnerId: 'player' },
+  );
+  assertEquals(submitted.includes('last_gasp'), true);
+
   const early = featsFor('player', [roll('player', [1, 2, 3, 4, 6]), roll('player', [1, 2, 3, 4, 6])], {
     ...board,
     winnerId: 'player',
@@ -210,6 +218,16 @@ Deno.test('Sucker chases reward landing it and shame missing, especially when it
   const broke = featsFor('player', [mulligan, mulligan, ...chase, hunt('player'), miss[3], scored('player', 'chance')]);
   assertEquals(broke.includes('all_in_all_gone'), true);
   assertEquals(broke.includes('sucker_born_every_minute'), true);
+
+  // A Mulligan starts the dice over, so a later Sucker does not rescue the earlier chase.
+  const restarted = featsFor('player', [
+    ...chase,
+    mulligan,
+    roll('player', [6, 6, 6, 6, 6]),
+    scored('player', 'sucker'),
+  ]);
+  assertEquals(restarted.includes('sucker_born_every_minute'), true);
+  assertEquals(restarted.includes('worth_every_penny'), false);
 
   // Two hunts are a normal gamble, not a defeat.
   const modest = featsFor('player', [hunt('player'), miss[0], hunt('player'), miss[1], scored('player')]);

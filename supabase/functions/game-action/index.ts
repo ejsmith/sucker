@@ -45,6 +45,7 @@ import {
   buildRollActionPayload,
   buildSuckerPunchActionPayload,
   type SuckerStatAction,
+  type SuckerStatActionType,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
 import { buildCompletedPlayerFeats } from '../_shared/feats.ts';
@@ -2325,14 +2326,29 @@ async function planCompletedGameStats(
   }
 }
 
+const statActionTypes: SuckerStatActionType[] = [
+  'extra_roll',
+  'roll',
+  'mulligan',
+  'sucker_punch',
+  'sucker_blocker',
+  'score_category',
+  'scratch_category',
+];
+
 async function loadCompletedGameHistory(admin: DbClient, gameId: string, plan: GameMovePlan) {
   const [actions, turns] = await Promise.all([
     loadSuckerStatActions(admin, gameId),
     loadSuckerStatTurns(admin, gameId),
   ]);
-  // The final turn is part of this transaction and is not in the database yet.
+  // The final turn and its submission are part of this transaction and are not
+  // in the database yet.
   for (const write of plan.writes) {
-    if (write.table === 'turns' && write.operation === 'insert') turns.push(write.data as unknown as SuckerStatTurn);
+    if (write.operation !== 'insert') continue;
+    if (write.table === 'turns') turns.push(write.data as unknown as SuckerStatTurn);
+    if (write.table === 'turn_actions' && statActionTypes.includes(write.data.action_type as SuckerStatActionType)) {
+      actions.push(write.data as unknown as SuckerStatAction);
+    }
   }
 
   return { actions, turns };
@@ -2357,15 +2373,7 @@ async function loadSuckerStatActions(admin: DbClient, gameId: string) {
     .from('turn_actions')
     .select('action_type, actor_id, payload')
     .eq('game_id', gameId)
-    .in('action_type', [
-      'extra_roll',
-      'roll',
-      'mulligan',
-      'sucker_punch',
-      'sucker_blocker',
-      'score_category',
-      'scratch_category',
-    ])
+    .in('action_type', statActionTypes)
     .order('created_at', { ascending: true });
 
   if (error) {

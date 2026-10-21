@@ -278,18 +278,29 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
   let rollsThisTurn = 0;
   let extraRollsThisTurn = 0;
   let spentThisTurn = 0;
+  let turnOpen = false;
+  let lastTurnUsedLastRoll = false;
   let suckerScratched = false;
   let chase = { emptied: false, extraRolls: 0, landed: false };
 
-  const endTurn = (score: number | null) => {
-    if (spentThisTurn >= goodMoneyTokens && score === 0) feats.add('bought_a_goose_egg');
-    spentThisTurn = 0;
+  // A Mulligan starts the dice over, so it settles any chase in progress.
+  const settleChase = () => {
     if (chase.extraRolls >= suckerChaseExtraRolls) {
       if (chase.landed) feats.add('worth_every_penny');
       else feats.add('sucker_born_every_minute');
     }
     if (chase.extraRolls > 0 && chase.emptied && !chase.landed) feats.add('all_in_all_gone');
     chase = { emptied: false, extraRolls: 0, landed: false };
+  };
+
+  const endTurn = (score: number | null) => {
+    if (spentThisTurn >= goodMoneyTokens && score === 0) feats.add('bought_a_goose_egg');
+    lastTurnUsedLastRoll = rollsThisTurn > 0 && rollsThisTurn >= maxRollsPerTurn + extraRollsThisTurn;
+    settleChase();
+    spentThisTurn = 0;
+    rollsThisTurn = 0;
+    extraRollsThisTurn = 0;
+    turnOpen = false;
   };
 
   for (const action of actions) {
@@ -307,6 +318,7 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
 
     switch (action.action_type) {
       case 'roll': {
+        turnOpen = true;
         rollsThisTurn += 1;
         const dice = payloadValue(action.payload, 'dice');
         if (Array.isArray(dice) && dice.length === 5 && dice.every((die) => die === dice[0])) {
@@ -318,6 +330,7 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
         break;
       }
       case 'extra_roll':
+        turnOpen = true;
         tokens -= suckerTokenCosts.extraRoll;
         spentThisTurn += suckerTokenCosts.extraRoll;
         extraRollsThisTurn += 1;
@@ -327,8 +340,10 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
         }
         break;
       case 'mulligan':
+        turnOpen = true;
         tokens -= suckerTokenCosts.mulligan;
         spentThisTurn += suckerTokenCosts.mulligan;
+        settleChase();
         rollsThisTurn = 0;
         extraRollsThisTurn = 0;
         break;
@@ -346,15 +361,11 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
           if (category === 'sucker') suckerScratched = true;
         }
         endTurn(0);
-        rollsThisTurn = 0;
-        extraRollsThisTurn = 0;
         break;
       }
       case 'score_category': {
         const score = payloadValue(action.payload, 'score');
         endTurn(typeof score === 'number' ? score : null);
-        rollsThisTurn = 0;
-        extraRollsThisTurn = 0;
         break;
       }
       default:
@@ -362,12 +373,11 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
     }
   }
 
-  // The game-ending turn is scored in the same transaction, so its submission
-  // is not among the loaded actions yet.
-  const finalTurnUsedLastRoll = rollsThisTurn > 0 && rollsThisTurn >= maxRollsPerTurn + extraRollsThisTurn;
-  endTurn(pendingFinalScore);
+  // Callers normally include the game-ending submission. If it is missing,
+  // finish the open turn with the score from its turn row.
+  if (turnOpen) endTurn(pendingFinalScore);
 
-  return { feats, finalTurnUsedLastRoll, scratchedCategories: scratched.size };
+  return { feats, finalTurnUsedLastRoll: lastTurnUsedLastRoll, scratchedCategories: scratched.size };
 }
 
 // The score of the game-ending turn when this player took it. That turn's
