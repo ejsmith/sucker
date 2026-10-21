@@ -49,6 +49,7 @@ export type GameFeatKey =
   | 'money_pit'
   | 'sucker_born_every_minute'
   | 'all_in_all_gone'
+  | 'bought_a_goose_egg'
   | 'buyers_remorse'
   | 'so_close'
   | 'scratch_fever';
@@ -89,6 +90,7 @@ function defeat(name: string, description: string, kind: FeatDefinition['kind'] 
 const closeGameMargin = 5;
 const bigSpendTokens = 10;
 const suckerChaseExtraRolls = 3;
+const goodMoneyTokens = 3;
 
 export const featCatalog: Record<FeatKey, FeatDefinition> = {
   one_inch_punch: feat('One-Inch Punch', 'Land a Sucker Punch on a 1 (10% chance).'),
@@ -134,6 +136,10 @@ export const featCatalog: Record<FeatKey, FeatDefinition> = {
     'Buy 3 or more Extra Rolls chasing a Sucker in one turn, and miss.',
   ),
   all_in_all_gone: defeat('All In, All Gone', 'Spend every token chasing a Sucker in one turn, and miss.'),
+  bought_a_goose_egg: defeat(
+    'Bought a Goose Egg',
+    'Spend 3 or more tokens in one turn and still walk away with a zero.',
+  ),
   buyers_remorse: defeat("Buyer's Remorse", 'Sucker Deal your Sucker box, then roll five of a kind later that game.'),
   so_close: defeat('So Close', 'Finish the upper section 1 to 3 points short of the bonus.'),
   scratch_fever: defeat('Scratch Fever', 'Scratch 6 or more categories in one game.'),
@@ -185,7 +191,7 @@ export function buildCompletedPlayerFeats({
   const margin = totalScore(player.scorecard) - totalScore(opponent.scorecard);
 
   scanPunches(actions, player.id, opponent.id).forEach((key) => feats.add(key));
-  const play = scanPlayerTurns(actions, player.id);
+  const play = scanPlayerTurns(actions, player.id, finalTurnScore(turns, player.id));
   play.feats.forEach((key) => feats.add(key));
 
   if ((player.suckerBonusCategories ?? []).length >= 2) feats.add('sucker_supreme');
@@ -265,16 +271,19 @@ function scanPunches(actions: SuckerStatAction[], playerId: string, opponentId: 
 
 // Replays a player's turns: rolls since the last score, scratch, Mulligan, or
 // landed punch; Extra Rolls bought; Sucker chases; and the running token balance.
-function scanPlayerTurns(actions: SuckerStatAction[], playerId: string) {
+function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingFinalScore: number | null) {
   const feats = new Set<GameFeatKey>();
   const scratched = new Set<string>();
   let tokens = startingSuckerTokens;
   let rollsThisTurn = 0;
   let extraRollsThisTurn = 0;
+  let spentThisTurn = 0;
   let suckerScratched = false;
   let chase = { emptied: false, extraRolls: 0, landed: false };
 
-  const endTurn = () => {
+  const endTurn = (score: number | null) => {
+    if (spentThisTurn >= goodMoneyTokens && score === 0) feats.add('bought_a_goose_egg');
+    spentThisTurn = 0;
     if (chase.extraRolls >= suckerChaseExtraRolls) {
       if (chase.landed) feats.add('worth_every_penny');
       else feats.add('sucker_born_every_minute');
@@ -310,6 +319,7 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string) {
       }
       case 'extra_roll':
         tokens -= suckerTokenCosts.extraRoll;
+        spentThisTurn += suckerTokenCosts.extraRoll;
         extraRollsThisTurn += 1;
         if (payloadValue(action.payload, 'suckerHunt') === true) {
           chase.extraRolls += 1;
@@ -318,6 +328,7 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string) {
         break;
       case 'mulligan':
         tokens -= suckerTokenCosts.mulligan;
+        spentThisTurn += suckerTokenCosts.mulligan;
         rollsThisTurn = 0;
         extraRollsThisTurn = 0;
         break;
@@ -334,16 +345,18 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string) {
           scratched.add(category);
           if (category === 'sucker') suckerScratched = true;
         }
-        endTurn();
+        endTurn(0);
         rollsThisTurn = 0;
         extraRollsThisTurn = 0;
         break;
       }
-      case 'score_category':
-        endTurn();
+      case 'score_category': {
+        const score = payloadValue(action.payload, 'score');
+        endTurn(typeof score === 'number' ? score : null);
         rollsThisTurn = 0;
         extraRollsThisTurn = 0;
         break;
+      }
       default:
         break;
     }
@@ -352,9 +365,16 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string) {
   // The game-ending turn is scored in the same transaction, so its submission
   // is not among the loaded actions yet.
   const finalTurnUsedLastRoll = rollsThisTurn > 0 && rollsThisTurn >= maxRollsPerTurn + extraRollsThisTurn;
-  endTurn();
+  endTurn(pendingFinalScore);
 
   return { feats, finalTurnUsedLastRoll, scratchedCategories: scratched.size };
+}
+
+// The score of the game-ending turn when this player took it. That turn's
+// submission is not among the loaded actions, but its turn row is.
+function finalTurnScore(turns: SuckerStatTurn[], playerId: string) {
+  const finalTurn = getEffectiveStatTurns(turns).at(-1);
+  return finalTurn?.player_id === playerId ? finalTurn.score : null;
 }
 
 function punchTokenCost(payload: unknown) {

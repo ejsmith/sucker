@@ -216,6 +216,34 @@ Deno.test('Sucker chases reward landing it and shame missing, especially when it
   assertEquals(modest.includes('sucker_born_every_minute'), false);
 });
 
+Deno.test('Bought a Goose Egg needs 3+ tokens spent in one turn and a zero to show for it', () => {
+  const extraRoll: SuckerStatAction = { action_type: 'extra_roll', actor_id: 'player' };
+  const mulligan: SuckerStatAction = { action_type: 'mulligan', actor_id: 'player' };
+  const zero: SuckerStatAction = {
+    action_type: 'score_category',
+    actor_id: 'player',
+    payload: { category: 'sucker', score: 0 },
+  };
+  const paid: SuckerStatAction = {
+    action_type: 'score_category',
+    actor_id: 'player',
+    payload: { category: 'chance', score: 22 },
+  };
+
+  assertEquals(featsFor('player', [extraRoll, extraRoll, extraRoll, zero]).includes('bought_a_goose_egg'), true);
+  assertEquals(featsFor('player', [mulligan, scratched('player', 'ones')]).includes('bought_a_goose_egg'), true);
+  assertEquals(featsFor('player', [extraRoll, extraRoll, extraRoll, paid]).includes('bought_a_goose_egg'), false);
+  assertEquals(featsFor('player', [extraRoll, extraRoll, zero]).includes('bought_a_goose_egg'), false);
+  // Spending in an earlier turn does not carry over.
+  assertEquals(featsFor('player', [extraRoll, extraRoll, paid, extraRoll, zero]).includes('bought_a_goose_egg'), false);
+
+  // The game-ending turn's zero comes from its turn row.
+  const finalZero = featsFor('player', [mulligan], {
+    turns: [turn(1, 'opponent', 'chance', 20), turn(2, 'player', 'sucker', 0)],
+  });
+  assertEquals(finalZero.includes('bought_a_goose_egg'), true);
+});
+
 Deno.test('punch defeats cover whiffs, sure-thing misses, and counterpunch boomerangs', () => {
   const whiffs = featsFor('player', [
     punch('player', { landed: false, chanceDie: 2 }),

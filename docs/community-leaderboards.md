@@ -135,6 +135,7 @@ the same actions, turns, and scorecards that already feed stats:
 | `money_pit`                | Money Pit                | Spend 10+ tokens and still lose                                       |
 | `sucker_born_every_minute` | Sucker Born Every Minute | Buy 3+ Extra Rolls chasing a Sucker in one turn, and miss             |
 | `all_in_all_gone`          | All In, All Gone         | Spend every token chasing a Sucker in one turn, and miss              |
+| `bought_a_goose_egg`       | Bought a Goose Egg       | Spend 3+ tokens in one turn and still walk away with a zero           |
 | `buyers_remorse`           | Buyer's Remorse          | Sucker Deal your Sucker box, then roll five of a kind later that game |
 | `so_close`                 | So Close                 | Finish the upper section 1 to 3 points short of the bonus             |
 | `scratch_fever`            | Scratch Fever            | Scratch 6+ categories in one game                                     |
