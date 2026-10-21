@@ -266,6 +266,8 @@ type PlayerStatsProfile = {
 
 type PlayerCommunity = {
   card: PlayerCard | null;
+  // Set when ratings, rankings, and feats could not be loaded.
+  failed?: boolean;
   feats: PlayerFeat[];
   profileId: string;
   rankings: PlayerRanking[];
@@ -480,6 +482,7 @@ function PlayerStatsPage({
       })
       .catch(() => {
         // Ratings and feats are extras; the profile still works without them.
+        if (isMounted) setCommunity({ card: null, failed: true, feats: [], profileId, rankings: [] });
       });
     return () => {
       isMounted = false;
@@ -869,7 +872,13 @@ function PlayerStatsSummary({
                 />
               </>
             )}
+            {section !== 'stats' && community?.failed && (
+              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
+                Rankings, feats, and defeats are unavailable right now.
+              </Text>
+            )}
             {section === 'ranks' &&
+              !community?.failed &&
               (community ? (
                 <PlayerRankingsCard
                   isHidden={card?.show_on_leaderboards === false}
@@ -880,8 +889,9 @@ function PlayerStatsSummary({
                 <ActivityIndicator color="#FFD329" />
               ))}
             {(section === 'feats' || section === 'defeats') &&
+              !community?.failed &&
               (community ? (
-                <PlayerFeatsCard feats={community.feats} tone={section === 'feats' ? 'feat' : 'defeat'} />
+                <PlayerFeatsCard feats={community.feats} key={section} tone={section === 'feats' ? 'feat' : 'defeat'} />
               ) : (
                 <ActivityIndicator color="#FFD329" />
               ))}
@@ -912,13 +922,14 @@ function PlayerSectionTabs({
   onChange: (section: PlayerProfileSection) => void;
   value: PlayerProfileSection;
 }) {
+  const loaded = community && !community.failed ? community : null;
   const earned = (tone: PlayerFeat['tone']) =>
-    community?.feats.filter((feat) => feat.tone === tone && feat.timesEarned > 0).length ?? 0;
+    loaded?.feats.filter((feat) => feat.tone === tone && feat.timesEarned > 0).length ?? 0;
   const sections: { label: string; section: PlayerProfileSection }[] = [
     { label: 'Stats', section: 'stats' },
-    { label: community ? `Ranks ${community.rankings.length}` : 'Ranks', section: 'ranks' },
-    { label: community ? `Feats ${earned('feat')}` : 'Feats', section: 'feats' },
-    { label: community ? `Defeats ${earned('defeat')}` : 'Defeats', section: 'defeats' },
+    { label: loaded ? `Ranks ${loaded.rankings.length}` : 'Ranks', section: 'ranks' },
+    { label: loaded ? `Feats ${earned('feat')}` : 'Feats', section: 'feats' },
+    { label: loaded ? `Defeats ${earned('defeat')}` : 'Defeats', section: 'defeats' },
   ];
 
   return (
