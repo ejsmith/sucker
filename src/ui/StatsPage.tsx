@@ -11,6 +11,14 @@ import {
 } from '../multiplayer/stats';
 import { categoryLabels, scoreCategories, upperBonus } from '../game';
 import { getProfilesByIds } from '../multiplayer/profiles';
+import {
+  formatRankLine,
+  getPlayerCard,
+  getPlayerFeats,
+  type PlayerCard,
+  type PlayerFeat,
+} from '../multiplayer/community';
+import { PlayerFeatsCard } from '../multiplayer/CommunityPages';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -250,6 +258,12 @@ type PlayerStatsProfile = {
   username?: string | null;
 };
 
+type PlayerCommunity = {
+  card: PlayerCard | null;
+  feats: PlayerFeat[];
+  profileId: string;
+};
+
 type PlayerStatsPageName = 'detail' | 'games' | 'stats';
 type PlayerStatsView = 'headToHead' | 'overall';
 
@@ -260,6 +274,131 @@ type PlayerStatsRoute = {
   selectedGame: ProfileRecentGame | null;
   statsView: PlayerStatsView;
 };
+
+async function loadPlayerStatsProfile(
+  profileId: string,
+  currentUserProfileId: string | undefined,
+  fallback: { avatarUrl?: string | null; name: string },
+): Promise<PlayerStatsProfile> {
+  const canLoadHeadToHead = Boolean(currentUserProfileId && profileId !== currentUserProfileId);
+  const [profiles, matchup, overallStats] = await Promise.all([
+    getProfilesByIds([profileId]),
+    canLoadHeadToHead ? getHeadToHeadStats(profileId) : Promise.resolve(null),
+    canLoadHeadToHead ? Promise.resolve(null) : getProfileStats(profileId),
+  ]);
+  const profile = profiles[0];
+  return {
+    avatarUrl: profile?.avatar_url ?? fallback.avatarUrl,
+    currentUserHeadToHeadStats: matchup?.mine ?? null,
+    headToHeadStats: matchup?.opponent ?? null,
+    id: profileId,
+    name: profile?.display_name ?? fallback.name,
+    stats: matchup?.opponentOverall ?? overallStats,
+    username: profile?.username ?? null,
+  };
+}
+
+// Opens the same player profile shown from completed games, starting from only an id.
+export function PlayerProfilePage({
+  currentUserProfileId,
+  nestedBackHandlerRef,
+  onClose,
+  onStartGameAgainst,
+  profileAvatarUrl,
+  profileId,
+  profileName,
+}: {
+  currentUserProfileId?: string;
+  nestedBackHandlerRef?: MutableRefObject<(() => void) | null>;
+  onClose: () => void;
+  onStartGameAgainst?: (profileId: string) => Promise<void>;
+  profileAvatarUrl?: string | null;
+  profileId: string;
+  profileName: string;
+}) {
+  const [loaded, setLoaded] = useState<{ error: string | null; profile: PlayerStatsProfile | null } | null>(null);
+  const closeButtonRef = useRef<AccessibilityTargetRef | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadPlayerStatsProfile(profileId, currentUserProfileId, { avatarUrl: profileAvatarUrl, name: profileName })
+      .then((profile) => {
+        if (isMounted) setLoaded({ error: null, profile });
+      })
+      .catch((loadError: unknown) => {
+        if (!isMounted) return;
+        setLoaded({
+          error: loadError instanceof Error ? loadError.message : 'Unable to load player stats.',
+          profile: null,
+        });
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUserProfileId, profileAvatarUrl, profileId, profileName]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => focusAccessibilityTarget(closeButtonRef.current));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  if (loaded?.profile?.id === profileId) {
+    return (
+      <PlayerStatsPage
+        currentUserProfileId={currentUserProfileId}
+        initialProfile={loaded.profile}
+        key={profileId}
+        nestedBackHandlerRef={nestedBackHandlerRef}
+        onClose={onClose}
+        onStartGameAgainst={onStartGameAgainst}
+      />
+    );
+  }
+
+  return (
+    <View
+      accessibilityLabel={`${profileName} Player Stats`}
+      accessibilityViewIsModal
+      onAccessibilityEscape={onClose}
+      role="dialog"
+      style={styles.statsOverlay}
+      testID="player-stats-page-overlay"
+    >
+      <View style={styles.playerStatsHeader}>
+        <View style={styles.statsBackButton} />
+        <Text
+          maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+          numberOfLines={1}
+          style={styles.playerStatsHeaderTitle}
+        >
+          Player Stats
+        </Text>
+        <Pressable
+          accessibilityLabel="Close player stats"
+          accessibilityRole="button"
+          onPress={onClose}
+          ref={closeButtonRef}
+          style={({ pressed }) => [styles.statsCloseButton, pressed && styles.pressed]}
+          testID="player-stats-close-button"
+        >
+          <CloseIcon />
+        </Pressable>
+      </View>
+      {loaded?.error ? (
+        <View style={styles.statsEmptyCard}>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
+            Player unavailable
+          </Text>
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
+            {loaded.error}
+          </Text>
+        </View>
+      ) : (
+        <ActivityIndicator color="#FFD329" />
+      )}
+    </View>
+  );
+}
 
 function PlayerStatsPage({
   currentUserProfileId,
@@ -282,6 +421,7 @@ function PlayerStatsPage({
   const [routeStack, setRouteStack] = useState<PlayerStatsRoute[]>([]);
   const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
   const [statsView, setStatsView] = useState<PlayerStatsView>('overall');
+  const [community, setCommunity] = useState<PlayerCommunity | null>(null);
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
   const playerNavigationPendingRef = useRef(false);
   const visibleProfile =
@@ -316,6 +456,21 @@ function PlayerStatsPage({
     };
   }, [visibleProfile.id]);
 
+  useEffect(() => {
+    let isMounted = true;
+    const profileId = visibleProfile.id;
+    Promise.all([getPlayerCard(profileId), getPlayerFeats(profileId)])
+      .then(([card, feats]) => {
+        if (isMounted) setCommunity({ card, feats, profileId });
+      })
+      .catch(() => {
+        // Ratings and feats are extras; the profile still works without them.
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [visibleProfile.id]);
+
   async function openGames() {
     setIsLoading(true);
     setMessage(null);
@@ -336,22 +491,7 @@ function PlayerStatsPage({
     setIsLoading(true);
     setMessage(null);
     try {
-      const canLoadHeadToHead = Boolean(currentUserProfileId && player.id !== currentUserProfileId);
-      const [profiles, matchup, overallStats] = await Promise.all([
-        getProfilesByIds([player.id]),
-        canLoadHeadToHead ? getHeadToHeadStats(player.id) : Promise.resolve(null),
-        canLoadHeadToHead ? Promise.resolve(null) : getProfileStats(player.id),
-      ]);
-      const profile = profiles[0];
-      const nextProfile = {
-        avatarUrl: profile?.avatar_url ?? player.avatarUrl,
-        currentUserHeadToHeadStats: matchup?.mine ?? null,
-        headToHeadStats: matchup?.opponent ?? null,
-        id: player.id,
-        name: profile?.display_name ?? player.name,
-        stats: matchup?.opponentOverall ?? overallStats,
-        username: profile?.username ?? null,
-      };
+      const nextProfile = await loadPlayerStatsProfile(player.id, currentUserProfileId, player);
       setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, selectedGame, statsView }]);
       setActiveProfile(nextProfile);
       setGames([]);
@@ -459,6 +599,8 @@ function PlayerStatsPage({
 
       {page === 'stats' && (
         <PlayerStatsSummary
+          community={community?.profileId === visibleProfile.id ? community : null}
+          isCurrentUser={visibleProfile.id === currentUserProfileId}
           isLoading={isLoading}
           message={message}
           onOpenGames={() => void openGames()}
@@ -534,6 +676,8 @@ function PlayerStatsViewToggle({
 }
 
 function PlayerStatsSummary({
+  community,
+  isCurrentUser,
   isLoading,
   message,
   onOpenGames,
@@ -542,6 +686,8 @@ function PlayerStatsSummary({
   showStartGame,
   statsView,
 }: {
+  community: PlayerCommunity | null;
+  isCurrentUser: boolean;
   isLoading: boolean;
   message: string | null;
   onOpenGames: () => void;
@@ -552,6 +698,8 @@ function PlayerStatsSummary({
 }) {
   const stats = statsView === 'headToHead' ? profile.currentUserHeadToHeadStats : profile.stats;
   const hasStats = Boolean(stats && stats.games_played > 0);
+  const card = community?.card ?? null;
+  const rankLine = card ? formatRankLine(card) : null;
 
   return (
     <ScrollView
@@ -580,8 +728,23 @@ function PlayerStatsSummary({
               @{profile.username}
             </Text>
           )}
+          {rankLine && (
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={styles.playerIdentityRank}
+              testID="player-stats-rank"
+            >
+              {rankLine}
+            </Text>
+          )}
         </View>
       </View>
+      {isCurrentUser && card && !card.show_on_leaderboards && (
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
+          You are hidden from leaderboards. Change this on your Profile.
+        </Text>
+      )}
 
       <View style={styles.playerStatsActions}>
         {showStartGame && (
@@ -641,6 +804,12 @@ function PlayerStatsSummary({
                 <StatBox compact label="Avg Score" value={formatPlayerStatNumber(stats.average_score)} />
                 <StatBox compact label="High Score" value={String(stats.highest_score)} />
               </View>
+              {card?.rating !== null && card?.rating !== undefined && (
+                <View style={styles.playerStatsMetricRow}>
+                  <StatBox compact label="Rating" value={String(Math.round(Number(card.rating)))} />
+                  <StatBox compact label="Best Streak" value={String(card.best_win_streak)} />
+                </View>
+              )}
             </View>
             <View style={styles.statsDetailCard}>
               <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
@@ -683,6 +852,7 @@ function PlayerStatsSummary({
               <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
               <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
             </View>
+            {community && community.feats.length > 0 && <PlayerFeatsCard feats={community.feats} />}
           </>
         )
       ) : (
@@ -1598,6 +1768,11 @@ const styles = StyleSheet.create({
   playerIdentityText: {
     flex: 1,
     gap: 2,
+  },
+  playerIdentityRank: {
+    color: '#FFF3C2',
+    fontSize: 13,
+    fontWeight: '900',
   },
   playerIdentityUsername: {
     color: '#FFD329',

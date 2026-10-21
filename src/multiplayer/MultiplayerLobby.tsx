@@ -46,7 +46,7 @@ import type { ProfileInput, RemoteGameRow } from './types';
 import { canJabGame } from './jab';
 import { categoryLabels, getWinnerId, scoreCategories, totalScore, upperBonus } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
-import { StatsPage } from '../ui/StatsPage';
+import { PlayerProfilePage, StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
@@ -57,16 +57,12 @@ import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
 import {
   getLeaderboard,
-  getPlayerCard,
-  getPlayerFeats,
   getShowOnLeaderboards,
   setShowOnLeaderboards,
   type LeaderboardBoard,
   type LeaderboardRow,
-  type PlayerCard,
-  type PlayerFeat,
 } from './community';
-import { LeaderboardPanel, PlayerCardPanel } from './CommunityPages';
+import { LeaderboardPanel } from './CommunityPages';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -79,7 +75,7 @@ type LobbyPage =
   | 'completedGameDetail'
   | 'completedGameStats'
   | 'community'
-  | 'playerCard';
+  | 'playerProfile';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://play.sucker.games/invite';
 const privacyPolicyUrl = 'https://play.sucker.games/privacy.html';
@@ -177,14 +173,8 @@ export function MultiplayerLobby({
     error: string | null;
     rows: LeaderboardRow[];
   } | null>(null);
-  const [playerCardProfileId, setPlayerCardProfileId] = useState<string | null>(null);
+  const [playerProfileId, setPlayerProfileId] = useState<string | null>(null);
   const [showOnLeaderboards, setShowOnLeaderboardsState] = useState<boolean | null>(null);
-  const [playerCard, setPlayerCard] = useState<{
-    card: PlayerCard | null;
-    error: string | null;
-    feats: PlayerFeat[];
-    profileId: string;
-  } | null>(null);
   const setPage = useCallback((nextPage: LobbyPage) => {
     if (nextPage !== 'password') {
       setNewPassword('');
@@ -466,27 +456,6 @@ export function MultiplayerLobby({
   }, [page, profileId, session]);
 
   useEffect(() => {
-    if (page !== 'playerCard' || !playerCardProfileId || !session) return;
-    let active = true;
-    Promise.all([getPlayerCard(playerCardProfileId), getPlayerFeats(playerCardProfileId)])
-      .then(([card, feats]) => {
-        if (active) setPlayerCard({ card, error: null, feats, profileId: playerCardProfileId });
-      })
-      .catch((loadError: unknown) => {
-        if (!active) return;
-        setPlayerCard({
-          card: null,
-          error: loadError instanceof Error ? loadError.message : 'Go back and try again.',
-          feats: [],
-          profileId: playerCardProfileId,
-        });
-      });
-    return () => {
-      active = false;
-    };
-  }, [page, playerCardProfileId, session]);
-
-  useEffect(() => {
     if (Platform.OS === 'web') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (avatarPickerVisible) {
@@ -497,7 +466,7 @@ export function MultiplayerLobby({
         setRemoveGameToConfirm(null);
         return true;
       }
-      if (page === 'completedGameStats' && completedGameStatsBackHandler.current) {
+      if ((page === 'completedGameStats' || page === 'playerProfile') && completedGameStatsBackHandler.current) {
         completedGameStatsBackHandler.current();
         return true;
       }
@@ -506,7 +475,7 @@ export function MultiplayerLobby({
         setPage('profile');
         return true;
       }
-      if (page === 'playerCard') {
+      if (page === 'playerProfile') {
         setPage('community');
         return true;
       }
@@ -1389,47 +1358,37 @@ export function MultiplayerLobby({
           onBoardChange={setLeaderboardBoard}
           onOpenPlayer={(playerId) => {
             setMessage(null);
-            setPlayerCardProfileId(playerId);
-            setPage('playerCard');
+            setPlayerProfileId(playerId);
+            setPage('playerProfile');
           }}
           rows={leaderboard?.board === leaderboardBoard ? leaderboard.rows : []}
         />
-        <Text style={lobbyStyles.message}>Only multiplayer games count. Tap a player to see their feats.</Text>
+        <Text style={lobbyStyles.message}>
+          Only multiplayer games count. Tap a player to see their stats and feats.
+        </Text>
       </ScrollView>,
     );
   }
 
-  if (page === 'playerCard') {
-    const loadedCard = playerCard?.profileId === playerCardProfileId ? playerCard : null;
-    const card = loadedCard?.card ?? null;
+  if (page === 'playerProfile' && playerProfileId) {
+    const row = leaderboard?.rows.find((candidate) => candidate.player_id === playerProfileId);
     return renderShell(
-      <ScrollView
-        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
-        showsVerticalScrollIndicator={false}
-        style={lobbyStyles.scroll}
-        testID="player-card-page"
-      >
-        <SuckerLobbyTitle />
-        {renderConnectionNotice()}
-        <ScreenHeader title="Player" onBack={() => setPage('community')} />
-        <PlayerCardPanel
-          card={card}
-          challengeDisabled={isBusy || isOffline}
-          error={loadedCard?.error ?? null}
-          feats={loadedCard?.feats ?? []}
-          isLoading={!loadedCard}
-          isMe={playerCardProfileId === profileId}
-          onChallenge={() => {
-            if (!card) return;
-            void runAction(async () => {
-              const result = await createGameAgainst(card.player_id);
-              await refreshGames({ surfaceError: false });
-              onOpenGame(result.game.id);
-            });
+      <View style={lobbyStyles.fullPageContent} testID="player-profile-safe-host">
+        <PlayerProfilePage
+          currentUserProfileId={profileId ?? undefined}
+          nestedBackHandlerRef={completedGameStatsBackHandler}
+          onClose={() => setPage('community')}
+          onStartGameAgainst={async (opponentProfileId) => {
+            const result = await createGameAgainst(opponentProfileId);
+            await refreshGames({ surfaceError: false });
+            onOpenGame(result.game.id);
           }}
+          profileAvatarUrl={row?.avatar_url ?? profileAvatars[playerProfileId]}
+          profileId={playerProfileId}
+          profileName={row?.display_name ?? 'Player'}
         />
-        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
-      </ScrollView>,
+      </View>,
+      false,
     );
   }
 

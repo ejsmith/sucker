@@ -91,6 +91,18 @@ export function formatLeaderboardValue(board: LeaderboardBoard, value: number) {
   }
 }
 
+// Matches the rating board's eligibility in get_leaderboard.
+export const rankedGameMinimum = 5;
+
+export function formatRankLine(card: PlayerCard) {
+  if (card.rating_rank) return `#${card.rating_rank} in the world`;
+  if (card.rated_games > 0 && card.rated_games < rankedGameMinimum) {
+    const remaining = rankedGameMinimum - card.rated_games;
+    return `${remaining} more ${remaining === 1 ? 'game' : 'games'} to get ranked`;
+  }
+  return null;
+}
+
 export function formatFeatRarity(earnedPct: number | null) {
   if (earnedPct === null || earnedPct === 0) return 'Nobody yet';
   if (earnedPct < 1) return '<1% of players';
