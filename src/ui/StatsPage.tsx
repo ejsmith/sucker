@@ -836,7 +836,7 @@ function PlayerStatsSummary({
               />
               <StatBox label="High" mini value={String(stats.highest_score)} />
             </View>
-            <PlayerSectionTabs community={community} onChange={onSectionChange} value={section} />
+            <PlayerSectionTabs onChange={onSectionChange} value={section} />
             {section === 'stats' && (
               <>
                 <StatsGrid
@@ -913,28 +913,23 @@ function PlayerStatsSummary({
   );
 }
 
+const playerSections: { label: string; section: PlayerProfileSection }[] = [
+  { label: 'Stats', section: 'stats' },
+  { label: 'Ranks', section: 'ranks' },
+  { label: 'Feats', section: 'feats' },
+  { label: 'Defeats', section: 'defeats' },
+];
+
 function PlayerSectionTabs({
-  community,
   onChange,
   value,
 }: {
-  community: PlayerCommunity | null;
   onChange: (section: PlayerProfileSection) => void;
   value: PlayerProfileSection;
 }) {
-  const loaded = community && !community.failed ? community : null;
-  const earned = (tone: PlayerFeat['tone']) =>
-    loaded?.feats.filter((feat) => feat.tone === tone && feat.timesEarned > 0).length ?? 0;
-  const sections: { label: string; section: PlayerProfileSection }[] = [
-    { label: 'Stats', section: 'stats' },
-    { label: loaded ? `Ranks ${loaded.rankings.length}` : 'Ranks', section: 'ranks' },
-    { label: loaded ? `Feats ${earned('feat')}` : 'Feats', section: 'feats' },
-    { label: loaded ? `Defeats ${earned('defeat')}` : 'Defeats', section: 'defeats' },
-  ];
-
   return (
     <View accessibilityLabel="Profile sections" accessibilityRole="tablist" style={styles.playerSectionTabs}>
-      {sections.map((item) => {
+      {playerSections.map((item) => {
         const selected = item.section === value;
         return (
           <Pressable
