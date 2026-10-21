@@ -1039,6 +1039,74 @@ test('keep playing rows show queued opponent profile avatars', async ({ browser 
   }
 });
 
+test('returning to a game waiting on the opponent offers other games on your turn', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`resume-alice-${runId}`, 'Resume Alice E2E');
+  const bob = await createUser(`resume-bob-${runId}`, 'Resume Bob E2E');
+  const charlie = await createUser(`resume-charlie-${runId}`, 'Resume Charlie E2E');
+  const pages: Page[] = [];
+
+  async function playOnes(page: Page) {
+    await waitForPressableEnabled(page.getByTestId('roll-button'));
+    await page.getByTestId('roll-button').click();
+    await waitForPressableEnabled(page.getByTestId('home-score-box-ones'));
+    await page.getByTestId('home-score-box-ones').click();
+    await expect(page.getByTestId('play-score-button')).toBeEnabled();
+    await page.getByTestId('play-score-button').click();
+  }
+
+  async function leaveAndReturn(page: Page) {
+    for (const hidden of [true, false]) {
+      await page.evaluate((hidden) => {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => (hidden ? 'hidden' : 'visible'),
+        });
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+        document.dispatchEvent(new Event('visibilitychange'));
+        window.dispatchEvent(new Event(hidden ? 'blur' : 'focus'));
+      }, hidden);
+      await page.waitForTimeout(100);
+    }
+  }
+
+  try {
+    const alicePage = await openAuthedPage(browser, alice);
+    pages.push(alicePage);
+    const bobPage = await openAuthedPage(browser, bob);
+    pages.push(bobPage);
+    const charliePage = await openAuthedPage(browser, charlie);
+    pages.push(charliePage);
+    const currentGameId = await createAcceptedGame(alicePage, bobPage);
+    const queuedGameId = await createAcceptedGame(alicePage, charliePage);
+
+    await openGameFromLobby(alicePage, currentGameId);
+    await playOnes(alicePage);
+    const dialog = alicePage.getByTestId('next-turns-dialog');
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expect(dialog).toContainText('Turn Finished');
+    await alicePage.getByTestId('next-turns-close-button').click();
+    await expect(dialog).toHaveCount(0);
+
+    await leaveAndReturn(alicePage);
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expect(dialog).toContainText('Your Move');
+    await dialog.getByTestId(`next-turn-game-${queuedGameId}`).click();
+    await expect(alicePage).toHaveURL(`${e2eBaseUrl}/game/${queuedGameId}`);
+
+    // With nothing else waiting, coming back stays quiet.
+    await playOnes(alicePage);
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expect(dialog).toContainText('No other turns right now.');
+    await alicePage.getByTestId('next-turns-close-button').click();
+    await leaveAndReturn(alicePage);
+    await alicePage.waitForTimeout(2_000);
+    await expect(dialog).toHaveCount(0);
+  } finally {
+    await Promise.all(pages.map((page) => page.context().close()));
+  }
+});
+
 test('multiplayer mulligan resets rolls and can be repeated before rolling', async ({ browser }) => {
   const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const alice = await createUser(`mulligan-alice-${runId}`, 'Alice E2E');

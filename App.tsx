@@ -291,6 +291,8 @@ type NextTurnPrompt = {
   gameId: string;
   gameUpdatedAt: string;
   isGameListReady: boolean;
+  // Returning to the app only prompts when another game is waiting on you.
+  isResume?: boolean;
 };
 let remoteGameRequestId = 0;
 const playerNames = ['You', 'Computer'];
@@ -495,6 +497,7 @@ export function RemoteGameScreen({
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
   const [unresolvedRequestId, setUnresolvedRequestId] = useState<string | null>(null);
   const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
+  const nextTurnPromptRef = useRef(nextTurnPrompt);
   const wasAppActive = useRef(isAppActive);
   const profileIdRef = useRef<string | null>(null);
   const activeGameIdRef = useRef(gameId);
@@ -539,6 +542,10 @@ export function RemoteGameScreen({
   useEffect(() => {
     activeGameIdRef.current = gameId;
   }, [gameId]);
+
+  useEffect(() => {
+    nextTurnPromptRef.current = nextTurnPrompt;
+  }, [nextTurnPrompt]);
 
   useEffect(() => {
     if (
@@ -847,7 +854,11 @@ export function RemoteGameScreen({
         setRemoteTaunt(latestTaunt);
         if (profileId) {
           onGameChange(profileId, nextGame);
-          void syncRemoteBadgeCount(profileId);
+          if (!nextTurnPromptRef.current && shouldShowNextTurnsAfterAction(nextGame, profileId)) {
+            void prepareNextTurnPrompt(profileId, nextGame, { isResume: true });
+          } else {
+            void syncRemoteBadgeCount(profileId);
+          }
         }
       })
       .catch((refreshError) => {
@@ -970,11 +981,16 @@ export function RemoteGameScreen({
     }
   }
 
-  async function prepareNextTurnPrompt(profileId: string, completedGame: RemoteGameRow) {
+  async function prepareNextTurnPrompt(
+    profileId: string,
+    completedGame: RemoteGameRow,
+    { isResume = false }: { isResume?: boolean } = {},
+  ) {
     const prompt: NextTurnPrompt = {
       gameId: completedGame.id,
       gameUpdatedAt: completedGame.updated_at,
       isGameListReady: false,
+      isResume,
     };
     setNextTurnPrompt(prompt);
     try {
@@ -984,7 +1000,11 @@ export function RemoteGameScreen({
         return;
       }
 
-      if (!refreshedGame || shouldDismissNextTurnPrompt(prompt, refreshedGame, profileId)) {
+      if (
+        !refreshedGame ||
+        shouldDismissNextTurnPrompt(prompt, refreshedGame, profileId) ||
+        (isResume && getNextTurnGames(games, profileId, prompt.gameId).length === 0)
+      ) {
         setNextTurnPrompt(null);
         return;
       }
@@ -1140,6 +1160,7 @@ export function RemoteGameScreen({
       isRemoteBusy={isRemoteBusy || isRecovering || isPendingGameAction}
       myProfileId={profileId}
       nextTurnGames={nextTurnGames}
+      nextTurnsEyebrow={nextTurnPrompt?.isResume ? 'Your Move' : 'Turn Finished'}
       onDismissNextTurns={() => setNextTurnPrompt(null)}
       onExit={exitToLobby}
       onOpenNextTurnGame={openNextTurnGame}
@@ -1168,6 +1189,7 @@ export function LocalGameScreen({
   localPlayerName,
   myProfileId,
   nextTurnGames,
+  nextTurnsEyebrow = 'Turn Finished',
   onDismissNextTurns,
   onExit,
   onOpenNextTurnGame,
@@ -1192,6 +1214,7 @@ export function LocalGameScreen({
   localPlayerName?: string;
   myProfileId?: string;
   nextTurnGames?: RemoteGameRow[] | null;
+  nextTurnsEyebrow?: string;
   onDismissNextTurns?: () => void;
   onExit?: () => void;
   onOpenNextTurnGame?: (gameId: string) => void;
@@ -4660,7 +4683,7 @@ export function LocalGameScreen({
                   <CloseIcon size={gameLayout.unit(18)} />
                 </Pressable>
                 <Text maxFontSizeMultiplier={1.2} style={[styles.nextTurnsEyebrow, gameLayout.styles.nextTurnsEyebrow]}>
-                  Turn Finished
+                  {nextTurnsEyebrow}
                 </Text>
                 <Text maxFontSizeMultiplier={1.2} style={[styles.nextTurnsTitle, gameLayout.styles.nextTurnsTitle]}>
                   Keep playing?
