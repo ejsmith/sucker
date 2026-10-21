@@ -272,12 +272,14 @@ type PlayerCommunity = {
 };
 
 type PlayerStatsPageName = 'detail' | 'games' | 'stats';
+type PlayerProfileSection = 'defeats' | 'feats' | 'ranks' | 'stats';
 type PlayerStatsView = 'headToHead' | 'overall';
 
 type PlayerStatsRoute = {
   games: ProfileRecentGame[];
   page: PlayerStatsPageName;
   profile: PlayerStatsProfile;
+  section: PlayerProfileSection;
   selectedGame: ProfileRecentGame | null;
   statsView: PlayerStatsView;
 };
@@ -433,6 +435,7 @@ function PlayerStatsPage({
   const [routeStack, setRouteStack] = useState<PlayerStatsRoute[]>([]);
   const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
   const [statsView, setStatsView] = useState<PlayerStatsView>('overall');
+  const [section, setSection] = useState<PlayerProfileSection>('stats');
   const [community, setCommunity] = useState<PlayerCommunity | null>(null);
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
   const playerNavigationPendingRef = useRef(false);
@@ -504,11 +507,12 @@ function PlayerStatsPage({
     setMessage(null);
     try {
       const nextProfile = await loadPlayerStatsProfile(player.id, currentUserProfileId, player);
-      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, selectedGame, statsView }]);
+      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame, statsView }]);
       setActiveProfile(nextProfile);
       setGames([]);
       setSelectedGame(null);
       setPage('stats');
+      setSection('stats');
       setStatsView('overall');
     } catch (profileError) {
       setMessage(profileError instanceof Error ? profileError.message : 'Unable to load player stats.');
@@ -536,6 +540,7 @@ function PlayerStatsPage({
       setActiveProfile(previousRoute.profile);
       setGames(previousRoute.games);
       setPage(previousRoute.page);
+      setSection(previousRoute.section);
       setSelectedGame(previousRoute.selectedGame);
       setStatsView(previousRoute.statsView);
       return;
@@ -617,8 +622,10 @@ function PlayerStatsPage({
           message={message}
           onOpenGames={() => void openGames()}
           onOpenLeaderboard={onOpenLeaderboard}
+          onSectionChange={setSection}
           onStartGame={() => void startGame()}
           profile={visibleProfile}
+          section={section}
           showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
           statsView={statsView}
         />
@@ -695,8 +702,10 @@ function PlayerStatsSummary({
   message,
   onOpenGames,
   onOpenLeaderboard,
+  onSectionChange,
   onStartGame,
   profile,
+  section,
   showStartGame,
   statsView,
 }: {
@@ -706,8 +715,10 @@ function PlayerStatsSummary({
   message: string | null;
   onOpenGames: () => void;
   onOpenLeaderboard?: (board: LeaderboardBoard) => void;
+  onSectionChange: (section: PlayerProfileSection) => void;
   onStartGame: () => void;
   profile: PlayerStatsProfile;
+  section: PlayerProfileSection;
   showStartGame: boolean;
   statsView: PlayerStatsView;
 }) {
@@ -723,7 +734,7 @@ function PlayerStatsSummary({
       style={styles.statsScroll}
     >
       <View style={styles.playerIdentityCard}>
-        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={76} testID="player-stats-avatar" />
+        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={58} testID="player-stats-avatar" />
         <View style={styles.playerIdentityText}>
           <Text
             maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
@@ -810,76 +821,70 @@ function PlayerStatsSummary({
           />
         ) : (
           <>
-            <View style={styles.playerStatsMetrics}>
-              <View style={styles.playerStatsMetricRow}>
-                <StatBox compact label="Record" value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
-                <StatBox compact label="Win %" value={formatPlayerWinningPct(stats.wins, stats.games_played)} />
-              </View>
-              <View style={styles.playerStatsMetricRow}>
-                <StatBox compact label="Avg Score" value={formatPlayerStatNumber(stats.average_score)} />
-                <StatBox compact label="High Score" value={String(stats.highest_score)} />
-              </View>
-              {card?.rating !== null && card?.rating !== undefined && (
-                <View style={styles.playerStatsMetricRow}>
-                  <StatBox compact label="Rating" value={String(Math.round(Number(card.rating)))} />
-                  <StatBox compact label="Best Streak" value={String(card.best_win_streak)} />
-                </View>
-              )}
+            <View style={styles.playerStatsStrip}>
+              <StatBox label="Record" mini value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
+              <StatBox label="Win %" mini value={formatPlayerWinningPct(stats.wins, stats.games_played)} />
+              <StatBox
+                label="Rating"
+                mini
+                value={
+                  card?.rating === null || card?.rating === undefined ? '—' : String(Math.round(Number(card.rating)))
+                }
+              />
+              <StatBox label="High" mini value={String(stats.highest_score)} />
             </View>
-            {community && (
-              <PlayerRankingsCard
-                isHidden={card?.show_on_leaderboards === false}
-                onOpenLeaderboard={onOpenLeaderboard}
-                rankings={community.rankings}
-              />
-            )}
-            <View style={styles.statsDetailCard}>
-              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-                Sucker Skills
-              </Text>
-              <StatsValueLine label="Blowout wins" value={formatPlayerSkillStat(stats, 'blowout_wins')} />
-              <StatsValueLine label="Comeback wins" value={formatPlayerSkillStat(stats, 'comeback_wins')} />
-              <StatsValueLine label="Buzzer beaters" value={formatPlayerSkillStat(stats, 'buzzer_beater_wins')} />
-              <StatsValueLine label="Extra rolls" value={formatPlayerSkillStat(stats, 'extra_rolls_used')} />
-              <StatsValueLine label="Mulligans" value={formatPlayerSkillStat(stats, 'mulligans_used')} />
-              <StatsValueLine
-                label="Sucker punches thrown"
-                value={formatPlayerSkillStat(stats, 'sucker_punches_used')}
-              />
-              <StatsValueLine
-                label="Sucker punches landed"
-                value={formatPlayerSkillPct(stats, 'sucker_punch_landed_pct')}
-              />
-              <StatsValueLine label="Sucker hunts" value={formatPlayerSkillStat(stats, 'sucker_hunts')} />
-              <StatsValueLine label="Hunt misses" value={formatPlayerSkillStat(stats, 'sucker_hunt_misses')} />
-              <StatsValueLine
-                label="Avg tokens used"
-                value={formatPlayerSkillStat(stats, 'average_sucker_tokens_spent')}
-              />
-              <StatsValueLine
-                label="Avg tokens left"
-                value={formatPlayerSkillStat(stats, 'average_sucker_tokens_leftover')}
-              />
-              <StatsValueLine label="Rage quits 🧂" value={String(stats.rage_quits ?? 0)} />
-            </View>
-            <View style={styles.statsDetailCard}>
-              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
-                Category Rates
-              </Text>
-              <StatsValueLine label="Upper bonus" value={formatProfileCategoryRate(stats, 'upper_bonus')} />
-              <StatsValueLine label="Sucker" value={formatProfileCategoryRate(stats, 'sucker')} />
-              <StatsValueLine label="3 of a kind" value={formatProfileCategoryRate(stats, 'three_of_a_kind')} />
-              <StatsValueLine label="4 of a kind" value={formatProfileCategoryRate(stats, 'four_of_a_kind')} />
-              <StatsValueLine label="Full house" value={formatProfileCategoryRate(stats, 'full_house')} />
-              <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
-              <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
-            </View>
-            {community && community.feats.length > 0 && (
+            <PlayerSectionTabs community={community} onChange={onSectionChange} value={section} />
+            {section === 'stats' && (
               <>
-                <PlayerFeatsCard feats={community.feats} tone="feat" />
-                <PlayerFeatsCard feats={community.feats} tone="defeat" />
+                <StatsGrid
+                  items={[
+                    ['Avg score', formatPlayerStatNumber(stats.average_score)],
+                    ['Best streak', String(card?.best_win_streak ?? 0)],
+                    ['Blowout wins', formatPlayerSkillStat(stats, 'blowout_wins')],
+                    ['Comebacks', formatPlayerSkillStat(stats, 'comeback_wins')],
+                    ['Buzzer beaters', formatPlayerSkillStat(stats, 'buzzer_beater_wins')],
+                    ['Extra rolls', formatPlayerSkillStat(stats, 'extra_rolls_used')],
+                    ['Mulligans', formatPlayerSkillStat(stats, 'mulligans_used')],
+                    ['Punches thrown', formatPlayerSkillStat(stats, 'sucker_punches_used')],
+                    ['Punches landed', formatPlayerSkillPct(stats, 'sucker_punch_landed_pct')],
+                    ['Sucker hunts', formatPlayerSkillStat(stats, 'sucker_hunts')],
+                    ['Hunt misses', formatPlayerSkillStat(stats, 'sucker_hunt_misses')],
+                    ['Avg tokens used', formatPlayerSkillStat(stats, 'average_sucker_tokens_spent')],
+                    ['Avg tokens left', formatPlayerSkillStat(stats, 'average_sucker_tokens_leftover')],
+                    ['Rage quits 🧂', String(stats.rage_quits ?? 0)],
+                  ]}
+                  title="Sucker Skills"
+                />
+                <StatsGrid
+                  items={[
+                    ['Upper bonus', formatProfileCategoryRate(stats, 'upper_bonus')],
+                    ['Sucker', formatProfileCategoryRate(stats, 'sucker')],
+                    ['3 of a kind', formatProfileCategoryRate(stats, 'three_of_a_kind')],
+                    ['4 of a kind', formatProfileCategoryRate(stats, 'four_of_a_kind')],
+                    ['Full house', formatProfileCategoryRate(stats, 'full_house')],
+                    ['Small straight', formatProfileCategoryRate(stats, 'small_straight')],
+                    ['Large straight', formatProfileCategoryRate(stats, 'large_straight')],
+                  ]}
+                  title="Category Rates"
+                />
               </>
             )}
+            {section === 'ranks' &&
+              (community ? (
+                <PlayerRankingsCard
+                  isHidden={card?.show_on_leaderboards === false}
+                  onOpenLeaderboard={onOpenLeaderboard}
+                  rankings={community.rankings}
+                />
+              ) : (
+                <ActivityIndicator color="#FFD329" />
+              ))}
+            {(section === 'feats' || section === 'defeats') &&
+              (community ? (
+                <PlayerFeatsCard feats={community.feats} tone={section === 'feats' ? 'feat' : 'defeat'} />
+              ) : (
+                <ActivityIndicator color="#FFD329" />
+              ))}
           </>
         )
       ) : (
@@ -895,6 +900,89 @@ function PlayerStatsSummary({
         </View>
       )}
     </ScrollView>
+  );
+}
+
+function PlayerSectionTabs({
+  community,
+  onChange,
+  value,
+}: {
+  community: PlayerCommunity | null;
+  onChange: (section: PlayerProfileSection) => void;
+  value: PlayerProfileSection;
+}) {
+  const earned = (tone: PlayerFeat['tone']) =>
+    community?.feats.filter((feat) => feat.tone === tone && feat.timesEarned > 0).length ?? 0;
+  const sections: { label: string; section: PlayerProfileSection }[] = [
+    { label: 'Stats', section: 'stats' },
+    { label: community ? `Ranks ${community.rankings.length}` : 'Ranks', section: 'ranks' },
+    { label: community ? `Feats ${earned('feat')}` : 'Feats', section: 'feats' },
+    { label: community ? `Defeats ${earned('defeat')}` : 'Defeats', section: 'defeats' },
+  ];
+
+  return (
+    <View accessibilityLabel="Profile sections" accessibilityRole="tablist" style={styles.playerSectionTabs}>
+      {sections.map((item) => {
+        const selected = item.section === value;
+        return (
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            aria-selected={selected}
+            key={item.section}
+            onPress={() => onChange(item.section)}
+            style={({ pressed }) => [
+              styles.playerStatsToggleButton,
+              selected && styles.playerStatsToggleButtonSelected,
+              pressed && styles.pressed,
+            ]}
+            testID={`player-section-${item.section}`}
+          >
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={[styles.playerStatsToggleText, selected && styles.playerStatsToggleTextSelected]}
+            >
+              {item.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// Label and value pairs in two columns, so long stat lists take half the height.
+function StatsGrid({ items, title }: { items: [string, string][]; title?: string }) {
+  return (
+    <View style={styles.statsDetailCard}>
+      {title && (
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+          {title}
+        </Text>
+      )}
+      <View style={styles.profileStatsGrid}>
+        {items.map(([label, value]) => (
+          <View key={label} style={styles.profileStatsGridCell}>
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={styles.profileStatsGridLabel}
+            >
+              {label}
+            </Text>
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={styles.profileStatsGridValue}
+            >
+              {value}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -1395,13 +1483,31 @@ function formatProfileCategoryRate(stats: ProfileStats | HeadToHeadStatsRow, key
   return `${formatPlayerStatNumber(stats[`${key}_pct`])}%`;
 }
 
-function StatBox({ compact = false, label, value }: { compact?: boolean; label: string; value: string }) {
+function StatBox({
+  compact = false,
+  label,
+  mini = false,
+  value,
+}: {
+  compact?: boolean;
+  label: string;
+  mini?: boolean;
+  value: string;
+}) {
   return (
-    <View style={[styles.statBox, compact && styles.playerStatBox]}>
-      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statBoxValue}>
+    <View style={[styles.statBox, compact && styles.playerStatBox, mini && styles.miniStatBox]}>
+      <Text
+        adjustsFontSizeToFit={mini}
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        numberOfLines={mini ? 1 : undefined}
+        style={[styles.statBoxValue, mini && styles.miniStatBoxValue]}
+      >
         {value}
       </Text>
-      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statBoxLabel}>
+      <Text
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        style={[styles.statBoxLabel, mini && styles.miniStatBoxLabel]}
+      >
         {label}
       </Text>
     </View>
@@ -1782,15 +1888,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 2,
     flexDirection: 'row',
-    gap: 14,
-    padding: 14,
+    gap: 12,
+    padding: 10,
     width: '100%',
   },
   playerIdentityName: {
     color: '#FFF3C2',
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '900',
-    lineHeight: 31,
+    lineHeight: 26,
   },
   playerIdentityText: {
     flex: 1,
@@ -1813,7 +1919,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     borderWidth: 3,
     flex: 1,
-    height: 50,
+    height: 44,
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
@@ -1829,7 +1935,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     borderWidth: 2,
     flex: 1,
-    height: 50,
+    height: 44,
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
@@ -1870,6 +1976,20 @@ const styles = StyleSheet.create({
     maxWidth: 190,
     padding: 2,
   },
+  playerSectionTabs: {
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: 'row',
+    padding: 2,
+    width: '100%',
+  },
+  playerStatsStrip: {
+    flexDirection: 'row',
+    gap: 6,
+    width: '100%',
+  },
   playerStatsMetricRow: {
     flexDirection: 'row',
     gap: 6,
@@ -1903,6 +2023,17 @@ const styles = StyleSheet.create({
   },
   playerStatBox: {
     minWidth: 0,
+  },
+  miniStatBox: {
+    minWidth: 0,
+    paddingHorizontal: 2,
+    paddingVertical: 6,
+  },
+  miniStatBoxLabel: {
+    fontSize: 10,
+  },
+  miniStatBoxValue: {
+    fontSize: 18,
   },
   statBox: {
     alignItems: 'center',
@@ -2072,6 +2203,34 @@ const styles = StyleSheet.create({
   statsScroll: {
     flex: 1,
     width: '100%',
+  },
+  profileStatsGrid: {
+    columnGap: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 6,
+  },
+  profileStatsGridCell: {
+    alignItems: 'baseline',
+    borderBottomColor: '#5A1308',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    justifyContent: 'space-between',
+    paddingBottom: 4,
+    width: '47%',
+  },
+  profileStatsGridLabel: {
+    color: '#FFF3C2',
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  profileStatsGridValue: {
+    color: '#FFD329',
+    flexShrink: 0,
+    fontSize: 15,
+    fontWeight: '900',
   },
   statsScrollContent: {
     gap: 10,

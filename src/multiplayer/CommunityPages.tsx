@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { Pressable } from '../ui/Pressable';
@@ -169,34 +170,58 @@ export function PlayerRankingsCard({
   );
 }
 
+// Earned first; locked ones stay tucked away until asked for, so the card stays short.
 export function PlayerFeatsCard({ feats, tone }: { feats: PlayerFeat[]; tone: 'feat' | 'defeat' }) {
+  const [showLocked, setShowLocked] = useState(false);
   const shown = feats.filter((feat) => feat.tone === tone);
-  const earned = shown.filter((feat) => feat.timesEarned > 0).length;
+  const earned = shown.filter((feat) => feat.timesEarned > 0);
+  const locked = shown.filter((feat) => feat.timesEarned === 0);
+  const noun = tone === 'feat' ? 'feats' : 'defeats';
 
   return (
     <View style={styles.panel} testID={tone === 'feat' ? 'player-feats' : 'player-defeats'}>
       <View style={styles.listHeader}>
         <Text style={styles.sectionTitle}>{tone === 'feat' ? 'Feats' : 'Defeats'}</Text>
         <Text style={styles.sectionTitle}>
-          {earned} / {shown.length}
+          {earned.length} / {shown.length}
         </Text>
       </View>
-      {shown.map((feat) => (
-        <View
-          key={feat.key}
-          style={[styles.feat, tone === 'defeat' && styles.defeat, feat.timesEarned === 0 && styles.featLocked]}
-          testID={`feat-${feat.key}`}
-        >
-          <View style={styles.rowText}>
-            <Text style={styles.featName}>
-              {feat.name}
-              {feat.timesEarned > 1 ? ` ×${feat.timesEarned}` : ''}
-            </Text>
-            <Text style={styles.featDescription}>{feat.description}</Text>
-          </View>
-          <Text style={styles.featRarity}>{formatFeatRarity(feat.earnedPct)}</Text>
-        </View>
+      {earned.length === 0 && <Text style={styles.emptyBody}>No {noun} yet.</Text>}
+      {earned.map((feat) => (
+        <FeatRow feat={feat} key={feat.key} tone={tone} />
       ))}
+      {locked.length > 0 && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showLocked }}
+          onPress={() => setShowLocked((current) => !current)}
+          style={({ pressed }) => [styles.seeAll, pressed && styles.pressed]}
+          testID={`player-${noun}-locked-toggle`}
+        >
+          <Text style={styles.seeAllText}>
+            {showLocked ? `Hide locked ${noun}` : `Show ${locked.length} locked ${noun}`}
+          </Text>
+        </Pressable>
+      )}
+      {showLocked && locked.map((feat) => <FeatRow feat={feat} key={feat.key} tone={tone} />)}
+    </View>
+  );
+}
+
+function FeatRow({ feat, tone }: { feat: PlayerFeat; tone: 'feat' | 'defeat' }) {
+  return (
+    <View
+      style={[styles.feat, tone === 'defeat' && styles.defeat, feat.timesEarned === 0 && styles.featLocked]}
+      testID={`feat-${feat.key}`}
+    >
+      <View style={styles.rowText}>
+        <Text style={styles.featName}>
+          {feat.name}
+          {feat.timesEarned > 1 ? ` ×${feat.timesEarned}` : ''}
+        </Text>
+        <Text style={styles.featDescription}>{feat.description}</Text>
+      </View>
+      <Text style={styles.featRarity}>{formatFeatRarity(feat.earnedPct)}</Text>
     </View>
   );
 }

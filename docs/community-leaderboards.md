@@ -199,6 +199,11 @@ profile keeps its existing pieces:
 - **Start Game**, which uses the existing `create_game` action, and
 - **Recent Games**, where tapping a player opens their profile.
 
+The Overall view keeps a short summary on screen (identity, actions, and a
+Record / Win % / Rating / High strip), with the rest split into **Stats**,
+**Ranks**, **Feats**, and **Defeats** tabs. Feats and defeats list what the
+player has earned, with locked ones behind a toggle.
+
 Players reach their own profile from their row on any board; it has no Vs You
 toggle or Start Game button.
 
