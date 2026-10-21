@@ -1468,6 +1468,7 @@ create table public.player_standings (
   peak_rating numeric(7, 2) not null default 1200,
   current_win_streak integer not null default 0,
   best_win_streak integer not null default 0,
+  current_loss_streak integer not null default 0,
   updated_at timestamptz not null default now()
 );
 
@@ -1538,6 +1539,10 @@ declare
   player_games integer;
   opponent_games integer;
   beaten integer;
+  player_lost boolean;
+  loss_streak integer;
+  losses integer;
+  quits integer;
 begin
   select array_agg(r order by r.player_id) into results
   from public.game_player_results r
@@ -1588,6 +1593,7 @@ begin
     rated_games = rated_games + 1,
     peak_rating = greatest(peak_rating, next_a),
     current_win_streak = case when (results[1]).won then current_win_streak + 1 else 0 end,
+    current_loss_streak = case when (results[2]).won then current_loss_streak + 1 else 0 end,
     best_win_streak = greatest(best_win_streak, case when (results[1]).won then current_win_streak + 1 else 0 end),
     updated_at = now()
   where player_id = (results[1]).player_id;
@@ -1597,6 +1603,7 @@ begin
     rated_games = rated_games + 1,
     peak_rating = greatest(peak_rating, next_b),
     current_win_streak = case when (results[2]).won then current_win_streak + 1 else 0 end,
+    current_loss_streak = case when (results[1]).won then current_loss_streak + 1 else 0 end,
     best_win_streak = greatest(best_win_streak, case when (results[2]).won then current_win_streak + 1 else 0 end),
     updated_at = now()
   where player_id = (results[2]).player_id;
@@ -1627,6 +1634,45 @@ begin
     ) >= 10 then
       perform public.award_milestone_feat(result.player_id, 'nemesis', target_game_id, completed);
     end if;
+
+    -- Defeats: a loss means the opponent won; ties are neither.
+    player_lost := case when result.player_id = (results[1]).player_id then (results[2]).won else (results[1]).won end;
+    select standing.current_loss_streak into loss_streak
+    from public.player_standings standing where standing.player_id = result.player_id;
+    if loss_streak >= 5 then perform public.award_milestone_feat(result.player_id, 'ice_cold', target_game_id, completed); end if;
+    if loss_streak >= 10 then perform public.award_milestone_feat(result.player_id, 'deep_freeze', target_game_id, completed); end if;
+
+    if player_lost then
+      if (
+        select count(*) = 5 and bool_and(recent.lost)
+        from (
+          select (not r.won and g.winner_id = r.opponent_id) as lost
+          from public.game_player_results r
+          join public.games g on g.id = r.game_id
+          where r.player_id = result.player_id and r.opponent_id = result.opponent_id and r.completed_at <= completed
+          order by r.completed_at desc, r.game_id desc
+          limit 5
+        ) recent
+      ) then
+        perform public.award_milestone_feat(result.player_id, 'pigeon', target_game_id, completed);
+      end if;
+      if opponent_games = 1 and player_games >= 6 then
+        perform public.award_milestone_feat(result.player_id, 'welcome_mat', target_game_id, completed);
+      end if;
+      select count(*) into losses
+      from public.game_player_results r
+      join public.games g on g.id = r.game_id
+      where r.player_id = result.player_id and not r.won and g.winner_id = r.opponent_id and r.completed_at <= completed;
+      if losses >= 100 then
+        perform public.award_milestone_feat(result.player_id, 'glutton_for_punishment', target_game_id, completed);
+      end if;
+    end if;
+
+    select count(*) into quits
+    from public.rage_quits quit
+    join public.game_player_results r on r.game_id = quit.game_id and r.player_id = quit.player_id
+    where quit.player_id = result.player_id and r.completed_at <= completed;
+    if quits >= 5 then perform public.award_milestone_feat(result.player_id, 'table_flipper', target_game_id, completed); end if;
   end loop;
 end;
 $$;

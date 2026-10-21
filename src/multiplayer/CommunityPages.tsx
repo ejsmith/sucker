@@ -169,21 +169,22 @@ export function PlayerRankingsCard({
   );
 }
 
-export function PlayerFeatsCard({ feats }: { feats: PlayerFeat[] }) {
-  const earned = feats.filter((feat) => feat.timesEarned > 0).length;
+export function PlayerFeatsCard({ feats, tone }: { feats: PlayerFeat[]; tone: 'feat' | 'defeat' }) {
+  const shown = feats.filter((feat) => feat.tone === tone);
+  const earned = shown.filter((feat) => feat.timesEarned > 0).length;
 
   return (
-    <View style={styles.panel} testID="player-feats">
+    <View style={styles.panel} testID={tone === 'feat' ? 'player-feats' : 'player-defeats'}>
       <View style={styles.listHeader}>
-        <Text style={styles.sectionTitle}>Feats</Text>
+        <Text style={styles.sectionTitle}>{tone === 'feat' ? 'Feats' : 'Defeats'}</Text>
         <Text style={styles.sectionTitle}>
-          {earned} / {feats.length}
+          {earned} / {shown.length}
         </Text>
       </View>
-      {feats.map((feat) => (
+      {shown.map((feat) => (
         <View
           key={feat.key}
-          style={[styles.feat, feat.timesEarned === 0 && styles.featLocked]}
+          style={[styles.feat, tone === 'defeat' && styles.defeat, feat.timesEarned === 0 && styles.featLocked]}
           testID={`feat-${feat.key}`}
         >
           <View style={styles.rowText}>
@@ -222,6 +223,9 @@ function getEmptyBoardHint(board: LeaderboardBoard) {
 }
 
 const styles = StyleSheet.create({
+  defeat: {
+    borderColor: '#E0412F',
+  },
   emptyBody: {
     color: '#FFF3C2',
     fontSize: 13,

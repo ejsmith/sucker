@@ -12,7 +12,7 @@ import {
 } from './game.ts';
 
 export const blowoutPointMargin = 75;
-export const comebackPointMargin = 50;
+export const comebackPointMargin = 100;
 const retiredSuckerBlockerTokenCost = 3;
 
 export type SuckerStatActionType =
@@ -218,7 +218,7 @@ export function didPlayerPullAheadOnFinalTurn(turns: SuckerStatTurn[], players: 
   return false;
 }
 
-function getEffectiveStatTurns(turns: SuckerStatTurn[]) {
+export function getEffectiveStatTurns(turns: SuckerStatTurn[]) {
   return [...turns]
     .filter(
       (turn) => !turn.status || turn.status === 'submitted' || turn.status === 'blocked' || turn.status === 'finalized',

@@ -41,6 +41,7 @@ export type Database = {
       player_standings: {
         Row: {
           best_win_streak: number;
+          current_loss_streak: number;
           current_win_streak: number;
           peak_rating: number;
           player_id: string;

@@ -2280,7 +2280,7 @@ async function planCompletedGameStats(
       continue;
     }
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
-    for (const featKey of buildCompletedPlayerFeats({ actions, player, result })) {
+    for (const featKey of buildCompletedPlayerFeats({ actions, opponent, player, result, turns, winnerId })) {
       plan.writes.push({
         table: 'player_feats',
         operation: 'insert',
