@@ -47,6 +47,7 @@ import {
   type SuckerStatAction,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
+import { buildCompletedPlayerFeats } from '../_shared/feats.ts';
 import {
   getTurnTauntScenario,
   isTauntAvailableForScenario,
@@ -2250,9 +2251,10 @@ async function planCompletedGameStats(
   plan: GameMovePlan,
   rageQuitterId?: string,
 ) {
+  const { actions, turns } = await loadCompletedGameHistory(admin, gameId, plan);
   for (const player of [...players].sort((left, right) => left.id.localeCompare(right.id))) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
-    const result = await buildResult(admin, gameId, player, opponent, players, winnerId, plan);
+    const result = buildCompletedPlayerStats({ actions, gameId, opponent, player, players, turns, winnerId });
     const lost = winnerId !== null && !result.won;
     if (rageQuitterId) {
       // A forfeit counts toward the record only. Its partial scores and plays
@@ -2278,6 +2280,13 @@ async function planCompletedGameStats(
       continue;
     }
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
+    for (const featKey of buildCompletedPlayerFeats({ actions, player, result })) {
+      plan.writes.push({
+        table: 'player_feats',
+        operation: 'insert',
+        data: { feat_key: featKey, game_id: gameId, player_id: player.id },
+      });
+    }
     const statsDelta = {
       player_id: player.id,
       opponent_id: opponent.id,
@@ -2316,35 +2325,17 @@ async function planCompletedGameStats(
   }
 }
 
-async function buildResult(
-  admin: DbClient,
-  gameId: string,
-  player: Player,
-  opponent: Player,
-  players: Player[],
-  winnerId: string | null,
-  plan?: GameMovePlan,
-) {
+async function loadCompletedGameHistory(admin: DbClient, gameId: string, plan: GameMovePlan) {
   const [actions, turns] = await Promise.all([
     loadSuckerStatActions(admin, gameId),
     loadSuckerStatTurns(admin, gameId),
   ]);
-  if (plan) {
-    // The final turn is part of this transaction and is not in the database yet.
-    for (const write of plan.writes) {
-      if (write.table === 'turns' && write.operation === 'insert') turns.push(write.data as unknown as SuckerStatTurn);
-    }
+  // The final turn is part of this transaction and is not in the database yet.
+  for (const write of plan.writes) {
+    if (write.table === 'turns' && write.operation === 'insert') turns.push(write.data as unknown as SuckerStatTurn);
   }
 
-  return buildCompletedPlayerStats({
-    actions,
-    gameId,
-    opponent,
-    player,
-    players,
-    turns,
-    winnerId,
-  });
+  return { actions, turns };
 }
 
 async function loadSuckerStatTurns(admin: DbClient, gameId: string) {
@@ -2366,7 +2357,15 @@ async function loadSuckerStatActions(admin: DbClient, gameId: string) {
     .from('turn_actions')
     .select('action_type, actor_id, payload')
     .eq('game_id', gameId)
-    .in('action_type', ['extra_roll', 'roll', 'mulligan', 'sucker_punch', 'sucker_blocker'])
+    .in('action_type', [
+      'extra_roll',
+      'roll',
+      'mulligan',
+      'sucker_punch',
+      'sucker_blocker',
+      'score_category',
+      'scratch_category',
+    ])
     .order('created_at', { ascending: true });
 
   if (error) {

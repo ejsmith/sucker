@@ -10,7 +10,8 @@ type MoveTable =
   | 'game_players'
   | 'game_player_results'
   | 'head_to_head_stats'
-  | 'rage_quits';
+  | 'rage_quits'
+  | 'player_feats';
 export type GameMoveWrite = {
   table: MoveTable;
   operation: 'insert' | 'update' | 'upsert' | 'increment';

@@ -55,6 +55,18 @@ import { getRageQuitReplyText } from '../../shared/rageQuit';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
+import {
+  getLeaderboard,
+  getPlayerCard,
+  getPlayerFeats,
+  getShowOnLeaderboards,
+  setShowOnLeaderboards,
+  type LeaderboardBoard,
+  type LeaderboardRow,
+  type PlayerCard,
+  type PlayerFeat,
+} from './community';
+import { LeaderboardPanel, PlayerCardPanel } from './CommunityPages';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -65,7 +77,9 @@ type LobbyPage =
   | 'startFriend'
   | 'completedGames'
   | 'completedGameDetail'
-  | 'completedGameStats';
+  | 'completedGameStats'
+  | 'community'
+  | 'playerCard';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://play.sucker.games/invite';
 const privacyPolicyUrl = 'https://play.sucker.games/privacy.html';
@@ -156,6 +170,21 @@ export function MultiplayerLobby({
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [pendingAvatarUri, setPendingAvatarUri] = useState<string | null>(null);
   const [isGamesScrolled, setIsGamesScrolled] = useState(false);
+  const [leaderboardBoard, setLeaderboardBoard] = useState<LeaderboardBoard>('rating');
+  // The last loaded board. It is stale while a different board is selected.
+  const [leaderboard, setLeaderboard] = useState<{
+    board: LeaderboardBoard;
+    error: string | null;
+    rows: LeaderboardRow[];
+  } | null>(null);
+  const [playerCardProfileId, setPlayerCardProfileId] = useState<string | null>(null);
+  const [showOnLeaderboards, setShowOnLeaderboardsState] = useState<boolean | null>(null);
+  const [playerCard, setPlayerCard] = useState<{
+    card: PlayerCard | null;
+    error: string | null;
+    feats: PlayerFeat[];
+    profileId: string;
+  } | null>(null);
   const setPage = useCallback((nextPage: LobbyPage) => {
     if (nextPage !== 'password') {
       setNewPassword('');
@@ -402,6 +431,62 @@ export function MultiplayerLobby({
   );
 
   useEffect(() => {
+    if (page !== 'community' || !session) return;
+    let active = true;
+    getLeaderboard(leaderboardBoard)
+      .then((rows) => {
+        if (active) setLeaderboard({ board: leaderboardBoard, error: null, rows });
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setLeaderboard({
+          board: leaderboardBoard,
+          error: loadError instanceof Error ? loadError.message : 'Refresh and try again.',
+          rows: [],
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [leaderboardBoard, page, session]);
+
+  useEffect(() => {
+    if (page !== 'profile' || !profileId || !session) return;
+    let active = true;
+    getShowOnLeaderboards(profileId)
+      .then((visible) => {
+        if (active) setShowOnLeaderboardsState(visible);
+      })
+      .catch(() => {
+        if (active) setShowOnLeaderboardsState(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [page, profileId, session]);
+
+  useEffect(() => {
+    if (page !== 'playerCard' || !playerCardProfileId || !session) return;
+    let active = true;
+    Promise.all([getPlayerCard(playerCardProfileId), getPlayerFeats(playerCardProfileId)])
+      .then(([card, feats]) => {
+        if (active) setPlayerCard({ card, error: null, feats, profileId: playerCardProfileId });
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setPlayerCard({
+          card: null,
+          error: loadError instanceof Error ? loadError.message : 'Go back and try again.',
+          feats: [],
+          profileId: playerCardProfileId,
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [page, playerCardProfileId, session]);
+
+  useEffect(() => {
     if (Platform.OS === 'web') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (avatarPickerVisible) {
@@ -419,6 +504,10 @@ export function MultiplayerLobby({
       if (page === 'password') {
         setMessage(null);
         setPage('profile');
+        return true;
+      }
+      if (page === 'playerCard') {
+        setPage('community');
         return true;
       }
       if (page !== 'games') {
@@ -1282,6 +1371,68 @@ export function MultiplayerLobby({
     );
   }
 
+  if (page === 'community') {
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+        testID="community-page"
+      >
+        <SuckerLobbyTitle />
+        {renderConnectionNotice()}
+        <ScreenHeader title="Hall of Suckers" onBack={() => setPage('games')} />
+        <LeaderboardPanel
+          board={leaderboardBoard}
+          error={leaderboard?.board === leaderboardBoard ? leaderboard.error : null}
+          isLoading={leaderboard?.board !== leaderboardBoard}
+          onBoardChange={setLeaderboardBoard}
+          onOpenPlayer={(playerId) => {
+            setMessage(null);
+            setPlayerCardProfileId(playerId);
+            setPage('playerCard');
+          }}
+          rows={leaderboard?.board === leaderboardBoard ? leaderboard.rows : []}
+        />
+        <Text style={lobbyStyles.message}>Only multiplayer games count. Tap a player to see their feats.</Text>
+      </ScrollView>,
+    );
+  }
+
+  if (page === 'playerCard') {
+    const loadedCard = playerCard?.profileId === playerCardProfileId ? playerCard : null;
+    const card = loadedCard?.card ?? null;
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+        testID="player-card-page"
+      >
+        <SuckerLobbyTitle />
+        {renderConnectionNotice()}
+        <ScreenHeader title="Player" onBack={() => setPage('community')} />
+        <PlayerCardPanel
+          card={card}
+          challengeDisabled={isBusy || isOffline}
+          error={loadedCard?.error ?? null}
+          feats={loadedCard?.feats ?? []}
+          isLoading={!loadedCard}
+          isMe={playerCardProfileId === profileId}
+          onChallenge={() => {
+            if (!card) return;
+            void runAction(async () => {
+              const result = await createGameAgainst(card.player_id);
+              await refreshGames({ surfaceError: false });
+              onOpenGame(result.game.id);
+            });
+          }}
+        />
+        {(message || error) && <Text style={lobbyStyles.message}>{message ?? error}</Text>}
+      </ScrollView>,
+    );
+  }
+
   if (page === 'startFriend') {
     return renderShell(
       <ScrollView
@@ -1587,6 +1738,34 @@ export function MultiplayerLobby({
             testID="save-profile-button"
           >
             <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
+          </Pressable>
+        </View>
+
+        <View style={lobbyStyles.panel}>
+          <Text style={lobbyStyles.sectionTitle}>Hall of Suckers</Text>
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: showOnLeaderboards !== false }}
+            disabled={isBusy || !profileId || showOnLeaderboards === null}
+            onPress={() =>
+              void runAction(async () => {
+                if (!profileId || showOnLeaderboards === null) return;
+                await setShowOnLeaderboards(profileId, !showOnLeaderboards);
+                setShowOnLeaderboardsState(!showOnLeaderboards);
+              })
+            }
+            style={({ pressed }) => [lobbyStyles.historyButton, pressed && lobbyStyles.pressed]}
+            testID="leaderboard-visibility-toggle"
+          >
+            <View style={lobbyStyles.flexInput}>
+              <Text style={lobbyStyles.historyButtonText}>Show me on leaderboards</Text>
+              <Text style={lobbyStyles.historyButtonSubtext}>
+                {showOnLeaderboards === false
+                  ? 'Hidden. Players can still open your card from a game.'
+                  : 'Other players can find and challenge you.'}
+              </Text>
+            </View>
+            <Text style={lobbyStyles.historyButtonText}>{showOnLeaderboards === false ? 'Off' : 'On'}</Text>
           </Pressable>
         </View>
 
@@ -1899,6 +2078,20 @@ export function MultiplayerLobby({
           </View>
           <ForwardChevronIcon />
         </Pressable>
+
+        {!showConnectionNotice && (
+          <Pressable
+            onPress={() => setPage('community')}
+            style={({ pressed }) => [lobbyStyles.historyButton, pressed && lobbyStyles.pressed]}
+            testID="community-button"
+          >
+            <View>
+              <Text style={lobbyStyles.historyButtonText}>Hall of Suckers</Text>
+              <Text style={lobbyStyles.historyButtonSubtext}>Leaderboards, feats, new rivals</Text>
+            </View>
+            <ForwardChevronIcon />
+          </Pressable>
+        )}
 
         <View style={lobbyStyles.actionGrid}>
           <Pressable
@@ -3353,6 +3546,11 @@ const lobbyStyles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     width: '100%',
+  },
+  historyButtonSubtext: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '800',
   },
   historyButtonText: {
     color: '#FFD329',
