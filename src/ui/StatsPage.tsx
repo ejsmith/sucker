@@ -842,7 +842,7 @@ function PlayerStatsSummary({
                 <StatsGrid
                   items={[
                     ['Avg score', formatPlayerStatNumber(stats.average_score)],
-                    ['Best streak', String(card?.best_win_streak ?? 0)],
+                    ['Best streak', card ? String(card.best_win_streak) : '—'],
                     ['Blowout wins', formatPlayerSkillStat(stats, 'blowout_wins')],
                     ['Comebacks', formatPlayerSkillStat(stats, 'comeback_wins')],
                     ['Buzzer beaters', formatPlayerSkillStat(stats, 'buzzer_beater_wins')],
