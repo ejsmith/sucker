@@ -124,8 +124,9 @@ export function formatLeaderboardValue(board: LeaderboardBoard, value: number) {
 export const rankedGameMinimum = 5;
 
 export function formatRankLine(card: PlayerCard) {
+  if (!card.show_on_leaderboards) return null;
   if (card.rating_rank) return `#${card.rating_rank} in the world`;
-  if (card.rated_games > 0 && card.rated_games < rankedGameMinimum) {
+  if (card.rated_games < rankedGameMinimum) {
     const remaining = rankedGameMinimum - card.rated_games;
     return `${remaining} more ${remaining === 1 ? 'game' : 'games'} to get ranked`;
   }
