@@ -1838,6 +1838,50 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     true,
   );
 
+  const standings = await selectMany<Database['public']['Tables']['player_standings']['Row']>(
+    admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
+  );
+  assertEquals(standings.length, 2);
+  assertEquals(
+    standings.every((row) => Number(row.rating) === 1200 && row.rated_games === 1 && row.current_win_streak === 0),
+    true,
+  );
+  assertEquals(
+    results.every((result) => Number(result.rating_before) === 1200 && Number(result.rating_after) === 1200),
+    true,
+  );
+
+  const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {
+    board: 'all_time_high_score',
+    max_rows: 5,
+  });
+  assertNoError(boardError);
+  assertEquals(board?.filter((row) => row.player_id === alice.id && row.is_me).length, 1);
+  assertNoError((await bob.client.from('profiles').update({ show_on_leaderboards: false }).eq('id', bob.id)).error);
+  const { data: bobBoard, error: bobBoardError } = await bob.client.rpc('get_leaderboard', {
+    board: 'all_time_high_score',
+    max_rows: 100,
+  });
+  assertNoError(bobBoardError);
+  assertEquals(
+    bobBoard?.some((row) => row.player_id === bob.id),
+    false,
+  );
+  const { error: unknownBoardError } = await alice.client.rpc('get_leaderboard', { board: 'nope' });
+  assertEquals(Boolean(unknownBoardError), true);
+
+  const { data: card, error: cardError } = await charlie.client.rpc('get_player_card', {
+    target_profile_id: alice.id,
+  });
+  assertNoError(cardError);
+  assertEquals(card?.[0]?.games_played, 1);
+  assertEquals(Number(card?.[0]?.rating), 1200);
+  assertEquals(card?.[0]?.rating_rank, null);
+  const { error: featsError } = await charlie.client.rpc('get_player_feats', { target_profile_id: alice.id });
+  assertNoError(featsError);
+  const { error: directFeatsError, data: directFeats } = await charlie.client.from('player_feats').select('*');
+  assertEquals(Boolean(directFeatsError) || directFeats?.length === 0, true);
+
   const { data: publicStats, error: publicStatsError } = await charlie.client.rpc('get_profile_stat_rates', {
     target_profile_id: alice.id,
   });
@@ -2061,6 +2105,30 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(results.find((result) => result.player_id === alice.id)?.won, true);
   assertEquals(results.find((result) => result.player_id === bob.id)?.won, false);
 
+  // A forfeit still moves ratings and streaks, but never awards feats or posts scores.
+  assertEquals(Number(results.find((result) => result.player_id === alice.id)?.rating_after), 1220);
+  assertEquals(Number(results.find((result) => result.player_id === bob.id)?.rating_after), 1180);
+  const quitStandings = await selectMany<Database['public']['Tables']['player_standings']['Row']>(
+    admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
+  );
+  assertEquals(quitStandings.find((row) => row.player_id === alice.id)?.current_win_streak, 1);
+  assertEquals(quitStandings.find((row) => row.player_id === bob.id)?.current_win_streak, 0);
+  const quitFeats = await selectMany<{ feat_key: string }>(
+    admin.from('player_feats').select('feat_key').eq('game_id', gameId),
+  );
+  assertEquals(quitFeats.length, 0);
+  for (const board of ['all_time_high_score', 'weekly_high_score'] as const) {
+    const { data: quitBoard, error: quitBoardError } = await bob.client.rpc('get_leaderboard', {
+      board,
+      max_rows: 100,
+    });
+    assertNoError(quitBoardError);
+    assertEquals(
+      quitBoard?.some((row) => row.player_id === bob.id),
+      false,
+    );
+  }
+
   const stats = await selectMany<HeadToHeadStatsRow>(
     admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
   );
@@ -2132,7 +2200,11 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   }
   assertEquals(finished.status, 'complete');
   // Only a rage quit can be answered with an insult.
-  const normalReply = await invokeGameAction(alice, { gameId: rematch.id, replyId: 'crybaby', type: 'rage_quit_reply' }, 400);
+  const normalReply = await invokeGameAction(
+    alice,
+    { gameId: rematch.id, replyId: 'crybaby', type: 'rage_quit_reply' },
+    400,
+  );
   assertEquals(normalReply.error, 'Nobody rage quit this game.');
   const finalStats = await selectSingle<HeadToHeadStatsRow>(
     admin.from('head_to_head_stats').select('*').eq('player_id', bob.id).eq('opponent_id', alice.id).single(),

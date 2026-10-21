@@ -15,6 +15,7 @@ export type Database = {
           display_name: string;
           id: string;
           needs_profile_setup: boolean;
+          show_on_leaderboards: boolean;
           updated_at: string;
           username: string | null;
         };
@@ -24,6 +25,7 @@ export type Database = {
           display_name: string;
           id: string;
           needs_profile_setup?: boolean;
+          show_on_leaderboards?: boolean;
           updated_at?: string;
           username?: string | null;
         };
@@ -31,9 +33,28 @@ export type Database = {
           avatar_url?: string | null;
           display_name?: string;
           needs_profile_setup?: boolean;
+          show_on_leaderboards?: boolean;
           updated_at?: string;
           username?: string | null;
         };
+      };
+      player_standings: {
+        Row: {
+          best_win_streak: number;
+          current_win_streak: number;
+          peak_rating: number;
+          player_id: string;
+          rated_games: number;
+          rating: number;
+          updated_at: string;
+        };
+        Insert: { player_id: string };
+        Update: never;
+      };
+      player_feats: {
+        Row: { earned_at: string; feat_key: string; game_id: string; player_id: string };
+        Insert: { earned_at?: string; feat_key: string; game_id: string; player_id: string };
+        Update: never;
       };
       friendships: {
         Row: {
@@ -603,6 +624,50 @@ export type Database = {
           player_sucker_tokens_spent: number;
           rage_quitter_id: string | null;
           winner_id: string | null;
+        }[];
+      };
+      get_leaderboard: {
+        Args: { board: string; max_rows?: number };
+        Returns: {
+          avatar_url: string | null;
+          display_name: string;
+          is_me: boolean;
+          player_id: string;
+          rank: number;
+          sample_size: number;
+          username: string | null;
+          value: number;
+        }[];
+      };
+      get_player_card: {
+        Args: { target_profile_id: string };
+        Returns: {
+          avatar_url: string | null;
+          best_win_streak: number;
+          current_win_streak: number;
+          display_name: string;
+          feats_earned: number;
+          games_played: number;
+          highest_score: number;
+          losses: number;
+          peak_rating: number | null;
+          player_id: string;
+          rated_games: number;
+          rating: number | null;
+          rating_rank: number | null;
+          show_on_leaderboards: boolean;
+          username: string | null;
+          wins: number;
+        }[];
+      };
+      get_player_feats: {
+        Args: { target_profile_id: string };
+        Returns: {
+          earned_pct: number | null;
+          feat_key: string;
+          first_earned_at: string | null;
+          last_earned_at: string | null;
+          times_earned: number;
         }[];
       };
       get_profile_stat_rates: {

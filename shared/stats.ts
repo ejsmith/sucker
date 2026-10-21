@@ -15,7 +15,8 @@ export const blowoutPointMargin = 75;
 export const comebackPointMargin = 50;
 const retiredSuckerBlockerTokenCost = 3;
 
-export type SuckerStatActionType = 'extra_roll' | 'roll' | 'mulligan' | 'sucker_punch' | 'sucker_blocker';
+export type SuckerStatActionType =
+  'extra_roll' | 'roll' | 'mulligan' | 'sucker_punch' | 'sucker_blocker' | 'score_category' | 'scratch_category';
 
 export type SuckerStatAction = {
   action_type: SuckerStatActionType;
