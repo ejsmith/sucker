@@ -135,7 +135,11 @@ There is one player profile, and it looks the same however you reach it: a
 leaderboard row, a player avatar in a game, or a player on a recent game card.
 `get_player_card(target)` adds a player's rating, world rank (if visible), and
 best streak to the existing profile, and `get_player_feats(target)` adds their
-feats with rarity. The profile keeps its existing pieces:
+feats with rarity. `get_player_rankings(target)` lists every board the player
+is ranked on, from the same ranking `get_leaderboard` uses, so a profile never
+disagrees with a board. Each ranking opens that leaderboard; from inside a game
+the profile returns to the lobby on that board (`/?leaderboard=<board>`). The
+profile keeps its existing pieces:
 
 - an **Overall / Vs You** toggle, where Vs You is the head-to-head against the
   viewer,

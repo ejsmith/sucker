@@ -9,6 +9,7 @@ import {
   type LeaderboardBoard,
   type LeaderboardRow,
   type PlayerFeat,
+  type PlayerRanking,
 } from './community';
 
 export function LeaderboardPanel({
@@ -37,6 +38,7 @@ export function LeaderboardPanel({
             <Pressable
               accessibilityRole="tab"
               accessibilityState={{ selected }}
+              aria-selected={selected}
               key={candidate.board}
               onPress={() => onBoardChange(candidate.board)}
               style={({ pressed }) => [styles.tab, selected && styles.tabSelected, pressed && styles.pressed]}
@@ -100,6 +102,68 @@ export function LeaderboardPanel({
             </View>
           );
         })
+      )}
+    </View>
+  );
+}
+
+export function PlayerRankingsCard({
+  isHidden,
+  onOpenLeaderboard,
+  rankings,
+}: {
+  isHidden: boolean;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
+  rankings: PlayerRanking[];
+}) {
+  return (
+    <View style={styles.panel} testID="player-rankings">
+      <Text style={styles.sectionTitle}>Rankings</Text>
+      {rankings.length === 0 ? (
+        <Text style={styles.emptyBody}>{isHidden ? 'Hidden from leaderboards.' : 'Not on a leaderboard yet.'}</Text>
+      ) : (
+        rankings.map((ranking) => {
+          const info = leaderboardBoards.find((candidate) => candidate.board === ranking.board)!;
+          const content = (
+            <>
+              <Text style={[styles.rankingRank, ranking.rank <= 3 && styles.rankTop]}>#{ranking.rank}</Text>
+              <View style={styles.rowText}>
+                <Text numberOfLines={1} style={styles.name}>
+                  {info.label}
+                </Text>
+                <Text style={styles.sample}>of {ranking.rankedPlayers} players</Text>
+              </View>
+              <Text style={styles.value}>{formatLeaderboardValue(ranking.board, ranking.value)}</Text>
+              {onOpenLeaderboard && <Text style={styles.chevron}>›</Text>}
+            </>
+          );
+          return onOpenLeaderboard ? (
+            <Pressable
+              accessibilityLabel={`${info.label} rank ${ranking.rank}. Open leaderboard`}
+              accessibilityRole="button"
+              key={ranking.board}
+              onPress={() => onOpenLeaderboard(ranking.board)}
+              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+              testID={`player-ranking-${ranking.board}`}
+            >
+              {content}
+            </Pressable>
+          ) : (
+            <View key={ranking.board} style={styles.row} testID={`player-ranking-${ranking.board}`}>
+              {content}
+            </View>
+          );
+        })
+      )}
+      {onOpenLeaderboard && (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => onOpenLeaderboard(rankings[0]?.board ?? 'rating')}
+          style={({ pressed }) => [styles.seeAll, pressed && styles.pressed]}
+          testID="player-rankings-see-all"
+        >
+          <Text style={styles.seeAllText}>See all rankings</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -247,6 +311,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     width: 28,
   },
+  rankingRank: {
+    color: '#FFF3C2',
+    fontSize: 15,
+    fontWeight: '900',
+    minWidth: 40,
+  },
   rankTop: {
     color: '#FFD329',
   },
@@ -268,10 +338,31 @@ const styles = StyleSheet.create({
   rowText: {
     flex: 1,
   },
+  chevron: {
+    color: '#FFD329',
+    fontSize: 24,
+    fontWeight: '900',
+    marginLeft: 2,
+  },
   sample: {
     color: '#FFD76B',
     fontSize: 10,
     fontWeight: '800',
+  },
+  seeAll: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    justifyContent: 'center',
+    minHeight: 40,
+  },
+  seeAllText: {
+    color: '#FFD329',
+    fontSize: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   sectionTitle: {
     color: '#FFD329',

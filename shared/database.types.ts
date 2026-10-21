@@ -639,6 +639,16 @@ export type Database = {
           value: number;
         }[];
       };
+      get_player_rankings: {
+        Args: { target_profile_id: string };
+        Returns: {
+          board: string;
+          rank: number;
+          ranked_players: number;
+          sample_size: number;
+          value: number;
+        }[];
+      };
       get_player_card: {
         Args: { target_profile_id: string };
         Returns: {

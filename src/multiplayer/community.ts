@@ -7,6 +7,15 @@ export type LeaderboardBoard = 'rating' | 'weekly_high_score' | 'all_time_high_s
 export type LeaderboardRow = Database['public']['Functions']['get_leaderboard']['Returns'][number];
 export type PlayerCard = Database['public']['Functions']['get_player_card']['Returns'][number];
 type PlayerFeatRow = Database['public']['Functions']['get_player_feats']['Returns'][number];
+type PlayerRankingRow = Database['public']['Functions']['get_player_rankings']['Returns'][number];
+
+export type PlayerRanking = {
+  board: LeaderboardBoard;
+  rank: number;
+  rankedPlayers: number;
+  sampleSize: number;
+  value: number;
+};
 
 export type PlayerFeat = FeatDefinition & {
   earnedPct: number | null;
@@ -61,6 +70,26 @@ export async function getPlayerFeats(profileId: string): Promise<PlayerFeat[]> {
       };
     })
     .sort((left, right) => Number(right.timesEarned > 0) - Number(left.timesEarned > 0));
+}
+
+// Every board the player is ranked on, in board order. Hidden players have none.
+export async function getPlayerRankings(profileId: string): Promise<PlayerRanking[]> {
+  const { data, error } = await supabase.rpc('get_player_rankings', { target_profile_id: profileId });
+
+  if (error) throw error;
+  return ((data ?? []) as PlayerRankingRow[])
+    .filter((row) => isLeaderboardBoard(row.board))
+    .map((row) => ({
+      board: row.board as LeaderboardBoard,
+      rank: row.rank,
+      rankedPlayers: row.ranked_players,
+      sampleSize: row.sample_size,
+      value: Number(row.value),
+    }));
+}
+
+export function isLeaderboardBoard(value: string): value is LeaderboardBoard {
+  return leaderboardBoards.some((candidate) => candidate.board === value);
 }
 
 export async function getShowOnLeaderboards(profileId: string) {

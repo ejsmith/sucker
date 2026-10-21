@@ -101,6 +101,7 @@ export function MultiplayerLobby({
   onOpenGame,
   onPlayLocalDemo,
   onRefreshGames,
+  requestedLeaderboard = null,
 }: {
   games: RemoteGameRow[];
   gamesProfileId: string | null;
@@ -108,6 +109,7 @@ export function MultiplayerLobby({
   onOpenGame: (gameId: string) => void;
   onPlayLocalDemo: (profile: { avatarUrl: string | null; displayName: string }) => void;
   onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
+  requestedLeaderboard?: LeaderboardBoard | null;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
@@ -174,6 +176,16 @@ export function MultiplayerLobby({
     rows: LeaderboardRow[];
   } | null>(null);
   const [playerProfileId, setPlayerProfileId] = useState<string | null>(null);
+  // A game screen asks for a leaderboard through the route. Adjust state while
+  // rendering, as React recommends for props that drive state.
+  const [handledLeaderboardRequest, setHandledLeaderboardRequest] = useState<LeaderboardBoard | null>(null);
+  if (requestedLeaderboard !== handledLeaderboardRequest) {
+    setHandledLeaderboardRequest(requestedLeaderboard);
+    if (requestedLeaderboard) {
+      setLeaderboardBoard(requestedLeaderboard);
+      setCurrentPage('community');
+    }
+  }
   const [showOnLeaderboards, setShowOnLeaderboardsState] = useState<boolean | null>(null);
   const setPage = useCallback((nextPage: LobbyPage) => {
     if (nextPage !== 'password') {
@@ -596,6 +608,11 @@ export function MultiplayerLobby({
       subscription.remove();
     };
   }, [setPage]);
+
+  function openLeaderboard(board: LeaderboardBoard) {
+    setLeaderboardBoard(board);
+    setPage('community');
+  }
 
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
@@ -1304,6 +1321,7 @@ export function MultiplayerLobby({
             currentScore={totalScore(me.scorecard)}
             nestedBackHandlerRef={completedGameStatsBackHandler}
             onClose={() => setPage('completedGameDetail')}
+            onOpenLeaderboard={openLeaderboard}
             onStartGameAgainst={async (opponentProfileId) => {
               const result = await createGameAgainst(opponentProfileId);
               await refreshGames({ surfaceError: false });
@@ -1378,6 +1396,7 @@ export function MultiplayerLobby({
           currentUserProfileId={profileId ?? undefined}
           nestedBackHandlerRef={completedGameStatsBackHandler}
           onClose={() => setPage('community')}
+          onOpenLeaderboard={openLeaderboard}
           onStartGameAgainst={async (opponentProfileId) => {
             const result = await createGameAgainst(opponentProfileId);
             await refreshGames({ surfaceError: false });

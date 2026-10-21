@@ -15,10 +15,13 @@ import {
   formatRankLine,
   getPlayerCard,
   getPlayerFeats,
+  getPlayerRankings,
+  type LeaderboardBoard,
   type PlayerCard,
   type PlayerFeat,
+  type PlayerRanking,
 } from '../multiplayer/community';
-import { PlayerFeatsCard } from '../multiplayer/CommunityPages';
+import { PlayerFeatsCard, PlayerRankingsCard } from '../multiplayer/CommunityPages';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -44,6 +47,7 @@ export function StatsPage({
   currentScore,
   nestedBackHandlerRef,
   onClose,
+  onOpenLeaderboard,
   onStartGameAgainst,
   opponentOverallStats,
   opponentScore,
@@ -62,6 +66,7 @@ export function StatsPage({
   currentScore?: number;
   nestedBackHandlerRef?: MutableRefObject<(() => void) | null>;
   onClose: () => void;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
   opponentOverallStats?: ProfileStats | null;
   opponentScore?: number;
@@ -97,6 +102,7 @@ export function StatsPage({
           key={profileId}
           nestedBackHandlerRef={nestedBackHandlerRef}
           onClose={onClose}
+          onOpenLeaderboard={onOpenLeaderboard}
           onStartGameAgainst={onStartGameAgainst}
         />
       );
@@ -262,6 +268,7 @@ type PlayerCommunity = {
   card: PlayerCard | null;
   feats: PlayerFeat[];
   profileId: string;
+  rankings: PlayerRanking[];
 };
 
 type PlayerStatsPageName = 'detail' | 'games' | 'stats';
@@ -303,6 +310,7 @@ export function PlayerProfilePage({
   currentUserProfileId,
   nestedBackHandlerRef,
   onClose,
+  onOpenLeaderboard,
   onStartGameAgainst,
   profileAvatarUrl,
   profileId,
@@ -311,6 +319,7 @@ export function PlayerProfilePage({
   currentUserProfileId?: string;
   nestedBackHandlerRef?: MutableRefObject<(() => void) | null>;
   onClose: () => void;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
   profileAvatarUrl?: string | null;
   profileId: string;
@@ -350,6 +359,7 @@ export function PlayerProfilePage({
         key={profileId}
         nestedBackHandlerRef={nestedBackHandlerRef}
         onClose={onClose}
+        onOpenLeaderboard={onOpenLeaderboard}
         onStartGameAgainst={onStartGameAgainst}
       />
     );
@@ -405,12 +415,14 @@ function PlayerStatsPage({
   initialProfile,
   nestedBackHandlerRef,
   onClose,
+  onOpenLeaderboard,
   onStartGameAgainst,
 }: {
   currentUserProfileId?: string;
   initialProfile: PlayerStatsProfile;
   nestedBackHandlerRef?: MutableRefObject<(() => void) | null>;
   onClose: () => void;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
 }) {
   const [activeProfile, setActiveProfile] = useState(initialProfile);
@@ -459,9 +471,9 @@ function PlayerStatsPage({
   useEffect(() => {
     let isMounted = true;
     const profileId = visibleProfile.id;
-    Promise.all([getPlayerCard(profileId), getPlayerFeats(profileId)])
-      .then(([card, feats]) => {
-        if (isMounted) setCommunity({ card, feats, profileId });
+    Promise.all([getPlayerCard(profileId), getPlayerFeats(profileId), getPlayerRankings(profileId)])
+      .then(([card, feats, rankings]) => {
+        if (isMounted) setCommunity({ card, feats, profileId, rankings });
       })
       .catch(() => {
         // Ratings and feats are extras; the profile still works without them.
@@ -604,6 +616,7 @@ function PlayerStatsPage({
           isLoading={isLoading}
           message={message}
           onOpenGames={() => void openGames()}
+          onOpenLeaderboard={onOpenLeaderboard}
           onStartGame={() => void startGame()}
           profile={visibleProfile}
           showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
@@ -681,6 +694,7 @@ function PlayerStatsSummary({
   isLoading,
   message,
   onOpenGames,
+  onOpenLeaderboard,
   onStartGame,
   profile,
   showStartGame,
@@ -691,6 +705,7 @@ function PlayerStatsSummary({
   isLoading: boolean;
   message: string | null;
   onOpenGames: () => void;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onStartGame: () => void;
   profile: PlayerStatsProfile;
   showStartGame: boolean;
@@ -811,6 +826,13 @@ function PlayerStatsSummary({
                 </View>
               )}
             </View>
+            {community && (
+              <PlayerRankingsCard
+                isHidden={card?.show_on_leaderboards === false}
+                onOpenLeaderboard={onOpenLeaderboard}
+                rankings={community.rankings}
+              />
+            )}
             <View style={styles.statsDetailCard}>
               <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
                 Sucker Skills

@@ -1679,9 +1679,18 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
   await expect(playerStatsPage).toBeVisible();
   await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
   await expect(alicePage.getByTestId('player-stats-rank')).toHaveText('#1 in the world');
-  await expect(playerStatsPage.getByText('4321')).toBeVisible();
+  await expect(playerStatsPage.getByText('4321').first()).toBeVisible();
   await expect(alicePage.getByTestId('player-stats-start-game-button')).toBeVisible();
+  await expect(alicePage.getByTestId('player-ranking-rating')).toContainText('#1');
+  await expect(alicePage.getByTestId('player-ranking-win_streak')).toBeVisible();
   await expectNoSeriousAccessibilityViolations(alicePage);
+
+  // A ranking opens that leaderboard.
+  await alicePage.getByTestId('player-ranking-win_streak').click();
+  await expect(playerStatsPage).toHaveCount(0);
+  await expect(alicePage.getByTestId('leaderboard-tab-win_streak')).toHaveAttribute('aria-selected', 'true');
+  await alicePage.getByTestId(`leaderboard-row-${bob.id}`).click();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
 
   await alicePage.getByTestId('player-stats-toggle-headToHead').click();
   await expect(playerStatsPage.getByText('Your Record')).toBeVisible();
@@ -1691,7 +1700,19 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
   await expect(playerStatsPage).toHaveCount(0);
   await expect(alicePage.getByTestId('leaderboard-panel')).toBeVisible();
 
+  // The same profile opened from a game returns to the lobby on that board.
+  const bobPage = await openAuthedPage(browser, bob);
+  await alicePage.goto('/');
+  const gameId = await createAcceptedGame(alicePage, bobPage);
+  await openGameFromLobby(alicePage, gameId);
+  await alicePage.getByTestId('opponent-player-avatar-stats-button').click();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+  await alicePage.getByTestId('player-ranking-rating').click();
+  await expect(alicePage.getByTestId('leaderboard-tab-rating')).toHaveAttribute('aria-selected', 'true');
+  await expect(alicePage.getByTestId(`leaderboard-row-${bob.id}`)).toBeVisible();
+
   await alicePage.context().close();
+  await bobPage.context().close();
 });
 
 async function openAuthedPage(
