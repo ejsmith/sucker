@@ -129,22 +129,31 @@ first and last earned dates, and **rarity**: the percentage of players with
 games completed before launch; milestone feats catch up on a player's next
 completed game.
 
-### Player Card
+### Player Profile
 
-`get_player_card(target)` returns a player's name, username, avatar, rating,
-rating rank (if visible), record, best score, streaks, and feat count. The app
-shows it from any leaderboard row with:
+There is one player profile, and it looks the same however you reach it: a
+leaderboard row, a player avatar in a game, or a player on a recent game card.
+`get_player_card(target)` adds a player's rating, world rank (if visible), and
+best streak to the existing profile, and `get_player_feats(target)` adds their
+feats with rarity. `get_player_rankings(target)` lists every board the player
+is ranked on, from the same ranking `get_leaderboard` uses, so a profile never
+disagrees with a board. Each ranking opens that leaderboard; from inside a game
+the profile returns to the lobby on that board (`/?leaderboard=<board>`). The
+profile keeps its existing pieces:
 
-- a **Challenge** button that uses the existing `create_game` action, and
-- their feats with rarity.
+- an **Overall / Vs You** toggle, where Vs You is the head-to-head against the
+  viewer,
+- **Start Game**, which uses the existing `create_game` action, and
+- **Recent Games**, where tapping a player opens their profile.
 
-Players reach their own card from their row on any board.
+Players reach their own profile from their row on any board; it has no Vs You
+toggle or Start Game button.
 
 ### App
 
 - New lobby entry **Hall of Suckers** (below Completed Games) opens the
   Community page with board tabs.
-- Tapping a row opens the player card.
+- Tapping a row opens that player's profile.
 - Profile page gains a **Show me on leaderboards** toggle.
 
 ### Rollout Order

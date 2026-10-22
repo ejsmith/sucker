@@ -118,6 +118,7 @@ import {
   wait,
 } from './src/ui/rollAnimation';
 import { StatsPage } from './src/ui/StatsPage';
+import type { LeaderboardBoard } from './src/multiplayer/community';
 import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
@@ -456,6 +457,7 @@ export function RemoteGameScreen({
   onExit,
   onGameChange,
   onOpenGame,
+  onOpenLeaderboard,
   onRefreshGames,
 }: {
   gameId: string;
@@ -464,6 +466,7 @@ export function RemoteGameScreen({
   onExit: () => void;
   onGameChange: (profileId: string, game: RemoteGameRow) => void;
   onOpenGame: (gameId: string) => void;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onRefreshGames: (profileId: string) => Promise<RemoteGameRow[]>;
 }) {
   const {
@@ -1163,6 +1166,7 @@ export function RemoteGameScreen({
       nextTurnsEyebrow={nextTurnPrompt?.isResume ? 'Your Move' : 'Turn Finished'}
       onDismissNextTurns={() => setNextTurnPrompt(null)}
       onExit={exitToLobby}
+      onOpenLeaderboard={onOpenLeaderboard}
       onOpenNextTurnGame={openNextTurnGame}
       onRemoteResultSeen={markResultSeen}
       onStartGameAgainst={startGameAgainst}
@@ -1192,6 +1196,7 @@ export function LocalGameScreen({
   nextTurnsEyebrow = 'Turn Finished',
   onDismissNextTurns,
   onExit,
+  onOpenLeaderboard,
   onOpenNextTurnGame,
   onRemoteResultSeen,
   onStartGameAgainst,
@@ -1217,6 +1222,7 @@ export function LocalGameScreen({
   nextTurnsEyebrow?: string;
   onDismissNextTurns?: () => void;
   onExit?: () => void;
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onOpenNextTurnGame?: (gameId: string) => void;
   onRemoteResultSeen?: () => void;
   onStartGameAgainst?: (profileId: string) => Promise<void>;
@@ -3683,11 +3689,7 @@ export function LocalGameScreen({
           </View>
           <Animated.View
             ref={boardRef}
-            style={[
-              styles.board,
-              gameLayout.styles.board,
-              isTableFlipped && getTableFlipBoardStyle(tableFlipProgress),
-            ]}
+            style={[styles.board, gameLayout.styles.board, isTableFlipped && getTableFlipBoardStyle(tableFlipProgress)]}
             testID="scorecard-board"
           >
             {upperCategories.map((leftCategory, index) => (
@@ -4994,6 +4996,7 @@ export function LocalGameScreen({
                     currentScore={totalScore(homePlayer.scorecard)}
                     nestedBackHandlerRef={statsNestedBackHandler}
                     onClose={handleCloseStats}
+                    onOpenLeaderboard={isRemoteGame ? onOpenLeaderboard : undefined}
                     onStartGameAgainst={
                       onStartGameAgainst
                         ? async (profileId) => {

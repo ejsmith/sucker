@@ -1877,6 +1877,19 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   assertEquals(card?.[0]?.games_played, 1);
   assertEquals(Number(card?.[0]?.rating), 1200);
   assertEquals(card?.[0]?.rating_rank, null);
+  const { data: aliceRankings, error: aliceRankingsError } = await charlie.client.rpc('get_player_rankings', {
+    target_profile_id: alice.id,
+  });
+  assertNoError(aliceRankingsError);
+  assertEquals(
+    aliceRankings?.some((ranking) => ranking.board === 'all_time_high_score' && ranking.rank >= 1),
+    true,
+  );
+  const { data: bobRankings, error: bobRankingsError } = await charlie.client.rpc('get_player_rankings', {
+    target_profile_id: bob.id,
+  });
+  assertNoError(bobRankingsError);
+  assertEquals(bobRankings?.length, 0);
   const { error: featsError } = await charlie.client.rpc('get_player_feats', { target_profile_id: alice.id });
   assertNoError(featsError);
   const { error: directFeatsError, data: directFeats } = await charlie.client.from('player_feats').select('*');

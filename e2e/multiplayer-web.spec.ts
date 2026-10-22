@@ -1640,6 +1640,81 @@ test('player avatars open separate overall stats pages', async ({ browser }) => 
   await bobPage.context().close();
 });
 
+test('Hall of Suckers opens the same player profile with head-to-head stats', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`hall-alice-${runId}`, 'Alice Hall E2E');
+  const bob = await createUser(`hall-bob-${runId}`, 'Bob Hall E2E');
+
+  const inserted = await Promise.all([
+    admin.from('head_to_head_stats').insert({
+      average_score: 150,
+      games_played: 2,
+      highest_score: 190,
+      losses: 1,
+      opponent_id: bob.id,
+      player_id: alice.id,
+      total_score: 300,
+      wins: 1,
+    }),
+    admin.from('head_to_head_stats').insert({
+      average_score: 165,
+      games_played: 2,
+      highest_score: 210,
+      losses: 1,
+      opponent_id: alice.id,
+      player_id: bob.id,
+      total_score: 330,
+      wins: 1,
+    }),
+    // Far above any rating other tests can reach, so Bob tops the board.
+    admin.from('player_standings').insert({ best_win_streak: 4, player_id: bob.id, rated_games: 6, rating: 4321 }),
+  ]);
+  inserted.forEach((result) => assertNoError(result.error));
+
+  const alicePage = await openAuthedPage(browser, alice);
+  await alicePage.getByTestId('community-button').click();
+  await alicePage.getByTestId(`leaderboard-row-${bob.id}`).click();
+
+  const playerStatsPage = alicePage.getByTestId('player-stats-page-overlay');
+  await expect(playerStatsPage).toBeVisible();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+  await expect(alicePage.getByTestId('player-stats-rank')).toHaveText('#1 in the world');
+  await expect(playerStatsPage.getByText('4321').first()).toBeVisible();
+  await expect(alicePage.getByTestId('player-stats-start-game-button')).toBeVisible();
+  await expect(alicePage.getByTestId('player-ranking-rating')).toContainText('#1');
+  await expect(alicePage.getByTestId('player-ranking-win_streak')).toBeVisible();
+  await expectNoSeriousAccessibilityViolations(alicePage);
+
+  // A ranking opens that leaderboard.
+  await alicePage.getByTestId('player-ranking-win_streak').click();
+  await expect(playerStatsPage).toHaveCount(0);
+  await expect(alicePage.getByTestId('leaderboard-tab-win_streak')).toHaveAttribute('aria-selected', 'true');
+  await alicePage.getByTestId(`leaderboard-row-${bob.id}`).click();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+
+  await alicePage.getByTestId('player-stats-toggle-headToHead').click();
+  await expect(playerStatsPage.getByText('Your Record')).toBeVisible();
+  await expect(playerStatsPage.getByText('210')).toBeVisible();
+
+  await alicePage.getByTestId('player-stats-back-button').click();
+  await expect(playerStatsPage).toHaveCount(0);
+  await expect(alicePage.getByTestId('leaderboard-panel')).toBeVisible();
+
+  // The same profile opened from a game returns to the lobby on that board.
+  const bobPage = await openAuthedPage(browser, bob);
+  await alicePage.goto('/');
+  const gameId = await createAcceptedGame(alicePage, bobPage);
+  await openGameFromLobby(alicePage, gameId);
+  await alicePage.getByTestId('opponent-player-avatar-stats-button').click();
+  await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+  await alicePage.getByTestId('player-ranking-rating').click();
+  await expect(alicePage.getByTestId('leaderboard-tab-rating')).toHaveAttribute('aria-selected', 'true');
+  await expect(alicePage.getByTestId(`leaderboard-row-${bob.id}`)).toBeVisible();
+
+  await alicePage.context().close();
+  await bobPage.context().close();
+});
+
 async function openAuthedPage(
   browser: Browser,
   user: TestUser,

@@ -21,6 +21,7 @@ export default function RemoteGameRoute() {
       onExit={() => (router.canGoBack() ? router.back() : router.replace('/'))}
       onGameChange={gameList.rememberGame}
       onOpenGame={(nextGameId) => router.replace(`/game/${encodeURIComponent(nextGameId)}`)}
+      onOpenLeaderboard={(board) => router.dismissTo({ pathname: '/', params: { leaderboard: board } })}
       onRefreshGames={gameList.refreshGames}
     />
   );
