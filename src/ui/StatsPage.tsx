@@ -1116,7 +1116,7 @@ function PlayerProfileHeader({
             testID="player-stats-start-game-button"
           >
             <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerPrimaryButtonText}>
-              Start Game
+              Challenge
             </Text>
           </Pressable>
         )}
