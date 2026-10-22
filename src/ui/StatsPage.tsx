@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import {
@@ -274,8 +274,7 @@ type PlayerCommunity = {
 };
 
 type PlayerStatsPageName = 'detail' | 'games' | 'stats';
-type PlayerProfileSection = 'defeats' | 'feats' | 'ranks' | 'stats';
-type PlayerStatsView = 'headToHead' | 'overall';
+type PlayerProfileSection = 'defeats' | 'feats' | 'headToHead' | 'ranks' | 'stats';
 
 type PlayerStatsRoute = {
   games: ProfileRecentGame[];
@@ -283,7 +282,6 @@ type PlayerStatsRoute = {
   profile: PlayerStatsProfile;
   section: PlayerProfileSection;
   selectedGame: ProfileRecentGame | null;
-  statsView: PlayerStatsView;
 };
 
 async function loadPlayerStatsProfile(
@@ -436,7 +434,6 @@ function PlayerStatsPage({
   const [page, setPage] = useState<PlayerStatsPageName>('stats');
   const [routeStack, setRouteStack] = useState<PlayerStatsRoute[]>([]);
   const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
-  const [statsView, setStatsView] = useState<PlayerStatsView>('overall');
   const [section, setSection] = useState<PlayerProfileSection>('stats');
   const [community, setCommunity] = useState<PlayerCommunity | null>(null);
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
@@ -490,11 +487,11 @@ function PlayerStatsPage({
   }, [visibleProfile.id]);
 
   async function openGames() {
+    setPage('games');
     setIsLoading(true);
     setMessage(null);
     try {
       setGames(await getProfileRecentGames(visibleProfile.id));
-      setPage('games');
     } catch (historyError) {
       setMessage(historyError instanceof Error ? historyError.message : 'Unable to load completed games.');
     } finally {
@@ -510,13 +507,12 @@ function PlayerStatsPage({
     setMessage(null);
     try {
       const nextProfile = await loadPlayerStatsProfile(player.id, currentUserProfileId, player);
-      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame, statsView }]);
+      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame }]);
       setActiveProfile(nextProfile);
       setGames([]);
       setSelectedGame(null);
       setPage('stats');
       setSection('stats');
-      setStatsView('overall');
     } catch (profileError) {
       setMessage(profileError instanceof Error ? profileError.message : 'Unable to load player stats.');
     } finally {
@@ -545,7 +541,6 @@ function PlayerStatsPage({
       setPage(previousRoute.page);
       setSection(previousRoute.section);
       setSelectedGame(previousRoute.selectedGame);
-      setStatsView(previousRoute.statsView);
       return;
     }
     onClose();
@@ -572,8 +567,22 @@ function PlayerStatsPage({
     }
   }
 
-  const title = page === 'detail' ? 'Game Card' : page === 'games' ? 'Recent Games' : 'Player Stats';
-  const showStatsToggle = Boolean(currentUserProfileId && visibleProfile.id !== currentUserProfileId);
+  const title = page === 'detail' ? 'Game Card' : 'Player Profile';
+  const isCurrentUser = visibleProfile.id === currentUserProfileId;
+  const communityForProfile = community?.profileId === visibleProfile.id ? community : null;
+  // Both profile pages share this header, so switching between them never shifts it.
+  const profileHeader = (
+    <PlayerProfileHeader
+      card={communityForProfile?.card ?? null}
+      isCurrentUser={isCurrentUser}
+      isLoading={isLoading}
+      onOpenGames={() => void openGames()}
+      onOpenStats={() => setPage('stats')}
+      onStartGame={onStartGameAgainst && !isCurrentUser ? () => void startGame() : null}
+      page={page === 'games' ? 'games' : 'stats'}
+      profile={visibleProfile}
+    />
+  );
 
   return (
     <View
@@ -595,17 +604,13 @@ function PlayerStatsPage({
         >
           <BackChevronIcon size={28} strokeWidth={4.5} />
         </Pressable>
-        {page === 'stats' && showStatsToggle ? (
-          <PlayerStatsViewToggle onChange={setStatsView} value={statsView} />
-        ) : (
-          <Text
-            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-            numberOfLines={1}
-            style={styles.playerStatsHeaderTitle}
-          >
-            {title}
-          </Text>
-        )}
+        <Text
+          maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+          numberOfLines={1}
+          style={styles.playerStatsHeaderTitle}
+        >
+          {title}
+        </Text>
         <Pressable
           accessibilityLabel="Close player stats"
           accessibilityRole="button"
@@ -619,35 +624,28 @@ function PlayerStatsPage({
 
       {page === 'stats' && (
         <PlayerStatsSummary
-          community={community?.profileId === visibleProfile.id ? community : null}
-          isCurrentUser={visibleProfile.id === currentUserProfileId}
+          community={communityForProfile}
+          header={profileHeader}
           isLoading={isLoading}
           message={message}
-          onOpenGames={() => void openGames()}
           onOpenLeaderboard={onOpenLeaderboard}
           onSectionChange={setSection}
-          onStartGame={() => void startGame()}
           profile={visibleProfile}
           section={section}
-          showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
-          statsView={statsView}
+          showHeadToHead={Boolean(currentUserProfileId && !isCurrentUser)}
         />
       )}
       {page === 'games' && (
         <PlayerGameHistory
-          card={community?.profileId === visibleProfile.id ? (community.card ?? null) : null}
           games={games}
-          isCurrentUser={visibleProfile.id === currentUserProfileId}
+          header={profileHeader}
+          isCurrentUser={isCurrentUser}
           isLoading={isLoading}
           message={message}
           onOpenGame={(game) => {
             setSelectedGame(game);
             setPage('detail');
           }}
-          onOpenStats={() => setPage('stats')}
-          onStartGame={() => void startGame()}
-          profile={visibleProfile}
-          showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
         />
       )}
       {page === 'detail' && selectedGame && (
@@ -657,81 +655,32 @@ function PlayerStatsPage({
   );
 }
 
-function PlayerStatsViewToggle({
-  onChange,
-  value,
-}: {
-  onChange: (view: PlayerStatsView) => void;
-  value: PlayerStatsView;
-}) {
-  return (
-    <View
-      accessibilityLabel="Player stats view"
-      accessibilityRole="tablist"
-      style={styles.playerStatsHeaderToggle}
-      testID="player-stats-toggle"
-    >
-      {(['overall', 'headToHead'] as const).map((view) => {
-        const selected = value === view;
-        const label = view === 'overall' ? 'Overall' : 'Vs You';
-        return (
-          <Pressable
-            accessibilityLabel={`${label} stats`}
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            aria-selected={selected}
-            key={view}
-            onPress={() => onChange(view)}
-            style={({ pressed }) => [
-              styles.playerStatsToggleButton,
-              selected && styles.playerStatsToggleButtonSelected,
-              pressed && styles.pressed,
-            ]}
-            testID={`player-stats-toggle-${view}`}
-          >
-            <Text
-              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-              style={[styles.playerStatsToggleText, selected && styles.playerStatsToggleTextSelected]}
-            >
-              {label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
 function PlayerStatsSummary({
   community,
-  isCurrentUser,
+  header,
   isLoading,
   message,
-  onOpenGames,
   onOpenLeaderboard,
   onSectionChange,
-  onStartGame,
   profile,
   section,
-  showStartGame,
-  statsView,
+  showHeadToHead,
 }: {
   community: PlayerCommunity | null;
-  isCurrentUser: boolean;
+  header: ReactNode;
   isLoading: boolean;
   message: string | null;
-  onOpenGames: () => void;
   onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   onSectionChange: (section: PlayerProfileSection) => void;
-  onStartGame: () => void;
   profile: PlayerStatsProfile;
   section: PlayerProfileSection;
-  showStartGame: boolean;
-  statsView: PlayerStatsView;
+  showHeadToHead: boolean;
 }) {
-  const stats = statsView === 'headToHead' ? profile.currentUserHeadToHeadStats : profile.stats;
+  const stats = profile.stats;
   const hasStats = Boolean(stats && stats.games_played > 0);
+  const headToHead = profile.currentUserHeadToHeadStats;
   const card = community?.card ?? null;
+  const visibleSection = section === 'headToHead' && !showHeadToHead ? 'stats' : section;
 
   return (
     <ScrollView
@@ -739,16 +688,7 @@ function PlayerStatsSummary({
       showsVerticalScrollIndicator={false}
       style={styles.statsScroll}
     >
-      <PlayerProfileHeader
-        card={card}
-        isCurrentUser={isCurrentUser}
-        isLoading={isLoading}
-        onOtherPage={onOpenGames}
-        onStartGame={onStartGame}
-        otherPage="games"
-        profile={profile}
-        showStartGame={showStartGame}
-      />
+      {header}
       {isLoading && <ActivityIndicator color="#FFD329" />}
       {message && (
         <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
@@ -756,106 +696,110 @@ function PlayerStatsSummary({
         </Text>
       )}
 
-      {hasStats && stats ? (
-        statsView === 'headToHead' ? (
+      {hasStats && stats && (
+        <View style={styles.playerStatsStrip}>
+          <StatBox label="Record" mini value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
+          <StatBox label="Win %" mini value={formatPlayerWinningPct(stats.wins, stats.games_played)} />
+          <StatBox
+            label="Rating"
+            mini
+            value={card?.rating === null || card?.rating === undefined ? '—' : String(Math.round(Number(card.rating)))}
+          />
+          <StatBox label="High" mini value={String(stats.highest_score)} />
+        </View>
+      )}
+      <PlayerSectionTabs onChange={onSectionChange} showHeadToHead={showHeadToHead} value={visibleSection} />
+      {visibleSection === 'stats' &&
+        (hasStats && stats ? (
+          <>
+            <StatsGrid
+              items={[
+                ['Avg score', formatPlayerStatNumber(stats.average_score)],
+                ['Best streak', card ? String(card.best_win_streak) : '—'],
+                ['Blowout wins', formatPlayerSkillStat(stats, 'blowout_wins')],
+                ['Comebacks', formatPlayerSkillStat(stats, 'comeback_wins')],
+                ['Buzzer beaters', formatPlayerSkillStat(stats, 'buzzer_beater_wins')],
+                ['Extra rolls', formatPlayerSkillStat(stats, 'extra_rolls_used')],
+                ['Mulligans', formatPlayerSkillStat(stats, 'mulligans_used')],
+                ['Punches thrown', formatPlayerSkillStat(stats, 'sucker_punches_used')],
+                ['Punches landed', formatPlayerSkillPct(stats, 'sucker_punch_landed_pct')],
+                ['Sucker hunts', formatPlayerSkillStat(stats, 'sucker_hunts')],
+                ['Hunt misses', formatPlayerSkillStat(stats, 'sucker_hunt_misses')],
+                ['Avg tokens used', formatPlayerSkillStat(stats, 'average_sucker_tokens_spent')],
+                ['Avg tokens left', formatPlayerSkillStat(stats, 'average_sucker_tokens_leftover')],
+                ['Rage quits 🧂', String(stats.rage_quits ?? 0)],
+              ]}
+              title="Sucker Skills"
+            />
+            <StatsGrid
+              items={[
+                ['Upper bonus', formatProfileCategoryRate(stats, 'upper_bonus')],
+                ['Sucker', formatProfileCategoryRate(stats, 'sucker')],
+                ['3 of a kind', formatProfileCategoryRate(stats, 'three_of_a_kind')],
+                ['4 of a kind', formatProfileCategoryRate(stats, 'four_of_a_kind')],
+                ['Full house', formatProfileCategoryRate(stats, 'full_house')],
+                ['Small straight', formatProfileCategoryRate(stats, 'small_straight')],
+                ['Large straight', formatProfileCategoryRate(stats, 'large_straight')],
+              ]}
+              title="Category Rates"
+            />
+          </>
+        ) : (
+          <PlayerStatsEmpty body={`${profile.name} has not finished a signed-in multiplayer game yet.`} />
+        ))}
+      {visibleSection === 'headToHead' &&
+        (headToHead && headToHead.games_played > 0 ? (
           <HeadToHeadStatsComparison
             formatNumber={formatPlayerStatNumber}
-            mine={stats as HeadToHeadStatsRow}
+            mine={headToHead}
             opponent={profile.headToHeadStats}
           />
         ) : (
-          <>
-            <View style={styles.playerStatsStrip}>
-              <StatBox label="Record" mini value={formatRecord(stats.wins, stats.losses, stats.games_played)} />
-              <StatBox label="Win %" mini value={formatPlayerWinningPct(stats.wins, stats.games_played)} />
-              <StatBox
-                label="Rating"
-                mini
-                value={
-                  card?.rating === null || card?.rating === undefined ? '—' : String(Math.round(Number(card.rating)))
-                }
-              />
-              <StatBox label="High" mini value={String(stats.highest_score)} />
-            </View>
-            <PlayerSectionTabs onChange={onSectionChange} value={section} />
-            {section === 'stats' && (
-              <>
-                <StatsGrid
-                  items={[
-                    ['Avg score', formatPlayerStatNumber(stats.average_score)],
-                    ['Best streak', card ? String(card.best_win_streak) : '—'],
-                    ['Blowout wins', formatPlayerSkillStat(stats, 'blowout_wins')],
-                    ['Comebacks', formatPlayerSkillStat(stats, 'comeback_wins')],
-                    ['Buzzer beaters', formatPlayerSkillStat(stats, 'buzzer_beater_wins')],
-                    ['Extra rolls', formatPlayerSkillStat(stats, 'extra_rolls_used')],
-                    ['Mulligans', formatPlayerSkillStat(stats, 'mulligans_used')],
-                    ['Punches thrown', formatPlayerSkillStat(stats, 'sucker_punches_used')],
-                    ['Punches landed', formatPlayerSkillPct(stats, 'sucker_punch_landed_pct')],
-                    ['Sucker hunts', formatPlayerSkillStat(stats, 'sucker_hunts')],
-                    ['Hunt misses', formatPlayerSkillStat(stats, 'sucker_hunt_misses')],
-                    ['Avg tokens used', formatPlayerSkillStat(stats, 'average_sucker_tokens_spent')],
-                    ['Avg tokens left', formatPlayerSkillStat(stats, 'average_sucker_tokens_leftover')],
-                    ['Rage quits 🧂', String(stats.rage_quits ?? 0)],
-                  ]}
-                  title="Sucker Skills"
-                />
-                <StatsGrid
-                  items={[
-                    ['Upper bonus', formatProfileCategoryRate(stats, 'upper_bonus')],
-                    ['Sucker', formatProfileCategoryRate(stats, 'sucker')],
-                    ['3 of a kind', formatProfileCategoryRate(stats, 'three_of_a_kind')],
-                    ['4 of a kind', formatProfileCategoryRate(stats, 'four_of_a_kind')],
-                    ['Full house', formatProfileCategoryRate(stats, 'full_house')],
-                    ['Small straight', formatProfileCategoryRate(stats, 'small_straight')],
-                    ['Large straight', formatProfileCategoryRate(stats, 'large_straight')],
-                  ]}
-                  title="Category Rates"
-                />
-              </>
-            )}
-            {section !== 'stats' && community?.failed && (
-              <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
-                Rankings, feats, and defeats are unavailable right now.
-              </Text>
-            )}
-            {section === 'ranks' &&
-              !community?.failed &&
-              (community ? (
-                <PlayerRankingsCard
-                  isHidden={card?.show_on_leaderboards === false}
-                  onOpenLeaderboard={onOpenLeaderboard}
-                  rankings={community.rankings}
-                />
-              ) : (
-                <ActivityIndicator color="#FFD329" />
-              ))}
-            {(section === 'feats' || section === 'defeats') &&
-              !community?.failed &&
-              (community ? (
-                <PlayerFeatsCard feats={community.feats} key={section} tone={section === 'feats' ? 'feat' : 'defeat'} />
-              ) : (
-                <ActivityIndicator color="#FFD329" />
-              ))}
-          </>
-        )
-      ) : (
-        <View style={styles.statsEmptyCard}>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
-            No saved stats yet
-          </Text>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
-            {statsView === 'headToHead'
-              ? `${profile.name} has not finished a game against you yet.`
-              : `${profile.name} has not finished a signed-in multiplayer game yet.`}
-          </Text>
-        </View>
+          <PlayerStatsEmpty body={`${profile.name} has not finished a game against you yet.`} />
+        ))}
+      {(section === 'ranks' || section === 'feats' || section === 'defeats') && community?.failed && (
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
+          Rankings, feats, and defeats are unavailable right now.
+        </Text>
       )}
+      {visibleSection === 'ranks' &&
+        !community?.failed &&
+        (community ? (
+          <PlayerRankingsCard
+            isHidden={card?.show_on_leaderboards === false}
+            onOpenLeaderboard={onOpenLeaderboard}
+            rankings={community.rankings}
+          />
+        ) : (
+          <ActivityIndicator color="#FFD329" />
+        ))}
+      {(visibleSection === 'feats' || visibleSection === 'defeats') &&
+        !community?.failed &&
+        (community ? (
+          <PlayerFeatsCard feats={community.feats} key={section} tone={section === 'feats' ? 'feat' : 'defeat'} />
+        ) : (
+          <ActivityIndicator color="#FFD329" />
+        ))}
     </ScrollView>
   );
 }
 
+function PlayerStatsEmpty({ body }: { body: string }) {
+  return (
+    <View style={styles.statsEmptyCard}>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyTitle}>
+        No saved stats yet
+      </Text>
+      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsEmptyBody}>
+        {body}
+      </Text>
+    </View>
+  );
+}
+
 const playerSections: { label: string; section: PlayerProfileSection }[] = [
-  { label: 'Stats', section: 'stats' },
+  { label: 'Overall', section: 'stats' },
+  { label: 'Vs You', section: 'headToHead' },
   { label: 'Ranks', section: 'ranks' },
   { label: 'Feats', section: 'feats' },
   { label: 'Defeats', section: 'defeats' },
@@ -863,39 +807,43 @@ const playerSections: { label: string; section: PlayerProfileSection }[] = [
 
 function PlayerSectionTabs({
   onChange,
+  showHeadToHead,
   value,
 }: {
   onChange: (section: PlayerProfileSection) => void;
+  showHeadToHead: boolean;
   value: PlayerProfileSection;
 }) {
   return (
     <View accessibilityLabel="Profile sections" accessibilityRole="tablist" style={styles.playerSectionTabs}>
-      {playerSections.map((item) => {
-        const selected = item.section === value;
-        return (
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            aria-selected={selected}
-            key={item.section}
-            onPress={() => onChange(item.section)}
-            style={({ pressed }) => [
-              styles.playerStatsToggleButton,
-              selected && styles.playerStatsToggleButtonSelected,
-              pressed && styles.pressed,
-            ]}
-            testID={`player-section-${item.section}`}
-          >
-            <Text
-              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-              numberOfLines={1}
-              style={[styles.playerStatsToggleText, selected && styles.playerStatsToggleTextSelected]}
+      {playerSections
+        .filter((item) => showHeadToHead || item.section !== 'headToHead')
+        .map((item) => {
+          const selected = item.section === value;
+          return (
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+              aria-selected={selected}
+              key={item.section}
+              onPress={() => onChange(item.section)}
+              style={({ pressed }) => [
+                styles.playerStatsToggleButton,
+                selected && styles.playerStatsToggleButtonSelected,
+                pressed && styles.pressed,
+              ]}
+              testID={`player-section-${item.section}`}
             >
-              {item.label}
-            </Text>
-          </Pressable>
-        );
-      })}
+              <Text
+                maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+                numberOfLines={1}
+                style={[styles.playerStatsToggleText, selected && styles.playerStatsToggleTextSelected]}
+              >
+                {item.label}
+              </Text>
+            </Pressable>
+          );
+        })}
     </View>
   );
 }
@@ -1045,20 +993,20 @@ function PlayerProfileHeader({
   card,
   isCurrentUser,
   isLoading,
-  onOtherPage,
+  onOpenGames,
+  onOpenStats,
   onStartGame,
-  otherPage,
+  page,
   profile,
-  showStartGame,
 }: {
   card: PlayerCard | null;
   isCurrentUser: boolean;
   isLoading: boolean;
-  onOtherPage: () => void;
-  onStartGame: () => void;
-  otherPage: 'games' | 'stats';
+  onOpenGames: () => void;
+  onOpenStats: () => void;
+  onStartGame: (() => void) | null;
+  page: 'games' | 'stats';
   profile: PlayerStatsProfile;
-  showStartGame: boolean;
 }) {
   const rankLine = card ? formatRankLine(card) : null;
 
@@ -1104,7 +1052,7 @@ function PlayerProfileHeader({
       )}
 
       <View style={styles.playerStatsActions}>
-        {showStartGame && (
+        {onStartGame && (
           <Pressable
             disabled={isLoading}
             onPress={onStartGame}
@@ -1120,47 +1068,59 @@ function PlayerProfileHeader({
             </Text>
           </Pressable>
         )}
-        <Pressable
-          disabled={isLoading}
-          onPress={onOtherPage}
-          style={({ pressed }) => [
-            styles.playerSecondaryButton,
-            isLoading && styles.disabled,
-            pressed && styles.pressed,
-          ]}
-          testID={otherPage === 'games' ? 'player-stats-games-button' : 'player-stats-stats-button'}
-        >
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerSecondaryButtonText}>
-            {otherPage === 'games' ? 'Recent Games' : 'Stats'}
-          </Text>
-        </Pressable>
+        <View accessibilityLabel="Profile pages" accessibilityRole="tablist" style={styles.playerPageTabs}>
+          {(
+            [
+              { label: 'Stats', onPress: onOpenStats, page: 'stats', testID: 'player-stats-stats-button' },
+              { label: 'Recent', onPress: onOpenGames, page: 'games', testID: 'player-stats-games-button' },
+            ] as const
+          ).map((item) => {
+            const selected = item.page === page;
+            return (
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ disabled: isLoading, selected }}
+                aria-selected={selected}
+                disabled={isLoading || selected}
+                key={item.page}
+                onPress={item.onPress}
+                style={({ pressed }) => [
+                  styles.playerStatsToggleButton,
+                  selected && styles.playerStatsToggleButtonSelected,
+                  pressed && styles.pressed,
+                ]}
+                testID={item.testID}
+              >
+                <Text
+                  maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+                  numberOfLines={1}
+                  style={[styles.playerStatsToggleText, selected && styles.playerStatsToggleTextSelected]}
+                >
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
     </>
   );
 }
 
 function PlayerGameHistory({
-  card,
   games,
+  header,
   isCurrentUser,
   isLoading,
   message,
   onOpenGame,
-  onOpenStats,
-  onStartGame,
-  profile,
-  showStartGame,
 }: {
-  card: PlayerCard | null;
   games: ProfileRecentGame[];
+  header: ReactNode;
   isCurrentUser: boolean;
   isLoading: boolean;
   message: string | null;
   onOpenGame: (game: ProfileRecentGame) => void;
-  onOpenStats: () => void;
-  onStartGame: () => void;
-  profile: PlayerStatsProfile;
-  showStartGame: boolean;
 }) {
   return (
     <ScrollView
@@ -1168,16 +1128,7 @@ function PlayerGameHistory({
       showsVerticalScrollIndicator={false}
       style={styles.statsScroll}
     >
-      <PlayerProfileHeader
-        card={card}
-        isCurrentUser={isCurrentUser}
-        isLoading={isLoading}
-        onOtherPage={onOpenStats}
-        onStartGame={onStartGame}
-        otherPage="stats"
-        profile={profile}
-        showStartGame={showStartGame}
-      />
+      {header}
       {isLoading && <ActivityIndicator color="#FFD329" />}
       {message && (
         <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
@@ -1957,22 +1908,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
   },
-  playerSecondaryButton: {
-    alignItems: 'center',
-    backgroundColor: '#3A0A05',
-    borderColor: '#FFB000',
-    borderRadius: 9,
-    borderWidth: 2,
-    flex: 1,
-    height: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  playerSecondaryButtonText: {
-    color: '#FFD329',
-    fontSize: 14,
-    fontWeight: '900',
-  },
   playerStatsActions: {
     flexDirection: 'row',
     gap: 8,
@@ -1995,14 +1930,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
-  playerStatsHeaderToggle: {
+  playerPageTabs: {
     backgroundColor: '#3A0A05',
     borderColor: '#FFB000',
-    borderRadius: 8,
+    borderRadius: 9,
     borderWidth: 2,
-    flex: 1,
+    flex: 2,
     flexDirection: 'row',
-    maxWidth: 190,
+    height: 44,
     padding: 2,
   },
   playerSectionTabs: {
