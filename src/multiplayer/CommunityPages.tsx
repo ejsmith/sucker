@@ -135,12 +135,16 @@ export function PlayerRankingsCard({
                 <Text style={styles.sample}>of {ranking.rankedPlayers} players</Text>
               </View>
               <Text style={styles.value}>{formatLeaderboardValue(ranking.board, ranking.value)}</Text>
-              {onOpenLeaderboard && <Text style={styles.chevron}>›</Text>}
+              {onOpenLeaderboard && (
+                <Text aria-hidden style={styles.chevron}>
+                  ›
+                </Text>
+              )}
             </>
           );
           return onOpenLeaderboard ? (
             <Pressable
-              accessibilityLabel={`${info.label} rank ${ranking.rank}. Open leaderboard`}
+              accessibilityHint="Opens the leaderboard"
               accessibilityRole="button"
               key={ranking.board}
               onPress={() => onOpenLeaderboard(ranking.board)}

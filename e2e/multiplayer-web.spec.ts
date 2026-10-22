@@ -397,7 +397,7 @@ for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
   });
 }
 
-test('auth sign-out failure restores notification ownership before reporting the error', async ({ browser }) => {
+test('auth sign-out request failure still signs the device out and releases notifications', async ({ browser }) => {
   const runId = crypto.randomUUID();
   const alice = await createUser(`push-auth-retry-${runId}`, 'Alice Auth Retry');
   const endpoint = `https://push.example.test/auth-retry-${runId}`;
@@ -415,13 +415,8 @@ test('auth sign-out failure restores notification ownership before reporting the
     );
     await page.getByTestId('profile-button').click();
     await page.getByTestId('sign-out-button').click();
-    await expect(page.getByText('Unable to reach Sucker! services. Please try again.')).toBeVisible();
-    await page.screenshot({ path: test.info().outputPath('auth-signout-failure.png') });
-    await expect.poll(owners).toEqual([{ profile_id: alice.id }]);
-    await expect(page.getByTestId('sign-out-button')).toBeEnabled();
-    await page.unroute('**/auth/v1/logout?*');
-    await page.getByTestId('sign-out-button').click();
     await expect(page.getByTestId('local-test-login')).toBeVisible();
+    await expect(page.getByText('Unable to reach Sucker! services. Please try again.')).toHaveCount(0);
     await expect.poll(owners).toEqual([]);
   } finally {
     await page.context().close();
@@ -1812,6 +1807,12 @@ async function openAuthedPage(
   return page;
 }
 
+// axe joins the Roll button's separate "ROLL", count, and "LEFT" text nodes into
+// one "ROLL4LEFT" word, so no name can match it; "Roll, 4 left" has every visible word.
+function isAxeLabelTokenFalsePositive(ruleId: string, html: string) {
+  return ruleId === 'label-content-name-mismatch' && /data-testid="roll-button"/.test(html);
+}
+
 async function expectNoSeriousAccessibilityViolations(page: Page) {
   const results = await new AxeBuilder({ page }).analyze();
   const violations = results.violations
@@ -1819,12 +1820,15 @@ async function expectNoSeriousAccessibilityViolations(page: Page) {
     .map((violation) => ({
       description: violation.description,
       id: violation.id,
-      nodes: violation.nodes.map((node) => ({
-        failureSummary: node.failureSummary,
-        html: node.html,
-        target: node.target.join(' '),
-      })),
-    }));
+      nodes: violation.nodes
+        .filter((node) => !isAxeLabelTokenFalsePositive(violation.id, node.html))
+        .map((node) => ({
+          failureSummary: node.failureSummary,
+          html: node.html,
+          target: node.target.join(' '),
+        })),
+    }))
+    .filter((violation) => violation.nodes.length > 0);
   expect(violations).toEqual([]);
 }
 

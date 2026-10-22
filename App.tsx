@@ -4154,7 +4154,8 @@ export function LocalGameScreen({
             <View style={[styles.controlsRow, gameLayout.styles.controlsRow]} testID="game-controls-row">
               <View style={[styles.rollButtonWrap, gameLayout.styles.rollButtonWrap]}>
                 <Pressable
-                  accessibilityLabel="Roll dice"
+                  accessibilityHint="Rolls the dice that are not held"
+                  accessibilityLabel={`Roll, ${standardRollsLeft} left`}
                   accessibilityRole="button"
                   accessibilityState={{ disabled: !canRoll }}
                   disabled={!canRoll}
@@ -5654,6 +5655,8 @@ function ScoreCell({
         ? String(opponentPreviewScore)
         : '';
   const categoryLabel = categoryLabels[category];
+  // Voice control users speak the visible tile text, so it leads the accessible name.
+  const tileText = categoryTileText[category as keyof typeof categoryTileText];
   const scoreActionDisabled = !selectable || locked;
   const homeScoreAccessibilityValue = formatAccessibleScore(homeLockedScore, homePreviewScore);
   const opponentScoreAccessibilityValue = formatAccessibleScore(opponentLockedScore, opponentPreviewScore);
@@ -5666,7 +5669,7 @@ function ScoreCell({
     <View style={[styles.scorePair, layout.styles.scorePair]}>
       <Pressable
         accessibilityHint={scoreActionDisabled ? undefined : 'Selects this category for the current turn'}
-        accessibilityLabel={`${categoryLabel} category for ${activePlayer.name}`}
+        accessibilityLabel={`${tileText ? `${tileText}, ` : ''}${categoryLabel} category for ${activePlayer.name}`}
         accessibilityRole="button"
         accessibilityState={{ disabled: scoreActionDisabled, selected }}
         aria-pressed={selected}
@@ -5973,6 +5976,8 @@ function scalePosition(position: Readonly<Record<string, number | string>>, layo
   );
 }
 
+const categoryTileText = { fourOfAKind: '4x', threeOfAKind: '3x' } as const;
+
 function CategoryTile({ category }: { category: ScoreCategory }) {
   const layout = useGameLayout();
   const upperIndex = upperCategories.indexOf(category);
@@ -5986,13 +5991,13 @@ function CategoryTile({ category }: { category: ScoreCategory }) {
     case 'threeOfAKind':
       return (
         <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
-          3x
+          {categoryTileText.threeOfAKind}
         </Text>
       );
     case 'fourOfAKind':
       return (
         <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
-          4x
+          {categoryTileText.fourOfAKind}
         </Text>
       );
     case 'fullHouse':

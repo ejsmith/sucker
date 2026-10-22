@@ -202,7 +202,9 @@ function clearAuthParamsFromBrowserUrl() {
 export async function signOut() {
   await signOutWithNotificationCleanup(async () => {
     const { error } = await supabase.auth.signOut({ scope: 'local' });
-    if (error) throw error;
+    // Auth clears the local session even when the logout request fails, so the
+    // device is signed out anyway; only a surviving session means sign-out failed.
+    if (error && (await supabase.auth.getSession()).data.session) throw error;
   });
 }
 

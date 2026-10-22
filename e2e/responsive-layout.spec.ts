@@ -326,7 +326,7 @@ test.describe('Chromium pixel baselines', () => {
         await expect(categoryAction).toBeDisabled();
         await expect(page.getByLabel('Player, Ones score: Not scored')).toHaveCount(1);
         await expect(page.getByLabel('Computer, Ones score: Not scored')).toHaveCount(1);
-        await expect(rollButton).toHaveAccessibleName('Roll dice');
+        await expect(rollButton).toHaveAccessibleName(/^Roll, \d left$/);
         await waitForPressableEnabled(rollButton);
         await rollButton.click();
 
