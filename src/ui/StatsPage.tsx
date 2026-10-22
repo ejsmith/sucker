@@ -1522,20 +1522,20 @@ function StatBox({
 
 function StatsComparisonHeader({ title }: { title: string }) {
   return (
-    <View style={styles.statsComparisonHeader}>
-      <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsSectionTitle}>
+    <View style={styles.statsLine}>
+      <Text
+        maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+        style={[styles.statsSectionTitle, styles.statsComparisonTitle]}
+      >
         {title}
       </Text>
-      <View style={styles.statsLine}>
-        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsLineLabel} />
-        <View style={styles.statsComparisonValues}>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsComparisonLabel}>
-            You
-          </Text>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsComparisonLabel}>
-            Them
-          </Text>
-        </View>
+      <View style={styles.statsComparisonValues}>
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsComparisonLabel}>
+          You
+        </Text>
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsComparisonLabel}>
+          Them
+        </Text>
       </View>
     </View>
   );
@@ -2082,9 +2082,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 44,
   },
-  statsComparisonHeader: {
-    gap: 4,
-  },
   statsComparisonLabel: {
     color: '#FFF3C2',
     fontSize: 11,
@@ -2093,6 +2090,9 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     textTransform: 'uppercase',
     width: 68,
+  },
+  statsComparisonTitle: {
+    flex: 1,
   },
   statsComparisonValues: {
     flexDirection: 'row',
