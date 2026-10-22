@@ -191,16 +191,20 @@ best streak to the existing profile, and `get_player_feats(target)` adds their
 feats with rarity. `get_player_rankings(target)` lists every board the player
 is ranked on, from the same ranking `get_leaderboard` uses, so a profile never
 disagrees with a board. Each ranking opens that leaderboard; from inside a game
-the profile returns to the lobby on that board (`/?leaderboard=<board>`). The
-profile keeps its existing pieces:
+the profile returns to the lobby on that board (`/?leaderboard=<board>`).
 
-- an **Overall / Vs You** toggle, where Vs You is the head-to-head against the
-  viewer,
-- **Start Game**, which uses the existing `create_game` action, and
-- **Recent Games**, where tapping a player opens their profile.
+Every profile page starts with the same header, so moving around it never
+shifts the layout: the player's identity and rank, then **Challenge** (starts a
+game with the existing `create_game` action) beside a **Stats / Recent** switch.
+Recent lists their latest games, and tapping a player there opens their profile.
+
+Stats adds a Record / Win % / Rating / High strip, then **Overall**, **Vs You**
+(the head-to-head against the viewer), **Ranks**, **Feats**, and **Defeats**
+tabs. Feats and defeats list what the player has earned, with locked ones
+behind a toggle.
 
 Players reach their own profile from their row on any board; it has no Vs You
-toggle or Start Game button.
+tab or Challenge button.
 
 ### App
 

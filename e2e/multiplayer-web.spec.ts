@@ -1681,6 +1681,7 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
   await expect(alicePage.getByTestId('player-stats-rank')).toHaveText('#1 in the world');
   await expect(playerStatsPage.getByText('4321').first()).toBeVisible();
   await expect(alicePage.getByTestId('player-stats-start-game-button')).toBeVisible();
+  await alicePage.getByTestId('player-section-ranks').click();
   await expect(alicePage.getByTestId('player-ranking-rating')).toContainText('#1');
   await expect(alicePage.getByTestId('player-ranking-win_streak')).toBeVisible();
   await expectNoSeriousAccessibilityViolations(alicePage);
@@ -1692,9 +1693,9 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
   await alicePage.getByTestId(`leaderboard-row-${bob.id}`).click();
   await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
 
-  await alicePage.getByTestId('player-stats-toggle-headToHead').click();
-  await expect(playerStatsPage.getByText('Your Record')).toBeVisible();
-  await expect(playerStatsPage.getByText('210')).toBeVisible();
+  await alicePage.getByTestId('player-section-headToHead').click();
+  await expect(playerStatsPage.getByTestId('head-to-head-stats-comparison').getByText('Your Record')).toBeVisible();
+  await expect(playerStatsPage.getByTestId('head-to-head-stats-comparison').getByText('210')).toBeVisible();
 
   await alicePage.getByTestId('player-stats-back-button').click();
   await expect(playerStatsPage).toHaveCount(0);
@@ -1707,6 +1708,7 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
   await openGameFromLobby(alicePage, gameId);
   await alicePage.getByTestId('opponent-player-avatar-stats-button').click();
   await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+  await alicePage.getByTestId('player-section-ranks').click();
   await alicePage.getByTestId('player-ranking-rating').click();
   await expect(alicePage.getByTestId('leaderboard-tab-rating')).toHaveAttribute('aria-selected', 'true');
   await expect(alicePage.getByTestId(`leaderboard-row-${bob.id}`)).toBeVisible();
