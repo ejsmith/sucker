@@ -874,7 +874,12 @@ function PlayerStatsSummary({
               <StatsValueLine label="Small straight" value={formatProfileCategoryRate(stats, 'small_straight')} />
               <StatsValueLine label="Large straight" value={formatProfileCategoryRate(stats, 'large_straight')} />
             </View>
-            {community && community.feats.length > 0 && <PlayerFeatsCard feats={community.feats} />}
+            {community && community.feats.length > 0 && (
+              <>
+                <PlayerFeatsCard feats={community.feats} tone="feat" />
+                <PlayerFeatsCard feats={community.feats} tone="defeat" />
+              </>
+            )}
           </>
         )
       ) : (

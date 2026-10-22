@@ -1851,6 +1851,17 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     true,
   );
 
+  // Every category was scratched, including the game-ending move, so both earn Scratch Fever.
+  const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
+    admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
+  );
+  assertEquals(
+    [alice.id, bob.id].every((id) =>
+      completionFeats.some((feat) => feat.player_id === id && feat.feat_key === 'scratch_fever'),
+    ),
+    true,
+  );
+
   const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {
     board: 'all_time_high_score',
     max_rows: 5,

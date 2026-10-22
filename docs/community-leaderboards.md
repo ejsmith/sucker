@@ -81,7 +81,13 @@ Boards are computed at query time from indexed tables. That is fine for the
 current player count. If boards get slow, add a materialized view refreshed
 on completion or on a schedule.
 
-### Feats
+### Feats and Defeats
+
+Feats celebrate great play; defeats are their losing-side mirror (a choke, a
+missed Sucker chase, a losing streak). Both share one catalog, with a `tone` of
+`feat` or `defeat`, one table, and one rarity calculation, and profiles show
+them as separate Feats and Defeats cards. There are no Hall of Shame boards
+yet.
 
 Feats are stored as occurrences in `player_feats (game_id, player_id,
 feat_key, earned_at)`. A player can earn a per-game feat many times; the card
@@ -92,22 +98,53 @@ need a migration.
 **Per-game feats** are computed in TypeScript (`buildCompletedPlayerFeats`) from
 the same actions, turns, and scorecards that already feed stats:
 
-| Key                   | Name                | Trigger                                                   |
-| --------------------- | ------------------- | --------------------------------------------------------- |
-| `one_inch_punch`      | One-Inch Punch      | Land a Sucker Punch on a 1 (10% chance)                   |
-| `iron_chin`           | Iron Chin           | Win after taking 2+ landed punches                        |
-| `revenge_is_sweet`    | Revenge Is Sweet    | Land a punch at the revenge discount                      |
-| `counter_culture`     | Counter Culture     | Land a counterpunch that cost only 1 token                |
-| `penny_pincher`       | Penny Pincher       | Win without spending a token                              |
-| `high_roller`         | High Roller         | Spend 10+ tokens and win                                  |
-| `deal_with_the_devil` | Deal With the Devil | Win with a zero in the Sucker box                         |
-| `natural`             | Natural             | Roll five of a kind on the first roll of a turn           |
-| `bought_it`           | Bought It           | Roll five of a kind on a purchased Extra Roll             |
-| `sucker_supreme`      | Sucker Supreme      | Score 2+ extra Sucker bonuses in one game                 |
-| `upper_crust`         | Upper Crust         | Score at least three of every number in the upper section |
-| `comeback_kid`        | Comeback Kid        | Win after trailing by 50+                                 |
-| `buzzer_beater`       | Buzzer Beater       | Take the lead on your final turn and win                  |
-| `blowout`             | Blowout             | Win by 75+                                                |
+| Key                   | Name                | Trigger                                                      |
+| --------------------- | ------------------- | ------------------------------------------------------------ |
+| `one_inch_punch`      | One-Inch Punch      | Land a Sucker Punch on a 1 (10% chance)                      |
+| `iron_chin`           | Iron Chin           | Win after taking 2+ landed punches                           |
+| `revenge_is_sweet`    | Revenge Is Sweet    | Land a punch at the revenge discount                         |
+| `counter_culture`     | Counter Culture     | Land a counterpunch that cost only 1 token                   |
+| `penny_pincher`       | Penny Pincher       | Win without spending a token                                 |
+| `high_roller`         | High Roller         | Spend 10+ tokens and win                                     |
+| `deal_with_the_devil` | Deal With the Devil | Win with a zero in the Sucker box                            |
+| `natural`             | Natural             | Roll five of a kind on the first roll of a turn              |
+| `bought_it`           | Bought It           | Roll five of a kind on a purchased Extra Roll                |
+| `sucker_supreme`      | Sucker Supreme      | Score 2+ extra Sucker bonuses in one game                    |
+| `upper_crust`         | Upper Crust         | Score at least three of every number in the upper section    |
+| `comeback_kid`        | Comeback Kid        | Win after trailing by 100+ (more than one Sucker)            |
+| `buzzer_beater`       | Buzzer Beater       | Take the lead on your final turn and win                     |
+| `walk_off`            | Walk-Off            | Trail going into the game's last turn, then take it and win  |
+| `last_gasp`           | Last Gasp           | A Walk-Off scored on the last roll you had                   |
+| `photo_finish`        | Photo Finish        | Win by 5 or less                                             |
+| `worth_every_penny`   | Worth Every Penny   | Buy 3+ Extra Rolls chasing a Sucker in one turn, and land it |
+| `blowout`             | Blowout             | Win by 75+                                                   |
+
+**Per-game defeats** use the same inputs:
+
+| Key                        | Name                     | Trigger                                                               |
+| -------------------------- | ------------------------ | --------------------------------------------------------------------- |
+| `glass_jaw`                | Glass Jaw                | Lose after taking 2+ landed punches                                   |
+| `choke_artist`             | Choke Artist             | Lose after leading by 100+                                            |
+| `walked_off`               | Walked Off               | Lead going into your opponent's last turn, then lose on it            |
+| `heartbreaker`             | Heartbreaker             | Lose by 5 or less                                                     |
+| `blown_out`                | Blown Out                | Lose by 75+                                                           |
+| `whiff_city`               | Whiff City               | Miss 3+ Sucker Punches in one game                                    |
+| `cant_miss_missed`         | Can't Miss, Missed       | Miss a punch at 75% odds                                              |
+| `boomerang`                | Boomerang                | Miss a punch, then get hit by the counterpunch it handed them         |
+| `died_rich`                | Died Rich                | Lose with 10+ tokens unspent                                          |
+| `money_pit`                | Money Pit                | Spend 10+ tokens and still lose                                       |
+| `sucker_born_every_minute` | Sucker Born Every Minute | Buy 3+ Extra Rolls chasing a Sucker in one turn, and miss             |
+| `all_in_all_gone`          | All In, All Gone         | Spend every token chasing a Sucker in one turn, and miss              |
+| `bought_a_goose_egg`       | Bought a Goose Egg       | Spend 3+ tokens in one turn and still walk away with a zero           |
+| `buyers_remorse`           | Buyer's Remorse          | Sucker Deal your Sucker box, then roll five of a kind later that game |
+| `so_close`                 | So Close                 | Finish the upper section 1 to 3 points short of the bonus             |
+| `scratch_fever`            | Scratch Fever            | Scratch 6+ categories in one game                                     |
+
+A Sucker chase is an Extra Roll bought with four of a kind showing and the
+Sucker box open (the existing Sucker hunt). The token balance for All In, All
+Gone is replayed from the game's actions. The comeback margin is shared with
+the Comeback wins stat, so both use 100. Rage Quit forfeits award no per-game
+feats or defeats.
 
 "First roll of a turn" means the roll count since the player's last score,
 scratch, Mulligan, or punch received is 1. "Purchased roll" means a roll beyond
@@ -122,6 +159,22 @@ player's full history:
 | `welcome_wagon`                    | Welcome Wagon | Finish a game with someone in their first completed game, when you have 5+ completed games |
 | `nemesis`                          | Nemesis       | Complete 10 games against the same opponent                                                |
 | `centurion`                        | Centurion     | Complete 100 games                                                                         |
+
+**Milestone defeats** use the same trigger. A loss means the opponent won;
+ties are neither:
+
+| Key                        | Name                   | Trigger                                                        |
+| -------------------------- | ---------------------- | -------------------------------------------------------------- |
+| `ice_cold` / `deep_freeze` | Ice Cold / Deep Freeze | Lose 5 / 10 in a row                                           |
+| `pigeon`                   | Pigeon                 | Lose 5 in a row to the same opponent                           |
+| `welcome_mat`              | Welcome Mat            | Lose to someone in their first game, with 5+ games of your own |
+| `table_flipper`            | Table Flipper          | Rage quit 5 games                                              |
+| `glutton_for_punishment`   | Glutton for Punishment | Lose 100 games                                                 |
+
+The defeats migration backfills milestone defeats from history, on the game
+that earned each one, and recomputes past comebacks at the 100-point margin:
+comebacks that never trailed by 100 lose their Comeback wins count and their
+Comeback Kid feat.
 
 `get_player_feats(target)` returns each feat a player has, with its count,
 first and last earned dates, and **rarity**: the percentage of players with
