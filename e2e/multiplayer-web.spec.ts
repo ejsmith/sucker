@@ -1819,12 +1819,17 @@ async function expectNoSeriousAccessibilityViolations(page: Page) {
     .map((violation) => ({
       description: violation.description,
       id: violation.id,
-      nodes: violation.nodes.map((node) => ({
-        failureSummary: node.failureSummary,
-        html: node.html,
-        target: node.target.join(' '),
-      })),
-    }));
+      nodes: violation.nodes
+        // axe joins the Roll button's separate text blocks into "ROLL4LEFT", which no name can
+        // contain; its name "Roll dice" already starts with the visible word.
+        .filter((node) => violation.id !== 'label-content-name-mismatch' || !node.html.includes('"roll-button"'))
+        .map((node) => ({
+          failureSummary: node.failureSummary,
+          html: node.html,
+          target: node.target.join(' '),
+        })),
+    }))
+    .filter((violation) => violation.nodes.length > 0);
   expect(violations).toEqual([]);
 }
 

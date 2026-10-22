@@ -5654,6 +5654,8 @@ function ScoreCell({
         ? String(opponentPreviewScore)
         : '';
   const categoryLabel = categoryLabels[category];
+  // Voice control users say what they see, so the name starts with the tile's text.
+  const categoryTileText = category === 'threeOfAKind' ? '3x, ' : category === 'fourOfAKind' ? '4x, ' : '';
   const scoreActionDisabled = !selectable || locked;
   const homeScoreAccessibilityValue = formatAccessibleScore(homeLockedScore, homePreviewScore);
   const opponentScoreAccessibilityValue = formatAccessibleScore(opponentLockedScore, opponentPreviewScore);
@@ -5666,7 +5668,7 @@ function ScoreCell({
     <View style={[styles.scorePair, layout.styles.scorePair]}>
       <Pressable
         accessibilityHint={scoreActionDisabled ? undefined : 'Selects this category for the current turn'}
-        accessibilityLabel={`${categoryLabel} category for ${activePlayer.name}`}
+        accessibilityLabel={`${categoryTileText}${categoryLabel} category for ${activePlayer.name}`}
         accessibilityRole="button"
         accessibilityState={{ disabled: scoreActionDisabled, selected }}
         aria-pressed={selected}
