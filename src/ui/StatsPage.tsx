@@ -635,6 +635,7 @@ function PlayerStatsPage({
       )}
       {page === 'games' && (
         <PlayerGameHistory
+          card={community?.profileId === visibleProfile.id ? (community.card ?? null) : null}
           games={games}
           isCurrentUser={visibleProfile.id === currentUserProfileId}
           isLoading={isLoading}
@@ -643,7 +644,10 @@ function PlayerStatsPage({
             setSelectedGame(game);
             setPage('detail');
           }}
+          onOpenStats={() => setPage('stats')}
+          onStartGame={() => void startGame()}
           profile={visibleProfile}
+          showStartGame={Boolean(onStartGameAgainst && visibleProfile.id !== currentUserProfileId)}
         />
       )}
       {page === 'detail' && selectedGame && (
@@ -728,7 +732,6 @@ function PlayerStatsSummary({
   const stats = statsView === 'headToHead' ? profile.currentUserHeadToHeadStats : profile.stats;
   const hasStats = Boolean(stats && stats.games_played > 0);
   const card = community?.card ?? null;
-  const rankLine = card ? formatRankLine(card) : null;
 
   return (
     <ScrollView
@@ -736,78 +739,16 @@ function PlayerStatsSummary({
       showsVerticalScrollIndicator={false}
       style={styles.statsScroll}
     >
-      <View style={styles.playerIdentityCard}>
-        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={58} testID="player-stats-avatar" />
-        <View style={styles.playerIdentityText}>
-          <Text
-            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-            numberOfLines={2}
-            style={styles.playerIdentityName}
-            testID="player-stats-name"
-          >
-            {profile.name}
-          </Text>
-          {profile.username && (
-            <Text
-              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-              numberOfLines={1}
-              style={styles.playerIdentityUsername}
-              testID="player-stats-username"
-            >
-              @{profile.username}
-            </Text>
-          )}
-          {rankLine && (
-            <Text
-              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
-              numberOfLines={1}
-              style={styles.playerIdentityRank}
-              testID="player-stats-rank"
-            >
-              {rankLine}
-            </Text>
-          )}
-        </View>
-      </View>
-      {isCurrentUser && card && !card.show_on_leaderboards && (
-        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
-          You are hidden from leaderboards. Change this on your Profile.
-        </Text>
-      )}
-
-      <View style={styles.playerStatsActions}>
-        {showStartGame && (
-          <Pressable
-            disabled={isLoading}
-            onPress={onStartGame}
-            style={({ pressed }) => [
-              styles.playerPrimaryButton,
-              isLoading && styles.disabled,
-              pressed && styles.pressed,
-            ]}
-            testID="player-stats-start-game-button"
-          >
-            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerPrimaryButtonText}>
-              Start Game
-            </Text>
-          </Pressable>
-        )}
-        <Pressable
-          disabled={isLoading}
-          onPress={onOpenGames}
-          style={({ pressed }) => [
-            styles.playerSecondaryButton,
-            isLoading && styles.disabled,
-            pressed && styles.pressed,
-          ]}
-          testID="player-stats-games-button"
-        >
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerSecondaryButtonText}>
-            Recent Games
-          </Text>
-        </Pressable>
-      </View>
-
+      <PlayerProfileHeader
+        card={card}
+        isCurrentUser={isCurrentUser}
+        isLoading={isLoading}
+        onOtherPage={onOpenGames}
+        onStartGame={onStartGame}
+        otherPage="games"
+        profile={profile}
+        showStartGame={showStartGame}
+      />
       {isLoading && <ActivityIndicator color="#FFD329" />}
       {message && (
         <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
@@ -1099,20 +1040,127 @@ function HeadToHeadStatsComparison({
   );
 }
 
+// Identity and actions shared by the stats and recent games pages, so switching between them doesn't shift the layout.
+function PlayerProfileHeader({
+  card,
+  isCurrentUser,
+  isLoading,
+  onOtherPage,
+  onStartGame,
+  otherPage,
+  profile,
+  showStartGame,
+}: {
+  card: PlayerCard | null;
+  isCurrentUser: boolean;
+  isLoading: boolean;
+  onOtherPage: () => void;
+  onStartGame: () => void;
+  otherPage: 'games' | 'stats';
+  profile: PlayerStatsProfile;
+  showStartGame: boolean;
+}) {
+  const rankLine = card ? formatRankLine(card) : null;
+
+  return (
+    <>
+      <View style={styles.playerIdentityCard}>
+        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={58} testID="player-stats-avatar" />
+        <View style={styles.playerIdentityText}>
+          <Text
+            maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+            numberOfLines={2}
+            style={styles.playerIdentityName}
+            testID="player-stats-name"
+          >
+            {profile.name}
+          </Text>
+          {profile.username && (
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={styles.playerIdentityUsername}
+              testID="player-stats-username"
+            >
+              @{profile.username}
+            </Text>
+          )}
+          {rankLine && (
+            <Text
+              maxFontSizeMultiplier={statsMaxFontSizeMultiplier}
+              numberOfLines={1}
+              style={styles.playerIdentityRank}
+              testID="player-stats-rank"
+            >
+              {rankLine}
+            </Text>
+          )}
+        </View>
+      </View>
+      {isCurrentUser && card && !card.show_on_leaderboards && (
+        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
+          You are hidden from leaderboards. Change this on your Profile.
+        </Text>
+      )}
+
+      <View style={styles.playerStatsActions}>
+        {showStartGame && (
+          <Pressable
+            disabled={isLoading}
+            onPress={onStartGame}
+            style={({ pressed }) => [
+              styles.playerPrimaryButton,
+              isLoading && styles.disabled,
+              pressed && styles.pressed,
+            ]}
+            testID="player-stats-start-game-button"
+          >
+            <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerPrimaryButtonText}>
+              Start Game
+            </Text>
+          </Pressable>
+        )}
+        <Pressable
+          disabled={isLoading}
+          onPress={onOtherPage}
+          style={({ pressed }) => [
+            styles.playerSecondaryButton,
+            isLoading && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+          testID={otherPage === 'games' ? 'player-stats-games-button' : 'player-stats-stats-button'}
+        >
+          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.playerSecondaryButtonText}>
+            {otherPage === 'games' ? 'Recent Games' : 'Stats'}
+          </Text>
+        </Pressable>
+      </View>
+    </>
+  );
+}
+
 function PlayerGameHistory({
+  card,
   games,
   isCurrentUser,
   isLoading,
   message,
   onOpenGame,
+  onOpenStats,
+  onStartGame,
   profile,
+  showStartGame,
 }: {
+  card: PlayerCard | null;
   games: ProfileRecentGame[];
   isCurrentUser: boolean;
   isLoading: boolean;
   message: string | null;
   onOpenGame: (game: ProfileRecentGame) => void;
+  onOpenStats: () => void;
+  onStartGame: () => void;
   profile: PlayerStatsProfile;
+  showStartGame: boolean;
 }) {
   return (
     <ScrollView
@@ -1120,17 +1168,16 @@ function PlayerGameHistory({
       showsVerticalScrollIndicator={false}
       style={styles.statsScroll}
     >
-      <View style={styles.historyIdentityRow}>
-        <PlayerAvatar avatarUrl={profile.avatarUrl} name={profile.name} size={50} />
-        <View style={styles.historyIdentityText}>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} numberOfLines={1} style={styles.historyIdentityName}>
-            {profile.name}
-          </Text>
-          <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.historyIdentityLabel}>
-            Most recent completed games
-          </Text>
-        </View>
-      </View>
+      <PlayerProfileHeader
+        card={card}
+        isCurrentUser={isCurrentUser}
+        isLoading={isLoading}
+        onOtherPage={onOpenStats}
+        onStartGame={onStartGame}
+        otherPage="stats"
+        profile={profile}
+        showStartGame={showStartGame}
+      />
       {isLoading && <ActivityIndicator color="#FFD329" />}
       {message && (
         <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
@@ -1778,30 +1825,6 @@ const styles = StyleSheet.create({
   historyGameWin: {
     backgroundColor: '#F1FFD8',
     borderColor: '#2F8F3E',
-  },
-  historyIdentityLabel: {
-    color: '#FFD76B',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  historyIdentityName: {
-    color: '#FFF3C2',
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  historyIdentityRow: {
-    alignItems: 'center',
-    backgroundColor: '#210505',
-    borderColor: '#FFB000',
-    borderRadius: 8,
-    borderWidth: 2,
-    flexDirection: 'row',
-    gap: 10,
-    padding: 10,
-    width: '100%',
-  },
-  historyIdentityText: {
-    flex: 1,
   },
   historyListPanel: {
     backgroundColor: '#210505',
