@@ -74,6 +74,7 @@ import {
   prepareRemoteSuckerPunch,
   rageQuitRemoteGame,
   replyToRemoteRageQuit,
+  sendRemotePartingShot,
   rollRemoteGame,
   scoreRemoteCategory,
   sendRemoteTaunt,
@@ -126,6 +127,9 @@ import { DieFace } from './src/ui/DieFace';
 import { rageQuitRematchCooldownMs, RageQuitDialog } from './src/ui/RageQuit';
 import { getTableFlipBoardStyle, getTableFlipTrayStyle, runTableFlip, TableFlipDebris } from './src/ui/TableFlip';
 import { getRageQuitReplyText, rageQuitReplies, type RageQuitReplyId } from './shared/rageQuit';
+import { getPartingShotOptions, type PartingShotLineId } from './shared/partingShots';
+import { loadGameRecap, type RemoteGameRecap } from './src/multiplayer/gameRecap';
+import { GameRecap } from './src/ui/GameRecap';
 import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
@@ -283,6 +287,8 @@ type RemoteActionHandlers = {
   onTaunt: (tauntId: TauntId) => Promise<ReturnType<typeof createGame> | null>;
   onRageQuit: () => Promise<ReturnType<typeof createGame> | null>;
   onRageQuitReply: (replyId: RageQuitReplyId) => Promise<ReturnType<typeof createGame> | null>;
+  onLoadRecap: () => Promise<RemoteGameRecap>;
+  onPartingShot: (lineId: PartingShotLineId) => Promise<ReturnType<typeof createGame> | null>;
 };
 type RemoteGameRequest = {
   gameId: string;
@@ -1156,6 +1162,9 @@ export function RemoteGameScreen({
     onRageQuit: () => runRemoteAction(() => rageQuitRemoteGame(remoteGame.id), { showNextTurns: false }),
     onRageQuitReply: (replyId) =>
       runRemoteAction(() => replyToRemoteRageQuit(remoteGame.id, replyId), { showNextTurns: false }),
+    onLoadRecap: () => loadGameRecap(remoteGame.id, remoteGame.state),
+    onPartingShot: (lineId) =>
+      runRemoteAction(() => sendRemotePartingShot(remoteGame.id, lineId), { showNextTurns: false }),
   };
 
   return (
@@ -1290,6 +1299,12 @@ export function LocalGameScreen({
   const [isRageQuitOpen, setIsRageQuitOpen] = useState(false);
   const [isRageQuitting, setIsRageQuitting] = useState(false);
   const [isSendingRageReply, setIsSendingRageReply] = useState(false);
+  const [isSendingPartingShot, setIsSendingPartingShot] = useState(false);
+  const [gameRecap, setGameRecap] = useState<{
+    failed: boolean;
+    gameId: string;
+    recap: RemoteGameRecap | null;
+  } | null>(null);
   // Rage-quit games end with the table flipped away. Each device watches it once.
   const [tableFlip, setTableFlip] = useState<{ gameId: string; status: 'checking' | 'flipping' | 'done' } | null>(null);
   const [rematchUnlockAt, setRematchUnlockAt] = useState<number | null>(null);
@@ -1609,6 +1624,30 @@ export function LocalGameScreen({
     !suckerPunchDialog,
   );
   const rageQuitGameId = isRemoteGame && isGameOver && game.rageQuit ? game.id : null;
+  const recapGameId = isRemoteGame && gameOverVisible && !rageQuit ? game.id : null;
+  const loadRecap = useRef(remoteHandlers?.onLoadRecap);
+  loadRecap.current = remoteHandlers?.onLoadRecap;
+  const partingShotOptions = isRemoteGame && myProfileId ? getPartingShotOptions(game, myProfileId) : null;
+
+  // Feats and results are written with the game-ending move, so one read per
+  // finished game is enough. Parting shots arrive with the game itself.
+  useEffect(() => {
+    if (!recapGameId || !loadRecap.current) return;
+    let isCurrent = true;
+    setGameRecap({ failed: false, gameId: recapGameId, recap: null });
+    loadRecap.current().then(
+      (recap) => {
+        if (isCurrent) setGameRecap({ failed: false, gameId: recapGameId, recap });
+      },
+      (error: unknown) => {
+        console.warn('Unable to load the game recap', error);
+        if (isCurrent) setGameRecap({ failed: true, gameId: recapGameId, recap: null });
+      },
+    );
+    return () => {
+      isCurrent = false;
+    };
+  }, [recapGameId]);
 
   useEffect(() => {
     if (!rageQuitGameId) {
@@ -3185,6 +3224,16 @@ export function LocalGameScreen({
       await remoteHandlers.onRageQuitReply(replyId);
     } finally {
       setIsSendingRageReply(false);
+    }
+  }
+
+  async function handlePartingShot(lineId: PartingShotLineId) {
+    if (!remoteHandlers || isSendingPartingShot) return;
+    setIsSendingPartingShot(true);
+    try {
+      await remoteHandlers.onPartingShot(lineId);
+    } finally {
+      setIsSendingPartingShot(false);
     }
   }
 
@@ -4901,6 +4950,19 @@ export function LocalGameScreen({
                     </Text>
                   </View>
                 </View>
+                {isRemoteGame && !rageQuit && (
+                  <GameRecap
+                    homePlayer={homePlayer}
+                    isSending={isSendingPartingShot}
+                    onSendPartingShot={(lineId) => void handlePartingShot(lineId)}
+                    opponentPlayer={opponentPlayer}
+                    partingShotOptions={partingShotOptions}
+                    partingShots={game.partingShots ?? []}
+                    recap={gameRecap?.gameId === game.id ? gameRecap.recap : null}
+                    recapFailed={gameRecap?.gameId === game.id && gameRecap.failed}
+                    unit={gameLayout.unit}
+                  />
+                )}
                 <View style={[styles.gameOverActions, gameLayout.styles.gameOverActions]}>
                   <Pressable
                     accessibilityLabel={
