@@ -9,7 +9,8 @@ Status: Phase 1 in progress (branch `community-leaderboards`).
 2. Turn every leaderboard row, feat, and record into a way to meet a new
    opponent: tap a name, see their player card, challenge them.
 3. Stay honest: only server-authoritative results count, farming one friend
-   should not top a board, and players can opt out of public boards.
+   should not top a board, and everyone is on the boards: Sucker is a
+   community, so there is no opt-out.
 
 Non-goals for now: chat, free-text comments, friend lists, and tournaments.
 
@@ -27,10 +28,13 @@ Non-goals for now: chat, free-text comments, friend lists, and tournaments.
 - **Forfeits count toward the record only.** A Rage Quit is a loss for the
   quitter and a win for the opponent in ratings, streaks, and milestone feats.
   Its partial scores and plays never reach high-score boards, Punch %, or
-  per-game feats, matching how Rage Quit already treats stats.
-- **Boards respect privacy.** `profiles.show_on_leaderboards` (default `true`)
-  removes a player from every public board. Player cards stay viewable, matching
-  how `get_profile_stat_rates` already works for any signed-in player.
+  per-game feats, matching how Rage Quit already treats stats. Hall of Shame
+  boards are the exception: quitting must never hide a player from them.
+- **Everyone is on the boards.** There is no leaderboard opt-out.
+  `profiles.show_on_leaderboards` is retired: the Hall of Shame migration set it
+  to `true` for everyone, and no query reads it. It stays only so installed apps
+  that still read or toggle it keep working; `get_player_card` always returns
+  `true` for it.
 - **No moderation surface.** Nothing in Phase 1 lets players post text. Names
   and avatars already exist and are already searchable.
 
@@ -77,6 +81,28 @@ row when they are outside the top, each with a `rank`. Ties share a rank.
 | `sharpshooter`        | Sucker Punch landing rate                     | 10+ punches thrown           |
 | `win_streak`          | Best win streak                               | 3+ wins in a row             |
 
+### Hall of Shame
+
+The community page has two halls: the **Hall of Suckers** (the boards above)
+and the **Hall of Shame**, which ranks the funny bad stuff. Shame boards are
+red instead of gold, and each one explains its rule. They use the same
+`get_leaderboard` and `get_player_rankings` calls, so shame ranks show on player
+profiles too, in their own Hall of Shame group on the Ranks tab.
+
+| Board            | Value                                        | Eligibility            |
+| ---------------- | -------------------------------------------- | ---------------------- |
+| `saltiest`       | Rage quits, out of all completed games       | 1+ rage quit           |
+| `weekly_salt`    | Rage quits since Monday 00:00 UTC            | 1+ rage quit this week |
+| `most_punchable` | Landed Sucker Punches taken (forced rerolls) | 1+ punch taken         |
+| `whiff_champion` | Sucker Punches missed, out of punches thrown | 1+ miss                |
+| `biggest_loser`  | Worst single-game losing margin              | 1+ loss by a margin    |
+
+Shame boards count rage-quit games, including their partial scores and plays.
+That never helps the quitter, which is why the spec allows it: a rage quit
+counts on Biggest Loser at the margin when the player quit, so flipping the
+table cannot hide a blowout. A player who quits while ahead has no losing
+margin from that game.
+
 Boards are computed at query time from indexed tables. That is fine for the
 current player count. If boards get slow, add a materialized view refreshed
 on completion or on a schedule.
@@ -86,8 +112,8 @@ on completion or on a schedule.
 Feats celebrate great play; defeats are their losing-side mirror (a choke, a
 missed Sucker chase, a losing streak). Both share one catalog, with a `tone` of
 `feat` or `defeat`, one table, and one rarity calculation, and profiles show
-them as separate Feats and Defeats cards. There are no Hall of Shame boards
-yet.
+them as separate Feats and Defeats cards. Defeats are not ranked
+as boards; the Hall of Shame boards rank totals instead.
 
 Feats are stored as occurrences in `player_feats (game_id, player_id,
 feat_key, earned_at)`. A player can earn a per-game feat many times; the card
@@ -200,7 +226,7 @@ Recent lists their latest games, and tapping a player there opens their profile.
 
 Stats adds a Record / Win % / Rating / High strip, then **Overall**, **Vs You**
 (the head-to-head against the viewer), **Ranks**, **Feats**, and **Defeats**
-tabs. Feats and defeats list what the player has earned, with locked ones
+tabs. Ranks lists Hall of Suckers ranks, then Hall of Shame ranks in red. Feats and defeats list what the player has earned, with locked ones
 behind a toggle.
 
 Players reach their own profile from their row on any board; it has no Vs You
@@ -209,9 +235,9 @@ tab or Challenge button.
 ### App
 
 - New lobby entry **Hall of Suckers** (below Completed Games) opens the
-  Community page with board tabs.
+  Community page. A Hall of Suckers / Hall of Shame switch sits above each
+  hall's board tabs.
 - Tapping a row opens that player's profile.
-- Profile page gains a **Show me on leaderboards** toggle.
 
 ### Rollout Order
 

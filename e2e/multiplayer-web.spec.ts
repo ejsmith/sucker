@@ -1717,6 +1717,48 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
   await bobPage.context().close();
 });
 
+test('Hall of Shame ranks rage quitters and shows shame on their profile', async ({ browser }) => {
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const alice = await createUser(`shame-alice-${runId}`, 'Alice Shame E2E');
+  const bob = await createUser(`shame-bob-${runId}`, 'Bob Shame E2E');
+  const { game } = await invokeTestGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+  await invokeTestGameAction(bob, { gameId: game.id, type: 'rage_quit' });
+  // Seen results leave the games list, so the lobby opens straight to its buttons.
+  assertNoError(
+    (await admin.from('game_players').update({ result_seen_at: new Date().toISOString() }).eq('game_id', game.id))
+      .error,
+  );
+
+  const alicePage = await openAuthedPage(browser, alice);
+  try {
+    await alicePage.getByTestId('community-button').click();
+    await alicePage.getByTestId('leaderboard-hall-shame').click();
+    await expect(alicePage.getByTestId('leaderboard-hall-shame')).toHaveAttribute('aria-selected', 'true');
+    await expect(alicePage.getByTestId('leaderboard-tab-saltiest')).toHaveAttribute('aria-selected', 'true');
+    await expect(alicePage.getByText('Hall of Shame').first()).toBeVisible();
+    await expect(alicePage.getByTestId(`leaderboard-row-${bob.id}`)).toBeVisible();
+    await expectNoSeriousAccessibilityViolations(alicePage);
+
+    await alicePage.getByTestId(`leaderboard-row-${bob.id}`).click();
+    await expect(alicePage.getByTestId('player-stats-name')).toHaveText(bob.displayName);
+    await alicePage.getByTestId('player-section-ranks').click();
+    const shame = alicePage.getByTestId('player-shame-rankings');
+    await expect(shame.getByTestId('player-ranking-saltiest')).toBeVisible();
+    await expect(shame.getByTestId('player-ranking-weekly_salt')).toBeVisible();
+    await expectNoSeriousAccessibilityViolations(alicePage);
+
+    // A shame ranking opens its board in the Hall of Shame.
+    await shame.getByTestId('player-ranking-weekly_salt').click();
+    await expect(alicePage.getByTestId('leaderboard-tab-weekly_salt')).toHaveAttribute('aria-selected', 'true');
+
+    // Switching back lands on the first Hall of Suckers board.
+    await alicePage.getByTestId('leaderboard-hall-glory').click();
+    await expect(alicePage.getByTestId('leaderboard-tab-rating')).toHaveAttribute('aria-selected', 'true');
+  } finally {
+    await alicePage.context().close();
+  }
+});
+
 async function openAuthedPage(
   browser: Browser,
   user: TestUser,

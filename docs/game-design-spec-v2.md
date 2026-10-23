@@ -328,6 +328,7 @@ Rage Quit is surrender, made loud. Quitting must never help the quitter.
 - The winner sees “Victory by Tantrum!” and may send the quitter one insult from a fixed list (“Need a tissue?”, “Bawk bawk bawk.”). It shows on both game-over screens and arrives as a push. It also puts the game back in the quitter's games list, with the insult on the row, until they open it. The quitter cannot say anything.
 - Public shame: a salt shaker (🧂) appears next to the quitter's name in every lobby view for 24 hours, visible to all signed-in players. Rage-quit counts appear in head-to-head and player stats, and recent game history labels the game a rage quit.
 - Stats: a rage quit counts as a game played, a win for the opponent, and a loss for the quitter. Its partial scores and plays never count toward averages, highs, category rates, or score-based achievements.
+- Hall of Shame: rage quits are the centerpiece of the shame boards (Saltiest and Salt of the Week), and shame boards count a rage quit's partial scores and plays. This never helps the quitter: a rage quit counts on Biggest Loser at the margin when they quit, so flipping the table cannot hide a blowout.
 
 ⸻
 

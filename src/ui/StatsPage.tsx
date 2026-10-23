@@ -765,11 +765,7 @@ function PlayerStatsSummary({
       {visibleSection === 'ranks' &&
         !community?.failed &&
         (community ? (
-          <PlayerRankingsCard
-            isHidden={card?.show_on_leaderboards === false}
-            onOpenLeaderboard={onOpenLeaderboard}
-            rankings={community.rankings}
-          />
+          <PlayerRankingsCard onOpenLeaderboard={onOpenLeaderboard} rankings={community.rankings} />
         ) : (
           <ActivityIndicator color="#FFD329" />
         ))}
@@ -1045,11 +1041,6 @@ function PlayerProfileHeader({
           )}
         </View>
       </View>
-      {isCurrentUser && card && !card.show_on_leaderboards && (
-        <Text maxFontSizeMultiplier={statsMaxFontSizeMultiplier} style={styles.statsMessage}>
-          You are hidden from leaderboards. Change this on your Profile.
-        </Text>
-      )}
 
       <View style={styles.playerStatsActions}>
         {onStartGame && (
@@ -1420,13 +1411,7 @@ function formatScore(value: number | null) {
 }
 
 type CategoryRateKey =
-  | 'four_of_a_kind'
-  | 'full_house'
-  | 'large_straight'
-  | 'small_straight'
-  | 'sucker'
-  | 'three_of_a_kind'
-  | 'upper_bonus';
+  'four_of_a_kind' | 'full_house' | 'large_straight' | 'small_straight' | 'sucker' | 'three_of_a_kind' | 'upper_bonus';
 
 type SkillStatKey =
   | 'average_sucker_tokens_leftover'

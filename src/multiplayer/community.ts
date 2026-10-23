@@ -3,7 +3,19 @@ import { featCatalog, featKeys, isFeatKey, type FeatDefinition, type FeatKey } f
 import { getSafeAvatarUrl } from './profiles';
 import { supabase } from './supabase';
 
-export type LeaderboardBoard = 'rating' | 'weekly_high_score' | 'all_time_high_score' | 'sharpshooter' | 'win_streak';
+export type LeaderboardBoard =
+  | 'rating'
+  | 'weekly_high_score'
+  | 'all_time_high_score'
+  | 'sharpshooter'
+  | 'win_streak'
+  | 'saltiest'
+  | 'weekly_salt'
+  | 'most_punchable'
+  | 'whiff_champion'
+  | 'biggest_loser';
+// The Hall of Suckers celebrates; the Hall of Shame ranks the funny bad stuff.
+export type LeaderboardHall = 'glory' | 'shame';
 export type LeaderboardRow = Database['public']['Functions']['get_leaderboard']['Returns'][number];
 export type PlayerCard = Database['public']['Functions']['get_player_card']['Returns'][number];
 type PlayerFeatRow = Database['public']['Functions']['get_player_feats']['Returns'][number];
@@ -24,13 +36,70 @@ export type PlayerFeat = FeatDefinition & {
   timesEarned: number;
 };
 
-export const leaderboardBoards: { board: LeaderboardBoard; label: string; valueLabel: string }[] = [
-  { board: 'rating', label: 'Rating', valueLabel: 'Rating' },
-  { board: 'weekly_high_score', label: 'This Week', valueLabel: 'Best score' },
-  { board: 'all_time_high_score', label: 'All Time', valueLabel: 'Best score' },
-  { board: 'sharpshooter', label: 'Punch %', valueLabel: 'Landed' },
-  { board: 'win_streak', label: 'Streak', valueLabel: 'Wins in a row' },
+export const leaderboardHalls: { hall: LeaderboardHall; title: string }[] = [
+  { hall: 'glory', title: 'Hall of Suckers' },
+  { hall: 'shame', title: 'Hall of Shame' },
 ];
+
+export const leaderboardBoards: {
+  board: LeaderboardBoard;
+  hall: LeaderboardHall;
+  label: string;
+  title: string;
+  valueLabel: string;
+  // Shame boards explain themselves; the joke needs the rule.
+  blurb?: string;
+}[] = [
+  { board: 'rating', hall: 'glory', label: 'Rating', title: 'Rating', valueLabel: 'Rating' },
+  { board: 'weekly_high_score', hall: 'glory', label: 'This Week', title: 'This Week', valueLabel: 'Best score' },
+  { board: 'all_time_high_score', hall: 'glory', label: 'All Time', title: 'All Time', valueLabel: 'Best score' },
+  { board: 'sharpshooter', hall: 'glory', label: 'Punch %', title: 'Punch %', valueLabel: 'Landed' },
+  { board: 'win_streak', hall: 'glory', label: 'Streak', title: 'Streak', valueLabel: 'Wins in a row' },
+  {
+    blurb: 'Most rage quits, ever.',
+    board: 'saltiest',
+    hall: 'shame',
+    label: 'Saltiest',
+    title: '🧂 Saltiest',
+    valueLabel: 'Rage quits',
+  },
+  {
+    blurb: 'Most rage quits since Monday.',
+    board: 'weekly_salt',
+    hall: 'shame',
+    label: 'Weekly',
+    title: '🧂 Salt of the Week',
+    valueLabel: 'Rage quits',
+  },
+  {
+    blurb: 'Most Sucker Punches taken on the chin.',
+    board: 'most_punchable',
+    hall: 'shame',
+    label: 'Punched',
+    title: '🥊 Most Punchable',
+    valueLabel: 'Punched',
+  },
+  {
+    blurb: 'Most Sucker Punches thrown at nothing.',
+    board: 'whiff_champion',
+    hall: 'shame',
+    label: 'Whiffs',
+    title: '💨 Whiff Champion',
+    valueLabel: 'Missed',
+  },
+  {
+    blurb: 'Worst beating in one game. Rage quitting does not hide it.',
+    board: 'biggest_loser',
+    hall: 'shame',
+    label: 'Loser',
+    title: '📉 Biggest Loser',
+    valueLabel: 'Lost by',
+  },
+];
+
+export function getLeaderboardInfo(board: LeaderboardBoard) {
+  return leaderboardBoards.find((candidate) => candidate.board === board)!;
+}
 
 export async function getLeaderboard(board: LeaderboardBoard, maxRows = 25): Promise<LeaderboardRow[]> {
   const { data, error } = await supabase.rpc('get_leaderboard', { board, max_rows: maxRows });
@@ -72,7 +141,7 @@ export async function getPlayerFeats(profileId: string): Promise<PlayerFeat[]> {
     .sort((left, right) => Number(right.timesEarned > 0) - Number(left.timesEarned > 0));
 }
 
-// Every board the player is ranked on, in board order. Hidden players have none.
+// Every board the player is ranked on, in board order.
 export async function getPlayerRankings(profileId: string): Promise<PlayerRanking[]> {
   const { data, error } = await supabase.rpc('get_player_rankings', { target_profile_id: profileId });
 
@@ -92,29 +161,19 @@ export function isLeaderboardBoard(value: string): value is LeaderboardBoard {
   return leaderboardBoards.some((candidate) => candidate.board === value);
 }
 
-export async function getShowOnLeaderboards(profileId: string) {
-  const { data, error } = await supabase.from('profiles').select('show_on_leaderboards').eq('id', profileId).single();
-
-  if (error) throw error;
-  return data.show_on_leaderboards;
-}
-
-export async function setShowOnLeaderboards(profileId: string, showOnLeaderboards: boolean) {
-  const { error } = await supabase
-    .from('profiles')
-    .update({ show_on_leaderboards: showOnLeaderboards })
-    .eq('id', profileId);
-
-  if (error) throw error;
-}
-
 export function formatLeaderboardValue(board: LeaderboardBoard, value: number) {
   switch (board) {
     case 'rating':
     case 'weekly_high_score':
     case 'all_time_high_score':
     case 'win_streak':
+    case 'saltiest':
+    case 'weekly_salt':
+    case 'most_punchable':
+    case 'whiff_champion':
       return String(Math.round(Number(value)));
+    case 'biggest_loser':
+      return `${Math.round(Number(value))} pts`;
     case 'sharpshooter':
       return `${Number(value).toFixed(1)}%`;
   }
@@ -124,7 +183,6 @@ export function formatLeaderboardValue(board: LeaderboardBoard, value: number) {
 export const rankedGameMinimum = 5;
 
 export function formatRankLine(card: PlayerCard) {
-  if (!card.show_on_leaderboards) return null;
   if (card.rating_rank) return `#${card.rating_rank} in the world`;
   if (card.rated_games < rankedGameMinimum) {
     const remaining = rankedGameMinimum - card.rated_games;

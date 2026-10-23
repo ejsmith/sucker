@@ -1868,6 +1868,7 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   });
   assertNoError(boardError);
   assertEquals(board?.filter((row) => row.player_id === alice.id && row.is_me).length, 1);
+  // Nobody hides from the boards. The retired flag is ignored by installed apps that still set it.
   assertNoError((await bob.client.from('profiles').update({ show_on_leaderboards: false }).eq('id', bob.id)).error);
   const { data: bobBoard, error: bobBoardError } = await bob.client.rpc('get_leaderboard', {
     board: 'all_time_high_score',
@@ -1875,8 +1876,8 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   });
   assertNoError(bobBoardError);
   assertEquals(
-    bobBoard?.some((row) => row.player_id === bob.id),
-    false,
+    bobBoard?.some((row) => row.player_id === bob.id && row.is_me),
+    true,
   );
   const { error: unknownBoardError } = await alice.client.rpc('get_leaderboard', { board: 'nope' });
   assertEquals(Boolean(unknownBoardError), true);
@@ -1900,7 +1901,12 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     target_profile_id: bob.id,
   });
   assertNoError(bobRankingsError);
-  assertEquals(bobRankings?.length, 0);
+  assertEquals(
+    bobRankings?.some((ranking) => ranking.board === 'all_time_high_score'),
+    true,
+  );
+  const { data: bobCard } = await charlie.client.rpc('get_player_card', { target_profile_id: bob.id });
+  assertEquals(bobCard?.[0]?.show_on_leaderboards, true);
   const { error: featsError } = await charlie.client.rpc('get_player_feats', { target_profile_id: alice.id });
   assertNoError(featsError);
   const { error: directFeatsError, data: directFeats } = await charlie.client.from('player_feats').select('*');
@@ -2035,6 +2041,27 @@ Deno.test('game-action creates one rematch and alternates the first player', asy
   );
 });
 
+Deno.test('rage quitting while behind still counts the beating on the Hall of Shame', async () => {
+  const [alice, bob, charlie] = await createUsers('shame-loser', ['Alice', 'Bob', 'Charlie']);
+  const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+  const gameId = (created.game as GameRow).id;
+  const startingState = (created.game as GameRow).state;
+  const trailingState: GameState = {
+    ...startingState,
+    players: startingState.players.map((player) =>
+      player.id === alice.id ? { ...player, scorecard: { ...player.scorecard, chance: 30 } } : player,
+    ),
+  };
+  assertNoError((await admin.from('games').update({ state: trailingState }).eq('id', gameId)).error);
+
+  await invokeGameAction(bob, { gameId, type: 'rage_quit' });
+
+  const { data: rankings, error } = await charlie.client.rpc('get_player_rankings', { target_profile_id: bob.id });
+  assertNoError(error);
+  const loser = rankings?.find((ranking) => ranking.board === 'biggest_loser');
+  assertEquals([Number(loser?.value), loser?.sample_size], [30, 1]);
+});
+
 Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and stays out of averages', async () => {
   const [alice, bob, charlie] = await createUsers('rage-quit', ['Alice', 'Bob', 'Charlie']);
   // Two earlier played-out games: 30 points total, high 20, one section bonus each.
@@ -2152,6 +2179,24 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
       false,
     );
   }
+
+  // The Hall of Shame counts the forfeit. Bob quit while leading, so it is not a beating.
+  const { data: shameRankings, error: shameRankingsError } = await charlie.client.rpc('get_player_rankings', {
+    target_profile_id: bob.id,
+  });
+  assertNoError(shameRankingsError);
+  const shame = (board: string) => shameRankings?.find((ranking) => ranking.board === board);
+  assertEquals([Number(shame('saltiest')?.value), shame('saltiest')?.sample_size], [1, 1]);
+  assertEquals(Number(shame('weekly_salt')?.value), 1);
+  assertEquals(shame('biggest_loser'), undefined);
+  const { data: aliceShame, error: aliceShameError } = await charlie.client.rpc('get_player_rankings', {
+    target_profile_id: alice.id,
+  });
+  assertNoError(aliceShameError);
+  assertEquals(
+    aliceShame?.some((ranking) => ['saltiest', 'weekly_salt', 'biggest_loser'].includes(ranking.board)),
+    false,
+  );
 
   const stats = await selectMany<HeadToHeadStatsRow>(
     admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),

@@ -55,13 +55,7 @@ import { getRageQuitReplyText } from '../../shared/rageQuit';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
-import {
-  getLeaderboard,
-  getShowOnLeaderboards,
-  setShowOnLeaderboards,
-  type LeaderboardBoard,
-  type LeaderboardRow,
-} from './community';
+import { getLeaderboard, getLeaderboardInfo, type LeaderboardBoard, type LeaderboardRow } from './community';
 import { LeaderboardPanel } from './CommunityPages';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
@@ -186,7 +180,6 @@ export function MultiplayerLobby({
       setCurrentPage('community');
     }
   }
-  const [showOnLeaderboards, setShowOnLeaderboardsState] = useState<boolean | null>(null);
   const setPage = useCallback((nextPage: LobbyPage) => {
     if (nextPage !== 'password') {
       setNewPassword('');
@@ -451,21 +444,6 @@ export function MultiplayerLobby({
       active = false;
     };
   }, [leaderboardBoard, page, session]);
-
-  useEffect(() => {
-    if (page !== 'profile' || !profileId || !session) return;
-    let active = true;
-    getShowOnLeaderboards(profileId)
-      .then((visible) => {
-        if (active) setShowOnLeaderboardsState(visible);
-      })
-      .catch(() => {
-        if (active) setShowOnLeaderboardsState(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, [page, profileId, session]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -1368,7 +1346,10 @@ export function MultiplayerLobby({
       >
         <SuckerLobbyTitle />
         {renderConnectionNotice()}
-        <ScreenHeader title="Hall of Suckers" onBack={() => setPage('games')} />
+        <ScreenHeader
+          title={getLeaderboardInfo(leaderboardBoard).hall === 'shame' ? 'Hall of Shame' : 'Hall of Suckers'}
+          onBack={() => setPage('games')}
+        />
         <LeaderboardPanel
           board={leaderboardBoard}
           error={leaderboard?.board === leaderboardBoard ? leaderboard.error : null}
@@ -1716,34 +1697,6 @@ export function MultiplayerLobby({
             testID="save-profile-button"
           >
             <Text style={lobbyStyles.primaryButtonText}>Save Profile</Text>
-          </Pressable>
-        </View>
-
-        <View style={lobbyStyles.panel}>
-          <Text style={lobbyStyles.sectionTitle}>Hall of Suckers</Text>
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: showOnLeaderboards !== false }}
-            disabled={isBusy || !profileId || showOnLeaderboards === null}
-            onPress={() =>
-              void runAction(async () => {
-                if (!profileId || showOnLeaderboards === null) return;
-                await setShowOnLeaderboards(profileId, !showOnLeaderboards);
-                setShowOnLeaderboardsState(!showOnLeaderboards);
-              })
-            }
-            style={({ pressed }) => [lobbyStyles.historyButton, pressed && lobbyStyles.pressed]}
-            testID="leaderboard-visibility-toggle"
-          >
-            <View style={lobbyStyles.flexInput}>
-              <Text style={lobbyStyles.historyButtonText}>Show me on leaderboards</Text>
-              <Text style={lobbyStyles.historyButtonSubtext}>
-                {showOnLeaderboards === false
-                  ? 'Hidden. Players can still open your card from a game.'
-                  : 'Other players can find and challenge you.'}
-              </Text>
-            </View>
-            <Text style={lobbyStyles.historyButtonText}>{showOnLeaderboards === false ? 'Off' : 'On'}</Text>
           </Pressable>
         </View>
 
