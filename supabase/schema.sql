@@ -12,6 +12,7 @@ create table public.profiles (
   display_name text not null,
   needs_profile_setup boolean not null default false,
   avatar_url text,
+  -- Retired. Every player appears on every board; kept for installed apps.
   show_on_leaderboards boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -1723,12 +1724,16 @@ as $$
 declare
   week_start timestamptz := date_trunc('week', now() at time zone 'utc') at time zone 'utc';
 begin
-  if board not in ('rating', 'weekly_high_score', 'all_time_high_score', 'sharpshooter', 'win_streak') then
+  if board not in (
+    'rating', 'weekly_high_score', 'all_time_high_score', 'sharpshooter', 'win_streak',
+    'saltiest', 'weekly_salt', 'most_punchable', 'whiff_champion', 'biggest_loser'
+  ) then
     raise exception 'Unknown leaderboard.' using errcode = '22023';
   end if;
 
   return query
   -- Forfeits count toward ratings and streaks only, never scores or punch rates.
+  -- Shame boards are the exception: quitting must never hide a player from them.
   with entries as (
     select standing.player_id, standing.rating as value, standing.rated_games as sample_size
     from public.player_standings standing
@@ -1758,6 +1763,44 @@ begin
     select standing.player_id, standing.best_win_streak::numeric, standing.rated_games
     from public.player_standings standing
     where board = 'win_streak' and standing.best_win_streak >= 3
+    union all
+    -- Rage quits, out of every completed game.
+    select r.player_id, count(quit.game_id)::numeric, count(*)::integer
+    from public.game_player_results r
+    left join public.rage_quits quit on quit.game_id = r.game_id and quit.player_id = r.player_id
+    where board = 'saltiest'
+    group by r.player_id
+    having count(quit.game_id) > 0
+    union all
+    select r.player_id, count(quit.game_id)::numeric, count(*)::integer
+    from public.game_player_results r
+    left join public.rage_quits quit on quit.game_id = r.game_id and quit.player_id = r.player_id
+    where board = 'weekly_salt' and r.completed_at >= week_start
+    group by r.player_id
+    having count(quit.game_id) > 0
+    union all
+    -- Landed punches taken. A landed punch forces a reroll.
+    select r.player_id, sum(r.forced_rerolls)::numeric, count(*)::integer
+    from public.game_player_results r
+    where board = 'most_punchable'
+    group by r.player_id
+    having sum(r.forced_rerolls) > 0
+    union all
+    select r.player_id, sum(r.sucker_punches_used - r.sucker_punches_landed)::numeric, sum(r.sucker_punches_used)::integer
+    from public.game_player_results r
+    where board = 'whiff_champion'
+    group by r.player_id
+    having sum(r.sucker_punches_used - r.sucker_punches_landed) > 0
+    union all
+    -- Worst losing margin. A rage quit counts at the margin when they quit,
+    -- so flipping the table never hides a blowout.
+    select r.player_id, max(opponent.final_score - r.final_score)::numeric, count(*)::integer
+    from public.game_player_results r
+    join public.games game on game.id = r.game_id and game.winner_id = r.opponent_id
+    join public.game_player_results opponent on opponent.game_id = r.game_id and opponent.player_id = r.opponent_id
+    where board = 'biggest_loser'
+    group by r.player_id
+    having max(opponent.final_score - r.final_score) > 0
   )
   select
     (rank() over (order by entry.value desc))::integer,
@@ -1768,8 +1811,7 @@ begin
     entry.value,
     entry.sample_size
   from entries entry
-  join public.profiles profile on profile.id = entry.player_id
-  where profile.show_on_leaderboards;
+  join public.profiles profile on profile.id = entry.player_id;
 end;
 $$;
 
@@ -1824,7 +1866,6 @@ $$;
 revoke all on function public.get_leaderboard(text, integer) from public;
 grant execute on function public.get_leaderboard(text, integer) to authenticated;
 
--- Hidden players appear on no board, so they have no rankings.
 create function public.get_player_rankings(target_profile_id uuid)
 returns table (
   board text,
@@ -1846,8 +1887,10 @@ begin
 
   return query
   select boards.board, ranked.rank, ranked.value, ranked.sample_size, ranked.ranked_players
-  from unnest(array['rating', 'weekly_high_score', 'all_time_high_score', 'sharpshooter', 'win_streak'])
-    with ordinality as boards(board, sort_order)
+  from unnest(array[
+    'rating', 'weekly_high_score', 'all_time_high_score', 'sharpshooter', 'win_streak',
+    'saltiest', 'weekly_salt', 'most_punchable', 'whiff_champion', 'biggest_loser'
+  ]) with ordinality as boards(board, sort_order)
   cross join lateral (
     select entry.rank, entry.value, entry.sample_size, (count(*) over ())::integer as ranked_players, entry.player_id
     from public.ranked_leaderboard(boards.board) entry
@@ -1860,6 +1903,7 @@ $$;
 revoke all on function public.get_player_rankings(uuid) from public;
 grant execute on function public.get_player_rankings(uuid) to authenticated;
 
+-- show_on_leaderboards is always true, for installed apps that still read it.
 create function public.get_player_card(target_profile_id uuid)
 returns table (
   player_id uuid,
@@ -1896,16 +1940,15 @@ begin
     profile.display_name,
     profile.username,
     profile.avatar_url,
-    profile.show_on_leaderboards,
+    true,
     standing.rating,
     coalesce(standing.rated_games, 0),
     standing.peak_rating,
     case
-      when profile.show_on_leaderboards and standing.rated_games >= 5 then (
+      when standing.rated_games >= 5 then (
         select count(*)::integer + 1
         from public.player_standings other
-        join public.profiles other_profile on other_profile.id = other.player_id
-        where other_profile.show_on_leaderboards and other.rated_games >= 5 and other.rating > standing.rating
+        where other.rated_games >= 5 and other.rating > standing.rating
       )
     end,
     coalesce(standing.current_win_streak, 0),

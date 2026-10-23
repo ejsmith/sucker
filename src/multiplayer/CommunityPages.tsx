@@ -5,7 +5,9 @@ import { Pressable } from '../ui/Pressable';
 import {
   formatFeatRarity,
   formatLeaderboardValue,
+  getLeaderboardInfo,
   leaderboardBoards,
+  leaderboardHalls,
   rankedGameMinimum,
   type LeaderboardBoard,
   type LeaderboardRow,
@@ -28,30 +30,79 @@ export function LeaderboardPanel({
   onOpenPlayer: (profileId: string) => void;
   rows: LeaderboardRow[];
 }) {
-  const boardInfo = leaderboardBoards.find((candidate) => candidate.board === board)!;
+  const boardInfo = getLeaderboardInfo(board);
+  const isShame = boardInfo.hall === 'shame';
 
   return (
-    <View style={styles.panel} testID="leaderboard-panel">
+    <View style={[styles.panel, isShame && styles.panelShame]} testID="leaderboard-panel">
       <View accessibilityRole="tablist" style={styles.tabs}>
-        {leaderboardBoards.map((candidate) => {
-          const selected = candidate.board === board;
+        {leaderboardHalls.map((candidate) => {
+          const selected = candidate.hall === boardInfo.hall;
           return (
             <Pressable
               accessibilityRole="tab"
               accessibilityState={{ selected }}
               aria-selected={selected}
-              key={candidate.board}
-              onPress={() => onBoardChange(candidate.board)}
-              style={({ pressed }) => [styles.tab, selected && styles.tabSelected, pressed && styles.pressed]}
-              testID={`leaderboard-tab-${candidate.board}`}
+              key={candidate.hall}
+              onPress={() => {
+                if (selected) return;
+                onBoardChange(leaderboardBoards.find((entry) => entry.hall === candidate.hall)!.board);
+              }}
+              style={({ pressed }) => [
+                styles.hallTab,
+                selected && (candidate.hall === 'shame' ? styles.tabSelectedShame : styles.tabSelected),
+                pressed && styles.pressed,
+              ]}
+              testID={`leaderboard-hall-${candidate.hall}`}
             >
-              <Text numberOfLines={1} style={[styles.tabText, selected && styles.tabTextSelected]}>
-                {candidate.label}
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.hallTabText,
+                  selected && (candidate.hall === 'shame' ? styles.tabTextSelectedShame : styles.tabTextSelected),
+                ]}
+              >
+                {candidate.title}
               </Text>
             </Pressable>
           );
         })}
       </View>
+      <View accessibilityRole="tablist" style={styles.tabs}>
+        {leaderboardBoards
+          .filter((candidate) => candidate.hall === boardInfo.hall)
+          .map((candidate) => {
+            const selected = candidate.board === board;
+            return (
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                aria-selected={selected}
+                key={candidate.board}
+                onPress={() => onBoardChange(candidate.board)}
+                style={({ pressed }) => [
+                  styles.tab,
+                  selected && (isShame ? styles.tabSelectedShame : styles.tabSelected),
+                  pressed && styles.pressed,
+                ]}
+                testID={`leaderboard-tab-${candidate.board}`}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={[styles.tabText, selected && (isShame ? styles.tabTextSelectedShame : styles.tabTextSelected)]}
+                >
+                  {candidate.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+      </View>
+      {boardInfo.blurb && (
+        <View style={styles.boardIntro}>
+          <Text style={styles.boardTitle}>{boardInfo.title}</Text>
+          <Text style={styles.boardBlurb}>{boardInfo.blurb}</Text>
+        </View>
+      )}
       <View style={styles.listHeader}>
         <Text style={styles.sectionTitle}>Player</Text>
         <Text style={styles.sectionTitle}>{boardInfo.valueLabel}</Text>
@@ -77,12 +128,19 @@ export function LeaderboardPanel({
             <View key={row.player_id}>
               {skipped && <Text style={styles.gap}>•••</Text>}
               <Pressable
-                accessibilityLabel={`${row.display_name}, rank ${row.rank}`}
+                accessibilityHint="Opens their profile"
+                accessibilityRole="button"
                 onPress={() => onOpenPlayer(row.player_id)}
-                style={({ pressed }) => [styles.row, row.is_me && styles.rowMine, pressed && styles.pressed]}
+                style={({ pressed }) => [
+                  styles.row,
+                  row.is_me && (isShame ? styles.rowMineShame : styles.rowMine),
+                  pressed && styles.pressed,
+                ]}
                 testID={`leaderboard-row-${row.player_id}`}
               >
-                <Text style={[styles.rank, row.rank <= 3 && styles.rankTop]}>{row.rank}</Text>
+                <Text style={[styles.rank, row.rank <= 3 && (isShame ? styles.rankTopShame : styles.rankTop)]}>
+                  {row.rank}
+                </Text>
                 <PlayerAvatar avatarUrl={row.avatar_url} name={row.display_name} size={32} />
                 <View style={styles.rowText}>
                   <Text numberOfLines={1} style={styles.name}>
@@ -96,7 +154,9 @@ export function LeaderboardPanel({
                   )}
                 </View>
                 <View style={styles.valueBlock}>
-                  <Text style={styles.value}>{formatLeaderboardValue(board, row.value)}</Text>
+                  <Text style={[styles.value, isShame && styles.valueShame]}>
+                    {formatLeaderboardValue(board, row.value)}
+                  </Text>
                   <Text style={styles.sample}>{formatSampleSize(board, row.sample_size)}</Text>
                 </View>
               </Pressable>
@@ -109,56 +169,32 @@ export function LeaderboardPanel({
 }
 
 export function PlayerRankingsCard({
-  isHidden,
   onOpenLeaderboard,
   rankings,
 }: {
-  isHidden: boolean;
   onOpenLeaderboard?: (board: LeaderboardBoard) => void;
   rankings: PlayerRanking[];
 }) {
+  const glory = rankings.filter((ranking) => getLeaderboardInfo(ranking.board).hall === 'glory');
+  const shame = rankings.filter((ranking) => getLeaderboardInfo(ranking.board).hall === 'shame');
+
   return (
     <View style={styles.panel} testID="player-rankings">
       <Text style={styles.sectionTitle}>Rankings</Text>
-      {rankings.length === 0 ? (
-        <Text style={styles.emptyBody}>{isHidden ? 'Hidden from leaderboards.' : 'Not on a leaderboard yet.'}</Text>
+      {glory.length === 0 ? (
+        <Text style={styles.emptyBody}>Not on a leaderboard yet.</Text>
       ) : (
-        rankings.map((ranking) => {
-          const info = leaderboardBoards.find((candidate) => candidate.board === ranking.board)!;
-          const content = (
-            <>
-              <Text style={[styles.rankingRank, ranking.rank <= 3 && styles.rankTop]}>#{ranking.rank}</Text>
-              <View style={styles.rowText}>
-                <Text numberOfLines={1} style={styles.name}>
-                  {info.label}
-                </Text>
-                <Text style={styles.sample}>of {ranking.rankedPlayers} players</Text>
-              </View>
-              <Text style={styles.value}>{formatLeaderboardValue(ranking.board, ranking.value)}</Text>
-              {onOpenLeaderboard && (
-                <Text aria-hidden style={styles.chevron}>
-                  ›
-                </Text>
-              )}
-            </>
-          );
-          return onOpenLeaderboard ? (
-            <Pressable
-              accessibilityHint="Opens the leaderboard"
-              accessibilityRole="button"
-              key={ranking.board}
-              onPress={() => onOpenLeaderboard(ranking.board)}
-              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-              testID={`player-ranking-${ranking.board}`}
-            >
-              {content}
-            </Pressable>
-          ) : (
-            <View key={ranking.board} style={styles.row} testID={`player-ranking-${ranking.board}`}>
-              {content}
-            </View>
-          );
-        })
+        glory.map((ranking) => (
+          <PlayerRankingRow key={ranking.board} onOpenLeaderboard={onOpenLeaderboard} ranking={ranking} />
+        ))
+      )}
+      {shame.length > 0 && (
+        <View style={styles.shameRankings} testID="player-shame-rankings">
+          <Text style={[styles.sectionTitle, styles.sectionTitleShame]}>Hall of Shame</Text>
+          {shame.map((ranking) => (
+            <PlayerRankingRow key={ranking.board} onOpenLeaderboard={onOpenLeaderboard} ranking={ranking} />
+          ))}
+        </View>
       )}
       {onOpenLeaderboard && (
         <Pressable
@@ -170,6 +206,55 @@ export function PlayerRankingsCard({
           <Text style={styles.seeAllText}>See all rankings</Text>
         </Pressable>
       )}
+    </View>
+  );
+}
+
+function PlayerRankingRow({
+  onOpenLeaderboard,
+  ranking,
+}: {
+  onOpenLeaderboard?: (board: LeaderboardBoard) => void;
+  ranking: PlayerRanking;
+}) {
+  const info = getLeaderboardInfo(ranking.board);
+  const isShame = info.hall === 'shame';
+  const content = (
+    <>
+      <Text style={[styles.rankingRank, ranking.rank <= 3 && (isShame ? styles.rankTopShame : styles.rankTop)]}>
+        #{ranking.rank}
+      </Text>
+      <View style={styles.rowText}>
+        <Text numberOfLines={1} style={styles.name}>
+          {info.title}
+        </Text>
+        <Text style={styles.sample}>
+          of {ranking.rankedPlayers} {ranking.rankedPlayers === 1 ? 'player' : 'players'}
+        </Text>
+      </View>
+      <Text style={[styles.value, isShame && styles.valueShame]}>
+        {formatLeaderboardValue(ranking.board, ranking.value)}
+      </Text>
+      {onOpenLeaderboard && (
+        <Text aria-hidden style={[styles.chevron, isShame && styles.valueShame]}>
+          ›
+        </Text>
+      )}
+    </>
+  );
+  return onOpenLeaderboard ? (
+    <Pressable
+      accessibilityHint="Opens the leaderboard"
+      accessibilityRole="button"
+      onPress={() => onOpenLeaderboard(ranking.board)}
+      style={({ pressed }) => [styles.row, isShame && styles.rowShame, pressed && styles.pressed]}
+      testID={`player-ranking-${ranking.board}`}
+    >
+      {content}
+    </Pressable>
+  ) : (
+    <View style={[styles.row, isShame && styles.rowShame]} testID={`player-ranking-${ranking.board}`}>
+      {content}
     </View>
   );
 }
@@ -231,9 +316,20 @@ function FeatRow({ feat, tone }: { feat: PlayerFeat; tone: 'feat' | 'defeat' }) 
 }
 
 function formatSampleSize(board: LeaderboardBoard, sampleSize: number) {
-  const noun = board === 'sharpshooter' ? 'punch' : 'game';
-  const plural = board === 'sharpshooter' ? 'punches' : 'games';
-  return `${sampleSize} ${sampleSize === 1 ? noun : plural}`;
+  const plural = (noun: string, nouns: string) => `${sampleSize} ${sampleSize === 1 ? noun : nouns}`;
+  switch (board) {
+    case 'sharpshooter':
+      return plural('punch', 'punches');
+    case 'whiff_champion':
+      return `of ${plural('punch', 'punches')}`;
+    case 'saltiest':
+    case 'weekly_salt':
+      return `of ${plural('game', 'games')}`;
+    case 'biggest_loser':
+      return plural('loss', 'losses');
+    default:
+      return plural('game', 'games');
+  }
 }
 
 function getEmptyBoardHint(board: LeaderboardBoard) {
@@ -248,12 +344,40 @@ function getEmptyBoardHint(board: LeaderboardBoard) {
       return 'Throw 10 Sucker Punches to qualify.';
     case 'win_streak':
       return 'Win 3 games in a row to qualify.';
+    case 'saltiest':
+      return 'Nobody has rage quit. Yet.';
+    case 'weekly_salt':
+      return 'Nobody has rage quit this week. Yet.';
+    case 'most_punchable':
+      return 'Nobody has taken a punch yet.';
+    case 'whiff_champion':
+      return 'Nobody has missed a punch yet.';
+    case 'biggest_loser':
+      return 'Nobody has lost a game yet.';
   }
 }
 
+const shameRed = '#E0412F';
+
 const styles = StyleSheet.create({
+  boardBlurb: {
+    color: '#FFF3C2',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  boardIntro: {
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 2,
+  },
+  boardTitle: {
+    color: '#FF8A6B',
+    fontSize: 17,
+    fontWeight: '900',
+  },
   defeat: {
-    borderColor: '#E0412F',
+    borderColor: shameRed,
   },
   emptyBody: {
     color: '#FFF3C2',
@@ -314,6 +438,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
+  hallTab: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#8F3B10',
+    borderRadius: 8,
+    borderWidth: 2,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingHorizontal: 6,
+  },
+  hallTabText: {
+    color: '#FFF3C2',
+    fontSize: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   listHeader: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -334,6 +475,9 @@ const styles = StyleSheet.create({
     padding: 8,
     width: '100%',
   },
+  panelShame: {
+    borderColor: shameRed,
+  },
   pressed: {
     opacity: 0.72,
   },
@@ -353,6 +497,9 @@ const styles = StyleSheet.create({
   rankTop: {
     color: '#FFD329',
   },
+  rankTopShame: {
+    color: '#FF8A6B',
+  },
   row: {
     alignItems: 'center',
     borderColor: 'transparent',
@@ -367,6 +514,14 @@ const styles = StyleSheet.create({
   rowMine: {
     backgroundColor: '#3A0A05',
     borderColor: '#FFD329',
+  },
+  rowMineShame: {
+    backgroundColor: '#3A0A05',
+    borderColor: shameRed,
+  },
+  rowShame: {
+    backgroundColor: '#3A0A05',
+    borderColor: shameRed,
   },
   rowText: {
     flex: 1,
@@ -403,6 +558,13 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textTransform: 'uppercase',
   },
+  sectionTitleShame: {
+    color: '#FF8A6B',
+  },
+  shameRankings: {
+    gap: 6,
+    marginTop: 4,
+  },
   tab: {
     alignItems: 'center',
     backgroundColor: '#3A0A05',
@@ -423,8 +585,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
+  tabSelectedShame: {
+    backgroundColor: '#A8251A',
+    borderColor: '#FFF3C2',
+  },
   tabTextSelected: {
     color: '#210505',
+  },
+  tabTextSelectedShame: {
+    color: '#FFF3C2',
   },
   tabs: {
     flexDirection: 'row',
@@ -440,6 +609,9 @@ const styles = StyleSheet.create({
     color: '#FFD329',
     fontSize: 17,
     fontWeight: '900',
+  },
+  valueShame: {
+    color: '#FF8A6B',
   },
   valueBlock: {
     alignItems: 'flex-end',
