@@ -57,6 +57,12 @@ import {
   type TauntScenario,
 } from '../_shared/taunts.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
+import {
+  getPartingShotOptions,
+  getPartingShotText,
+  isPartingShotLineId,
+  type PartingShotLineId,
+} from '../_shared/partingShots.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -116,7 +122,8 @@ type ActionInput =
   | { type: 'sucker_punch'; chanceDie?: DieValue; chanceProtocol?: 'prepared'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string }
   | { type: 'rage_quit'; gameId: string }
-  | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
+  | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId }
+  | { type: 'parting_shot'; gameId: string; lineId: PartingShotLineId };
 type Action = ActionInput & { requestId: string };
 type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
 
@@ -307,6 +314,8 @@ async function applyAction(
       return rageQuitRemoteGame(admin, actorId, action.gameId, mutationState);
     case 'rage_quit_reply':
       return replyToRageQuit(admin, actorId, action.gameId, action.replyId, mutationState);
+    case 'parting_shot':
+      return sendPartingShot(admin, actorId, action.gameId, action.lineId, mutationState);
     default:
       return assertNever(action);
   }
@@ -695,6 +704,13 @@ function buildNotificationContent(
       title: `${actorName} flipped the table!`,
     };
   }
+  if (action.type === 'parting_shot') {
+    const shot = game.state.partingShots?.at(-1);
+    return {
+      body: getPartingShotText(action.lineId),
+      title: shot?.kind === 'comeback' ? `${actorName} fired back` : `${actorName} got the last word`,
+    };
+  }
   if (action.type === 'rage_quit_reply') {
     return {
       body: getRageQuitReplyText(action.replyId),
@@ -931,6 +947,13 @@ function toAction(value: unknown): Action {
         throw new Error('Choose one of the available replies.');
       }
       return { gameId: readString(action, 'gameId'), replyId, requestId, type };
+    }
+    case 'parting_shot': {
+      const lineId = readString(action, 'lineId');
+      if (!isPartingShotLineId(lineId)) {
+        throw new Error('Choose one of the available lines.');
+      }
+      return { gameId: readString(action, 'gameId'), lineId, requestId, type };
     }
     default:
       throw new Error('Invalid multiplayer action.');
@@ -1722,6 +1745,48 @@ async function replyToRageQuit(
   });
   await insertAction(admin, gameId, actorId, 'rage_quit_reply', { replyId }, mutationState.plan);
   return { game: updatedGame, notificationProfileIds: [rageQuit.playerId] };
+}
+
+async function sendPartingShot(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  lineId: PartingShotLineId,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status !== 'complete') {
+    throw new Error('Parting shots wait until the game is over.');
+  }
+  if (game.state.rageQuit) {
+    throw new Error('Rage Quit games get one reply, not parting shots.');
+  }
+  const options = getPartingShotOptions(game.state, actorId);
+  if (!options) {
+    throw new Error('You already said your piece.');
+  }
+  if (!options.lines.some((line) => line.id === lineId)) {
+    throw new Error('Choose one of the available lines.');
+  }
+
+  // The game version check keeps each player to one shot and one comeback
+  // across devices.
+  const recipientId = game.state.players.find((player) => player.id !== actorId)!.id;
+  const updatedGame = stageGameMove(mutationState, game, {
+    state: {
+      ...game.state,
+      partingShots: [...(game.state.partingShots ?? []), { kind: options.kind, lineId, playerId: actorId }],
+    },
+  });
+  // The recipient has not seen this yet, so the game goes back into their list.
+  mutationState.plan!.writes.push({
+    table: 'game_players',
+    operation: 'update',
+    data: { result_seen_at: null },
+    match: { game_id: gameId, player_id: recipientId },
+  });
+  await insertAction(admin, gameId, actorId, 'parting_shot', { kind: options.kind, lineId }, mutationState.plan);
+  return { game: updatedGame, notificationProfileIds: [recipientId] };
 }
 
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
