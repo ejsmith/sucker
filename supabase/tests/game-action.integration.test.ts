@@ -1787,9 +1787,26 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   latestGame.state.players[1].revengePunchDiscount = 2;
   assertNoError((await admin.from('games').update({ state: latestGame.state }).eq('id', gameId)).error);
 
-  for (const category of scoreCategories) {
+  for (const [index, category] of scoreCategories.entries()) {
     latestGame = await scratchAndPass(gameId, alice, bob, category);
     latestGame = await scratchAndPass(gameId, bob, alice, category);
+    if (index === 5) {
+      // The fixed test die rolls five 1s, a Natural. It and the sixth scratch
+      // are awarded the moment they happen, not when the game ends.
+      assertEquals(latestGame.status === 'complete', false);
+      const midGameFeats = await selectMany<{ feat_key: string; player_id: string }>(
+        admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
+      );
+      for (const id of [alice.id, bob.id]) {
+        assertEquals(
+          midGameFeats
+            .filter((feat) => feat.player_id === id)
+            .map((feat) => feat.feat_key)
+            .sort(),
+          ['natural', 'scratch_fever'],
+        );
+      }
+    }
   }
 
   assertEquals(latestGame.status, 'complete');

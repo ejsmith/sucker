@@ -27,7 +27,8 @@ Non-goals for now: chat, free-text comments, friend lists, and tournaments.
 - **Forfeits count toward the record only.** A Rage Quit is a loss for the
   quitter and a win for the opponent in ratings, streaks, and milestone feats.
   Its partial scores and plays never reach high-score boards, Punch %, or
-  per-game feats, matching how Rage Quit already treats stats.
+  result-based feats, matching how Rage Quit already treats stats. Instant
+  feats earned before the quit stand.
 - **Boards respect privacy.** `profiles.show_on_leaderboards` (default `true`)
   removes a player from every public board. Player cards stay viewable, matching
   how `get_profile_stat_rates` already works for any signed-in player.
@@ -143,8 +144,18 @@ the same actions, turns, and scorecards that already feed stats:
 A Sucker chase is an Extra Roll bought with four of a kind showing and the
 Sucker box open (the existing Sucker hunt). The token balance for All In, All
 Gone is replayed from the game's actions. The comeback margin is shared with
-the Comeback wins stat, so both use 100. Rage Quit forfeits award no per-game
-feats or defeats.
+the Comeback wins stat, so both use 100. Rage Quit forfeits award no further
+per-game feats or defeats.
+
+**Instant feats** (`instantFeatKeys`) cannot depend on how the game ends, so
+`game-action` awards them in the same move that earns them: One-Inch Punch,
+Revenge Is Sweet, Counter Culture, Natural, Bought It, Worth Every Penny, Whiff
+City, Can't Miss Missed, Boomerang, Sucker Born Every Minute, All In All Gone,
+Bought a Goose Egg, Buyer's Remorse, and Scratch Fever. Only a punch, a
+submission, a Mulligan, or five of a kind replays the game's actions to check.
+Turn-level feats such as a Sucker chase settle when the turn is submitted or
+Mulliganed. Completion still computes every feat and skips the ones already
+stored for that game.
 
 "First roll of a turn" means the roll count since the player's last score,
 scratch, Mulligan, or punch received is 1. "Purchased roll" means a roll beyond

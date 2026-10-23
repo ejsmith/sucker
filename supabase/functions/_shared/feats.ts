@@ -170,6 +170,50 @@ const upperCategoryFaces: [UpperCategory, number][] = [
 
 const upperBonusThreshold = 63;
 
+// Feats settled the moment they happen, whatever the final score. The
+// game-action function awards these mid-game; the rest wait for completion.
+// Each one only ever turns on as more actions are replayed, so a later move
+// cannot take one back.
+export const instantFeatKeys: ReadonlySet<GameFeatKey> = new Set<GameFeatKey>([
+  'one_inch_punch',
+  'revenge_is_sweet',
+  'counter_culture',
+  'natural',
+  'bought_it',
+  'worth_every_penny',
+  'whiff_city',
+  'cant_miss_missed',
+  'boomerang',
+  'sucker_born_every_minute',
+  'all_in_all_gone',
+  'bought_a_goose_egg',
+  'buyers_remorse',
+  'scratch_fever',
+]);
+
+// Every instant feat needs a punch, a turn ending, or five of a kind, so other
+// moves can skip replaying the game.
+export function mayEarnInstantFeat(action: SuckerStatAction) {
+  if (action.action_type !== 'roll') return action.action_type !== 'extra_roll';
+  const dice = payloadValue(action.payload, 'dice');
+  return Array.isArray(dice) && dice.length === 5 && dice.every((die) => die === dice[0]);
+}
+
+export function buildInstantPlayerFeats({
+  actions,
+  opponentId,
+  playerId,
+}: {
+  actions: SuckerStatAction[];
+  opponentId: string;
+  playerId: string;
+}): GameFeatKey[] {
+  const feats = new Set([...scanPunches(actions, playerId, opponentId), ...scanPlayerTurns(actions, playerId).feats]);
+  return featKeys.filter(
+    (key): key is GameFeatKey => instantFeatKeys.has(key as GameFeatKey) && feats.has(key as GameFeatKey),
+  );
+}
+
 export function buildCompletedPlayerFeats({
   actions,
   opponent,
@@ -206,7 +250,6 @@ export function buildCompletedPlayerFeats({
   }
   const upperBase = upperSectionBaseScore(player.scorecard);
   if (upperBase < upperBonusThreshold && upperBase >= upperBonusThreshold - 3) feats.add('so_close');
-  if (play.scratchedCategories >= 6) feats.add('scratch_fever');
 
   const timeline = scoreTimeline(turns, player.id, opponent.id);
   const finalTurn = timeline.at(-1);
@@ -271,7 +314,9 @@ function scanPunches(actions: SuckerStatAction[], playerId: string, opponentId: 
 
 // Replays a player's turns: rolls since the last score, scratch, Mulligan, or
 // landed punch; Extra Rolls bought; Sucker chases; and the running token balance.
-function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingFinalScore: number | null) {
+// Without a pending final score, the open turn is still being played, so its
+// Sucker chase and spending stay unsettled.
+function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingFinalScore?: number | null) {
   const feats = new Set<GameFeatKey>();
   const scratched = new Set<string>();
   let tokens = startingSuckerTokens;
@@ -375,9 +420,10 @@ function scanPlayerTurns(actions: SuckerStatAction[], playerId: string, pendingF
 
   // Callers normally include the game-ending submission. If it is missing,
   // finish the open turn with the score from its turn row.
-  if (turnOpen) endTurn(pendingFinalScore);
+  if (turnOpen && pendingFinalScore !== undefined) endTurn(pendingFinalScore);
+  if (scratched.size >= 6) feats.add('scratch_fever');
 
-  return { feats, finalTurnUsedLastRoll: lastTurnUsedLastRoll, scratchedCategories: scratched.size };
+  return { feats, finalTurnUsedLastRoll: lastTurnUsedLastRoll };
 }
 
 // The score of the game-ending turn when this player took it. That turn's
