@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getRandomBytes } from 'expo-crypto';
-import { supabase } from './supabase';
+import { gameActionRegion, supabase } from './supabase';
 import { getCurrentSession } from './auth';
 import type { Database } from './database.types';
 import type {
@@ -326,7 +326,10 @@ async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TRe
     }
 
     const { actionKey: _actionKey, actorId: _actorId, createdAt: _createdAt, ...body } = request;
-    const { data, error } = await supabase.functions.invoke<TResult>('game-action', { body });
+    const { data, error } = await supabase.functions.invoke<TResult>('game-action', {
+      body,
+      region: gameActionRegion,
+    });
     if (!error && data) {
       return data;
     }
