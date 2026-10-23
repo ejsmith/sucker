@@ -1,5 +1,12 @@
 import { createGame, type Player } from './game.ts';
-import { buildCompletedPlayerFeats, featCatalog, featKeys } from './feats.ts';
+import {
+  buildCompletedPlayerFeats,
+  buildInstantPlayerFeats,
+  featCatalog,
+  featKeys,
+  instantFeatKeys,
+  mayEarnInstantFeat,
+} from './feats.ts';
 import { buildCompletedPlayerStats, type SuckerStatAction, type SuckerStatTurn } from './stats.ts';
 
 Deno.test('landed punch feats read chance, revenge, and counterpunch cost', () => {
@@ -311,6 +318,71 @@ Deno.test('losing defeats need a loss, and ties award neither feats nor defeats 
   assertEquals(tie.includes('heartbreaker'), false);
   assertEquals(tie.includes('photo_finish'), false);
   assertEquals(tie.includes('died_rich'), false);
+});
+
+Deno.test('instant feats are awarded mid-game, before anyone wins', () => {
+  const instant = buildInstantPlayerFeats({
+    actions: [punch('player', { landed: true, chanceDie: 1, tokenCost: 3 }), roll('player', [4, 4, 4, 4, 4])],
+    opponentId: 'opponent',
+    playerId: 'player',
+  });
+  assertEquals(instant.join(), 'one_inch_punch,natural');
+  assertEquals(
+    buildInstantPlayerFeats({
+      actions: [punch('player', { landed: false, chanceDie: 4 })],
+      opponentId: 'player',
+      playerId: 'opponent',
+    }).length,
+    0,
+  );
+});
+
+Deno.test('instant feats leave a turn in progress unsettled until it is submitted', () => {
+  const miss = roll('player', [6, 6, 6, 6, 1]);
+  const chase = [hunt('player'), miss, hunt('player'), miss, hunt('player'), miss];
+  const instantFor = (actions: SuckerStatAction[]) =>
+    buildInstantPlayerFeats({ actions, opponentId: 'opponent', playerId: 'player' });
+
+  assertEquals(instantFor(chase).includes('sucker_born_every_minute'), false);
+  assertEquals(instantFor([...chase, roll('player', [6, 6, 6, 6, 6])]).includes('worth_every_penny'), false);
+  assertEquals(instantFor([...chase, scored('player', 'fourOfAKind')]).includes('sucker_born_every_minute'), true);
+  assertEquals(
+    instantFor([...chase, roll('player', [6, 6, 6, 6, 6]), scored('player', 'sucker')]).includes('worth_every_penny'),
+    true,
+  );
+});
+
+Deno.test('instant feats match what completion awards for the same history', () => {
+  const miss = roll('player', [6, 6, 6, 6, 1]);
+  const actions = [
+    ...['ones', 'twos', 'threes', 'fours', 'fives', 'sucker'].map((category) => scratched('player', category)),
+    roll('player', [2, 2, 2, 2, 2]),
+    hunt('player'),
+    miss,
+    hunt('player'),
+    miss,
+    hunt('player'),
+    miss,
+    scored('player', 'chance'),
+    punch('player', { landed: false, chanceDie: 6 }),
+    punch('opponent', { landed: true, isCounterPunch: true, tokenCost: 1, targetPlayerId: 'player' }),
+    punch('player', { landed: true, chanceDie: 1, isRevengePunch: true, tokenCost: 2 }),
+  ];
+  const instant = buildInstantPlayerFeats({ actions, opponentId: 'opponent', playerId: 'player' });
+  const completed = featsFor('player', actions, { winnerId: 'player' }).filter((key) => instantFeatKeys.has(key));
+
+  assertEquals(instant.join(), completed.join());
+  assertEquals(instant.length >= 6, true, instant.join());
+});
+
+Deno.test('only punches, submissions, Mulligans, and five of a kind replay the game for instant feats', () => {
+  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 5])), true);
+  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 1])), false);
+  assertEquals(mayEarnInstantFeat(hunt('player')), false);
+  assertEquals(mayEarnInstantFeat(punch('player', { landed: false })), true);
+  assertEquals(mayEarnInstantFeat(scored('player')), true);
+  assertEquals(mayEarnInstantFeat(scratched('player', 'ones')), true);
+  assertEquals(mayEarnInstantFeat({ action_type: 'mulligan', actor_id: 'player' }), true);
 });
 
 Deno.test('every feat and defeat has a name, a tone, and a database-safe key', () => {
