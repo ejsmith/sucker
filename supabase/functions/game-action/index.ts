@@ -123,6 +123,8 @@ type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, x-region, apikey, content-type',
   'Access-Control-Allow-Origin': '*',
+  // Lets web clients read timings for slow-action reports, as native already can.
+  'Access-Control-Expose-Headers': 'server-timing, x-sb-edge-region, x-sucker-action-duration-ms',
 };
 // Time spent loading this worker's modules, charged to the first request it serves.
 let pendingBootMs: number | null = performance.now();

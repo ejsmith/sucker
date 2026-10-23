@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { getRandomBytes } from 'expo-crypto';
 import { gameActionRegion, supabase } from './supabase';
 import { getCurrentSession } from './auth';
@@ -20,8 +21,9 @@ import {
   toHeldDice,
 } from '../game';
 import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
-import { reportError } from '../monitoring/exceptionless';
-import { actionRequestStatus } from '../network/actionRequestStatus';
+import { reportError, reportWarning } from '../monitoring/exceptionless';
+import { actionRequestStatus, slowActionDelayMs } from '../network/actionRequestStatus';
+import { buildSlowActionReport, toActionAttempt, type ActionAttempt } from '../network/slowActionReport';
 import {
   createOrReuseActionRequest,
   createUuidV4,
@@ -296,8 +298,12 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
     );
   }
 
+  const attempts: ActionAttempt[] = [];
+  const startedAt = Date.now();
   try {
-    const result = await actionRequestStatus.run(() => invokeActionRequest<TResult>(request));
+    const result = await actionRequestStatus
+      .run(() => invokeActionRequest<TResult>(request, attempts))
+      .finally(() => reportSlowAction(request.type, Date.now() - startedAt, attempts));
     await removePendingAction(request.requestId);
     return result;
   } catch (error) {
@@ -318,7 +324,25 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
   }
 }
 
-async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TResult> {
+// Matches the server-slowness banner, so every report is a slowdown a player saw.
+function reportSlowAction(actionType: string, totalMs: number, attempts: ActionAttempt[]) {
+  if (totalMs < slowActionDelayMs) return;
+  void (async () => {
+    const state = await NetInfo.fetch().catch(() => null);
+    const details = state?.details as { cellularGeneration?: string | null } | null | undefined;
+    const connection = state
+      ? {
+          cellularGeneration: details?.cellularGeneration ?? null,
+          isInternetReachable: state.isInternetReachable,
+          type: state.type,
+        }
+      : null;
+    const report = buildSlowActionReport(actionType, totalMs, attempts, connection);
+    await reportWarning('SlowGameAction', report.message, report.properties);
+  })().catch(() => undefined);
+}
+
+async function invokeActionRequest<TResult>(request: ActionRequest, attempts?: ActionAttempt[]): Promise<TResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     if (attempt > 0) {
@@ -326,10 +350,16 @@ async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TRe
     }
 
     const { actionKey: _actionKey, actorId: _actorId, createdAt: _createdAt, ...body } = request;
-    const { data, error } = await supabase.functions.invoke<TResult>('game-action', {
+    const attemptStartedAt = Date.now();
+    const {
+      data,
+      error,
+      response: invokeResponse,
+    } = await supabase.functions.invoke<TResult>('game-action', {
       body,
       region: gameActionRegion,
     });
+    attempts?.push(toActionAttempt(Date.now() - attemptStartedAt, invokeResponse));
     if (!error && data) {
       return data;
     }
