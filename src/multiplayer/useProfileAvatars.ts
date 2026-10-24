@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import NetInfo from '@react-native-community/netinfo';
+import { reportError } from '../monitoring/exceptionless';
 import { useAppActivity } from '../ui/useAppActivity';
 import { getCachedProfiles, hydrateProfileCache, subscribeToProfiles } from './profileCache';
 import { getProfilesByIds, getSafeAvatarUrl } from './profiles';
@@ -21,8 +22,9 @@ export function useProfileAvatars(profileIds: string[], enabled = true, refreshK
       inFlight = true;
       try {
         await getProfilesByIds(idsKey.split(','));
-      } catch {
+      } catch (error) {
         // Keep known photos and retry while this screen is active.
+        void reportError(error, { Operation: 'Load profile avatars' });
         if (active) retry = setTimeout(() => void refresh(), 5_000);
       } finally {
         inFlight = false;

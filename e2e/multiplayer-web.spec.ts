@@ -339,6 +339,23 @@ test('local development offers reusable Test 1 and Test 2 logins at the bottom',
   }
 });
 
+test('opening your own open invite waits for the friend instead of crashing', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`invite-wait-a-${runId}`, 'Alice Waiting');
+  const bob = await createUser(`invite-wait-b-${runId}`, 'Bob Joining');
+  const { game, inviteCode } = await invokeTestGameAction(alice, { type: 'create_invite' });
+  const page = await openAuthedPage(browser, alice);
+  try {
+    await page.getByTestId(`game-card-${game.id}`).click();
+    await expect(page.getByTestId('remote-waiting-for-friend')).toBeVisible();
+    await expect(page.getByText('Something went wrong')).toHaveCount(0);
+    await invokeTestGameAction(bob, { type: 'accept_invite', inviteCode });
+    await expect(page.getByTestId('game-screen')).toBeVisible();
+  } finally {
+    await page.context().close();
+  }
+});
+
 for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
   test(`signing out releases this browser notification endpoint for the next account (${unsubscribeResult})`, async ({
     browser,
@@ -396,6 +413,30 @@ for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
     }
   });
 }
+
+test('a browser endpoint still owned by an account that never signed out moves to the new account', async ({
+  browser,
+}) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`push-stale-a-${runId}`, 'Alice Stale');
+  const bob = await createUser(`push-stale-b-${runId}`, 'Bob Claims');
+  const endpoint = `https://push.example.test/stale-${runId}`;
+  const stale = await admin.from('web_push_subscriptions').insert({
+    endpoint,
+    auth_key: 'stale-auth',
+    p256dh_key: 'stale-key',
+    profile_id: alice.id,
+  });
+  expect(stale.error).toBeNull();
+  const page = await openAuthedPage(browser, bob, endpoint);
+  try {
+    await expect
+      .poll(async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data)
+      .toEqual([{ profile_id: bob.id }]);
+  } finally {
+    await page.context().close();
+  }
+});
 
 test('auth sign-out failure restores notification ownership before reporting the error', async ({ browser }) => {
   const runId = crypto.randomUUID();

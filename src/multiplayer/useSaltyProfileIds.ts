@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isSaltyAt } from '../../shared/rageQuit';
+import { reportError } from '../monitoring/exceptionless';
 import { useAppActivity } from '../ui/useAppActivity';
 import { getRecentRageQuits } from './games';
 
@@ -24,8 +25,9 @@ export function useSaltyProfileIds(profileIds: string[], enabled = true, refresh
           setRageQuitTimes(times);
           setNow(checkedAt);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           // Keep the last known badges; the next refresh will try again.
+          void reportError(error, { Operation: 'Load recent rage quits' });
         });
     };
     refresh();

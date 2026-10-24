@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { reportError } from '../monitoring/exceptionless';
 import { authStorage } from './authStorage';
 import { supabase } from './supabase';
 import type { RemoteGameRow } from './types';
@@ -85,21 +86,11 @@ async function registerDevicePushToken(profileId: string) {
 
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   await authStorage.setItem(nativePushTokenStorageKey, token);
-  const { data, error } = await supabase
-    .from('push_tokens')
-    .upsert(
-      {
-        device_name: Device.deviceName ?? null,
-        expo_push_token: token,
-        platform: Platform.OS,
-        profile_id: profileId,
-      },
-      {
-        onConflict: 'expo_push_token',
-      },
-    )
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('claim_push_token', {
+    push_device_name: Device.deviceName ?? null,
+    push_platform: Platform.OS,
+    push_token: token,
+  });
 
   if (error) {
     throw error;
@@ -245,26 +236,16 @@ async function registerBrowserPushSubscription(profileId: string) {
     throw new Error('Browser did not return a complete web push subscription.');
   }
 
-  const { data, error } = await supabase
-    .from('web_push_subscriptions')
-    .upsert(
-      {
-        auth_key: authKey,
-        endpoint,
-        expiration_time:
-          typeof subscriptionJson.expirationTime === 'number'
-            ? new Date(subscriptionJson.expirationTime).toISOString()
-            : null,
-        p256dh_key: p256dhKey,
-        profile_id: profileId,
-        user_agent: navigator.userAgent,
-      },
-      {
-        onConflict: 'endpoint',
-      },
-    )
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('claim_web_push_subscription', {
+    push_auth_key: authKey,
+    push_endpoint: endpoint,
+    push_expiration_time:
+      typeof subscriptionJson.expirationTime === 'number'
+        ? new Date(subscriptionJson.expirationTime).toISOString()
+        : null,
+    push_p256dh_key: p256dhKey,
+    push_user_agent: navigator.userAgent,
+  });
 
   if (error) {
     throw error;
@@ -285,7 +266,11 @@ export async function signOutWithNotificationCleanup(signOut: () => Promise<void
       } catch (signOutError) {
         // Keep the provider destination so a failed auth request can restore it.
         // The session hook retries registration after connectivity recovery too.
-        if (data.session) await registerDevicePushToken(data.session.user.id).catch(() => undefined);
+        if (data.session) {
+          await registerDevicePushToken(data.session.user.id).catch((registerError: unknown) =>
+            reportError(registerError, { Operation: 'Restore push token after failed sign-out' }),
+          );
+        }
         throw signOutError;
       }
       await finishCleanup?.();
@@ -310,7 +295,9 @@ async function removeDevicePushRegistration(profileId: string) {
     if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
     // Defer provider cleanup until auth confirms sign-out.
     return async () => {
-      await subscription.unsubscribe().catch(() => undefined);
+      await subscription
+        .unsubscribe()
+        .catch((unsubscribeError: unknown) => reportError(unsubscribeError, { Operation: 'Unsubscribe web push' }));
     };
   }
 
@@ -330,7 +317,9 @@ async function removeDevicePushRegistration(profileId: string) {
     .eq('expo_push_token', token);
   if (error) throw new Error('Could not disconnect notifications. Check your connection and try signing out again.');
   return async () => {
-    await authStorage.removeItem(nativePushTokenStorageKey).catch(() => undefined);
+    await authStorage
+      .removeItem(nativePushTokenStorageKey)
+      .catch((removeError: unknown) => reportError(removeError, { Operation: 'Forget native push token' }));
   };
 }
 

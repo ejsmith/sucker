@@ -56,6 +56,12 @@ import {
   type TauntId,
   type TauntScenario,
 } from '../_shared/taunts.ts';
+import {
+  InternalServerError,
+  isUnexpectedServerError,
+  logServerError,
+  reportServerError,
+} from '../_shared/monitoring.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
 
 type DbClient = SupabaseClient<Database>;
@@ -129,6 +135,9 @@ const nudgeTurnWaitMs = readPositiveInteger(readLocalTestHook('SUCKER_E2E_NUDGE_
 Deno.serve(async (request) => {
   const timer = new ActionTimer();
   let actionType = 'unknown';
+  let actorId: string | null = null;
+  let requestId: string | null = null;
+  let gameId: string | null = null;
 
   try {
     if (request.method === 'OPTIONS') {
@@ -148,6 +157,8 @@ Deno.serve(async (request) => {
 
     const action = await timer.measure('parse', async () => toAction(await request.json()));
     actionType = action.type;
+    requestId = action.requestId;
+    gameId = 'gameId' in action ? action.gameId : null;
     const authHeader = request.headers.get('Authorization') ?? '';
     const supabaseUrl = requireEnv('SUPABASE_URL');
     const anonKey = requireEnv('SUPABASE_ANON_KEY');
@@ -164,6 +175,7 @@ Deno.serve(async (request) => {
     if (userError || !user) {
       return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
     }
+    actorId = user.id;
 
     const claim = await timer.measure('claim', () => claimActionRequest(admin, user.id, action));
     if (claim.kind === 'completed') {
@@ -189,7 +201,7 @@ Deno.serve(async (request) => {
     try {
       let result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
       if (mutationState.plan) {
-        if (!result.game) throw new Error('A game move must return its game.');
+        if (!result.game) throw new InternalServerError('A game move must return its game.');
         mutationState.mayHaveWritten = true;
         try {
           result = await commitGameMove(admin, mutationState.plan, user.id, action.requestId, {
@@ -235,6 +247,16 @@ Deno.serve(async (request) => {
     console.error('game-action failed', error);
     const message = toErrorMessage(error);
     const status = toErrorStatus(error);
+    // Game rule rejections are expected. Faults are reported with the ids the
+    // app's own event carries, so the two can be linked.
+    if (isUnexpectedServerError(error, status)) {
+      reportServerError(error, {
+        functionName: 'game-action',
+        operation: actionType,
+        userId: actorId,
+        properties: { GameId: gameId, HttpStatus: status, RequestId: requestId },
+      });
+    }
     timer.logIfSlow(actionType);
     return json({ error: message }, status, timer.toHeaders());
   }
@@ -417,7 +439,12 @@ function queueActionNotifications(admin: DbClient, actorId: string, action: Acti
   const task = deliverActionNotifications(admin, actorId, action.requestId, () =>
     sendActionNotifications(admin, actorId, action, result),
   ).catch((notificationError) => {
-    console.error('Unable to send action notifications', notificationError);
+    logServerError('Unable to send action notifications', notificationError, {
+      functionName: 'game-action',
+      operation: 'Send action notifications',
+      userId: actorId,
+      properties: { ActionType: action.type },
+    });
   });
   const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
 
@@ -458,7 +485,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
 
   const latestTurn = game.last_turn_id
     ? await loadTurn(admin, game.last_turn_id).catch((turnError) => {
-        console.error('Unable to load latest turn for notification', turnError);
+        logServerError('Unable to load latest turn for notification', turnError, {
+          functionName: 'game-action',
+          operation: 'Load latest turn for notification',
+        });
         return null;
       })
     : null;
@@ -502,7 +532,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
   }
 
   await settleNotificationSends([
-    sendExpoPushMessages(messages),
+    sendExpoPushMessages(admin, messages),
     sendWebPushNotifications(
       admin,
       webPushSubscriptions as WebPushSubscriptionRow[] | null,
@@ -516,7 +546,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
   ]);
 }
 
-async function sendExpoPushMessages(messages: unknown[]) {
+type ExpoPushMessage = { to: string };
+type ExpoPushTicket = { details?: { error?: string }; message?: string; status?: string };
+
+async function sendExpoPushMessages(admin: DbClient, messages: ExpoPushMessage[]) {
   if (!messages.length) {
     return;
   }
@@ -532,8 +565,49 @@ async function sendExpoPushMessages(messages: unknown[]) {
     });
 
     if (!response.ok) {
-      throw new Error(`Expo push send failed: ${response.status} ${await response.text()}`);
+      // The body can list push tokens, so it stays in the function log only.
+      console.error('Expo push send failed', response.status, await response.text());
+      throw new Error(`Expo push send failed: ${response.status}`);
     }
+
+    await handleExpoPushTickets(admin, chunk, await response.json().catch(() => null));
+  }
+}
+
+// Expo accepts the request even when individual messages fail. Tickets line up
+// with the messages sent. Retrying would duplicate the delivered ones, so
+// failures are cleaned up or reported instead of thrown.
+async function handleExpoPushTickets(admin: DbClient, chunk: ExpoPushMessage[], body: unknown) {
+  const tickets = (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(tickets)) return;
+
+  const unregisteredTokens: string[] = [];
+  const failures = new Map<string, number>();
+  tickets.forEach((ticket: ExpoPushTicket, index) => {
+    if (ticket?.status !== 'error') return;
+    const reason = ticket.details?.error ?? 'Unknown';
+    if (reason === 'DeviceNotRegistered' && chunk[index]?.to) {
+      unregisteredTokens.push(chunk[index].to);
+    } else {
+      failures.set(reason, (failures.get(reason) ?? 0) + 1);
+    }
+  });
+
+  if (unregisteredTokens.length) {
+    const { error } = await admin.from('push_tokens').delete().in('expo_push_token', unregisteredTokens);
+    if (error) {
+      logServerError('Unable to remove unregistered push tokens', error, {
+        functionName: 'game-action',
+        operation: 'Remove unregistered push tokens',
+      });
+    }
+  }
+  for (const [reason, count] of failures) {
+    logServerError('Expo rejected push messages', new Error(`Expo push ticket error: ${reason}`), {
+      functionName: 'game-action',
+      operation: 'Send Expo push messages',
+      properties: { FailedMessages: count },
+    });
   }
 }
 
@@ -613,7 +687,10 @@ async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
     .is('hidden_at', null);
 
   if (visiblePlayersError) {
-    console.error('Unable to load visible games for badge counts', visiblePlayersError);
+    logServerError('Unable to load visible games for badge counts', visiblePlayersError, {
+      functionName: 'game-action',
+      operation: 'Load visible games for badge counts',
+    });
     return counts;
   }
 
@@ -633,7 +710,10 @@ async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
     .neq('status', 'inviting');
 
   if (gamesError) {
-    console.error('Unable to load games for badge counts', gamesError);
+    logServerError('Unable to load games for badge counts', gamesError, {
+      functionName: 'game-action',
+      operation: 'Load games for badge counts',
+    });
     return counts;
   }
 
@@ -2445,7 +2525,7 @@ async function insertTokenEvent(
 function requireEnv(name: string): string {
   const value = Deno.env.get(name);
   if (!value) {
-    throw new Error(`${name} is not configured.`);
+    throw new InternalServerError(`${name} is not configured.`);
   }
   return value;
 }
@@ -2556,5 +2636,5 @@ function json(body: unknown, status = 200, extraHeaders: Record<string, string> 
 }
 
 function assertNever(value: never): never {
-  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+  throw new InternalServerError(`Unhandled value: ${JSON.stringify(value)}`);
 }

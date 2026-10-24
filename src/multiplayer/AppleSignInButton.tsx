@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Platform, StyleSheet, View } from 'react-native';
+import { reportError } from '../monitoring/exceptionless';
 
 export function AppleSignInButton({
   compact = false,
@@ -21,7 +22,7 @@ export function AppleSignInButton({
       .then((value) => {
         if (active) setAvailable(value);
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => reportError(error, { Operation: 'Check Apple sign-in availability' }));
     return () => {
       active = false;
     };
