@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { reportError, reportErrorMessage } from '../monitoring/exceptionless';
 import type { getComputerStats } from '../multiplayer/computerStats';
 import {
   getHeadToHeadStats,
@@ -462,8 +463,9 @@ function PlayerStatsPage({
             : currentProfile,
         );
       })
-      .catch(() => {
+      .catch((profileError: unknown) => {
         // The game snapshot still provides a display name and avatar if profile metadata cannot be refreshed.
+        void reportError(profileError, { Operation: 'Refresh stats profile' });
       });
     return () => {
       isMounted = false;
@@ -493,7 +495,7 @@ function PlayerStatsPage({
     try {
       setGames(await getProfileRecentGames(visibleProfile.id));
     } catch (historyError) {
-      setMessage(historyError instanceof Error ? historyError.message : 'Unable to load completed games.');
+      setMessage(reportErrorMessage(historyError, 'Unable to load completed games.'));
     } finally {
       setIsLoading(false);
     }
@@ -514,7 +516,7 @@ function PlayerStatsPage({
       setPage('stats');
       setSection('stats');
     } catch (profileError) {
-      setMessage(profileError instanceof Error ? profileError.message : 'Unable to load player stats.');
+      setMessage(reportErrorMessage(profileError, 'Unable to load player stats.'));
     } finally {
       setIsLoading(false);
       requestAnimationFrame(() => {
@@ -561,7 +563,7 @@ function PlayerStatsPage({
     try {
       await onStartGameAgainst(visibleProfile.id);
     } catch (startError) {
-      setMessage(startError instanceof Error ? startError.message : 'Unable to start the game.');
+      setMessage(reportErrorMessage(startError, 'Unable to start the game.'));
     } finally {
       setIsLoading(false);
     }

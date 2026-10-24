@@ -19,6 +19,7 @@ import {
   type RecoveredMultiplayerAction,
 } from '../multiplayer/actionRecovery';
 import { listPendingMultiplayerActions, recoverPendingMultiplayerActions } from '../multiplayer/games';
+import { isTemporarySessionError } from '../multiplayer/sessionRecovery';
 import { reportError } from '../monitoring/exceptionless';
 import { actionRequestStatus } from './actionRequestStatus';
 
@@ -40,12 +41,16 @@ const NetworkContext = createContext<NetworkContextValue>({
   refresh: async () => undefined,
 });
 
+const recoveryRetryDelaysMs = [5_000, 15_000, 45_000];
+
 export function NetworkProvider({ children }: { children: ReactNode }) {
   const [networkState, setNetworkState] = useState<NetInfoState | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
   const [pendingActions, setPendingActions] = useState<ActionRequest[]>([]);
   const [recoveredActions, setRecoveredActions] = useState<RecoveredMultiplayerAction[]>([]);
   const isMounted = useRef(true);
+  const recoveryRetry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout> }>({ attempt: 0 });
+  const recoverRef = useRef<() => Promise<void>>(async () => undefined);
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
   const loadPending = useCallback(async () => {
@@ -60,6 +65,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const recover = useCallback(async () => {
+    clearTimeout(recoveryRetry.current.timer);
     try {
       const session = await getCurrentSession();
       if (!session) {
@@ -77,14 +83,28 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           setRecoveredActions((current) => mergeRecoveredActions(current, recovered));
         }
       }
+      recoveryRetry.current.attempt = 0;
     } catch (error) {
-      await reportError(error, { Operation: 'RecoverPendingMultiplayerActions' });
+      // Resuming often runs before the network is back. Connectivity events may
+      // not follow, so retry with backoff instead of reporting a timeout.
+      const attempt = recoveryRetry.current.attempt;
+      if (isTemporarySessionError(error) && attempt < recoveryRetryDelaysMs.length) {
+        recoveryRetry.current.attempt = attempt + 1;
+        recoveryRetry.current.timer = setTimeout(() => void recoverRef.current(), recoveryRetryDelaysMs[attempt]);
+      } else {
+        recoveryRetry.current.attempt = 0;
+        await reportError(error, { Operation: 'RecoverPendingMultiplayerActions', RecoveryAttempts: attempt + 1 });
+      }
     } finally {
       if (isMounted.current) {
         setIsRecovering(false);
       }
     }
   }, []);
+
+  useEffect(() => {
+    recoverRef.current = recover;
+  }, [recover]);
 
   const consumeRecoveredActions = useCallback((requestIds: string[]) => {
     const consumed = new Set(requestIds);
@@ -103,6 +123,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     isMounted.current = true;
+    const retry = recoveryRetry.current;
     const unsubscribe = NetInfo.addEventListener((state) => {
       setNetworkState(state);
       if (state.isConnected !== false && state.isInternetReachable !== false) {
@@ -118,6 +139,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
     return () => {
       isMounted.current = false;
+      clearTimeout(retry.timer);
       unsubscribe();
       appStateSubscription.remove();
     };

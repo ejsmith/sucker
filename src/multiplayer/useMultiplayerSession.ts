@@ -93,8 +93,9 @@ export function useMultiplayerSession() {
         const user = data.user;
         setSession((current) => (current?.user.id === user.id ? { ...current, user } : current));
         setConfirmedAppleUserId(hasAppleIdentity(user) ? user.id : null);
-      } catch {
+      } catch (syncError) {
         // Keep a successful link visible while offline. Retry on reconnect/resume.
+        void reportError(syncError, { Operation: 'Sync Apple connection' });
       } finally {
         syncing = false;
       }
@@ -186,10 +187,11 @@ export function useMultiplayerSession() {
         }
         if (isCurrent()) setIsSessionUnavailable(false);
       } catch (reconnectError) {
+        void reportError(reconnectError, { Operation: 'Reconnect session' });
         if (isCurrent()) {
           // An unsuccessful session lookup is not evidence of sign-out.
           setIsSessionUnavailable(!hasSessionResult || isTemporarySessionError(reconnectError));
-          if (!isTemporarySessionError(reconnectError)) setError(toErrorMessage(reconnectError));
+          if (!isTemporarySessionError(reconnectError)) setError(toErrorMessage(reconnectError, 'Reconnect session'));
         }
       } finally {
         clearTimeout(slowRequest);
@@ -223,7 +225,9 @@ export function useMultiplayerSession() {
     if (!session || isReconnecting || isSessionUnavailable) return;
     const retryRegistration = () => {
       if (pushRegisteredProfileId.current !== session.user.id) {
-        void refreshProfile().catch(() => undefined);
+        void refreshProfile().catch((profileError: unknown) =>
+          reportError(profileError, { Operation: 'Retry profile registration' }),
+        );
       }
     };
     const unsubscribe = NetInfo.addEventListener((state) => {
@@ -267,7 +271,7 @@ export function useMultiplayerSession() {
         return true;
       } catch (authUrlError) {
         if (isMounted) {
-          setError(toErrorMessage(authUrlError));
+          setError(toErrorMessage(authUrlError, 'Complete auth link'));
         }
         return true;
       } finally {
@@ -301,9 +305,10 @@ export function useMultiplayerSession() {
         }
         if (isMounted) await reconnectSession();
       } catch (loadError) {
+        void reportError(loadError, { Operation: 'Load session' });
         if (isMounted && revision === authRevision.current) {
           setIsSessionUnavailable(true);
-          if (!isTemporarySessionError(loadError)) setError(toErrorMessage(loadError));
+          if (!isTemporarySessionError(loadError)) setError(toErrorMessage(loadError, 'Load session'));
         }
       } finally {
         if (isMounted) {
@@ -339,7 +344,7 @@ export function useMultiplayerSession() {
             .catch((profileError) => {
               if (isMounted && sessionProfileId.current === nextSession.user.id) {
                 if (isTemporarySessionError(profileError)) setIsSessionUnavailable(true);
-                else setError(toErrorMessage(profileError));
+                else setError(toErrorMessage(profileError, 'Load profile'));
               }
             });
         }, 0);
@@ -364,7 +369,7 @@ export function useMultiplayerSession() {
     try {
       return await signInWithEmail(email);
     } catch (signInError) {
-      const message = toErrorMessage(signInError);
+      const message = toErrorMessage(signInError, 'Send sign-in code');
       setError(message);
       throw new Error(message);
     } finally {
@@ -383,7 +388,7 @@ export function useMultiplayerSession() {
       }
       return nextSession;
     } catch (verifyError) {
-      const message = toErrorMessage(verifyError);
+      const message = toErrorMessage(verifyError, 'Verify sign-in code');
       setError(message);
       throw new Error(message);
     } finally {
@@ -400,7 +405,7 @@ export function useMultiplayerSession() {
       await refreshProfile();
       return nextSession;
     } catch (signInError) {
-      const message = toErrorMessage(signInError);
+      const message = toErrorMessage(signInError, 'Sign in as local test user');
       setError(message);
       throw new Error(message);
     } finally {
@@ -417,7 +422,7 @@ export function useMultiplayerSession() {
       if (nextSession) await refreshProfile();
       return nextSession;
     } catch (signInError) {
-      const message = toErrorMessage(signInError);
+      const message = toErrorMessage(signInError, 'Sign in with password');
       setError(message);
       throw new Error(message);
     } finally {
@@ -437,14 +442,16 @@ export function useMultiplayerSession() {
         if (action === 'link') {
           setConfirmedAppleUserId(nextSession.user.id);
           // Loading profile details cannot undo a successful account link.
-          await refreshProfile().catch(() => undefined);
+          await refreshProfile().catch((profileError: unknown) =>
+            reportError(profileError, { Operation: 'Load profile after Apple link' }),
+          );
         } else {
           await refreshProfile();
         }
       }
       return nextSession;
     } catch (appleError) {
-      const message = toErrorMessage(appleError);
+      const message = toErrorMessage(appleError, 'Continue with Apple');
       setError(message);
       throw new Error(message);
     } finally {
@@ -464,7 +471,7 @@ export function useMultiplayerSession() {
       rememberProfiles([nextProfile]);
       return nextProfile;
     } catch (profileError) {
-      setError(toErrorMessage(profileError));
+      setError(toErrorMessage(profileError, 'Save profile'));
       throw profileError;
     } finally {
       setIsLoading(false);
@@ -477,7 +484,7 @@ export function useMultiplayerSession() {
     try {
       return await updateAccountPassword(password);
     } catch (passwordError) {
-      const message = toErrorMessage(passwordError);
+      const message = toErrorMessage(passwordError, 'Update password');
       setError(message);
       throw new Error(message);
     } finally {
@@ -495,7 +502,7 @@ export function useMultiplayerSession() {
       clearProfileCache();
     } catch (signOutError) {
       pushRegisteredProfileId.current = null;
-      setError(toErrorMessage(signOutError));
+      setError(toErrorMessage(signOutError, 'Sign out'));
     } finally {
       setIsLoading(false);
     }
@@ -525,7 +532,8 @@ export function useMultiplayerSession() {
   };
 }
 
-function toErrorMessage(error: unknown) {
+function toErrorMessage(error: unknown, operation: string) {
+  void reportError(error, { Operation: operation });
   if (isTemporarySessionError(error)) return sessionConnectionMessage;
   if (error instanceof Error) {
     if (error.message === 'Failed to fetch') {

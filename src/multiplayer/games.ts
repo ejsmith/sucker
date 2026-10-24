@@ -30,7 +30,7 @@ import {
   type ActionRequest,
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
-import { createGameListRealtimeTopic } from './realtimeTopics';
+import { createGameListRealtimeTopic, createRealtimeTopic } from './realtimeTopics';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
 import { rageQuitSaltDurationMs, type RageQuitReplyId } from '../../shared/rageQuit';
@@ -312,6 +312,11 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
         request.requestId,
       );
     } else {
+      void reportError(error, {
+        ActionType: request.type,
+        Operation: 'MultiplayerAction',
+        RequestId: request.requestId,
+      });
       await removePendingAction(request.requestId);
     }
     throw error;
@@ -423,7 +428,8 @@ async function loadPendingActions(): Promise<ActionRequest[]> {
     }
     const actions = JSON.parse(value) as unknown;
     return Array.isArray(actions) ? (actions.filter(isActionRequest) as ActionRequest[]) : [];
-  } catch {
+  } catch (error) {
+    void reportError(error, { Operation: 'LoadPendingActionStorage' });
     return [];
   }
 }
@@ -662,7 +668,7 @@ export function subscribeToGameTaunts(
   onOpportunityAction?: () => void,
 ) {
   const channel = supabase
-    .channel(`game-taunts:${gameId}`)
+    .channel(createRealtimeTopic(`game-taunts:${gameId}`))
     .on(
       'postgres_changes',
       {
@@ -699,7 +705,7 @@ export function subscribeToGame(
   onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
 ) {
   const channel = supabase
-    .channel(`game:${gameId}`)
+    .channel(createRealtimeTopic(`game:${gameId}`))
     .on(
       'postgres_changes',
       {

@@ -6,6 +6,9 @@ Use this checklist for store builds and any change to native dependencies, Expo 
 
 - Set `EXPO_PUBLIC_EXCEPTIONLESS_API_KEY` in the EAS `development`, `preview`, and `production` environments and in GitHub repository variables.
 - Set `EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL` only when using a self-hosted collector.
+- Set the Supabase Edge Function secret `EXCEPTIONLESS_API_KEY` (and `EXCEPTIONLESS_SERVER_URL` when self-hosting) so `game-action` and `delete-account` report server failures.
+- The app reports unhandled errors, errors shown to the player, and every `console.warn`/`console.error` that includes an error object. Use `reportError` or `reportErrorMessage` from `src/monitoring/exceptionless.ts` in new catch blocks instead of swallowing errors.
+- `npm run errors` lists recent error stacks; `npm run errors -- events <stackId>` shows occurrences. Run `npm run errors -- login` once to save a read token to the macOS keychain item `sucker-exceptionless` (project client keys cannot read), or set `EXCEPTIONLESS_API_TOKEN`.
 - Verify one handled test exception appears with the app version, build, platform, update ID, sanitized route, and profile ID.
 - Confirm Exceptionless private-information collection remains disabled and no invite codes or auth callback values are attached.
 - Background and reopen the app to verify queued events are delivered.

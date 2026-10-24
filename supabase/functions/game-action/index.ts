@@ -56,6 +56,7 @@ import {
   type TauntId,
   type TauntScenario,
 } from '../_shared/taunts.ts';
+import { logServerError, reportServerError } from '../_shared/monitoring.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
 
 type DbClient = SupabaseClient<Database>;
@@ -129,6 +130,7 @@ const nudgeTurnWaitMs = readPositiveInteger(readLocalTestHook('SUCKER_E2E_NUDGE_
 Deno.serve(async (request) => {
   const timer = new ActionTimer();
   let actionType = 'unknown';
+  let actorId: string | null = null;
 
   try {
     if (request.method === 'OPTIONS') {
@@ -164,6 +166,7 @@ Deno.serve(async (request) => {
     if (userError || !user) {
       return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
     }
+    actorId = user.id;
 
     const claim = await timer.measure('claim', () => claimActionRequest(admin, user.id, action));
     if (claim.kind === 'completed') {
@@ -235,6 +238,15 @@ Deno.serve(async (request) => {
     console.error('game-action failed', error);
     const message = toErrorMessage(error);
     const status = toErrorStatus(error);
+    // Rule rejections (4xx) are reported by the app with the player's context.
+    if (status >= 500) {
+      reportServerError(error, {
+        functionName: 'game-action',
+        operation: actionType,
+        userId: actorId,
+        properties: { HttpStatus: status },
+      });
+    }
     timer.logIfSlow(actionType);
     return json({ error: message }, status, timer.toHeaders());
   }
@@ -417,7 +429,12 @@ function queueActionNotifications(admin: DbClient, actorId: string, action: Acti
   const task = deliverActionNotifications(admin, actorId, action.requestId, () =>
     sendActionNotifications(admin, actorId, action, result),
   ).catch((notificationError) => {
-    console.error('Unable to send action notifications', notificationError);
+    logServerError('Unable to send action notifications', notificationError, {
+      functionName: 'game-action',
+      operation: 'Send action notifications',
+      userId: actorId,
+      properties: { ActionType: action.type },
+    });
   });
   const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
 
@@ -458,7 +475,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
 
   const latestTurn = game.last_turn_id
     ? await loadTurn(admin, game.last_turn_id).catch((turnError) => {
-        console.error('Unable to load latest turn for notification', turnError);
+        logServerError('Unable to load latest turn for notification', turnError, {
+          functionName: 'game-action',
+          operation: 'Load latest turn for notification',
+        });
         return null;
       })
     : null;
@@ -613,7 +633,10 @@ async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
     .is('hidden_at', null);
 
   if (visiblePlayersError) {
-    console.error('Unable to load visible games for badge counts', visiblePlayersError);
+    logServerError('Unable to load visible games for badge counts', visiblePlayersError, {
+      functionName: 'game-action',
+      operation: 'Load visible games for badge counts',
+    });
     return counts;
   }
 
@@ -633,7 +656,10 @@ async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
     .neq('status', 'inviting');
 
   if (gamesError) {
-    console.error('Unable to load games for badge counts', gamesError);
+    logServerError('Unable to load games for badge counts', gamesError, {
+      functionName: 'game-action',
+      operation: 'Load games for badge counts',
+    });
     return counts;
   }
 

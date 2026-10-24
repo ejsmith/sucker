@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
+import { reportError, reportErrorMessage } from '../monitoring/exceptionless';
 import { loadComputerSession } from '../game/computerSessionStorage';
 import {
   ActivityIndicator,
@@ -208,7 +209,8 @@ export function MultiplayerLobby({
         .then((saved) => {
           if (active) setHasComputerSave(Boolean(saved && saved.game.phase !== 'complete'));
         })
-        .catch(() => {
+        .catch((loadError: unknown) => {
+          void reportError(loadError, { Operation: 'Check computer save' });
           if (active) setHasComputerSave(true);
         });
       return () => {
@@ -388,7 +390,7 @@ export function MultiplayerLobby({
           }
         } catch (refreshError) {
           if (surfaceError) {
-            setMessage(refreshError instanceof Error ? refreshError.message : 'Unable to refresh games.');
+            setMessage(reportErrorMessage(refreshError, 'Unable to refresh games.'));
           }
         } finally {
           refreshGamesInFlight.current = null;
@@ -525,7 +527,7 @@ export function MultiplayerLobby({
           await refreshProfile();
         } catch (pendingError) {
           if (active) {
-            setMessage(pendingError instanceof Error ? pendingError.message : 'Unable to recover the selected photo.');
+            setMessage(reportErrorMessage(pendingError, 'Unable to recover the selected photo.'));
           }
         } finally {
           if (active) {
@@ -536,7 +538,7 @@ export function MultiplayerLobby({
       })
       .catch((pendingError: unknown) => {
         if (active) {
-          setMessage(pendingError instanceof Error ? pendingError.message : 'Unable to recover the selected photo.');
+          setMessage(reportErrorMessage(pendingError, 'Unable to recover the selected photo.'));
         }
       });
     return () => {
@@ -620,7 +622,7 @@ export function MultiplayerLobby({
     try {
       await action();
     } catch (actionError) {
-      setMessage(actionError instanceof Error ? actionError.message : 'Something went wrong.');
+      setMessage(reportErrorMessage(actionError, 'Something went wrong.', { Operation: 'Lobby action' }));
     } finally {
       setIsBusy(false);
     }
@@ -842,6 +844,7 @@ export function MultiplayerLobby({
           if (isWebShareAbort(webShareError)) {
             return;
           }
+          void reportError(webShareError, { Operation: 'Share invite on web' });
         }
 
         await copyTextToWebClipboard(inviteLink);
@@ -858,7 +861,7 @@ export function MultiplayerLobby({
         return;
       }
 
-      setMessage(shareError instanceof Error ? shareError.message : 'Unable to share invite.');
+      setMessage(reportErrorMessage(shareError, 'Unable to share invite.'));
     }
   }
 
@@ -2336,7 +2339,7 @@ function ProfileSetupForm({
     try {
       await onSave({ displayName, username, completeSetup: true });
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Unable to save your name. Please try again.');
+      setError(reportErrorMessage(saveError, 'Unable to save your name. Please try again.'));
     } finally {
       setIsSaving(false);
     }
