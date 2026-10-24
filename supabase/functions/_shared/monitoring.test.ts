@@ -1,4 +1,4 @@
-import { createServerErrorEvent } from './monitoring.ts';
+import { buildReportBody, createServerErrorEvent, InternalServerError, isUnexpectedServerError } from './monitoring.ts';
 
 Deno.test('server errors keep their type, stack, user, and details', () => {
   const error = new TypeError('Cannot read properties of undefined');
@@ -37,6 +37,63 @@ Deno.test('Supabase error objects stack by operation and message without ids', (
   assertEquals(first.data.ErrorDetails, 'none');
   assertEquals(first.data['@user'], undefined);
   assertEquals(stackKey(first), stackKey(second));
+});
+
+Deno.test('game rule rejections are expected, faults are reported even as 4xx', () => {
+  assertEquals(isUnexpectedServerError(new Error('It is not your turn.'), 400), false);
+  assertEquals(isUnexpectedServerError({ code: 'PT409', message: 'The game changed on another device.' }, 409), false);
+  assertEquals(
+    isUnexpectedServerError(
+      { code: 'P0001', message: 'You can jab this player again 8 hours after your last jab.' },
+      400,
+    ),
+    false,
+  );
+
+  assertEquals(isUnexpectedServerError(new TypeError('Cannot read properties of undefined'), 400), true);
+  assertEquals(isUnexpectedServerError(new InternalServerError('SUPABASE_URL is not configured.'), 400), true);
+  assertEquals(isUnexpectedServerError({ code: '42703', message: 'column "x" does not exist' }, 400), true);
+  assertEquals(
+    isUnexpectedServerError({ code: 'P0001', message: 'Move update target is missing or ambiguous' }, 400),
+    true,
+  );
+  assertEquals(isUnexpectedServerError(new Error('Unable to persist the game action outcome.'), 503), true);
+});
+
+Deno.test('server events redact personal data and keep the underlying cause', () => {
+  const event = createServerErrorEvent(
+    Object.assign(new Error('Unable to persist the game action outcome.'), {
+      originalError: {
+        code: '23505',
+        message: 'duplicate key',
+        details: 'Key (expo_push_token)=(ExponentPushToken[abc]) exists.',
+      },
+    }),
+    { functionName: 'game-action', operation: 'roll' },
+  );
+  assertEquals(event.data.ErrorCause, 'SupabaseError 23505: duplicate key');
+
+  const withToken = createServerErrorEvent(
+    { code: '23505', message: 'duplicate key', details: 'Key (expo_push_token)=(ExponentPushToken[abc]) exists.' },
+    { functionName: 'game-action', operation: 'roll' },
+  );
+  assertEquals(withToken.data.ErrorDetails, 'Key (expo_push_token)=(…) exists.');
+});
+
+Deno.test('an unserializable report is skipped instead of throwing', () => {
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    assertEquals(buildReportBody(circular, { functionName: 'game-action', operation: 'roll' }) === null, false);
+    assertEquals(
+      buildReportBody(new Error('boom'), { functionName: 'game-action', operation: 'roll', properties: { Big: 1n } }),
+      null,
+    );
+  } finally {
+    console.error = originalError;
+  }
 });
 
 function assertEquals<T>(actual: T, expected: T) {

@@ -29,7 +29,7 @@ import {
 import { getE2ESession } from './env';
 import { isMultiplayerConfigured, supabase } from './supabase';
 import type { ProfileInput } from './types';
-import { reportError, setMonitoringUser } from '../monitoring/exceptionless';
+import { markErrorReported, reportError, setMonitoringUser } from '../monitoring/exceptionless';
 import { isTemporarySessionError, sessionConnectionMessage, withSessionTimeout } from './sessionRecovery';
 import { useAppActivity } from '../ui/useAppActivity';
 import { authenticateWithApple, type AppleAuthAction } from './appleAuth';
@@ -371,7 +371,8 @@ export function useMultiplayerSession() {
     } catch (signInError) {
       const message = toErrorMessage(signInError, 'Send sign-in code');
       setError(message);
-      throw new Error(message);
+      // Already reported with the original error; the caller only shows it.
+      throw markErrorReported(new Error(message));
     } finally {
       setIsLoading(false);
     }
@@ -390,7 +391,7 @@ export function useMultiplayerSession() {
     } catch (verifyError) {
       const message = toErrorMessage(verifyError, 'Verify sign-in code');
       setError(message);
-      throw new Error(message);
+      throw markErrorReported(new Error(message));
     } finally {
       setIsLoading(false);
     }
@@ -407,7 +408,7 @@ export function useMultiplayerSession() {
     } catch (signInError) {
       const message = toErrorMessage(signInError, 'Sign in as local test user');
       setError(message);
-      throw new Error(message);
+      throw markErrorReported(new Error(message));
     } finally {
       setIsLoading(false);
     }
@@ -424,7 +425,7 @@ export function useMultiplayerSession() {
     } catch (signInError) {
       const message = toErrorMessage(signInError, 'Sign in with password');
       setError(message);
-      throw new Error(message);
+      throw markErrorReported(new Error(message));
     } finally {
       setIsLoading(false);
     }
@@ -453,7 +454,7 @@ export function useMultiplayerSession() {
     } catch (appleError) {
       const message = toErrorMessage(appleError, 'Continue with Apple');
       setError(message);
-      throw new Error(message);
+      throw markErrorReported(new Error(message));
     } finally {
       setIsAppleAuthenticating(false);
       setIsLoading(false);
@@ -486,7 +487,7 @@ export function useMultiplayerSession() {
     } catch (passwordError) {
       const message = toErrorMessage(passwordError, 'Update password');
       setError(message);
-      throw new Error(message);
+      throw markErrorReported(new Error(message));
     } finally {
       setIsLoading(false);
     }

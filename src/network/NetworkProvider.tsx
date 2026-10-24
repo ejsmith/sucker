@@ -51,6 +51,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const isMounted = useRef(true);
   const recoveryRetry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout> }>({ attempt: 0 });
   const recoverRef = useRef<() => Promise<void>>(async () => undefined);
+  const recoveryInFlight = useRef<Promise<void> | null>(null);
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
   const loadPending = useCallback(async () => {
@@ -64,18 +65,20 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const recover = useCallback(async () => {
+  const runRecovery = useCallback(async () => {
     clearTimeout(recoveryRetry.current.timer);
+    let failure: unknown = null;
     try {
       const session = await getCurrentSession();
       if (!session) {
+        recoveryRetry.current.attempt = 0;
         if (isMounted.current) {
           setPendingActions([]);
         }
         return;
       }
       setIsRecovering(true);
-      const recovered = await recoverPendingMultiplayerActions(session.user.id);
+      const { recovered, retryableError } = await recoverPendingMultiplayerActions(session.user.id);
       const pending = await listPendingMultiplayerActions(session.user.id);
       if (isMounted.current) {
         setPendingActions(pending);
@@ -83,24 +86,48 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           setRecoveredActions((current) => mergeRecoveredActions(current, recovered));
         }
       }
-      recoveryRetry.current.attempt = 0;
+      failure = pending.length > 0 ? retryableError : null;
     } catch (error) {
-      // Resuming often runs before the network is back. Connectivity events may
-      // not follow, so retry with backoff instead of reporting a timeout.
-      const attempt = recoveryRetry.current.attempt;
-      if (isTemporarySessionError(error) && attempt < recoveryRetryDelaysMs.length) {
-        recoveryRetry.current.attempt = attempt + 1;
-        recoveryRetry.current.timer = setTimeout(() => void recoverRef.current(), recoveryRetryDelaysMs[attempt]);
-      } else {
+      if (!isTemporarySessionError(error)) {
         recoveryRetry.current.attempt = 0;
-        await reportError(error, { Operation: 'RecoverPendingMultiplayerActions', RecoveryAttempts: attempt + 1 });
+        await reportError(error, { Operation: 'RecoverPendingMultiplayerActions' });
+        return;
       }
+      failure = error;
     } finally {
       if (isMounted.current) {
         setIsRecovering(false);
       }
     }
+
+    if (failure === null) {
+      recoveryRetry.current.attempt = 0;
+      return;
+    }
+
+    // Resuming often runs before the network is back, and connectivity events
+    // may not follow. Retry moves that are still pending with backoff, and
+    // report only once retrying has not helped.
+    const attempt = recoveryRetry.current.attempt;
+    if (attempt < recoveryRetryDelaysMs.length) {
+      recoveryRetry.current.attempt = attempt + 1;
+      if (isMounted.current) {
+        recoveryRetry.current.timer = setTimeout(() => void recoverRef.current(), recoveryRetryDelaysMs[attempt]);
+      }
+      return;
+    }
+    recoveryRetry.current.attempt = 0;
+    await reportError(failure, { Operation: 'RecoverPendingMultiplayerActions', RecoveryAttempts: attempt + 1 });
   }, []);
+
+  // App resume and connectivity changes often both trigger recovery. Share one
+  // pass so they don't consume two retry attempts or orphan a retry timer.
+  const recover = useCallback(() => {
+    recoveryInFlight.current ??= runRecovery().finally(() => {
+      recoveryInFlight.current = null;
+    });
+    return recoveryInFlight.current;
+  }, [runRecovery]);
 
   useEffect(() => {
     recoverRef.current = recover;

@@ -60,6 +60,8 @@ jobs:
           EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY }}
           EXPO_PUBLIC_EXCEPTIONLESS_API_KEY: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY }}
           EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL: ${{ vars.EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL }}
+          # Identifies the deployed web release in Exceptionless.
+          EXPO_PUBLIC_RELEASE_ID: ${{ github.sha }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Check production web bundle budget

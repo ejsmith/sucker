@@ -479,8 +479,9 @@ function PlayerStatsPage({
       .then(([card, feats, rankings]) => {
         if (isMounted) setCommunity({ card, feats, profileId, rankings });
       })
-      .catch(() => {
+      .catch((communityError) => {
         // Ratings and feats are extras; the profile still works without them.
+        void reportError(communityError, { Operation: 'Load community profile' });
         if (isMounted) setCommunity({ card: null, failed: true, feats: [], profileId, rankings: [] });
       });
     return () => {

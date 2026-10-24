@@ -43,12 +43,24 @@ export const authStorage =
 // items written before AFTER_FIRST_UNLOCK are replaced once.
 async function writeSecureItem(key: string, value: string) {
   const migrationKey = `sucker:secure-store-after-first-unlock:${key}`;
-  if ((await AsyncStorage.getItem(migrationKey)) === '1') {
+  const isMigrated = await AsyncStorage.getItem(migrationKey).then(
+    (flag) => flag === '1',
+    () => false,
+  );
+  if (isMigrated) {
     await SecureStore.setItemAsync(key, value, secureStoreOptions);
     return;
   }
 
   await SecureStore.deleteItemAsync(key, secureStoreOptions);
-  await SecureStore.setItemAsync(key, value, secureStoreOptions);
-  await AsyncStorage.setItem(migrationKey, '1');
+  try {
+    await SecureStore.setItemAsync(key, value, secureStoreOptions);
+  } catch (writeError) {
+    // Never leave the player without a saved session: put the value back with
+    // the default accessibility and try the migration again on the next write.
+    await SecureStore.setItemAsync(key, value).catch(() => undefined);
+    throw writeError;
+  }
+  // A lost flag only repeats the migration, which is safe.
+  await AsyncStorage.setItem(migrationKey, '1').catch(() => undefined);
 }

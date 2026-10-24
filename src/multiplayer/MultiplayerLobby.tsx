@@ -461,7 +461,8 @@ export function MultiplayerLobby({
       .then((visible) => {
         if (active) setShowOnLeaderboardsState(visible);
       })
-      .catch(() => {
+      .catch((visibilityError) => {
+        void reportError(visibilityError, { Operation: 'Load leaderboard visibility' });
         if (active) setShowOnLeaderboardsState(null);
       });
     return () => {

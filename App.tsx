@@ -48,7 +48,7 @@ import {
   type ComputerTurnResult,
   type LocalPendingTurn,
 } from './src/game/computer';
-import { reportError, reportErrorMessage } from './src/monitoring/exceptionless';
+import { reportError, reportErrorMessage, setMonitoringGame } from './src/monitoring/exceptionless';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
@@ -566,6 +566,11 @@ export function RemoteGameScreen({
 
   const refreshRemoteGameRef = useRef<{ refresh: () => Promise<void>; invalidate: () => void } | null>(null);
   const retryRemoteLoadRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    setMonitoringGame(gameId);
+    return () => setMonitoringGame(null);
+  }, [gameId]);
 
   useEffect(() => {
     let isMounted = true;

@@ -3,8 +3,14 @@ import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { Platform } from 'react-native';
+import { classifyError, createReportThrottle, getErrorDetails, getManualStackingKey, redactError } from './errorPolicy';
 
 type ConsoleLevel = 'error' | 'warn';
+type ReportOptions = {
+  // Report at most once per window for this operation, for failures that can
+  // repeat on a loop such as a reconnecting realtime channel.
+  throttleMs?: number;
+};
 
 let startupPromise: Promise<void> | null = null;
 let isConsoleCaptureInstalled = false;
@@ -17,8 +23,22 @@ const originalConsole: Record<ConsoleLevel, (...args: unknown[]) => void> = {
   error: console.error.bind(console),
   warn: console.warn.bind(console),
 };
-const networkErrorPattern =
-  /failed to fetch|network request failed|networkerror|load failed|fetch failed|the internet connection appears to be offline|network connection was lost/i;
+// Offline players retry on a loop; one network report per operation per
+// window still shows an outage without flooding the project.
+const networkReportWindowMs = 10 * 60_000;
+const shouldReportNow = createReportThrottle();
+// Credentials and personal data that error objects or context can carry.
+const dataExclusions = [
+  '*password*',
+  '*secret*',
+  '*token*',
+  'auth_key',
+  'details',
+  'email',
+  'endpoint',
+  'hint',
+  'p256dh*',
+];
 
 export function initializeMonitoring() {
   const apiKey = getApiKey();
@@ -35,12 +55,17 @@ export function initializeMonitoring() {
     }
 
     configuration.includePrivateInformation = false;
+    configuration.addDataExclusions(...dataExclusions);
     configuration.usePersistedQueueStorage = true;
     configuration.version = getReleaseVersion();
     configuration.defaultTags.push('Sucker', Platform.OS, __DEV__ ? 'development' : 'production');
+    if (Updates.updateId && !Updates.isEmbeddedLaunch) {
+      configuration.defaultTags.push('ota');
+    }
     configuration.defaultData['App'] = {
       build: Application.nativeBuildVersion ?? 'web',
       channel: Updates.channel ?? 'embedded',
+      release: process.env.EXPO_PUBLIC_RELEASE_ID?.trim() || undefined,
       updateId: Updates.updateId ?? 'embedded',
     };
     configuration.useSessions(true, 60_000, true);
@@ -64,40 +89,86 @@ export function setMonitoringRoute(pathname: string) {
   Exceptionless.config.defaultData['Route'] = sanitizeRoute(pathname);
 }
 
+/** Attaches the open game to every event until it is cleared with `null`. */
+export function setMonitoringGame(gameId: string | null) {
+  if (gameId) {
+    Exceptionless.config.defaultData['GameId'] = gameId;
+  } else {
+    delete Exceptionless.config.defaultData['GameId'];
+  }
+}
+
+/** Marks an error as reported so a caller that catches it again skips it. */
+export function markErrorReported<T extends object>(error: T): T {
+  reportedErrors.add(error);
+  return error;
+}
+
 /**
  * Reports a handled error. Safe to call from any catch block: it never throws,
  * reports each error object once, and does nothing without an API key.
- * Pass `Operation` so handled errors stack by what failed, not by where the
- * shared helper that threw them lives.
+ * Expected player mistakes are skipped and network failures are throttled
+ * (see errorPolicy.ts). Pass `Operation` so handled errors stack by what
+ * failed, not by where the shared helper that threw them lives.
  */
-export async function reportError(error: unknown, context?: Record<string, unknown>) {
+export async function reportError(error: unknown, context?: Record<string, unknown>, options?: ReportOptions) {
+  if (!getApiKey()) {
+    return;
+  }
+
+  const disposition = classifyError(error);
+  const operation = typeof context?.Operation === 'string' ? context.Operation : null;
+  const throttleMs = disposition === 'network' ? networkReportWindowMs : options?.throttleMs;
+  if (
+    disposition === 'expected' ||
+    (throttleMs !== undefined && !shouldReportNow(`${disposition}|${operation ?? ''}`, throttleMs)) ||
+    !claimError(error)
+  ) {
+    return;
+  }
+
+  await submitError(error, context, (builder) => {
+    let next = builder.addTags('handled');
+    if (disposition === 'network') next = next.addTags('network');
+    return next;
+  });
+}
+
+/** Reports a render crash caught by an error boundary as critical. */
+export async function reportCrash(error: unknown, componentStack: string) {
   if (!getApiKey() || !claimError(error)) {
     return;
   }
 
+  await submitError(error, { ComponentStack: componentStack, Operation: 'Render' }, (builder) =>
+    builder.addTags('render-crash').markAsCritical(),
+  );
+}
+
+async function submitError(
+  error: unknown,
+  context: Record<string, unknown> | undefined,
+  decorate: (
+    builder: ReturnType<typeof Exceptionless.createException>,
+  ) => ReturnType<typeof Exceptionless.createException>,
+) {
   try {
     await initializeMonitoring();
-    const exception = toMonitoringError(error);
-    let builder = Exceptionless.createException(exception).addTags('handled');
-    if (isNetworkError(exception)) {
-      builder = builder.addTags('network');
-    }
-
+    const exception = redactError(toMonitoringError(error));
+    let builder = decorate(Exceptionless.createException(exception));
     for (const [key, value] of Object.entries({ ...getErrorDetails(error), ...context })) {
       if (value !== undefined && value !== '') {
         builder = builder.setProperty(key, value);
       }
     }
 
-    // Errors with frames stack (and source map) by where they were thrown.
-    // Frameless ones, such as Supabase objects and native module rejections,
-    // need the operation to stay apart.
+    // Errors thrown from app code stack (and source map) by where they were
+    // thrown. Frameless errors and library errors, whose frames are the same
+    // for every caller, stack by operation, code and message instead.
     const operation = typeof context?.Operation === 'string' ? context.Operation : null;
-    if (operation && !hasStackFrames(exception)) {
-      builder = builder.setManualStackingKey(
-        `${operation}|${exception.name}|${normalizeMessage(exception.message)}`,
-        `${operation}: ${exception.message}`,
-      );
+    const stacking = getManualStackingKey(error, operation, hasStackFrames(exception));
+    if (stacking) {
+      builder = builder.setManualStackingKey(stacking.key, stacking.title);
     }
 
     await builder.submit();
@@ -113,11 +184,6 @@ export async function reportError(error: unknown, context?: Record<string, unkno
 export function reportErrorMessage(error: unknown, fallback: string, context?: Record<string, unknown>) {
   void reportError(error, { Operation: fallback.replace(/[.!…]+$/, ''), ...context });
   return error instanceof Error ? error.message : fallback;
-}
-
-export function isNetworkError(error: unknown) {
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  return networkErrorPattern.test(message);
 }
 
 // Most handled failures are already logged with the error object. Forward those
@@ -187,27 +253,6 @@ function toMonitoringError(error: unknown) {
   return toError(error);
 }
 
-function getErrorDetails(error: unknown): Record<string, unknown> {
-  if (typeof error !== 'object' || error === null) {
-    return {};
-  }
-
-  const details: Record<string, unknown> = {};
-  for (const key of ['code', 'details', 'hint', 'status'] as const) {
-    const value = (error as Record<string, unknown>)[key];
-    if (typeof value === 'string' || typeof value === 'number') {
-      details[`Error${key[0].toUpperCase()}${key.slice(1)}`] = value;
-    }
-  }
-
-  const cause = (error as { cause?: unknown }).cause;
-  if (cause instanceof Error) {
-    details.ErrorCause = `${cause.name}: ${cause.message}`;
-  }
-
-  return details;
-}
-
 function isErrorLike(value: unknown): value is { message: string; name?: unknown } {
   return (
     value instanceof Error ||
@@ -227,21 +272,22 @@ function hasStackFrames(error: Error) {
   return /^\s*at\s|@\S+:\d+/m.test(error.stack ?? '');
 }
 
-function normalizeMessage(message: string) {
-  return message
-    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>')
-    .replace(/\d+/g, '<n>')
-    .slice(0, 200);
-}
-
 function getApiKey() {
   return process.env.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY?.trim();
 }
 
+// Native: app version and build, plus the over-the-air update when one is
+// running, since an update changes code without changing the build. Web: the
+// app version plus the deployed commit.
 function getReleaseVersion() {
   const version = Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? 'development';
   const build = Application.nativeBuildVersion;
-  return build ? `${version}.${build}` : version;
+  const release = build ? `${version}.${build}` : version;
+  if (Updates.updateId && !Updates.isEmbeddedLaunch) {
+    return `${release}+update.${Updates.updateId.slice(0, 8)}`;
+  }
+  const commit = process.env.EXPO_PUBLIC_RELEASE_ID?.trim().slice(0, 7);
+  return Platform.OS === 'web' && commit ? `${release}+${commit}` : release;
 }
 
 function sanitizeRoute(pathname: string) {

@@ -7,7 +7,15 @@ Use this checklist for store builds and any change to native dependencies, Expo 
 - Set `EXPO_PUBLIC_EXCEPTIONLESS_API_KEY` in the EAS `development`, `preview`, and `production` environments and in GitHub repository variables.
 - Set `EXPO_PUBLIC_EXCEPTIONLESS_SERVER_URL` only when using a self-hosted collector.
 - Set the Supabase Edge Function secret `EXCEPTIONLESS_API_KEY` (and `EXCEPTIONLESS_SERVER_URL` when self-hosting) so `game-action` and `delete-account` report server failures.
-- The app reports unhandled errors, errors shown to the player, and every `console.warn`/`console.error` that includes an error object. Use `reportError` or `reportErrorMessage` from `src/monitoring/exceptionless.ts` in new catch blocks instead of swallowing errors.
+- The app reports unhandled errors, errors shown to the player, and every `console.warn`/`console.error` that includes an error object. Use `reportError` or `reportErrorMessage` from `src/monitoring/exceptionless.ts` in new catch blocks instead of swallowing errors, and pass an `Operation` naming what failed.
+- One policy (`src/monitoring/errorPolicy.ts`, unit tested) decides what is sent:
+  - Expected player mistakes are skipped: wrong or expired codes, auth rate limits, and game rule rejections (4xx game actions other than 401).
+  - Network failures are tagged `network` and sent at most once per operation every 10 minutes.
+  - App errors with stack frames group by where they were thrown. Library, coded and frameless errors group by operation, code and normalized message.
+  - Messages, stacks and error details are redacted (`shared/redaction.ts`): emails, push tokens and endpoints, JWTs and database row values.
+- Render crashes are critical and tagged `render-crash`. Every event from a game screen carries `GameId`; game actions also carry `ActionType` and `RequestId`.
+- `game-action` reports faults with the same `GameId` and `RequestId`, even when it responds 4xx. Game rules reject with a plain `Error`; throw `InternalServerError` from `_shared/monitoring.ts` for server invariants so they are reported.
+- Versions identify releases: native is `version.build`, plus `+update.<id>` when running an over-the-air update. Web is `version+<commit>`, using `EXPO_PUBLIC_RELEASE_ID` set by the web build.
 - `npm run errors` lists recent error stacks; `npm run errors -- events <stackId>` shows occurrences. Run `npm run errors -- login` once to save a read token to the macOS keychain item `sucker-exceptionless` (project client keys cannot read), or set `EXCEPTIONLESS_API_TOKEN`.
 - Verify one handled test exception appears with the app version, build, platform, update ID, sanitized route, and profile ID.
 - Confirm Exceptionless private-information collection remains disabled and no invite codes or auth callback values are attached.
