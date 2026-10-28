@@ -45,8 +45,10 @@ export type Database = {
           current_win_streak: number;
           peak_rating: number;
           player_id: string;
+          rated_at: string | null;
           rated_games: number;
           rating: number;
+          rating_deviation: number;
           updated_at: string;
         };
         Insert: { player_id: string };

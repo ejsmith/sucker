@@ -1666,8 +1666,11 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
       total_score: 330,
       wins: 1,
     }),
-    // Far above any rating other tests can reach, so Bob tops the board.
-    admin.from('player_standings').insert({ best_win_streak: 4, player_id: bob.id, rated_games: 6, rating: 4321 }),
+    // Far above any rating other tests can reach, so Bob tops the board. With no
+    // uncertainty, the shown rating is the rating itself.
+    admin
+      .from('player_standings')
+      .insert({ best_win_streak: 4, player_id: bob.id, rated_games: 6, rating: 4321, rating_deviation: 0 }),
   ]);
   inserted.forEach((result) => assertNoError(result.error));
 
