@@ -1464,15 +1464,16 @@ on public.game_player_results (player_id, opponent_id, completed_at desc);
 create table public.player_standings (
   player_id uuid primary key references public.profiles(id) on delete cascade,
   rating numeric(7, 2) not null default 1200,
+  rating_deviation numeric(6, 2) not null default 150,
+  rated_at timestamptz,
   rated_games integer not null default 0,
-  peak_rating numeric(7, 2) not null default 1200,
+  peak_rating numeric(7, 2) not null default 900,
   current_win_streak integer not null default 0,
   best_win_streak integer not null default 0,
   current_loss_streak integer not null default 0,
   updated_at timestamptz not null default now()
 );
 
-create index player_standings_rating_idx on public.player_standings (rating desc);
 
 alter table public.player_standings enable row level security;
 grant all on public.player_standings to service_role;
@@ -1516,33 +1517,77 @@ $$;
 revoke all on function public.award_milestone_feat(uuid, text, uuid, timestamptz) from public, anon, authenticated;
 grant execute on function public.award_milestone_feat(uuid, text, uuid, timestamptz) to service_role;
 
--- Elo with provisional K and repeat-opponent damping, plus streaks and
--- milestone feats. Idempotent: a game whose results already carry ratings is skipped.
-create function public.apply_completed_game_standings(target_game_id uuid)
+-- Uncertainty grows while a player sits out (its variance gains 10² a day),
+-- back up to the starting 150.
+create function public.rating_deviation_at(deviation numeric, rated_at timestamptz, as_of timestamptz)
+returns numeric
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when rated_at is null then deviation
+    else least(150, sqrt(deviation ^ 2 + 100 * greatest(extract(epoch from as_of - rated_at) / 86400, 0)))
+  end;
+$$;
+
+revoke all on function public.rating_deviation_at(numeric, timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function public.rating_deviation_at(numeric, timestamptz, timestamptz) to service_role;
+
+-- The rating players see and rank by.
+create function public.conservative_rating(rating numeric, deviation numeric, rated_at timestamptz, as_of timestamptz)
+returns numeric
+language sql
+immutable
+set search_path = ''
+as $$
+  select round(rating - 2 * public.rating_deviation_at(deviation, rated_at, as_of), 2);
+$$;
+
+revoke all on function public.conservative_rating(numeric, numeric, timestamptz, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.conservative_rating(numeric, numeric, timestamptz, timestamptz) to service_role;
+
+-- Glicko-1, one game at a time. The first 3 games a pair plays in 7 days count
+-- fully and later ones a quarter. Once either player has won 19 of the pair's
+-- last 20 games, their games stop counting, so throwing games to a second
+-- account goes nowhere. Each result records the shown rating before and after.
+-- Idempotent: a game whose results already carry ratings is skipped.
+create function public.rate_completed_game(target_game_id uuid)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
+  q constant double precision := ln(10) / 400;
   results public.game_player_results[];
-  result public.game_player_results;
   standing_a public.player_standings;
   standing_b public.player_standings;
   completed timestamptz;
   pair_games integer;
-  damping numeric;
-  score_a numeric;
-  expected_a numeric;
-  next_a numeric;
-  next_b numeric;
-  player_games integer;
-  opponent_games integer;
-  beaten integer;
-  player_lost boolean;
-  loss_streak integer;
-  losses integer;
-  quits integer;
+  lopsided boolean;
+  weight double precision;
+  score_a double precision;
+  rating_a double precision;
+  rating_b double precision;
+  deviation_a double precision;
+  deviation_b double precision;
+  -- How much a result against each player reveals, given their uncertainty.
+  reveal_a double precision;
+  reveal_b double precision;
+  expected_a double precision;
+  expected_b double precision;
+  variance_a double precision;
+  variance_b double precision;
+  next_rating_a numeric;
+  next_rating_b numeric;
+  next_deviation_a numeric;
+  next_deviation_b numeric;
+  before_a numeric;
+  before_b numeric;
+  after_a numeric;
+  after_b numeric;
 begin
   select array_agg(r order by r.player_id) into results
   from public.game_player_results r
@@ -1567,31 +1612,119 @@ begin
   select * into strict standing_a from public.player_standings where player_id = (results[1]).player_id;
   select * into strict standing_b from public.player_standings where player_id = (results[2]).player_id;
 
+  before_a := public.conservative_rating(standing_a.rating, standing_a.rating_deviation, standing_a.rated_at, completed);
+  before_b := public.conservative_rating(standing_b.rating, standing_b.rating_deviation, standing_b.rated_at, completed);
+
   select count(*) into pair_games
   from public.game_player_results r
   where r.player_id = (results[1]).player_id
     and r.opponent_id = (results[2]).player_id
     and r.completed_at > completed - interval '7 days'
     and r.completed_at <= completed;
-  damping := case when pair_games <= 3 then 1 else 0.25 end;
 
+  select count(*) = 20 and greatest(count(*) filter (where recent.a_won), count(*) filter (where recent.b_won)) >= 19
+  into lopsided
+  from (
+    select own.won as a_won, other.won as b_won
+    from public.game_player_results own
+    join public.game_player_results other on other.game_id = own.game_id and other.player_id = own.opponent_id
+    where own.player_id = (results[1]).player_id
+      and own.opponent_id = (results[2]).player_id
+      and own.game_id <> target_game_id
+      and own.completed_at <= completed
+    order by own.completed_at desc, own.game_id desc
+    limit 20
+  ) recent;
+
+  if lopsided then
+    update public.game_player_results set rating_before = before_a, rating_after = before_a
+    where game_id = target_game_id and player_id = (results[1]).player_id;
+    update public.game_player_results set rating_before = before_b, rating_after = before_b
+    where game_id = target_game_id and player_id = (results[2]).player_id;
+    return;
+  end if;
+
+  weight := case when pair_games <= 3 then 1 else 0.25 end;
   score_a := case when (results[1]).won then 1 when (results[2]).won then 0 else 0.5 end;
-  expected_a := 1 / (1 + power(10::numeric, (standing_b.rating - standing_a.rating) / 400));
-  next_a := round(
-    standing_a.rating
-      + (case when standing_a.rated_games < 10 then 40 else 24 end) * damping * (score_a - expected_a),
-    2
-  );
-  next_b := round(
-    standing_b.rating
-      + (case when standing_b.rated_games < 10 then 40 else 24 end) * damping * ((1 - score_a) - (1 - expected_a)),
-    2
-  );
+  rating_a := standing_a.rating;
+  rating_b := standing_b.rating;
+  deviation_a := public.rating_deviation_at(standing_a.rating_deviation, standing_a.rated_at, completed);
+  deviation_b := public.rating_deviation_at(standing_b.rating_deviation, standing_b.rated_at, completed);
+  reveal_a := 1 / sqrt(1 + 3 * q ^ 2 * deviation_a ^ 2 / pi() ^ 2);
+  reveal_b := 1 / sqrt(1 + 3 * q ^ 2 * deviation_b ^ 2 / pi() ^ 2);
+  expected_a := 1 / (1 + 10 ^ (-reveal_b * (rating_a - rating_b) / 400));
+  expected_b := 1 / (1 + 10 ^ (-reveal_a * (rating_b - rating_a) / 400));
+  variance_a := 1 / (1 / deviation_a ^ 2 + weight * q ^ 2 * reveal_b ^ 2 * expected_a * (1 - expected_a));
+  variance_b := 1 / (1 / deviation_b ^ 2 + weight * q ^ 2 * reveal_a ^ 2 * expected_b * (1 - expected_b));
+  next_rating_a := round((rating_a + q * variance_a * weight * reveal_b * (score_a - expected_a))::numeric, 2);
+  next_rating_b := round((rating_b + q * variance_b * weight * reveal_a * ((1 - score_a) - expected_b))::numeric, 2);
+  next_deviation_a := round(sqrt(variance_a)::numeric, 2);
+  next_deviation_b := round(sqrt(variance_b)::numeric, 2);
+  after_a := public.conservative_rating(next_rating_a, next_deviation_a, completed, completed);
+  after_b := public.conservative_rating(next_rating_b, next_deviation_b, completed, completed);
 
   update public.player_standings set
-    rating = next_a,
+    rating = next_rating_a,
+    rating_deviation = next_deviation_a,
+    rated_at = completed,
     rated_games = rated_games + 1,
-    peak_rating = greatest(peak_rating, next_a),
+    peak_rating = greatest(peak_rating, after_a),
+    updated_at = now()
+  where player_id = (results[1]).player_id;
+
+  update public.player_standings set
+    rating = next_rating_b,
+    rating_deviation = next_deviation_b,
+    rated_at = completed,
+    rated_games = rated_games + 1,
+    peak_rating = greatest(peak_rating, after_b),
+    updated_at = now()
+  where player_id = (results[2]).player_id;
+
+  update public.game_player_results set rating_before = before_a, rating_after = after_a
+  where game_id = target_game_id and player_id = (results[1]).player_id;
+  update public.game_player_results set rating_before = before_b, rating_after = after_b
+  where game_id = target_game_id and player_id = (results[2]).player_id;
+end;
+$$;
+
+revoke all on function public.rate_completed_game(uuid) from public, anon, authenticated;
+grant execute on function public.rate_completed_game(uuid) to service_role;
+
+-- Glicko rating, then streaks and milestone feats.
+-- Idempotent: a game whose results already carry ratings is skipped.
+create function public.apply_completed_game_standings(target_game_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  results public.game_player_results[];
+  result public.game_player_results;
+  completed timestamptz;
+  player_games integer;
+  opponent_games integer;
+  beaten integer;
+  player_lost boolean;
+  loss_streak integer;
+  losses integer;
+  quits integer;
+begin
+  select array_agg(r order by r.player_id) into results
+  from public.game_player_results r
+  where r.game_id = target_game_id;
+
+  if coalesce(array_length(results, 1), 0) <> 2 or (results[1]).rating_after is not null then
+    return;
+  end if;
+
+  completed := greatest((results[1]).completed_at, (results[2]).completed_at);
+
+  -- Creates and locks both standings rows.
+  perform public.rate_completed_game(target_game_id);
+
+  update public.player_standings set
     current_win_streak = case when (results[1]).won then current_win_streak + 1 else 0 end,
     current_loss_streak = case when (results[2]).won then current_loss_streak + 1 else 0 end,
     best_win_streak = greatest(best_win_streak, case when (results[1]).won then current_win_streak + 1 else 0 end),
@@ -1599,19 +1732,11 @@ begin
   where player_id = (results[1]).player_id;
 
   update public.player_standings set
-    rating = next_b,
-    rated_games = rated_games + 1,
-    peak_rating = greatest(peak_rating, next_b),
     current_win_streak = case when (results[2]).won then current_win_streak + 1 else 0 end,
     current_loss_streak = case when (results[1]).won then current_loss_streak + 1 else 0 end,
     best_win_streak = greatest(best_win_streak, case when (results[2]).won then current_win_streak + 1 else 0 end),
     updated_at = now()
   where player_id = (results[2]).player_id;
-
-  update public.game_player_results set rating_before = standing_a.rating, rating_after = next_a
-  where game_id = target_game_id and player_id = (results[1]).player_id;
-  update public.game_player_results set rating_before = standing_b.rating, rating_after = next_b
-  where game_id = target_game_id and player_id = (results[2]).player_id;
 
   foreach result in array results loop
     select count(*) into player_games from public.game_player_results r
@@ -1730,7 +1855,10 @@ begin
   return query
   -- Forfeits count toward ratings and streaks only, never scores or punch rates.
   with entries as (
-    select standing.player_id, standing.rating as value, standing.rated_games as sample_size
+    select
+      standing.player_id,
+      public.conservative_rating(standing.rating, standing.rating_deviation, standing.rated_at, now()) as value,
+      standing.rated_games as sample_size
     from public.player_standings standing
     where board = 'rating' and standing.rated_games >= 5
     union all
@@ -1897,17 +2025,11 @@ begin
     profile.username,
     profile.avatar_url,
     profile.show_on_leaderboards,
-    standing.rating,
+    public.conservative_rating(standing.rating, standing.rating_deviation, standing.rated_at, now()),
     coalesce(standing.rated_games, 0),
     standing.peak_rating,
-    case
-      when profile.show_on_leaderboards and standing.rated_games >= 5 then (
-        select count(*)::integer + 1
-        from public.player_standings other
-        join public.profiles other_profile on other_profile.id = other.player_id
-        where other_profile.show_on_leaderboards and other.rated_games >= 5 and other.rating > standing.rating
-      )
-    end,
+    -- The rating board's own rank, so a card never disagrees with the board.
+    (select ranked.rank from public.ranked_leaderboard('rating') ranked where ranked.player_id = profile.id),
     coalesce(standing.current_win_streak, 0),
     coalesce(standing.best_win_streak, 0),
     coalesce(totals.games_played, 0),
