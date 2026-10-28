@@ -34,6 +34,7 @@ import { createGameListRealtimeTopic } from './realtimeTopics';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
 import { rageQuitSaltDurationMs, type RageQuitReplyId } from '../../shared/rageQuit';
+import type { PartingShotLineId } from '../../shared/partingShots';
 
 type GameRow = Database['public']['Tables']['games']['Row'];
 type TurnRow = Database['public']['Tables']['turns']['Row'];
@@ -59,18 +60,21 @@ export class PendingMultiplayerActionError extends Error {
 export async function listMyGames() {
   const session = await getCurrentSession();
   if (!session) throw new Error('Sign in to refresh your games.');
-  const [{ data: activeGames, error: activeError }, { data: recentCompletedGames, error: completedError }, unseenGameIds] =
-    await Promise.all([
-      supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
-      supabase
-        .from('games')
-        .select('*')
-        .eq('status', 'complete')
-        .order('completed_at', { ascending: false, nullsFirst: false })
-        .order('updated_at', { ascending: false })
-        .limit(25),
-      loadUnseenGameIds(),
-    ]);
+  const [
+    { data: activeGames, error: activeError },
+    { data: recentCompletedGames, error: completedError },
+    unseenGameIds,
+  ] = await Promise.all([
+    supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
+    supabase
+      .from('games')
+      .select('*')
+      .eq('status', 'complete')
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .order('updated_at', { ascending: false })
+      .limit(25),
+    loadUnseenGameIds(),
+  ]);
 
   if (activeError) {
     throw activeError;
@@ -583,6 +587,10 @@ export async function rageQuitRemoteGame(gameId: string) {
 
 export async function replyToRemoteRageQuit(gameId: string, replyId: RageQuitReplyId) {
   return applyMultiplayerAction({ gameId, replyId, type: 'rage_quit_reply' });
+}
+
+export async function sendRemotePartingShot(gameId: string, lineId: PartingShotLineId) {
+  return applyMultiplayerAction({ gameId, lineId, type: 'parting_shot' });
 }
 
 // Latest rage quit within the public salt window, keyed by player id.

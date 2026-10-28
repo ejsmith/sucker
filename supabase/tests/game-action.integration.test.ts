@@ -1967,6 +1967,81 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   );
 });
 
+Deno.test('parting shots allow one shot and one comeback each, and recaps stay private', async () => {
+  const [alice, bob, charlie] = await createUsers('parting-shots', ['Alice', 'Bob', 'Charlie']);
+  const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+  const gameId = (created.game as GameRow).id;
+  const early = await invokeGameAction(alice, { gameId, lineId: 'gg-mostly', type: 'parting_shot' }, 400);
+  assertEquals(early.error, 'Parting shots wait until the game is over.');
+
+  // Every box but Chance is filled, and Alice is up by 3.
+  const startingState = (created.game as GameRow).state;
+  const nearlyDone: GameState = {
+    ...startingState,
+    players: startingState.players.map((player) => ({
+      ...player,
+      scorecard: Object.fromEntries(
+        scoreCategories.map((category) => [
+          category,
+          category === 'chance' ? null : category === 'ones' && player.id === alice.id ? 3 : 0,
+        ]),
+      ) as GameState['players'][number]['scorecard'],
+    })),
+  };
+  assertNoError((await admin.from('games').update({ state: nearlyDone }).eq('id', gameId)).error);
+  await scratchAndPass(gameId, alice, bob, 'chance');
+  const finished = await scratchAndPass(gameId, bob, alice, 'chance');
+  assertEquals(finished.status, 'complete');
+  assertEquals(finished.winner_id, alice.id);
+
+  const { data: recap, error: recapError } = await alice.client.rpc('get_game_recap', { target_game_id: gameId });
+  assertNoError(recapError);
+  assertEquals(
+    recap?.map((row) => row.player_id),
+    [alice.id, bob.id],
+  );
+  assertEquals(
+    recap?.every((row) => row.rating_before !== null && row.rating_after !== null),
+    true,
+  );
+  assertEquals(Number(recap?.[0].rating_after) > Number(recap?.[0].rating_before), true);
+  // The fixed test die rolls five 1s on each first roll.
+  assertEquals(
+    recap?.every((row) => row.feat_keys.includes('natural')),
+    true,
+  );
+  const outsider = await charlie.client.rpc('get_game_recap', { target_game_id: gameId });
+  assertEquals(outsider.error?.code, '42501');
+
+  const wrongSet = await invokeGameAction(bob, { gameId, lineId: 'gg-mostly', type: 'parting_shot' }, 400);
+  assertEquals(wrongSet.error, 'Choose one of the available lines.');
+  const freeText = await invokeGameAction(bob, { gameId, lineId: 'You stink', type: 'parting_shot' }, 400);
+  assertEquals(freeText.error, 'Choose one of the available lines.');
+
+  await markResultSeen(bob, gameId, finished.updated_at);
+  const shot = (await invokeGameAction(alice, { gameId, lineId: 'gg-mostly', type: 'parting_shot' })).game as GameRow;
+  assertEquals(shot.state.partingShots, [{ kind: 'shot', lineId: 'gg-mostly', playerId: alice.id }]);
+  // Bob already cleared the result, so the shot puts the game back in his list.
+  assertEquals((await loadResultSeen(gameId))[bob.id], false);
+  const again = await invokeGameAction(alice, { gameId, lineId: 'thanks-tokens', type: 'parting_shot' }, 400);
+  assertEquals(again.error, 'You already said your piece.');
+
+  await invokeGameAction(bob, { gameId, lineId: 'cute', type: 'parting_shot' });
+  await invokeGameAction(bob, { gameId, lineId: 'rematch-now', type: 'parting_shot' });
+  const last = (await invokeGameAction(alice, { gameId, lineId: 'says-the-sucker', type: 'parting_shot' }))
+    .game as GameRow;
+  assertEquals(
+    last.state.partingShots?.map((entry) => `${entry.playerId === alice.id ? 'alice' : 'bob'}:${entry.kind}`),
+    ['alice:shot', 'bob:comeback', 'bob:shot', 'alice:comeback'],
+  );
+  for (const user of [alice, bob]) {
+    const done = await invokeGameAction(user, { gameId, lineId: 'cute', type: 'parting_shot' }, 400);
+    assertEquals(done.error, 'You already said your piece.');
+  }
+  const shotActions = (await loadActions(gameId)).filter((action) => action.action_type === 'parting_shot');
+  assertEquals(shotActions.length, 4);
+});
+
 Deno.test('game-action creates one rematch and alternates the first player', async () => {
   const [alice, bob] = await createUsers('rematch', ['Alice', 'Bob']);
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });

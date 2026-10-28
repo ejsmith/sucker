@@ -194,7 +194,8 @@ export type Database = {
             | 'sucker_blocker'
             | 'taunt'
             | 'rage_quit'
-            | 'rage_quit_reply';
+            | 'rage_quit_reply'
+            | 'parting_shot';
           actor_id: string;
           created_at: string;
           game_id: string;
@@ -219,7 +220,8 @@ export type Database = {
             | 'sucker_blocker'
             | 'taunt'
             | 'rage_quit'
-            | 'rage_quit_reply';
+            | 'rage_quit_reply'
+            | 'parting_shot';
           actor_id: string;
           game_id: string;
           id?: string;
@@ -671,6 +673,15 @@ export type Database = {
           show_on_leaderboards: boolean;
           username: string | null;
           wins: number;
+        }[];
+      };
+      get_game_recap: {
+        Args: { target_game_id: string };
+        Returns: {
+          feat_keys: string[];
+          player_id: string;
+          rating_after: number | null;
+          rating_before: number | null;
         }[];
       };
       get_player_feats: {
