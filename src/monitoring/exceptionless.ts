@@ -62,6 +62,19 @@ export async function reportError(error: unknown, context?: Record<string, unkno
   await builder.submit();
 }
 
+export async function reportWarning(source: string, message: string, context?: Record<string, unknown>) {
+  if (!process.env.EXPO_PUBLIC_EXCEPTIONLESS_API_KEY) {
+    return;
+  }
+
+  await initializeMonitoring();
+  let builder = Exceptionless.createLog(source, message, 'warn');
+  for (const [key, value] of Object.entries(context ?? {})) {
+    builder = builder.setProperty(key, value);
+  }
+  await builder.submit();
+}
+
 function getReleaseVersion() {
   const version = Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? 'development';
   const build = Application.nativeBuildVersion;

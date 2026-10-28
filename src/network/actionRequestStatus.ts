@@ -1,5 +1,7 @@
+export const slowActionDelayMs = 3000;
+
 // Only explicit player requests belong here. Background refresh/recovery stays quiet.
-export function createActionRequestStatus(delayMs = 3000) {
+export function createActionRequestStatus(delayMs = slowActionDelayMs) {
   const slowRequests = new Set<symbol>();
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());

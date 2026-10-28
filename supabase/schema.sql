@@ -118,6 +118,9 @@ create table public.turn_actions (
   created_at timestamptz not null default now()
 );
 
+create index turn_actions_game_type_created_idx
+on public.turn_actions (game_id, action_type, created_at);
+
 create unique index turn_actions_one_taunt_per_turn
 on public.turn_actions (
   game_id,
