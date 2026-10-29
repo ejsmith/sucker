@@ -190,8 +190,9 @@ A Sucker rolled counts once per run of rolls. A run starts over at each
 submission and Mulligan, so rolling again with all five held, or buying another
 roll on a Sucker, does not count twice. A Sucker on a punched turn's replay
 counts again. The count tiers are separate feats, so a 6-Sucker game earns
-Seeing Double through Six Pack. A landed punch erases the target's last turn:
-Back-to-Back and Anything You Can Do compare against the turn before that, and
+Seeing Double through Six Pack. A landed punch, or a Mulligan of a submitted
+turn, erases that turn: Back-to-Back and Anything You Can Do compare against
+the turn before it, and
 a "scored Sucker" is a turn scored (not scratched) with five of a kind showing.
 Migration `20261028140000_backfill_sucker_count_feats.sql` credited games that
 finished before the count tiers existed.

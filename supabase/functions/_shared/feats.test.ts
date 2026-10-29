@@ -462,6 +462,29 @@ Deno.test('Back-to-Back and Anything You Can Do read the turn before', () => {
     sucker('player'),
   ]);
   assertEquals(erased.includes('anything_you_can_do'), false);
+
+  // Mulliganing a submitted turn discards it, so its replay is the same turn again.
+  const redone = buildInstantPlayerFeats({
+    actions: [
+      sucker('player'),
+      scored('player', 'sucker'),
+      { action_type: 'mulligan', actor_id: 'player', payload: { turnId: 'turn' } },
+      sucker('player'),
+    ],
+    opponentId: 'opponent',
+    playerId: 'player',
+  });
+  assertEquals(redone.includes('back_to_back'), false);
+  assertEquals(redone.includes('seeing_double'), true);
+  const theirs = featsFor('player', [
+    sucker('opponent'),
+    scored('opponent', 'sucker'),
+    { action_type: 'mulligan', actor_id: 'opponent', payload: { turnId: 'turn' } },
+    miss('opponent'),
+    scored('opponent'),
+    sucker('player'),
+  ]);
+  assertEquals(theirs.includes('anything_you_can_do'), false);
 });
 
 Deno.test('punching away a scored Sucker robs it, and a Sucker on the replay strikes twice', () => {

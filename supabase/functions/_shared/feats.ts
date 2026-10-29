@@ -381,8 +381,8 @@ function scanPunches(actions: SuckerStatAction[], playerId: string, opponentId: 
 
 // Replays both players' dice. A Sucker counts once per run of rolls, and a run
 // starts over at each submission and Mulligan, so rolling again with all five
-// held does not count twice. A landed punch erases the target's last turn, and
-// its replay is a new run.
+// held does not count twice. A landed punch or a Mulligan of a submitted turn
+// erases that turn, and its replay is a new run.
 function scanDice(actions: SuckerStatAction[], playerId: string, opponentId: string) {
   const feats = new Set<GameFeatKey>();
   const newSide = () => ({
@@ -425,6 +425,8 @@ function scanDice(actions: SuckerStatAction[], playerId: string, opponentId: str
         break;
       }
       case 'mulligan':
+        // A Mulligan in the response window discards the turn just submitted.
+        if (payloadValue(action.payload, 'turnId')) side.turns.pop();
         side.dice = null;
         side.rolls = 0;
         side.runSucker = false;
