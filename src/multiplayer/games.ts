@@ -63,6 +63,7 @@ export async function listMyGames() {
     { data: activeGames, error: activeError },
     { data: recentCompletedGames, error: completedError },
     unseenGameIds,
+    unfinishedPlayOuts,
   ] = await Promise.all([
     supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
     supabase
@@ -73,6 +74,7 @@ export async function listMyGames() {
       .order('updated_at', { ascending: false })
       .limit(25),
     loadUnseenGameIds(),
+    loadUnfinishedPlayOuts(),
   ]);
 
   if (activeError) {
@@ -82,14 +84,17 @@ export async function listMyGames() {
     throw completedError;
   }
 
-  // A finished game stays listed until its result is seen, even if it is older
-  // than the recent completed page.
+  // A finished game stays listed until its result is seen, and a card being
+  // finished after a Rage Quit until it is full, even if older than the recent
+  // completed page.
   const loadedGameIds = new Set([...(activeGames ?? []), ...(recentCompletedGames ?? [])].map((game) => game.id));
+  const olderPlayOuts = unfinishedPlayOuts.filter((game) => !loadedGameIds.has(game.id));
+  olderPlayOuts.forEach((game) => loadedGameIds.add(game.id));
   const olderUnseenGames = await loadOlderUnseenGames(
     [...unseenGameIds].filter((gameId) => !loadedGameIds.has(gameId)),
   );
 
-  const completedGames = [...(recentCompletedGames ?? []), ...olderUnseenGames];
+  const completedGames = [...(recentCompletedGames ?? []), ...olderPlayOuts, ...olderUnseenGames];
   const data = [...(activeGames ?? []), ...completedGames];
 
   const currentPlayerIds = [
@@ -122,6 +127,21 @@ async function loadUnseenGameIds() {
   }
   const rows: { game_id: string }[] = data ?? [];
   return new Set(rows.map((row) => row.game_id));
+}
+
+// Cards still being finished after a Rage Quit. Like unseen results, a failed
+// lookup must not stop the game list from loading.
+async function loadUnfinishedPlayOuts(): Promise<GameRow[]> {
+  const { data, error } = await supabase
+    .from('games')
+    .select('*')
+    .eq('status', 'complete')
+    .filter('state->rageQuit->>playOut', 'eq', 'playing');
+  if (error) {
+    console.warn('Unable to load unfinished cards', error);
+    return [];
+  }
+  return data ?? [];
 }
 
 async function loadOlderUnseenGames(gameIds: string[]): Promise<GameRow[]> {

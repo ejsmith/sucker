@@ -1795,6 +1795,12 @@ async function rageQuitRemoteGame(
     insertAction(admin, gameId, actorId, 'rage_quit', {}, mutationState.plan),
   ]);
   await planCompletedGameStats(admin, gameId, nextState.players, winnerId, mutationState.plan!, actorId);
+  // A winner who already filled their card has nothing left to play out, so it
+  // counts right away.
+  const winner = nextState.players.find((player) => player.id === winnerId);
+  if (winner && scoreCategories.every((category) => winner.scorecard[category] !== null)) {
+    await planPlayOutResult(admin, game, nextState, winner.id, mutationState.plan!);
+  }
 
   return {
     game: updatedGame,
@@ -2528,9 +2534,10 @@ async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePl
   }
 }
 
-// A finished play-out posts the winner's full card: their final score counts
-// toward high scores, and they earn the feats their own card decides. The
-// result row keeps the forfeit's zeroed comeback and margin stats.
+// A Rage Quit winner's full card, played out or already full at the quit,
+// counts: their final score reaches the high scores, and they earn the feats
+// their own card decides. The result row keeps the forfeit's zeroed comeback
+// and margin stats.
 async function planPlayOutResult(
   admin: DbClient,
   game: GameRow,
@@ -2551,7 +2558,7 @@ async function planPlayOutResult(
     player,
     players: state.players,
     turns,
-    winnerId: game.winner_id,
+    winnerId: playerId,
   });
   plan.writes.push({
     table: 'game_player_results',

@@ -28,8 +28,9 @@ Non-goals for now: chat, free-text comments, friend lists, and tournaments.
   quitter and a win for the opponent in ratings, streaks, and milestone feats.
   Its partial scores and plays never reach high-score boards, Punch %, or
   result-based feats, matching how Rage Quit already treats stats. Instant
-  feats earned before the quit stand. The exception is a winner who finishes
-  their card after the quit: `game-action` sets `played_out_at` on their result,
+  feats earned before the quit stand. The exception is a winner whose card is
+  full, by finishing it after the quit or because it was already full at the
+  quit: `game-action` sets `played_out_at` on their result,
   their final score reaches the weekly (by `played_out_at`) and all-time boards
   and their matchup high, and they earn instant and card feats
   (`buildPlayOutFeats`), never ones about the forfeit.

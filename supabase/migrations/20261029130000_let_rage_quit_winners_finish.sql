@@ -1,6 +1,7 @@
--- After a Rage Quit, the player who stayed may finish their own card. A
--- finished card posts its final score to the high score boards; the result,
--- rating, and streaks stay as they were at the quit. See the Rage Quit section
+-- After a Rage Quit, the player who stayed may finish their own card, and a
+-- card already full at the quit counts at once. A full card posts its final
+-- score to the high score boards; the result, rating, and streaks stay as they
+-- were at the quit. See the Rage Quit section
 -- of docs/game-design-spec-v2.md.
 alter table public.game_player_results add column played_out_at timestamptz;
 

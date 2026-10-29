@@ -267,7 +267,8 @@ create table public.game_player_results (
   completed_at timestamptz not null default now(),
   rating_before numeric(7, 2),
   rating_after numeric(7, 2),
-  -- Set when the winner finished their card after a Rage Quit.
+  -- Set when a Rage Quit winner's full card counts: finished by playing it
+  -- out, or already full at the quit.
   played_out_at timestamptz,
   primary key (game_id, player_id)
 );

@@ -2399,6 +2399,59 @@ Deno.test('the winner of a rage quit can finish their card, and its score counts
   assertString(done.error);
 });
 
+Deno.test('a winner whose card was already full when the opponent quit keeps that score', async () => {
+  const [alice, bob] = await createUsers('full-card-quit', ['Alice', 'Bob']);
+  const created = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  // Alice has filled her card. Bob has one box left and quits instead of playing it.
+  const fullCard: GameState = {
+    ...created.state,
+    currentPlayerIndex: created.state.players.findIndex((player) => player.id === bob.id),
+    players: created.state.players.map((player) => ({
+      ...player,
+      scorecard: Object.fromEntries(
+        scoreCategories.map((category) => [category, player.id === alice.id ? 20 : category === 'chance' ? null : 0]),
+      ) as GameState['players'][number]['scorecard'],
+    })),
+  };
+  assertNoError(
+    (await admin.from('games').update({ current_player_id: bob.id, state: fullCard }).eq('id', created.id)).error,
+  );
+
+  const quit = (await invokeGameAction(bob, { gameId: created.id, type: 'rage_quit' })).game as GameRow;
+  assertEquals([quit.status, quit.winner_id, quit.state.rageQuit], ['complete', alice.id, { playerId: bob.id }]);
+  const finish = await invokeGameAction(alice, { gameId: created.id, type: 'finish_card' }, 400);
+  assertEquals(finish.error, 'There is no card left to finish.');
+
+  // 13 boxes of 20 plus the section bonus.
+  const result = await selectSingle<GamePlayerResultRow>(
+    admin.from('game_player_results').select('*').eq('game_id', created.id).eq('player_id', alice.id).single(),
+  );
+  assertEquals([result.final_score, result.won], [295, true]);
+  assertString(result.played_out_at);
+  const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {
+    board: 'all_time_high_score',
+    max_rows: 100,
+  });
+  assertNoError(boardError);
+  assertEquals(
+    board?.some((row) => row.player_id === alice.id && Number(row.value) === 295),
+    true,
+  );
+  const feats = await selectMany<{ feat_key: string; player_id: string }>(
+    admin.from('player_feats').select('feat_key, player_id').eq('game_id', created.id),
+  );
+  assertEquals(
+    ['spotless', 'upper_crust'].map((key) =>
+      feats.some((feat) => feat.player_id === alice.id && feat.feat_key === key),
+    ),
+    [true, true],
+  );
+  assertEquals(
+    feats.some((feat) => feat.player_id === bob.id),
+    false,
+  );
+});
+
 Deno.test({
   name: 'cleanup Supabase clients',
   sanitizeOps: false,

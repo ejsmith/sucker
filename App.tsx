@@ -4843,8 +4843,8 @@ export function LocalGameScreen({
                     >
                       {didIRageQuit
                         ? `${rageQuitWinnerName} wins. Everyone sees your 🧂 for 24 hours.`
-                        : rageQuit.playOut === 'finished'
-                          ? `${rageQuitterName} flipped the table. You finished your card anyway.`
+                        : availableCategories(homePlayer.scorecard).length === 0
+                          ? `${rageQuitterName} flipped the table. Your finished card still counts.`
                           : `${rageQuitterName} flipped the table. You win.`}
                     </Text>
                     {rageQuit.replyId ? (
