@@ -375,14 +375,157 @@ Deno.test('instant feats match what completion awards for the same history', () 
   assertEquals(instant.length >= 6, true, instant.join());
 });
 
-Deno.test('only punches, submissions, Mulligans, and five of a kind replay the game for instant feats', () => {
-  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 5])), true);
-  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 1])), false);
-  assertEquals(mayEarnInstantFeat(hunt('player')), false);
-  assertEquals(mayEarnInstantFeat(punch('player', { landed: false })), true);
-  assertEquals(mayEarnInstantFeat(scored('player')), true);
-  assertEquals(mayEarnInstantFeat(scratched('player', 'ones')), true);
-  assertEquals(mayEarnInstantFeat({ action_type: 'mulligan', actor_id: 'player' }), true);
+Deno.test('only punches, submissions, Mulligans, five of a kind, and first-roll patterns replay the game', () => {
+  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 5]), 3), true);
+  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 1]), 3), false);
+  assertEquals(mayEarnInstantFeat(roll('player', [5, 5, 5, 5, 1]), 1), true);
+  assertEquals(mayEarnInstantFeat(roll('player', [2, 3, 4, 5, 6]), 1), true);
+  assertEquals(mayEarnInstantFeat(roll('player', [2, 3, 4, 5, 6]), 2), false);
+  assertEquals(mayEarnInstantFeat(roll('player', [1, 2, 3, 4, 6]), 1), false);
+  assertEquals(mayEarnInstantFeat(hunt('player'), 1), false);
+  assertEquals(mayEarnInstantFeat(punch('player', { landed: false }), 0), true);
+  assertEquals(mayEarnInstantFeat(scored('player'), 0), true);
+  assertEquals(mayEarnInstantFeat(scratched('player', 'ones'), 0), true);
+  assertEquals(mayEarnInstantFeat({ action_type: 'mulligan', actor_id: 'player' }, 0), true);
+});
+
+Deno.test('Sucker tiers count each run of rolls once, so a 6-Sucker game earns every tier up to Six Pack', () => {
+  const sucker = (face: number) => roll('player', [face, face, face, face, face]);
+  const sixSuckers = [1, 2, 3, 4, 5, 6].flatMap((face) => [sucker(face), scored('player')]);
+  const six = featsFor('player', sixSuckers);
+  for (const key of ['seeing_double', 'hat_trick', 'four_score', 'high_five', 'six_pack'] as const) {
+    assertEquals(six.includes(key), true, key);
+  }
+  assertEquals(six.includes('lucky_seven'), false);
+
+  // Rolling again with all five held, or buying another roll, is the same Sucker.
+  const heldReroll = featsFor('player', [
+    sucker(6),
+    sucker(6),
+    { action_type: 'extra_roll', actor_id: 'player' },
+    sucker(6),
+    scored('player'),
+  ]);
+  assertEquals(heldReroll.includes('seeing_double'), false);
+
+  // A Mulligan starts the dice over, so a second Sucker after it counts.
+  const mulligan: SuckerStatAction = { action_type: 'mulligan', actor_id: 'player' };
+  assertEquals(featsFor('player', [sucker(6), mulligan, sucker(3)]).includes('seeing_double'), true);
+
+  // The opponent's Suckers are theirs.
+  const shared = featsFor('player', [sucker(6), scored('player'), roll('opponent', [2, 2, 2, 2, 2])]);
+  assertEquals(shared.includes('seeing_double'), false);
+
+  // The tiers are awarded mid-game, the moment the Sucker lands.
+  const eight = buildInstantPlayerFeats({
+    actions: [1, 2, 3, 4, 5, 6, 1, 2].flatMap((face) => [sucker(face), scored('player')]).slice(0, -1),
+    opponentId: 'opponent',
+    playerId: 'player',
+  });
+  assertEquals(eight.includes('crazy_eights'), true);
+});
+
+Deno.test('Back-to-Back and Anything You Can Do read the turn before', () => {
+  const sucker = (actorId: string) => roll(actorId, [4, 4, 4, 4, 4]);
+  const miss = (actorId: string) => roll(actorId, [4, 4, 4, 4, 1]);
+
+  const streak = featsFor('player', [
+    sucker('player'),
+    scored('player'),
+    miss('opponent'),
+    scored('opponent'),
+    sucker('player'),
+  ]);
+  assertEquals(streak.includes('back_to_back'), true);
+  assertEquals(streak.includes('anything_you_can_do'), false);
+
+  const gap = featsFor('player', [
+    sucker('player'),
+    scored('player'),
+    miss('player'),
+    scored('player'),
+    sucker('player'),
+  ]);
+  assertEquals(gap.includes('back_to_back'), false);
+
+  const answered = featsFor('player', [sucker('opponent'), scored('opponent'), miss('player'), sucker('player')]);
+  assertEquals(answered.includes('anything_you_can_do'), true);
+  assertEquals(answered.includes('back_to_back'), false);
+
+  // Punching away the opponent's Sucker turn leaves their replay as the turn before.
+  const erased = featsFor('player', [
+    sucker('opponent'),
+    scored('opponent', 'sucker'),
+    punch('player', { landed: true }),
+    miss('opponent'),
+    scored('opponent'),
+    sucker('player'),
+  ]);
+  assertEquals(erased.includes('anything_you_can_do'), false);
+});
+
+Deno.test('punching away a scored Sucker robs it, and a Sucker on the replay strikes twice', () => {
+  const sucker = (actorId: string) => roll(actorId, [6, 6, 6, 6, 6]);
+  const robbery = [
+    sucker('opponent'),
+    scored('opponent', 'sucker'),
+    punch('player', { landed: true, chanceDie: 3 }),
+    sucker('opponent'),
+    scored('opponent', 'sucker'),
+  ];
+  assertEquals(featsFor('player', robbery).includes('daylight_robbery'), true);
+  const victim = featsFor('opponent', robbery);
+  assertEquals(victim.includes('sucker_punched'), true);
+  assertEquals(victim.includes('lightning_strikes_twice'), true);
+  // The replay is the same turn again, not a second turn in a row.
+  assertEquals(victim.includes('back_to_back'), false);
+  assertEquals(victim.includes('seeing_double'), true);
+
+  // A missed punch, a scratched Sucker, or a later turn's Sucker does not count.
+  const missed = [sucker('opponent'), scored('opponent', 'sucker'), punch('player', { landed: false })];
+  assertEquals(featsFor('player', missed).includes('daylight_robbery'), false);
+  assertEquals(featsFor('opponent', missed).includes('sucker_punched'), false);
+  const scratchedSucker = [sucker('opponent'), scratched('opponent', 'sucker'), punch('player', { landed: true })];
+  assertEquals(featsFor('player', scratchedSucker).includes('daylight_robbery'), false);
+  const later = featsFor('opponent', [
+    sucker('opponent'),
+    scored('opponent', 'sucker'),
+    punch('player', { landed: true }),
+    roll('opponent', [1, 2, 3, 4, 6]),
+    scored('opponent'),
+    sucker('opponent'),
+  ]);
+  assertEquals(later.includes('sucker_punched'), true);
+  assertEquals(later.includes('lightning_strikes_twice'), false);
+});
+
+Deno.test('Straight Out the Gate and Four on the Floor need the first roll of a turn', () => {
+  assertEquals(featsFor('player', [roll('player', [3, 5, 2, 6, 4])]).includes('straight_out_the_gate'), true);
+  assertEquals(featsFor('player', [roll('player', [1, 2, 3, 4, 5])]).includes('straight_out_the_gate'), true);
+  assertEquals(
+    featsFor('player', [roll('player', [1, 2, 3, 4, 4]), roll('player', [1, 2, 3, 4, 5])]).includes(
+      'straight_out_the_gate',
+    ),
+    false,
+  );
+  assertEquals(featsFor('player', [roll('player', [2, 2, 5, 2, 2])]).includes('four_on_the_floor'), true);
+  assertEquals(featsFor('player', [roll('player', [2, 2, 2, 2, 2])]).includes('four_on_the_floor'), false);
+  assertEquals(
+    featsFor('player', [roll('player', [2, 2, 5, 3, 2]), roll('player', [2, 2, 5, 2, 2])]).includes(
+      'four_on_the_floor',
+    ),
+    false,
+  );
+  // A Mulligan or a new turn starts the count over.
+  assertEquals(
+    featsFor('player', [
+      roll('player', [2, 2, 5, 3, 2]),
+      { action_type: 'mulligan', actor_id: 'player' },
+      roll('player', [2, 3, 4, 5, 6]),
+    ]).includes('straight_out_the_gate'),
+    true,
+  );
+  assertEquals(featsFor('opponent', [roll('player', [2, 3, 4, 5, 6])]).includes('straight_out_the_gate'), false);
 });
 
 Deno.test('every feat and defeat has a name, a tone, and a database-safe key', () => {

@@ -2451,7 +2451,11 @@ function plannedStatActions(plan: GameMovePlan) {
 // them. A completing move leaves every feat to planCompletedGameStats, and a
 // Rage Quit awards nothing more, but feats earned before it stand.
 async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePlan) {
-  if (game.status === 'complete' || !plannedStatActions(plan).some(mayEarnInstantFeat)) return;
+  if (
+    game.status === 'complete' ||
+    !plannedStatActions(plan).some((action) => mayEarnInstantFeat(action, game.state.rollNumber))
+  )
+    return;
 
   const [storedActions, awardedFeats] = await Promise.all([
     loadSuckerStatActions(admin, game.id),

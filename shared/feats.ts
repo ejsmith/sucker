@@ -1,12 +1,15 @@
 import {
   createEmptyScorecard,
   extraSuckerBonusPoints,
+  isSuckerRoll,
   maxRollsPerTurn,
+  scoreCategory,
   startingSuckerTokens,
   suckerTokenCosts,
   toScoreCategory,
   totalScore,
   upperSectionBaseScore,
+  type Dice,
   type Player,
   type ScoreCategory,
 } from './game';
@@ -30,6 +33,19 @@ export type GameFeatKey =
   | 'bought_it'
   | 'worth_every_penny'
   | 'sucker_supreme'
+  | 'seeing_double'
+  | 'hat_trick'
+  | 'four_score'
+  | 'high_five'
+  | 'six_pack'
+  | 'lucky_seven'
+  | 'crazy_eights'
+  | 'back_to_back'
+  | 'anything_you_can_do'
+  | 'lightning_strikes_twice'
+  | 'straight_out_the_gate'
+  | 'four_on_the_floor'
+  | 'daylight_robbery'
   | 'upper_crust'
   | 'comeback_kid'
   | 'buzzer_beater'
@@ -45,6 +61,7 @@ export type GameFeatKey =
   | 'whiff_city'
   | 'cant_miss_missed'
   | 'boomerang'
+  | 'sucker_punched'
   | 'died_rich'
   | 'money_pit'
   | 'sucker_born_every_minute'
@@ -104,6 +121,22 @@ export const featCatalog: Record<FeatKey, FeatDefinition> = {
   bought_it: feat('Bought It', 'Roll five of a kind on a purchased Extra Roll.'),
   worth_every_penny: feat('Worth Every Penny', 'Buy 3 or more Extra Rolls chasing a Sucker in one turn, and land it.'),
   sucker_supreme: feat('Sucker Supreme', 'Score 2 extra Sucker bonuses in one game.'),
+  seeing_double: feat('Seeing Double', 'Roll 2 Suckers in one game.'),
+  hat_trick: feat('Hat Trick', 'Roll 3 Suckers in one game.'),
+  four_score: feat('Four Score', 'Roll 4 Suckers in one game.'),
+  high_five: feat('High Five', 'Roll 5 Suckers in one game.'),
+  six_pack: feat('Six Pack', 'Roll 6 Suckers in one game.'),
+  lucky_seven: feat('Lucky Seven', 'Roll 7 Suckers in one game.'),
+  crazy_eights: feat('Crazy Eights', 'Roll 8 Suckers in one game.'),
+  back_to_back: feat('Back-to-Back', 'Roll a Sucker on two of your turns in a row.'),
+  anything_you_can_do: feat('Anything You Can Do', 'Roll a Sucker on the turn right after your opponent rolled one.'),
+  lightning_strikes_twice: feat(
+    'Lightning Strikes Twice',
+    'Have a Sucker you scored punched away, then roll another on the replay.',
+  ),
+  straight_out_the_gate: feat('Straight Out the Gate', 'Roll a large straight on the first roll of a turn.'),
+  four_on_the_floor: feat('Four on the Floor', 'Roll four of a kind on the first roll of a turn.'),
+  daylight_robbery: feat('Daylight Robbery', 'Land a punch on a turn that scored a Sucker.'),
   upper_crust: feat('Upper Crust', 'Score at least three of every number in the upper section.'),
   comeback_kid: feat('Comeback Kid', `Win after trailing by ${comebackPointMargin} or more.`),
   buzzer_beater: feat('Buzzer Beater', 'Take the lead on your final turn and win.'),
@@ -129,6 +162,7 @@ export const featCatalog: Record<FeatKey, FeatDefinition> = {
   whiff_city: defeat('Whiff City', 'Miss 3 or more Sucker Punches in one game.'),
   cant_miss_missed: defeat("Can't Miss, Missed", 'Miss a Sucker Punch at 75% odds.'),
   boomerang: defeat('Boomerang', 'Miss a punch, then get hit by the counterpunch it handed them.'),
+  sucker_punched: defeat('Sucker Punched', 'Have a Sucker you scored punched away.'),
   died_rich: defeat('Died Rich', 'Lose with 10 or more tokens unspent.'),
   money_pit: defeat('Money Pit', 'Spend 10 or more tokens and still lose.'),
   sucker_born_every_minute: defeat(
@@ -170,6 +204,17 @@ const upperCategoryFaces: [UpperCategory, number][] = [
 
 const upperBonusThreshold = 63;
 
+// Each tier is its own feat, so a 6-Sucker game earns every tier from 2 to 6.
+const suckerCountFeats: [number, GameFeatKey][] = [
+  [2, 'seeing_double'],
+  [3, 'hat_trick'],
+  [4, 'four_score'],
+  [5, 'high_five'],
+  [6, 'six_pack'],
+  [7, 'lucky_seven'],
+  [8, 'crazy_eights'],
+];
+
 // Feats settled the moment they happen, whatever the final score. The
 // game-action function awards these mid-game; the rest wait for completion.
 // Each one only ever turns on as more actions are replayed, so a later move
@@ -184,6 +229,20 @@ export const instantFeatKeys: ReadonlySet<GameFeatKey> = new Set<GameFeatKey>([
   'whiff_city',
   'cant_miss_missed',
   'boomerang',
+  'sucker_punched',
+  'seeing_double',
+  'hat_trick',
+  'four_score',
+  'high_five',
+  'six_pack',
+  'lucky_seven',
+  'crazy_eights',
+  'back_to_back',
+  'anything_you_can_do',
+  'lightning_strikes_twice',
+  'straight_out_the_gate',
+  'four_on_the_floor',
+  'daylight_robbery',
   'sucker_born_every_minute',
   'all_in_all_gone',
   'bought_a_goose_egg',
@@ -191,12 +250,15 @@ export const instantFeatKeys: ReadonlySet<GameFeatKey> = new Set<GameFeatKey>([
   'scratch_fever',
 ]);
 
-// Every instant feat needs a punch, a turn ending, or five of a kind, so other
-// moves can skip replaying the game.
-export function mayEarnInstantFeat(action: SuckerStatAction) {
+// Every instant feat needs a punch, a turn ending, five of a kind, or a large
+// straight or four of a kind on the first roll, so other moves can skip
+// replaying the game. rollNumber is the roll's number since the turn started
+// or was Mulliganed.
+export function mayEarnInstantFeat(action: SuckerStatAction, rollNumber: number) {
   if (action.action_type !== 'roll') return action.action_type !== 'extra_roll';
-  const dice = payloadValue(action.payload, 'dice');
-  return Array.isArray(dice) && dice.length === 5 && dice.every((die) => die === dice[0]);
+  const dice = rolledDice(action.payload);
+  if (!dice) return false;
+  return isSuckerRoll(dice) || (rollNumber === 1 && (isLargeStraight(dice) || isFourOfAKind(dice)));
 }
 
 export function buildInstantPlayerFeats({
@@ -208,7 +270,11 @@ export function buildInstantPlayerFeats({
   opponentId: string;
   playerId: string;
 }): GameFeatKey[] {
-  const feats = new Set([...scanPunches(actions, playerId, opponentId), ...scanPlayerTurns(actions, playerId).feats]);
+  const feats = new Set([
+    ...scanPunches(actions, playerId, opponentId),
+    ...scanPlayerTurns(actions, playerId).feats,
+    ...scanDice(actions, playerId, opponentId),
+  ]);
   return featKeys.filter(
     (key): key is GameFeatKey => instantFeatKeys.has(key as GameFeatKey) && feats.has(key as GameFeatKey),
   );
@@ -235,6 +301,7 @@ export function buildCompletedPlayerFeats({
   const margin = totalScore(player.scorecard) - totalScore(opponent.scorecard);
 
   scanPunches(actions, player.id, opponent.id).forEach((key) => feats.add(key));
+  scanDice(actions, player.id, opponent.id).forEach((key) => feats.add(key));
   const play = scanPlayerTurns(actions, player.id, finalTurnScore(turns, player.id));
   play.feats.forEach((key) => feats.add(key));
 
@@ -309,6 +376,89 @@ function scanPunches(actions: SuckerStatAction[], playerId: string, opponentId: 
   }
 
   if (misses >= 3) feats.add('whiff_city');
+  return feats;
+}
+
+// Replays both players' dice. A Sucker counts once per run of rolls, and a run
+// starts over at each submission and Mulligan, so rolling again with all five
+// held does not count twice. A landed punch erases the target's last turn, and
+// its replay is a new run.
+function scanDice(actions: SuckerStatAction[], playerId: string, opponentId: string) {
+  const feats = new Set<GameFeatKey>();
+  const newSide = () => ({
+    dice: null as Dice | null,
+    rolls: 0,
+    runSucker: false,
+    turnSucker: false,
+    turns: [] as { scoredSucker: boolean; sucker: boolean }[],
+  });
+  const player = newSide();
+  const opponent = newSide();
+  let suckers = 0;
+  let replayingStolenSucker = false;
+
+  for (const action of actions) {
+    const side = action.actor_id === playerId ? player : action.actor_id === opponentId ? opponent : null;
+    if (!side) continue;
+
+    switch (action.action_type) {
+      case 'roll': {
+        side.rolls += 1;
+        side.dice = rolledDice(action.payload);
+        if (!side.dice) break;
+        const sucker = isSuckerRoll(side.dice);
+        if (side === player) {
+          if (side.rolls === 1 && isLargeStraight(side.dice)) feats.add('straight_out_the_gate');
+          if (side.rolls === 1 && isFourOfAKind(side.dice)) feats.add('four_on_the_floor');
+          if (sucker && !side.runSucker) {
+            suckers += 1;
+            for (const [count, key] of suckerCountFeats) if (suckers >= count) feats.add(key);
+          }
+          if (sucker && player.turns.at(-1)?.sucker) feats.add('back_to_back');
+          if (sucker && opponent.turns.at(-1)?.sucker) feats.add('anything_you_can_do');
+          if (sucker && replayingStolenSucker) feats.add('lightning_strikes_twice');
+        }
+        if (sucker) {
+          side.runSucker = true;
+          side.turnSucker = true;
+        }
+        break;
+      }
+      case 'mulligan':
+        side.dice = null;
+        side.rolls = 0;
+        side.runSucker = false;
+        break;
+      case 'score_category':
+      case 'scratch_category':
+        side.turns.push({
+          scoredSucker: action.action_type === 'score_category' && side.dice !== null && isSuckerRoll(side.dice),
+          sucker: side.turnSucker,
+        });
+        side.dice = null;
+        side.rolls = 0;
+        side.runSucker = false;
+        side.turnSucker = false;
+        if (side === player) replayingStolenSucker = false;
+        break;
+      case 'sucker_punch': {
+        if (payloadValue(action.payload, 'landed') === false) break;
+        const targetId = payloadValue(action.payload, 'targetPlayerId');
+        const target = targetId === playerId ? player : targetId === opponentId ? opponent : null;
+        if (!target || target === side || !target.turns.pop()?.scoredSucker) break;
+        if (target === player) {
+          feats.add('sucker_punched');
+          replayingStolenSucker = true;
+        } else {
+          feats.add('daylight_robbery');
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
   return feats;
 }
 
@@ -453,6 +603,22 @@ function scoreTimeline(turns: SuckerStatTurn[], playerId: string, opponentId: st
     scorecard[toScoreCategory(turn.category)] = turn.score;
     return [{ leadAfter: lead(), leadBefore, playerId: turn.player_id }];
   });
+}
+
+function rolledDice(payload: unknown): Dice | null {
+  const dice = payloadValue(payload, 'dice');
+  return Array.isArray(dice) && dice.length === 5 && dice.every((die) => Number.isInteger(die) && die >= 1 && die <= 6)
+    ? (dice as Dice)
+    : null;
+}
+
+function isLargeStraight(dice: Dice) {
+  return scoreCategory(dice, 'largeStraight') > 0;
+}
+
+// Exactly four alike; five alike is a Sucker.
+function isFourOfAKind(dice: Dice) {
+  return !isSuckerRoll(dice) && scoreCategory(dice, 'fourOfAKind') > 0;
 }
 
 function payloadValue(payload: unknown, key: string) {

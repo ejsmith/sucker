@@ -124,26 +124,39 @@ need a migration.
 **Per-game feats** are computed in TypeScript (`buildCompletedPlayerFeats`) from
 the same actions, turns, and scorecards that already feed stats:
 
-| Key                   | Name                | Trigger                                                      |
-| --------------------- | ------------------- | ------------------------------------------------------------ |
-| `one_inch_punch`      | One-Inch Punch      | Land a Sucker Punch on a 1 (10% chance)                      |
-| `iron_chin`           | Iron Chin           | Win after taking 2+ landed punches                           |
-| `revenge_is_sweet`    | Revenge Is Sweet    | Land a punch at the revenge discount                         |
-| `counter_culture`     | Counter Culture     | Land a counterpunch that cost only 1 token                   |
-| `penny_pincher`       | Penny Pincher       | Win without spending a token                                 |
-| `high_roller`         | High Roller         | Spend 10+ tokens and win                                     |
-| `deal_with_the_devil` | Deal With the Devil | Win with a zero in the Sucker box                            |
-| `natural`             | Natural             | Roll five of a kind on the first roll of a turn              |
-| `bought_it`           | Bought It           | Roll five of a kind on a purchased Extra Roll                |
-| `sucker_supreme`      | Sucker Supreme      | Score 2+ extra Sucker bonuses in one game                    |
-| `upper_crust`         | Upper Crust         | Score at least three of every number in the upper section    |
-| `comeback_kid`        | Comeback Kid        | Win after trailing by 100+ (more than one Sucker)            |
-| `buzzer_beater`       | Buzzer Beater       | Take the lead on your final turn and win                     |
-| `walk_off`            | Walk-Off            | Trail going into the game's last turn, then take it and win  |
-| `last_gasp`           | Last Gasp           | A Walk-Off scored on the last roll you had                   |
-| `photo_finish`        | Photo Finish        | Win by 5 or less                                             |
-| `worth_every_penny`   | Worth Every Penny   | Buy 3+ Extra Rolls chasing a Sucker in one turn, and land it |
-| `blowout`             | Blowout             | Win by 75+                                                   |
+| Key                       | Name                    | Trigger                                                            |
+| ------------------------- | ----------------------- | ------------------------------------------------------------------ |
+| `one_inch_punch`          | One-Inch Punch          | Land a Sucker Punch on a 1 (10% chance)                            |
+| `iron_chin`               | Iron Chin               | Win after taking 2+ landed punches                                 |
+| `revenge_is_sweet`        | Revenge Is Sweet        | Land a punch at the revenge discount                               |
+| `counter_culture`         | Counter Culture         | Land a counterpunch that cost only 1 token                         |
+| `penny_pincher`           | Penny Pincher           | Win without spending a token                                       |
+| `high_roller`             | High Roller             | Spend 10+ tokens and win                                           |
+| `deal_with_the_devil`     | Deal With the Devil     | Win with a zero in the Sucker box                                  |
+| `natural`                 | Natural                 | Roll five of a kind on the first roll of a turn                    |
+| `bought_it`               | Bought It               | Roll five of a kind on a purchased Extra Roll                      |
+| `sucker_supreme`          | Sucker Supreme          | Score 2+ extra Sucker bonuses in one game                          |
+| `seeing_double`           | Seeing Double           | Roll 2+ Suckers in one game                                        |
+| `hat_trick`               | Hat Trick               | Roll 3+ Suckers in one game                                        |
+| `four_score`              | Four Score              | Roll 4+ Suckers in one game                                        |
+| `high_five`               | High Five               | Roll 5+ Suckers in one game                                        |
+| `six_pack`                | Six Pack                | Roll 6+ Suckers in one game                                        |
+| `lucky_seven`             | Lucky Seven             | Roll 7+ Suckers in one game                                        |
+| `crazy_eights`            | Crazy Eights            | Roll 8+ Suckers in one game                                        |
+| `back_to_back`            | Back-to-Back            | Roll a Sucker on two of your turns in a row                        |
+| `anything_you_can_do`     | Anything You Can Do     | Roll a Sucker on the turn right after your opponent did            |
+| `lightning_strikes_twice` | Lightning Strikes Twice | Have a scored Sucker punched away, then roll another on the replay |
+| `straight_out_the_gate`   | Straight Out the Gate   | Roll a large straight on the first roll of a turn                  |
+| `four_on_the_floor`       | Four on the Floor       | Roll exactly four of a kind on the first roll of a turn            |
+| `daylight_robbery`        | Daylight Robbery        | Land a punch on a turn that scored a Sucker                        |
+| `upper_crust`             | Upper Crust             | Score at least three of every number in the upper section          |
+| `comeback_kid`            | Comeback Kid            | Win after trailing by 100+ (more than one Sucker)                  |
+| `buzzer_beater`           | Buzzer Beater           | Take the lead on your final turn and win                           |
+| `walk_off`                | Walk-Off                | Trail going into the game's last turn, then take it and win        |
+| `last_gasp`               | Last Gasp               | A Walk-Off scored on the last roll you had                         |
+| `photo_finish`            | Photo Finish            | Win by 5 or less                                                   |
+| `worth_every_penny`       | Worth Every Penny       | Buy 3+ Extra Rolls chasing a Sucker in one turn, and land it       |
+| `blowout`                 | Blowout                 | Win by 75+                                                         |
 
 **Per-game defeats** use the same inputs:
 
@@ -157,6 +170,7 @@ the same actions, turns, and scorecards that already feed stats:
 | `whiff_city`               | Whiff City               | Miss 3+ Sucker Punches in one game                                    |
 | `cant_miss_missed`         | Can't Miss, Missed       | Miss a punch at 75% odds                                              |
 | `boomerang`                | Boomerang                | Miss a punch, then get hit by the counterpunch it handed them         |
+| `sucker_punched`           | Sucker Punched           | Have a Sucker you scored punched away                                 |
 | `died_rich`                | Died Rich                | Lose with 10+ tokens unspent                                          |
 | `money_pit`                | Money Pit                | Spend 10+ tokens and still lose                                       |
 | `sucker_born_every_minute` | Sucker Born Every Minute | Buy 3+ Extra Rolls chasing a Sucker in one turn, and miss             |
@@ -172,12 +186,25 @@ Gone is replayed from the game's actions. The comeback margin is shared with
 the Comeback wins stat, so both use 100. Rage Quit forfeits award no further
 per-game feats or defeats.
 
+A Sucker rolled counts once per run of rolls. A run starts over at each
+submission and Mulligan, so rolling again with all five held, or buying another
+roll on a Sucker, does not count twice. A Sucker on a punched turn's replay
+counts again. The count tiers are separate feats, so a 6-Sucker game earns
+Seeing Double through Six Pack. A landed punch erases the target's last turn:
+Back-to-Back and Anything You Can Do compare against the turn before that, and
+a "scored Sucker" is a turn scored (not scratched) with five of a kind showing.
+Migration `20261028140000_backfill_sucker_count_feats.sql` credited games that
+finished before the count tiers existed.
+
 **Instant feats** (`instantFeatKeys`) cannot depend on how the game ends, so
 `game-action` awards them in the same move that earns them: One-Inch Punch,
 Revenge Is Sweet, Counter Culture, Natural, Bought It, Worth Every Penny, Whiff
-City, Can't Miss Missed, Boomerang, Sucker Born Every Minute, All In All Gone,
-Bought a Goose Egg, Buyer's Remorse, and Scratch Fever. Only a punch, a
-submission, a Mulligan, or five of a kind replays the game's actions to check.
+City, Can't Miss Missed, Boomerang, Sucker Punched, the Sucker count tiers,
+Back-to-Back, Anything You Can Do, Lightning Strikes Twice, Straight Out the
+Gate, Four on the Floor, Daylight Robbery, Sucker Born Every Minute, All In All
+Gone, Bought a Goose Egg, Buyer's Remorse, and Scratch Fever. Only a punch, a
+submission, a Mulligan, five of a kind, or a large straight or four of a kind
+on a turn's first roll replays the game's actions to check.
 Turn-level feats such as a Sucker chase settle when the turn is submitted or
 Mulliganed. Completion still computes every feat and skips the ones already
 stored for that game.

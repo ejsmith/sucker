@@ -1791,8 +1791,9 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     latestGame = await scratchAndPass(gameId, alice, bob, category);
     latestGame = await scratchAndPass(gameId, bob, alice, category);
     if (index === 5) {
-      // The fixed test die rolls five 1s, a Natural. It and the sixth scratch
-      // are awarded the moment they happen, not when the game ends.
+      // The fixed test die rolls five 1s every turn: a Natural, a Sucker on
+      // every turn so far, and back-to-back with each other. They and the sixth
+      // scratch are awarded the moment they happen, not when the game ends.
       assertEquals(latestGame.status === 'complete', false);
       const midGameFeats = await selectMany<{ feat_key: string; player_id: string }>(
         admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
@@ -1803,7 +1804,17 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
             .filter((feat) => feat.player_id === id)
             .map((feat) => feat.feat_key)
             .sort(),
-          ['natural', 'scratch_fever'],
+          [
+            'anything_you_can_do',
+            'back_to_back',
+            'four_score',
+            'hat_trick',
+            'high_five',
+            'natural',
+            'scratch_fever',
+            'seeing_double',
+            'six_pack',
+          ],
         );
       }
     }
