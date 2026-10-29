@@ -48,7 +48,7 @@ import {
   type SuckerStatActionType,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
-import { buildCompletedPlayerFeats } from '../_shared/feats.ts';
+import { buildCompletedPlayerFeats, buildInstantPlayerFeats, mayEarnInstantFeat } from '../_shared/feats.ts';
 import {
   getTurnTauntScenario,
   isTauntAvailableForScenario,
@@ -202,6 +202,9 @@ Deno.serve(async (request) => {
       let result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
       if (mutationState.plan) {
         if (!result.game) throw new InternalServerError('A game move must return its game.');
+        const plan = mutationState.plan;
+        const game = result.game;
+        await timer.measure('feats', () => planInstantFeats(admin, game, plan));
         mutationState.mayHaveWritten = true;
         try {
           result = await commitGameMove(admin, mutationState.plan, user.id, action.requestId, {
@@ -2332,7 +2335,10 @@ async function planCompletedGameStats(
   plan: GameMovePlan,
   rageQuitterId?: string,
 ) {
-  const { actions, turns } = await loadCompletedGameHistory(admin, gameId, plan);
+  const [{ actions, turns }, awardedFeats] = await Promise.all([
+    loadCompletedGameHistory(admin, gameId, plan),
+    loadAwardedFeats(admin, gameId),
+  ]);
   for (const player of [...players].sort((left, right) => left.id.localeCompare(right.id))) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = buildCompletedPlayerStats({ actions, gameId, opponent, player, players, turns, winnerId });
@@ -2362,6 +2368,7 @@ async function planCompletedGameStats(
     }
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
     for (const featKey of buildCompletedPlayerFeats({ actions, opponent, player, result, turns, winnerId })) {
+      if (awardedFeats.has(awardedFeatId(player.id, featKey))) continue;
       plan.writes.push({
         table: 'player_feats',
         operation: 'insert',
@@ -2424,14 +2431,62 @@ async function loadCompletedGameHistory(admin: DbClient, gameId: string, plan: G
   // The final turn and its submission are part of this transaction and are not
   // in the database yet.
   for (const write of plan.writes) {
-    if (write.operation !== 'insert') continue;
-    if (write.table === 'turns') turns.push(write.data as unknown as SuckerStatTurn);
-    if (write.table === 'turn_actions' && statActionTypes.includes(write.data.action_type as SuckerStatActionType)) {
-      actions.push(write.data as unknown as SuckerStatAction);
-    }
+    if (write.operation === 'insert' && write.table === 'turns') turns.push(write.data as unknown as SuckerStatTurn);
   }
 
-  return { actions, turns };
+  return { actions: [...actions, ...plannedStatActions(plan)], turns };
+}
+
+function plannedStatActions(plan: GameMovePlan) {
+  return plan.writes.flatMap((write) =>
+    write.operation === 'insert' &&
+    write.table === 'turn_actions' &&
+    statActionTypes.includes(write.data.action_type as SuckerStatActionType)
+      ? [write.data as unknown as SuckerStatAction]
+      : [],
+  );
+}
+
+// Feats that cannot depend on the result are awarded on the move that earns
+// them. A completing move leaves every feat to planCompletedGameStats, and a
+// Rage Quit awards nothing more, but feats earned before it stand.
+async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePlan) {
+  if (
+    game.status === 'complete' ||
+    !plannedStatActions(plan).some((action) => mayEarnInstantFeat(action, game.state.rollNumber))
+  )
+    return;
+
+  const [storedActions, awardedFeats] = await Promise.all([
+    loadSuckerStatActions(admin, game.id),
+    loadAwardedFeats(admin, game.id),
+  ]);
+  const actions = [...storedActions, ...plannedStatActions(plan)];
+  for (const player of game.state.players) {
+    const opponent = game.state.players.find((candidate) => candidate.id !== player.id);
+    if (!opponent) continue;
+    for (const featKey of buildInstantPlayerFeats({ actions, opponentId: opponent.id, playerId: player.id })) {
+      if (awardedFeats.has(awardedFeatId(player.id, featKey))) continue;
+      plan.writes.push({
+        table: 'player_feats',
+        operation: 'insert',
+        data: { feat_key: featKey, game_id: game.id, player_id: player.id },
+      });
+    }
+  }
+}
+
+async function loadAwardedFeats(admin: DbClient, gameId: string) {
+  const { data, error } = await admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId);
+  if (error) {
+    throw error;
+  }
+
+  return new Set((data ?? []).map((feat) => awardedFeatId(feat.player_id, feat.feat_key)));
+}
+
+function awardedFeatId(playerId: string, featKey: string) {
+  return `${playerId}:${featKey}`;
 }
 
 async function loadSuckerStatTurns(admin: DbClient, gameId: string) {
