@@ -19,6 +19,7 @@ import {
   type Dice,
   type DieValue,
   type GameState,
+  isPlayingOut,
   isSuckerRoll,
   maxRollsPerTurn,
   mulliganCurrentTurn,
@@ -30,6 +31,7 @@ import {
   type ScoreCategory,
   scoreCategoryForScorecard,
   startingSuckerTokens,
+  startPlayOut,
   type SuckerPunchOutcome,
   suckerTokenCosts,
   toDice,
@@ -48,7 +50,12 @@ import {
   type SuckerStatActionType,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
-import { buildCompletedPlayerFeats, buildInstantPlayerFeats, mayEarnInstantFeat } from '../_shared/feats.ts';
+import {
+  buildCompletedPlayerFeats,
+  buildInstantPlayerFeats,
+  buildPlayOutFeats,
+  mayEarnInstantFeat,
+} from '../_shared/feats.ts';
 import {
   getTurnTauntScenario,
   isTauntAvailableForScenario,
@@ -122,6 +129,7 @@ type ActionInput =
   | { type: 'sucker_punch'; chanceDie?: DieValue; chanceProtocol?: 'prepared'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string }
   | { type: 'rage_quit'; gameId: string }
+  | { type: 'finish_card'; gameId: string }
   | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
 type Action = ActionInput & { requestId: string };
 type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
@@ -330,6 +338,8 @@ async function applyAction(
       return blockSuckerPunch(admin, actorId, action.gameId, action.turnId);
     case 'rage_quit':
       return rageQuitRemoteGame(admin, actorId, action.gameId, mutationState);
+    case 'finish_card':
+      return startRemotePlayOut(admin, actorId, action.gameId, mutationState);
     case 'rage_quit_reply':
       return replyToRageQuit(admin, actorId, action.gameId, action.replyId, mutationState);
     default:
@@ -1007,6 +1017,7 @@ function toAction(value: unknown): Action {
         type,
       };
     case 'rage_quit':
+    case 'finish_card':
       return { gameId: readString(action, 'gameId'), requestId, type };
     case 'rage_quit_reply': {
       const replyId = readString(action, 'replyId');
@@ -1569,14 +1580,16 @@ async function mutateGame(
   const game = await loadGameForActor(admin, gameId, actorId);
   const nextState = mutate(expireCounterPunch(game.state, actorId));
   const nextPlayer = nextState.players[nextState.currentPlayerIndex];
+  // A play-out after a Rage Quit happens in a game that is already over.
+  const over = nextState.phase === 'complete' || isPlayingOut(nextState);
   const data = stageGameMove(mutationState, game, {
-    current_player_id: nextState.phase === 'complete' ? null : nextPlayer.id,
+    current_player_id: over ? null : nextPlayer.id,
     state: nextState,
-    status: nextState.phase === 'complete' ? 'complete' : 'active',
+    status: over ? 'complete' : 'active',
   });
 
   await Promise.all([
-    syncGamePlayers(admin, gameId, nextState, nextState.phase === 'complete', mutationState.plan),
+    syncGamePlayers(admin, gameId, nextState, over, mutationState.plan),
     insertAction(admin, gameId, actorId, actionType, createPayload(game.state, nextState), mutationState.plan),
   ]);
   return { game: data };
@@ -1625,18 +1638,23 @@ async function scoreRemoteTurn(
       suckerTokens: Math.max(0, player.suckerTokens + tokenDelta),
     };
   });
-  const complete = players.every((player) =>
-    scoreCategories.every((scoreCategory) => player.scorecard[scoreCategory] !== null),
-  );
+  // A play-out after a Rage Quit ends when the winner's own card is full, and
+  // every turn stays theirs.
+  const playingOut = isPlayingOut(state);
+  const complete = players
+    .filter((player) => !playingOut || player.id === actorId)
+    .every((player) => scoreCategories.every((scoreCategory) => player.scorecard[scoreCategory] !== null));
   const nextState: GameState = {
     ...expireCounterPunch(state, complete ? (state.counterPunchPlayerId ?? actorId) : actorId),
-    currentPlayerIndex: complete ? state.currentPlayerIndex : (state.currentPlayerIndex + 1) % players.length,
+    currentPlayerIndex:
+      complete || playingOut ? state.currentPlayerIndex : (state.currentPlayerIndex + 1) % players.length,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
     held: [false, false, false, false, false],
     phase: complete ? 'complete' : 'rolling',
     players: complete ? players.map(clearRevengePunchDiscount) : players,
     rollNumber: 0,
+    ...(playingOut ? { rageQuit: { ...state.rageQuit!, playOut: complete ? 'finished' : 'playing' } } : {}),
   };
   const rankedPlayers = complete ? [...players].sort((a, b) => totalScore(b.scorecard) - totalScore(a.scorecard)) : [];
   const winner =
@@ -1656,18 +1674,25 @@ async function scoreRemoteTurn(
     status: complete ? 'finalized' : 'submitted',
     turn_index: turnIndex,
   };
-  const updatedGame = stageGameMove(mutationState, game, {
-    completed_at: complete ? new Date().toISOString() : null,
-    current_player_id: complete ? null : players[nextState.currentPlayerIndex].id,
-    last_turn_id: turn.id,
-    state: nextState,
-    status: complete ? 'complete' : 'response_window',
-    winner_id: winner?.id ?? null,
-  });
+  // The result was settled at the quit, so a play-out only records the turn.
+  const updatedGame = stageGameMove(
+    mutationState,
+    game,
+    playingOut
+      ? { last_turn_id: turn.id, state: nextState }
+      : {
+          completed_at: complete ? new Date().toISOString() : null,
+          current_player_id: complete ? null : players[nextState.currentPlayerIndex].id,
+          last_turn_id: turn.id,
+          state: nextState,
+          status: complete ? 'complete' : 'response_window',
+          winner_id: winner?.id ?? null,
+        },
+  );
   mutationState.plan!.writes.push({ table: 'turns', operation: 'insert', data: turn });
 
   await Promise.all([
-    syncGamePlayers(admin, gameId, nextState, complete, mutationState.plan),
+    syncGamePlayers(admin, gameId, nextState, complete || playingOut, mutationState.plan),
     insertAction(
       admin,
       gameId,
@@ -1683,6 +1708,10 @@ async function scoreRemoteTurn(
     ),
   ]);
 
+  if (playingOut) {
+    if (complete) await planPlayOutResult(admin, game, nextState, actorId, mutationState.plan!);
+    return { game: updatedGame, notificationProfileIds: [] };
+  }
   if (complete) {
     await planCompletedGameStats(admin, gameId, players, winner?.id ?? null, mutationState.plan!);
   }
@@ -1766,11 +1795,34 @@ async function rageQuitRemoteGame(
     insertAction(admin, gameId, actorId, 'rage_quit', {}, mutationState.plan),
   ]);
   await planCompletedGameStats(admin, gameId, nextState.players, winnerId, mutationState.plan!, actorId);
+  // A winner who already filled their card has nothing left to play out, so it
+  // counts right away.
+  const winner = nextState.players.find((player) => player.id === winnerId);
+  if (winner && scoreCategories.every((category) => winner.scorecard[category] !== null)) {
+    await planPlayOutResult(admin, game, nextState, winner.id, mutationState.plan!);
+  }
 
   return {
     game: updatedGame,
     notificationProfileIds: nextState.players.map((player) => player.id),
   };
+}
+
+// After a Rage Quit, the winner may finish their own card alone. The result,
+// rating, and streaks stay as they were at the quit.
+async function startRemotePlayOut(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status !== 'complete') {
+    throw new Error('There is no card left to finish.');
+  }
+
+  const updatedGame = stageGameMove(mutationState, game, { state: startPlayOut(game.state, actorId) });
+  return { game: updatedGame, notificationProfileIds: [] };
 }
 
 async function replyToRageQuit(
@@ -1809,13 +1861,17 @@ async function replyToRageQuit(
 
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
   const game = await loadGameForActor(admin, gameId, actorId);
-  if ((game.status !== 'active' && game.status !== 'response_window') || game.state.phase === 'complete') {
+  const playingOut = isPlayingOut(game.state);
+  if (
+    (game.status !== 'active' && game.status !== 'response_window' && !playingOut) ||
+    game.state.phase === 'complete'
+  ) {
     throw new Error('Mulligan is only available during a game.');
   }
 
   const state = game.state;
   let turn: TurnRow | null = null;
-  if (game.current_player_id === actorId) {
+  if (game.current_player_id === actorId || playingOut) {
     assertCurrentPlayer(state, actorId);
   } else {
     // Preserve the existing ability to undo your submitted turn while its
@@ -1837,11 +1893,11 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   const nextState = turn
     ? removeScoredTurn(expireCounterPunch(state, actorId), turn, actorId, -suckerTokenCosts.mulligan)
     : mulliganCurrentTurn(state);
-  const updatedGame = stageGameMove(mutationState, game, {
-    current_player_id: actorId,
-    state: nextState,
-    status: 'active',
-  });
+  const updatedGame = stageGameMove(
+    mutationState,
+    game,
+    playingOut ? { state: nextState } : { current_player_id: actorId, state: nextState, status: 'active' },
+  );
 
   await Promise.all([
     ...(turn ? [updateTurnStatus(admin, turn.id, 'mulliganed', mutationState.plan)] : []),
@@ -1856,7 +1912,7 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
       },
       mutationState.plan,
     ),
-    syncGamePlayers(admin, gameId, nextState, false, mutationState.plan),
+    syncGamePlayers(admin, gameId, nextState, playingOut, mutationState.plan),
     insertAction(admin, gameId, actorId, 'mulligan', turn ? { turnId: turn.id } : {}, mutationState.plan),
   ]);
 
@@ -2451,8 +2507,10 @@ function plannedStatActions(plan: GameMovePlan) {
 // them. A completing move leaves every feat to planCompletedGameStats, and a
 // Rage Quit awards nothing more, but feats earned before it stand.
 async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePlan) {
+  // During a play-out only the winner is still playing.
+  const playingOut = isPlayingOut(game.state);
   if (
-    game.status === 'complete' ||
+    (game.status === 'complete' && !playingOut) ||
     !plannedStatActions(plan).some((action) => mayEarnInstantFeat(action, game.state.rollNumber))
   )
     return;
@@ -2464,7 +2522,7 @@ async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePl
   const actions = [...storedActions, ...plannedStatActions(plan)];
   for (const player of game.state.players) {
     const opponent = game.state.players.find((candidate) => candidate.id !== player.id);
-    if (!opponent) continue;
+    if (!opponent || (playingOut && player.id === game.state.rageQuit?.playerId)) continue;
     for (const featKey of buildInstantPlayerFeats({ actions, opponentId: opponent.id, playerId: player.id })) {
       if (awardedFeats.has(awardedFeatId(player.id, featKey))) continue;
       plan.writes.push({
@@ -2473,6 +2531,59 @@ async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePl
         data: { feat_key: featKey, game_id: game.id, player_id: player.id },
       });
     }
+  }
+}
+
+// A Rage Quit winner's full card, played out or already full at the quit,
+// counts: their final score reaches the high scores, and they earn the feats
+// their own card decides. The result row keeps the forfeit's zeroed comeback
+// and margin stats.
+async function planPlayOutResult(
+  admin: DbClient,
+  game: GameRow,
+  state: GameState,
+  playerId: string,
+  plan: GameMovePlan,
+) {
+  const player = findPlayer(state, playerId);
+  const opponent = state.players.find((candidate) => candidate.id !== playerId)!;
+  const [{ actions, turns }, awardedFeats] = await Promise.all([
+    loadCompletedGameHistory(admin, game.id, plan),
+    loadAwardedFeats(admin, game.id),
+  ]);
+  const result = buildCompletedPlayerStats({
+    actions,
+    gameId: game.id,
+    opponent,
+    player,
+    players: state.players,
+    turns,
+    winnerId: playerId,
+  });
+  plan.writes.push({
+    table: 'game_player_results',
+    operation: 'upsert',
+    data: {
+      ...result,
+      blowout_loss: 0,
+      blowout_win: 0,
+      buzzer_beater_win: 0,
+      comeback_win: 0,
+      played_out_at: new Date().toISOString(),
+    },
+  });
+  plan.writes.push({
+    table: 'head_to_head_stats',
+    operation: 'increment',
+    data: { player_id: playerId, opponent_id: opponent.id, highest_score: result.final_score },
+  });
+  for (const featKey of buildPlayOutFeats({ actions, opponentId: opponent.id, player })) {
+    if (awardedFeats.has(awardedFeatId(playerId, featKey))) continue;
+    plan.writes.push({
+      table: 'player_feats',
+      operation: 'insert',
+      data: { feat_key: featKey, game_id: game.id, player_id: playerId },
+    });
   }
 }
 

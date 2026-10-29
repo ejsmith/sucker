@@ -2109,6 +2109,9 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
   const gameId = (created.game as GameRow).id;
   const startingState = (created.game as GameRow).state;
+  // The game has barely started, so there is nothing to rage about yet.
+  const tooSoon = await invokeGameAction(bob, { gameId, type: 'rage_quit' }, 400);
+  assertEquals(tooSoon.error, 'Too soon to rage quit. Finish what you started.');
   // Bob is ahead with a counterpunch and revenge in hand, and it is Alice's turn.
   const leadingState: GameState = {
     ...startingState,
@@ -2116,7 +2119,11 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
     counterPunchPlayerId: bob.id,
     players: startingState.players.map((player) =>
       player.id === bob.id
-        ? { ...player, revengePunchDiscount: 2, scorecard: { ...player.scorecard, chance: 30 } }
+        ? {
+            ...player,
+            revengePunchDiscount: 2,
+            scorecard: { ...player.scorecard, chance: 30, ones: 0, twos: 0 },
+          }
         : player,
     ),
   };
@@ -2282,6 +2289,167 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   );
   assertEquals(finalStats.games_played, 4);
   assertEquals(Number(finalStats.average_score), 10);
+});
+
+Deno.test('the winner of a rage quit can finish their card, and its score counts', async () => {
+  const [alice, bob] = await createUsers('play-out', ['Alice', 'Bob']);
+  const created = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const first = created.current_player_id === alice.id ? alice : bob;
+  const second = first === alice ? bob : alice;
+  const opening: ScoreCategory[] = ['ones', 'twos', 'threes'];
+  for (const category of opening) {
+    await scratchAndPass(created.id, first, second, category);
+    await scratchAndPass(created.id, second, first, category);
+  }
+  const quit = (await invokeGameAction(bob, { gameId: created.id, type: 'rage_quit' })).game as GameRow;
+  assertEquals([quit.status, quit.winner_id], ['complete', alice.id]);
+  const resultAtQuit = await selectSingle<GamePlayerResultRow>(
+    admin.from('game_player_results').select('*').eq('game_id', created.id).eq('player_id', alice.id).single(),
+  );
+  const loadFeats = async (playerId: string) =>
+    (
+      await selectMany<{ feat_key: string }>(
+        admin.from('player_feats').select('feat_key').eq('game_id', created.id).eq('player_id', playerId),
+      )
+    )
+      .map((feat) => feat.feat_key)
+      .sort();
+  // The fixed test die rolls a Sucker every turn, so both earned Sucker feats before the quit.
+  const bobFeatsAtQuit = await loadFeats(bob.id);
+  assertEquals((await loadFeats(alice.id)).includes('four_score'), false);
+
+  // Only the winner can, and only once.
+  const quitterFinish = await invokeGameAction(bob, { gameId: created.id, type: 'finish_card' }, 400);
+  assertEquals(quitterFinish.error, 'There is no card left to finish.');
+  const playing = (await invokeGameAction(alice, { gameId: created.id, type: 'finish_card' })).game as GameRow;
+  assertEquals([playing.status, playing.current_player_id, playing.winner_id], ['complete', null, alice.id]);
+  assertEquals([playing.state.phase, playing.state.rageQuit?.playOut], ['rolling', 'playing']);
+  const twice = await invokeGameAction(alice, { gameId: created.id, type: 'finish_card' }, 400);
+  assertEquals(twice.error, 'There is no card left to finish.');
+
+  // The fixed test die rolls a Sucker. Every turn stays Alice's, and the quitter can't touch it.
+  const rolled = (await invokeGameAction(alice, { gameId: created.id, held: falseHeld, type: 'roll' })).game as GameRow;
+  assertEquals([rolled.status, rolled.current_player_id], ['complete', null]);
+  const quitterRoll = await invokeGameAction(bob, { gameId: created.id, held: falseHeld, type: 'roll' }, 400);
+  assertEquals(quitterRoll.error, 'It is not your turn.');
+  let latest = (
+    await invokeGameAction(alice, { category: 'sucker', gameId: created.id, held: falseHeld, type: 'score_category' })
+  ).game as GameRow;
+  // No response window: the next turn is Alice's again.
+  assertEquals(
+    [latest.status, latest.state.rageQuit?.playOut, latest.state.players[latest.state.currentPlayerIndex].id],
+    ['complete', 'playing', alice.id],
+  );
+  assertString(latest.last_turn_id);
+  const punch = await invokeGameAction(
+    bob,
+    { gameId: created.id, turnId: latest.last_turn_id, type: 'prepare_sucker_punch' },
+    400,
+  );
+  assertString(punch.error);
+
+  const remaining = scoreCategories.filter((category) => !opening.includes(category) && category !== 'sucker');
+  for (const category of remaining) {
+    latest = (
+      await invokeGameAction(alice, { category, gameId: created.id, held: falseHeld, type: 'scratch_category' })
+    ).game as GameRow;
+  }
+  assertEquals(
+    [latest.status, latest.state.phase, latest.state.rageQuit?.playOut],
+    ['complete', 'complete', 'finished'],
+  );
+  assertEquals([latest.winner_id, latest.completed_at], [alice.id, quit.completed_at]);
+
+  // The finished card posts its score. The forfeit's result, rating, and stats stand.
+  const result = await selectSingle<GamePlayerResultRow>(
+    admin.from('game_player_results').select('*').eq('game_id', created.id).eq('player_id', alice.id).single(),
+  );
+  assertEquals([result.final_score, result.won, result.sucker_count], [50, true, 1]);
+  assertString(result.played_out_at);
+  assertEquals([result.rating_after, result.completed_at], [resultAtQuit.rating_after, resultAtQuit.completed_at]);
+  const aliceStats = await selectSingle<HeadToHeadStatsRow>(
+    admin.from('head_to_head_stats').select('*').eq('player_id', alice.id).eq('opponent_id', bob.id).single(),
+  );
+  assertEquals([aliceStats.highest_score, aliceStats.games_played, aliceStats.rage_quit_games], [50, 1, 1]);
+  for (const board of ['all_time_high_score', 'weekly_high_score'] as const) {
+    const { data: rows, error } = await alice.client.rpc('get_leaderboard', { board, max_rows: 100 });
+    assertNoError(error);
+    assertEquals(
+      [
+        rows?.some((row) => row.player_id === alice.id && Number(row.value) === 50),
+        rows?.some((row) => row.player_id === bob.id),
+      ],
+      [true, false],
+    );
+  }
+
+  // Feats from the play-out's own rolls and final card, and none about the forfeit.
+  const aliceFeats = await loadFeats(alice.id);
+  assertEquals(
+    ['four_score', 'scratch_fever', 'double_digits'].map((key) => aliceFeats.includes(key)),
+    [true, true, true],
+  );
+  assertEquals(
+    ['dead_heat', 'penny_pincher', 'blowout', 'wire_to_wire', 'photo_finish'].some((key) => aliceFeats.includes(key)),
+    false,
+  );
+  assertEquals(await loadFeats(bob.id), bobFeatsAtQuit);
+
+  const done = await invokeGameAction(alice, { gameId: created.id, held: falseHeld, type: 'roll' }, 400);
+  assertString(done.error);
+});
+
+Deno.test('a winner whose card was already full when the opponent quit keeps that score', async () => {
+  const [alice, bob] = await createUsers('full-card-quit', ['Alice', 'Bob']);
+  const created = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  // Alice has filled her card. Bob has one box left and quits instead of playing it.
+  const fullCard: GameState = {
+    ...created.state,
+    currentPlayerIndex: created.state.players.findIndex((player) => player.id === bob.id),
+    players: created.state.players.map((player) => ({
+      ...player,
+      scorecard: Object.fromEntries(
+        scoreCategories.map((category) => [category, player.id === alice.id ? 20 : category === 'chance' ? null : 0]),
+      ) as GameState['players'][number]['scorecard'],
+    })),
+  };
+  assertNoError(
+    (await admin.from('games').update({ current_player_id: bob.id, state: fullCard }).eq('id', created.id)).error,
+  );
+
+  const quit = (await invokeGameAction(bob, { gameId: created.id, type: 'rage_quit' })).game as GameRow;
+  assertEquals([quit.status, quit.winner_id, quit.state.rageQuit], ['complete', alice.id, { playerId: bob.id }]);
+  const finish = await invokeGameAction(alice, { gameId: created.id, type: 'finish_card' }, 400);
+  assertEquals(finish.error, 'There is no card left to finish.');
+
+  // 13 boxes of 20 plus the section bonus.
+  const result = await selectSingle<GamePlayerResultRow>(
+    admin.from('game_player_results').select('*').eq('game_id', created.id).eq('player_id', alice.id).single(),
+  );
+  assertEquals([result.final_score, result.won], [295, true]);
+  assertString(result.played_out_at);
+  const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {
+    board: 'all_time_high_score',
+    max_rows: 100,
+  });
+  assertNoError(boardError);
+  assertEquals(
+    board?.some((row) => row.player_id === alice.id && Number(row.value) === 295),
+    true,
+  );
+  const feats = await selectMany<{ feat_key: string; player_id: string }>(
+    admin.from('player_feats').select('feat_key, player_id').eq('game_id', created.id),
+  );
+  assertEquals(
+    ['spotless', 'upper_crust'].map((key) =>
+      feats.some((feat) => feat.player_id === alice.id && feat.feat_key === key),
+    ),
+    [true, true],
+  );
+  assertEquals(
+    feats.some((feat) => feat.player_id === bob.id),
+    false,
+  );
 });
 
 Deno.test({

@@ -267,6 +267,9 @@ create table public.game_player_results (
   completed_at timestamptz not null default now(),
   rating_before numeric(7, 2),
   rating_after numeric(7, 2),
+  -- Set when a Rage Quit winner's full card counts: finished by playing it
+  -- out, or already full at the quit.
+  played_out_at timestamptz,
   primary key (game_id, player_id)
 );
 
@@ -1940,7 +1943,8 @@ begin
   end if;
 
   return query
-  -- Forfeits count toward ratings and streaks only, never scores or punch rates.
+  -- Forfeits count toward ratings and streaks only, never punch rates. Their
+  -- scores count only when the winner finished their card after the quit.
   with entries as (
     select
       standing.player_id,
@@ -1951,14 +1955,14 @@ begin
     union all
     select r.player_id, max(r.final_score)::numeric, count(*)::integer
     from public.game_player_results r
-    where board = 'weekly_high_score' and r.completed_at >= week_start
-      and not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id)
+    where board = 'weekly_high_score' and coalesce(r.played_out_at, r.completed_at) >= week_start
+      and (r.played_out_at is not null or not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id))
     group by r.player_id
     union all
     select r.player_id, max(r.final_score)::numeric, count(*)::integer
     from public.game_player_results r
     where board = 'all_time_high_score'
-      and not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id)
+      and (r.played_out_at is not null or not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id))
     group by r.player_id
     union all
     select r.player_id,

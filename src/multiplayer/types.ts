@@ -125,6 +125,10 @@ export type MultiplayerAction =
       gameId: string;
     }
   | {
+      type: 'finish_card';
+      gameId: string;
+    }
+  | {
       type: 'rage_quit_reply';
       gameId: string;
       replyId: RageQuitReplyId;

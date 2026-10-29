@@ -355,23 +355,7 @@ export function buildCompletedPlayerFeats({
   const play = scanPlayerTurns(actions, player.id, finalTurnScore(turns, player.id));
   play.feats.forEach((key) => feats.add(key));
 
-  if ((player.suckerBonusCategories ?? []).length >= 2) feats.add('sucker_supreme');
-  if (
-    upperCategoryFaces.every(([category, face]) => {
-      const score = player.scorecard[category] ?? 0;
-      const baseScore = score >= extraSuckerBonusPoints ? score - extraSuckerBonusPoints : score;
-      return baseScore >= face * 3;
-    })
-  ) {
-    feats.add('upper_crust');
-  }
-  const upperBase = upperSectionBaseScore(player.scorecard);
-  if (upperBase < upperBonusThreshold && upperBase >= upperBonusThreshold - 3) feats.add('so_close');
-  const finalScore = totalScore(player.scorecard);
-  if (finalScore >= 400) feats.add('club_400');
-  if (finalScore >= 500) feats.add('club_500');
-  if (finalScore < 100) feats.add('double_digits');
-  if (Object.values(player.scorecard).every((score) => score !== null && score > 0)) feats.add('spotless');
+  scorecardFeats(player).forEach((key) => feats.add(key));
   if (winnerId === null) feats.add('dead_heat');
 
   const timeline = scoreTimeline(turns, player.id, opponent.id);
@@ -406,6 +390,48 @@ export function buildCompletedPlayerFeats({
   }
 
   return featKeys.filter((key): key is GameFeatKey => feats.has(key as GameFeatKey));
+}
+
+// After a Rage Quit the winner may finish their card alone. That earns the
+// instant feats and the ones their own final card decides, never the ones
+// measured against the quitter's frozen card or the forfeited result.
+export function buildPlayOutFeats({
+  actions,
+  opponentId,
+  player,
+}: {
+  actions: SuckerStatAction[];
+  opponentId: string;
+  player: Player;
+}): GameFeatKey[] {
+  const feats = new Set([
+    ...buildInstantPlayerFeats({ actions, opponentId, playerId: player.id }),
+    ...scorecardFeats(player),
+  ]);
+  return featKeys.filter((key): key is GameFeatKey => feats.has(key as GameFeatKey));
+}
+
+// Feats a finished card earns on its own, whoever won.
+function scorecardFeats(player: Player) {
+  const feats = new Set<GameFeatKey>();
+  if ((player.suckerBonusCategories ?? []).length >= 2) feats.add('sucker_supreme');
+  if (
+    upperCategoryFaces.every(([category, face]) => {
+      const score = player.scorecard[category] ?? 0;
+      const baseScore = score >= extraSuckerBonusPoints ? score - extraSuckerBonusPoints : score;
+      return baseScore >= face * 3;
+    })
+  ) {
+    feats.add('upper_crust');
+  }
+  const upperBase = upperSectionBaseScore(player.scorecard);
+  if (upperBase < upperBonusThreshold && upperBase >= upperBonusThreshold - 3) feats.add('so_close');
+  const finalScore = totalScore(player.scorecard);
+  if (finalScore >= 400) feats.add('club_400');
+  if (finalScore >= 500) feats.add('club_500');
+  if (finalScore < 100) feats.add('double_digits');
+  if (Object.values(player.scorecard).every((score) => score !== null && score > 0)) feats.add('spotless');
+  return feats;
 }
 
 function scanPunches(actions: SuckerStatAction[], playerId: string, opponentId: string) {

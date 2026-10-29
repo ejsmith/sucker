@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  AccessibilityInfo,
-  Animated,
-  Modal,
-  Platform,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { AccessibilityInfo, Animated, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { Pressable } from './Pressable';
@@ -36,6 +28,8 @@ const insults = [
 // Slowing down is not rage. The streak starts over quietly, and the next tap
 // answers with one of these instead of an insult.
 const resetTaunts = ['Too slow.', "That's not rage.", 'Weak. Again.', 'Is that all you got?'];
+// Early in a game the rage is real but the table stays put.
+const tooSoon = ['Nope.', 'Not a chance.', 'Nice try, crybaby.', 'Denied.'];
 const tapsToFlip = 10;
 // Each tap must land this soon after the last one, or the streak resets.
 // Screen reader double taps cannot go that fast, so they get longer. The web
@@ -47,12 +41,16 @@ export const rageQuitRematchCooldownMs = 5_000;
 
 export function RageQuitDialog({
   isBusy,
+  lockedUntilTurns,
   onCancel,
   onFlip,
   onTap,
   reduceMotion,
 }: {
   isBusy: boolean;
+  // Set while the game is too young to quit. The taps still insult them, and
+  // the last one refuses instead of flipping the table.
+  lockedUntilTurns?: number;
   onCancel: () => void;
   onFlip: () => void;
   onTap?: () => void;
@@ -60,6 +58,7 @@ export function RageQuitDialog({
 }) {
   const [label, setLabel] = useState('RAGE QUIT');
   const [hasFlipped, setHasFlipped] = useState(false);
+  const [isRefused, setIsRefused] = useState(false);
   const taps = useRef(0);
   const usedInsults = useRef<string[]>([]);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,9 +71,7 @@ export function RageQuitDialog({
   useEffect(() => {
     let isActive = true;
     const subscription =
-      Platform.OS === 'web'
-        ? null
-        : AccessibilityInfo.addEventListener('screenReaderChanged', setIsScreenReaderOn);
+      Platform.OS === 'web' ? null : AccessibilityInfo.addEventListener('screenReaderChanged', setIsScreenReaderOn);
     if (subscription) {
       void AccessibilityInfo.isScreenReaderEnabled().then((enabled) => {
         if (isActive) setIsScreenReaderOn(enabled);
@@ -104,6 +101,11 @@ export function RageQuitDialog({
     taps.current += 1;
     onTap?.();
     if (taps.current >= tapsToFlip) {
+      if (lockedUntilTurns) {
+        setIsRefused(true);
+        setLabel(tooSoon[Math.floor(Math.random() * tooSoon.length)]);
+        return;
+      }
       setHasFlipped(true);
       onFlip();
       return;
@@ -168,14 +170,16 @@ export function RageQuitDialog({
           <Text accessibilityRole="header" maxFontSizeMultiplier={1.2} style={styles.title}>
             HAD ENOUGH?
           </Text>
-          <Text maxFontSizeMultiplier={1.2} style={styles.subtitle}>
-            Your opponent wins and everyone sees the 🧂 next to your name for 24 hours.
+          <Text maxFontSizeMultiplier={1.2} style={styles.subtitle} testID="rage-quit-subtitle">
+            {isRefused
+              ? `You can't quit until you've played ${lockedUntilTurns} turns. Finish what you started.`
+              : 'Your opponent wins and everyone sees the 🧂 next to your name for 24 hours.'}
           </Text>
           <Animated.View style={{ transform: [{ scale: pop }] }}>
             <Pressable
-              accessibilityHint="Tap fast, over and over, to flip the table and forfeit."
+              accessibilityHint={isRefused ? undefined : 'Tap fast, over and over, to flip the table and forfeit.'}
               accessibilityLabel={isFlipping ? 'Flipping the table' : label}
-              disabled={isFlipping}
+              disabled={isFlipping || isRefused}
               onPress={handleTap}
               style={({ pressed }) => [styles.rageButton, pressed && styles.rageButtonPressed]}
               testID="rage-quit-button"
@@ -183,14 +187,14 @@ export function RageQuitDialog({
               <Text
                 maxFontSizeMultiplier={1.2}
                 numberOfLines={3}
-                style={[styles.rageText, (isStart || isFlipping) && styles.rageTextBig]}
+                style={[styles.rageText, (isStart || isFlipping || isRefused) && styles.rageTextBig]}
               >
                 {isFlipping ? 'FLIPPING…' : label}
               </Text>
             </Pressable>
           </Animated.View>
           <Pressable
-            accessibilityLabel="Never mind, keep playing"
+            accessibilityLabel={isRefused ? "Fine, I'll play" : 'Never mind, keep playing'}
             disabled={isFlipping}
             onPress={onCancel}
             ref={cancelRef}
@@ -198,7 +202,7 @@ export function RageQuitDialog({
             testID="rage-quit-cancel-button"
           >
             <Text maxFontSizeMultiplier={1.2} style={styles.cancelText}>
-              Nah, I&apos;m good
+              {isRefused ? "Fine, I'll play" : "Nah, I'm good"}
             </Text>
           </Pressable>
         </Animated.View>
