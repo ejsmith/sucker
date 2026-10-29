@@ -485,6 +485,17 @@ Deno.test('Back-to-Back and Anything You Can Do read the turn before', () => {
     sucker('player'),
   ]);
   assertEquals(theirs.includes('anything_you_can_do'), false);
+
+  // Mulliganing a Sucker mid-turn discards it, so the submitted turn has none.
+  const thrownAway = [
+    sucker('player'),
+    { action_type: 'mulligan', actor_id: 'player' } as SuckerStatAction,
+    miss('player'),
+    scored('player'),
+  ];
+  assertEquals(featsFor('player', [...thrownAway, sucker('player')]).includes('back_to_back'), false);
+  assertEquals(featsFor('opponent', [...thrownAway, sucker('opponent')]).includes('anything_you_can_do'), false);
+  assertEquals(featsFor('player', [...thrownAway, sucker('player')]).includes('seeing_double'), true);
 });
 
 Deno.test('punching away a scored Sucker robs it, and a Sucker on the replay strikes twice', () => {

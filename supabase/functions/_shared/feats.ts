@@ -492,9 +492,11 @@ function scanTurnHistory(actions: SuckerStatAction[], playerId: string, opponent
         // A Mulligan in the response window discards the turn just submitted.
         const discarded = payloadValue(action.payload, 'turnId') ? side.turns.pop() : undefined;
         if (discarded) side.erased = { ...discarded, by: 'mulligan' };
+        // Its rolls are discarded too. The Sucker count keeps them; turn checks do not.
         side.dice = null;
         side.rolls = 0;
         side.runSucker = false;
+        side.turnSucker = false;
         break;
       }
       case 'score_category':
