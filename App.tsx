@@ -17,15 +17,19 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   availableCategories,
+  canPlayOut,
   categoryLabels,
   createGame,
   getSuckerPunchCost,
   getSuckerPunchKind,
   getWinnerId,
   hasExtraSuckerBonus,
+  isPlayingOut,
+  isRageQuitUnlocked,
   maxAvailableRolls,
   mulliganCurrentTurn,
   purchaseExtraRoll,
+  rageQuitUnlockTurns,
   rollCurrentDice,
   rollsRemaining,
   scoreCategory,
@@ -73,6 +77,7 @@ import {
   markRemoteTauntSeen,
   PendingMultiplayerActionError,
   prepareRemoteSuckerPunch,
+  finishRemoteCard,
   rageQuitRemoteGame,
   replyToRemoteRageQuit,
   rollRemoteGame,
@@ -284,6 +289,7 @@ type RemoteActionHandlers = {
   onTaunt: (tauntId: TauntId) => Promise<ReturnType<typeof createGame> | null>;
   onRageQuit: () => Promise<ReturnType<typeof createGame> | null>;
   onRageQuitReply: (replyId: RageQuitReplyId) => Promise<ReturnType<typeof createGame> | null>;
+  onFinishCard: () => Promise<ReturnType<typeof createGame> | null>;
 };
 type RemoteGameRequest = {
   gameId: string;
@@ -1177,6 +1183,7 @@ export function RemoteGameScreen({
     onRageQuit: () => runRemoteAction(() => rageQuitRemoteGame(remoteGame.id), { showNextTurns: false }),
     onRageQuitReply: (replyId) =>
       runRemoteAction(() => replyToRemoteRageQuit(remoteGame.id, replyId), { showNextTurns: false }),
+    onFinishCard: () => runRemoteAction(() => finishRemoteCard(remoteGame.id), { showNextTurns: false }),
   };
 
   return (
@@ -1311,6 +1318,7 @@ export function LocalGameScreen({
   const [isRageQuitOpen, setIsRageQuitOpen] = useState(false);
   const [isRageQuitting, setIsRageQuitting] = useState(false);
   const [isSendingRageReply, setIsSendingRageReply] = useState(false);
+  const [isStartingPlayOut, setIsStartingPlayOut] = useState(false);
   // Rage-quit games end with the table flipped away. Each device watches it once.
   const [tableFlip, setTableFlip] = useState<{ gameId: string; status: 'checking' | 'flipping' | 'done' } | null>(null);
   const [rematchUnlockAt, setRematchUnlockAt] = useState<number | null>(null);
@@ -1442,7 +1450,10 @@ export function LocalGameScreen({
   const isMyRemoteTurn = !isRemoteGame || currentPlayer.id === myProfileId;
   const isRemoteResponseTurn =
     isRemoteGame && isMyRemoteTurn && (remoteStatus === 'response_window' || remoteStatus === 'blocked_response');
-  const isRemoteActionPlayable = !isRemoteGame || remoteStatus === 'active' || isRemoteResponseTurn;
+  // After a Rage Quit the winner may finish their card in the finished game.
+  const isRemotePlayOut = Boolean(isRemoteGame && isPlayingOut(game));
+  const isMyPlayOut = isRemotePlayOut && game.rageQuit?.playerId !== myProfileId;
+  const isRemoteActionPlayable = !isRemoteGame || remoteStatus === 'active' || isRemoteResponseTurn || isMyPlayOut;
   const isRemoteTurnRevealPending = Boolean(
     isRemoteGame &&
     remoteLastTurnId &&
@@ -1579,11 +1590,16 @@ export function LocalGameScreen({
   const homeSectionBonusAwarded = homeUpperTotal >= upperBonusTarget;
   const homeScore = totalScore(homePlayer.scorecard);
   const opponentScore = totalScore(opponentPlayer.scorecard);
-  const isGameOver = game.phase === 'complete';
+  // The quitter's game stays over while the winner finishes their card.
+  const isGameOver = game.phase === 'complete' || (isRemotePlayOut && !isMyPlayOut);
   // The dialog never outlives the game, even when the other player ends it first.
   const showRageQuitDialog = isRageQuitOpen && !isGameOver;
+  // A winner who finished their card sees it, not the flipped table.
+  const showsFlippedTable = Boolean(
+    isRemoteGame && isGameOver && game.rageQuit && (game.rageQuit.playerId === myProfileId || !game.rageQuit.playOut),
+  );
   const isRageQuitFlipPending = Boolean(
-    isRemoteGame && isGameOver && game.rageQuit && (tableFlip?.gameId !== game.id || tableFlip.status !== 'done'),
+    showsFlippedTable && (tableFlip?.gameId !== game.id || tableFlip.status !== 'done'),
   );
   const gameOverVisible = isGameOver && dismissedGameOverId !== game.id && !isRageQuitFlipPending;
   const hasNextTurnPrompt = nextTurnGames !== null && nextTurnGames !== undefined;
@@ -1611,7 +1627,10 @@ export function LocalGameScreen({
         ? 'You win!'
         : `${winnerName} wins!`
       : 'Tie game!';
-  const isTableFlipped = Boolean(isRemoteGame && rageQuit);
+  const isTableFlipped = showsFlippedTable;
+  const canFinishCard = Boolean(
+    remoteHandlers && isGameOver && rageQuit && !didIRageQuit && canPlayOut(game, homePlayer.id),
+  );
   const rageQuitter = rageQuit ? game.players.find((player) => player.id === rageQuit.playerId) : undefined;
   const rematchLockSeconds = !didIRageQuit
     ? 0
@@ -1629,7 +1648,7 @@ export function LocalGameScreen({
     !isScoring &&
     !suckerPunchDialog,
   );
-  const rageQuitGameId = isRemoteGame && isGameOver && game.rageQuit ? game.id : null;
+  const rageQuitGameId = showsFlippedTable ? game.id : null;
 
   useEffect(() => {
     if (!rageQuitGameId) {
@@ -3204,6 +3223,16 @@ export function LocalGameScreen({
     }
   }
 
+  async function handleFinishCard() {
+    if (!remoteHandlers || isStartingPlayOut) return;
+    setIsStartingPlayOut(true);
+    try {
+      await remoteHandlers.onFinishCard();
+    } finally {
+      setIsStartingPlayOut(false);
+    }
+  }
+
   async function handleRageQuitReply(replyId: RageQuitReplyId) {
     if (!remoteHandlers || isSendingRageReply) return;
     setIsSendingRageReply(true);
@@ -4297,6 +4326,7 @@ export function LocalGameScreen({
                 setIsRageQuitOpen(false);
                 requestAnimationFrame(() => focusAccessibilityTarget(menuButtonRef.current));
               }}
+              lockedUntilTurns={isRageQuitUnlocked(game, homePlayer.id) ? undefined : rageQuitUnlockTurns}
               onFlip={() => void handleRageQuit()}
               onTap={() => playHaptic('rageTap')}
               reduceMotion={shouldReduceMotion}
@@ -4813,7 +4843,9 @@ export function LocalGameScreen({
                     >
                       {didIRageQuit
                         ? `${rageQuitWinnerName} wins. Everyone sees your 🧂 for 24 hours.`
-                        : `${rageQuitterName} flipped the table. You win.`}
+                        : rageQuit.playOut === 'finished'
+                          ? `${rageQuitterName} flipped the table. You finished your card anyway.`
+                          : `${rageQuitterName} flipped the table. You win.`}
                     </Text>
                     {rageQuit.replyId ? (
                       <View
@@ -4878,6 +4910,46 @@ export function LocalGameScreen({
                           </View>
                         </View>
                       )
+                    )}
+                    {canFinishCard && (
+                      <Pressable
+                        accessibilityHint="Play your open boxes alone. Your final score counts toward high scores."
+                        accessibilityLabel="Finish your card"
+                        accessibilityRole="button"
+                        disabled={isStartingPlayOut}
+                        onPress={() => void handleFinishCard()}
+                        style={({ pressed }) => [
+                          styles.finishCardButton,
+                          {
+                            borderRadius: gameLayout.unit(9),
+                            minHeight: Math.max(44, gameLayout.unit(44)),
+                            paddingHorizontal: gameLayout.unit(10),
+                            paddingVertical: gameLayout.unit(4),
+                          },
+                          pressed && styles.pressed,
+                          isStartingPlayOut && styles.disabledButton,
+                        ]}
+                        testID="finish-card-button"
+                      >
+                        <Text
+                          adjustsFontSizeToFit
+                          maxFontSizeMultiplier={1.2}
+                          minimumFontScale={0.75}
+                          numberOfLines={1}
+                          style={[styles.finishCardText, { fontSize: gameLayout.unit(15) }]}
+                        >
+                          FINISH YOUR CARD
+                        </Text>
+                        <Text
+                          adjustsFontSizeToFit
+                          maxFontSizeMultiplier={1.2}
+                          minimumFontScale={0.75}
+                          numberOfLines={1}
+                          style={[styles.finishCardHint, { fontSize: gameLayout.unit(11) }]}
+                        >
+                          Your score still counts for high scores
+                        </Text>
+                      </Pressable>
                     )}
                   </View>
                 )}
@@ -7598,6 +7670,22 @@ const styles = StyleSheet.create({
     flexBasis: '47%',
     flexGrow: 1,
     justifyContent: 'center',
+  },
+  finishCardButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#8F3B10',
+    borderWidth: 2,
+    justifyContent: 'center',
+  },
+  finishCardHint: {
+    color: '#8F3B10',
+    fontFamily: gameFontExtraBold,
+  },
+  finishCardText: {
+    color: '#050505',
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
   },
   rageQuitReplyText: {
     color: '#FFD329',

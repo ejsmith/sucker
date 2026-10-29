@@ -2,6 +2,7 @@ import { createGame, scoreCategories, type Player } from './game.ts';
 import {
   buildCompletedPlayerFeats,
   buildInstantPlayerFeats,
+  buildPlayOutFeats,
   featCatalog,
   featKeys,
   instantFeatKeys,
@@ -690,6 +691,25 @@ Deno.test('final card feats read the total, the zeros, and the tie', () => {
   assertEquals(featsFor('player', [], { scorecard: full(8), winnerId: 'player' }).includes('double_digits'), false);
 
   assertEquals(featsFor('player', [], { winnerId: null }).includes('dead_heat'), true);
+});
+
+Deno.test('a finished play-out earns its own card feats, never ones about the forfeit', () => {
+  const game = createGame(['Player', 'Opponent']);
+  const player: Player = {
+    ...game.players[0],
+    id: 'player',
+    scorecard: Object.fromEntries(scoreCategories.map((category) => [category, 31])) as Player['scorecard'],
+    suckerBonusCategories: [],
+  };
+  const feats = buildPlayOutFeats({
+    actions: [roll('player', [5, 5, 5, 5, 5]), scored('player', 'sucker', 50)],
+    opponentId: 'opponent',
+    player,
+  });
+  for (const key of ['club_400', 'spotless', 'natural'] as const) assertEquals(feats.includes(key), true, key);
+  for (const key of ['penny_pincher', 'blowout', 'photo_finish', 'wire_to_wire', 'dead_heat'] as const) {
+    assertEquals(feats.includes(key), false, key);
+  }
 });
 
 Deno.test('every feat and defeat has a name, a tone, and a database-safe key', () => {

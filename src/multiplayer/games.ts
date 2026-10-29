@@ -59,18 +59,21 @@ export class PendingMultiplayerActionError extends Error {
 export async function listMyGames() {
   const session = await getCurrentSession();
   if (!session) throw new Error('Sign in to refresh your games.');
-  const [{ data: activeGames, error: activeError }, { data: recentCompletedGames, error: completedError }, unseenGameIds] =
-    await Promise.all([
-      supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
-      supabase
-        .from('games')
-        .select('*')
-        .eq('status', 'complete')
-        .order('completed_at', { ascending: false, nullsFirst: false })
-        .order('updated_at', { ascending: false })
-        .limit(25),
-      loadUnseenGameIds(),
-    ]);
+  const [
+    { data: activeGames, error: activeError },
+    { data: recentCompletedGames, error: completedError },
+    unseenGameIds,
+  ] = await Promise.all([
+    supabase.from('games').select('*').neq('status', 'complete').order('updated_at', { ascending: false }),
+    supabase
+      .from('games')
+      .select('*')
+      .eq('status', 'complete')
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .order('updated_at', { ascending: false })
+      .limit(25),
+    loadUnseenGameIds(),
+  ]);
 
   if (activeError) {
     throw activeError;
@@ -610,6 +613,11 @@ export async function sendRemoteTaunt(gameId: string, tauntId: TauntId) {
 
 export async function rageQuitRemoteGame(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'rage_quit' });
+}
+
+// After the opponent rage quits, play your own open boxes alone.
+export async function finishRemoteCard(gameId: string) {
+  return applyMultiplayerAction({ gameId, type: 'finish_card' });
 }
 
 export async function replyToRemoteRageQuit(gameId: string, replyId: RageQuitReplyId) {
