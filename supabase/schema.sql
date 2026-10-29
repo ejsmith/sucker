@@ -2105,3 +2105,73 @@ $$;
 
 revoke all on function public.get_player_feats(uuid) from public;
 grant execute on function public.get_player_feats(uuid) to authenticated;
+
+create or replace function public.claim_push_token(
+  push_token text,
+  push_platform text,
+  push_device_name text default null
+)
+returns public.push_tokens
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  caller_id uuid := auth.uid();
+  claimed public.push_tokens;
+begin
+  if caller_id is null then
+    raise exception 'You must be signed in to register notifications.' using errcode = '42501';
+  end if;
+
+  insert into public.push_tokens (profile_id, expo_push_token, platform, device_name)
+  values (caller_id, push_token, push_platform, push_device_name)
+  on conflict (expo_push_token) do update
+  set profile_id = excluded.profile_id,
+    platform = excluded.platform,
+    device_name = excluded.device_name
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_push_token(text, text, text) from public, anon;
+grant execute on function public.claim_push_token(text, text, text) to authenticated;
+
+create or replace function public.claim_web_push_subscription(
+  push_endpoint text,
+  push_p256dh_key text,
+  push_auth_key text,
+  push_expiration_time timestamptz default null,
+  push_user_agent text default null
+)
+returns public.web_push_subscriptions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  caller_id uuid := auth.uid();
+  claimed public.web_push_subscriptions;
+begin
+  if caller_id is null then
+    raise exception 'You must be signed in to register notifications.' using errcode = '42501';
+  end if;
+
+  insert into public.web_push_subscriptions (profile_id, endpoint, p256dh_key, auth_key, expiration_time, user_agent)
+  values (caller_id, push_endpoint, push_p256dh_key, push_auth_key, push_expiration_time, push_user_agent)
+  on conflict (endpoint) do update
+  set profile_id = excluded.profile_id,
+    p256dh_key = excluded.p256dh_key,
+    auth_key = excluded.auth_key,
+    expiration_time = excluded.expiration_time,
+    user_agent = excluded.user_agent
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_web_push_subscription(text, text, text, timestamptz, text) from public, anon;
+grant execute on function public.claim_web_push_subscription(text, text, text, timestamptz, text) to authenticated;

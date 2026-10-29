@@ -46,6 +46,7 @@ function mountSession() {
     profile: { id: 'account-a', display_name: 'Player', username: null, avatar_url: null, needs_profile_setup: true },
   };
   const profileCache = load('../src/multiplayer/profileCache.ts', {
+    '../monitoring/exceptionless': { reportError: async () => {} },
     './env': { getMultiplayerConfig: () => ({ supabaseUrl: 'https://example.test' }) },
     '@react-native-async-storage/async-storage': {
       getItem: async () => null,

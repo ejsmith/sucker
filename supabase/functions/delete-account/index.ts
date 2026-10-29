@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import type { Database } from '../_shared/database.types.ts';
+import { reportServerError } from '../_shared/monitoring.ts';
 
 type DbClient = SupabaseClient<Database>;
 
@@ -10,6 +11,7 @@ const corsHeaders = {
 const avatarBucket = 'avatars';
 
 Deno.serve(async (request) => {
+  let userId: string | null = null;
   try {
     if (request.method === 'OPTIONS') {
       return new Response('ok', { headers: corsHeaders });
@@ -32,6 +34,7 @@ Deno.serve(async (request) => {
     if (userError || !user) {
       return json({ error: 'Unauthorized' }, 401);
     }
+    userId = user.id;
 
     await removeAvatarObjects(admin, user.id);
     await removeGamesContainingProfile(admin, user.id);
@@ -42,6 +45,7 @@ Deno.serve(async (request) => {
     return json({ deleted: true });
   } catch (error) {
     console.error('delete-account failed', error);
+    reportServerError(error, { functionName: 'delete-account', operation: 'Delete account', userId });
     return json({ error: toErrorMessage(error) }, 500);
   }
 });
