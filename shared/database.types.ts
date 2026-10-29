@@ -45,8 +45,10 @@ export type Database = {
           current_win_streak: number;
           peak_rating: number;
           player_id: string;
+          rated_at: string | null;
           rated_games: number;
           rating: number;
+          rating_deviation: number;
           updated_at: string;
         };
         Insert: { player_id: string };
@@ -715,6 +717,20 @@ export type Database = {
           upper_bonus_pct: number;
           wins: number;
         }[];
+      };
+      claim_push_token: {
+        Args: { push_token: string; push_platform: 'ios' | 'android'; push_device_name?: string | null };
+        Returns: Database['public']['Tables']['push_tokens']['Row'];
+      };
+      claim_web_push_subscription: {
+        Args: {
+          push_endpoint: string;
+          push_p256dh_key: string;
+          push_auth_key: string;
+          push_expiration_time?: string | null;
+          push_user_agent?: string | null;
+        };
+        Returns: Database['public']['Tables']['web_push_subscriptions']['Row'];
       };
       get_unseen_game_results: {
         Args: Record<PropertyKey, never>;

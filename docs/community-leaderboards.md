@@ -44,26 +44,51 @@ game:
 
 | Column                                   | Meaning                                                   |
 | ---------------------------------------- | --------------------------------------------------------- |
-| `rating`                                 | Elo rating, starts at 1200                                |
+| `rating`                                 | Glicko rating estimate, starts at 1200                    |
+| `rating_deviation`                       | Uncertainty in `rating` as of `rated_at`, starts at 150   |
+| `rated_at`                               | When the last rated game finished                         |
 | `rated_games`                            | Completed games that changed the rating                   |
-| `peak_rating`                            | Highest rating reached                                    |
+| `peak_rating`                            | Highest shown rating reached                              |
 | `current_win_streak` / `best_win_streak` | Consecutive wins; a loss or tie resets the current streak |
 
-`game_player_results` gains `rating_before` and `rating_after` so a completed
-game can show "+14".
+Players see one number, the **shown rating**: `rating - 2 × deviation`, the
+cautious end of their likely range (`conservative_rating`). It starts at 900,
+climbs as games build confidence, and sinks while a player sits out. Boards,
+ranks, and profiles all use it, computed as of now. `game_player_results`
+gains `rating_before` and `rating_after`, the shown rating either side of the
+game, so a completed game can show "+14".
 
-**Rating math (Elo):**
+**Rating math (Glicko-1, one game at a time):**
 
-- Expected score `E = 1 / (1 + 10^((opponent - player) / 400))`.
-- Actual score: win 1, tie 0.5, loss 0.
-- K factor: 40 for a player's first 10 rated games (provisional), 24 after.
+Dice luck keeps skill gaps small, so ratings start with a deviation of 150
+rather than Glicko's usual 350. A wider start overreacts to early luck and can
+raise a player's shown rating after a loss.
+
+- `q = ln(10) / 400`, `g(d) = 1 / sqrt(1 + 3q²d² / π²)`.
+- Before each game, each player's deviation grows with the days since their
+  last rated game: `d = min(150, sqrt(d² + 100 × days))`.
+- Expected score `E = 1 / (1 + 10^(-g(d_opponent) × (player - opponent) / 400))`.
+- Actual score `S`: win 1, tie 0.5, loss 0.
+- With game weight `w`: `d' = 1 / sqrt(1/d² + w × q² × g(d_opponent)² × E(1 - E))`
+  and `rating' = rating + q × d'² × w × g(d_opponent) × (S - E)`.
 - **Repeat-opponent damping:** the first 3 games between the same pair in a
-  trailing 7-day window count fully. Later games in that window use a quarter of
-  the K factor, so two accounts farming each other move slowly.
+  trailing 7-day window count fully (`w = 1`). Later games in that window count
+  a quarter (`w = 0.25`).
+- **Lopsided-pair guard:** once either player has won 19 of the pair's last 20
+  games, their games stop counting until that record drops below 19. As of
+  October 2026, real pairings peak at 17 of 20, so this only stops games thrown
+  to a second account. It cannot stop someone who throws only some games.
 - Players stay off the rating board until they have 5 rated games.
 
-Existing completed games are replayed once, in completion order, by the
-migration so current players start with a real rating.
+Idle decay: a player who stops playing loses roughly 30-45 shown points in a
+month and 75-105 in three months, depending on how settled their rating is.
+Their rating itself does not change, and their first games back count for
+more, so they climb back quickly.
+
+`rate_completed_game` holds the rating math; `apply_completed_game_standings`
+calls it, then updates streaks and milestone feats. The Glicko migration resets
+every rating and replays all completed games in completion order, so current
+players start with a real Glicko rating. Streaks and feats are not replayed.
 
 ### Leaderboards
 
@@ -72,7 +97,7 @@ row when they are outside the top, each with a `rank`. Ties share a rank.
 
 | Board                 | Value                                         | Eligibility                  |
 | --------------------- | --------------------------------------------- | ---------------------------- |
-| `rating`              | Current rating                                | 5+ rated games               |
+| `rating`              | Shown rating, as of now                       | 5+ rated games               |
 | `weekly_high_score`   | Best single-game score since Monday 00:00 UTC | Any completed game this week |
 | `all_time_high_score` | Best single-game score                        | Any completed game           |
 | `sharpshooter`        | Sucker Punch landing rate                     | 10+ punches thrown           |

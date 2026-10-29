@@ -22,6 +22,7 @@ function loadBadgeSync({ getRegistration = async () => null, setBadgeCountAsync 
   let activeProfileId = 'player';
   const exports = {};
   const mocks = {
+    '../monitoring/exceptionless': { reportError: async () => {} },
     'react-native': { Platform: { OS: 'web' } },
     'expo-notifications': { setNotificationHandler() {}, setBadgeCountAsync },
     'expo-constants': {},
