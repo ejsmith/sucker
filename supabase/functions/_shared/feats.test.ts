@@ -1,4 +1,4 @@
-import { createGame, type Player } from './game.ts';
+import { createGame, scoreCategories, type Player } from './game.ts';
 import {
   buildCompletedPlayerFeats,
   buildInstantPlayerFeats,
@@ -551,6 +551,136 @@ Deno.test('Straight Out the Gate and Four on the Floor need the first roll of a 
   assertEquals(featsFor('opponent', [roll('player', [2, 3, 4, 5, 6])]).includes('straight_out_the_gate'), false);
 });
 
+Deno.test('Flurry needs 3 landed punches, and Rope-a-Dope a win after dodging 3', () => {
+  const landed = punch('player', { landed: true, chanceDie: 4 });
+  const missed = punch('player', { landed: false, chanceDie: 4 });
+  assertEquals(featsFor('player', [landed, landed, landed]).includes('flurry'), true);
+  assertEquals(featsFor('player', [landed, landed, missed]).includes('flurry'), false);
+  assertEquals(
+    buildInstantPlayerFeats({ actions: [landed, landed, landed], opponentId: 'opponent', playerId: 'player' }).includes(
+      'flurry',
+    ),
+    true,
+  );
+
+  const dodged = [1, 2, 3].map(() => punch('opponent', { landed: false, chanceDie: 5 }));
+  assertEquals(featsFor('player', dodged, { winnerId: 'player' }).includes('rope_a_dope'), true);
+  assertEquals(featsFor('player', dodged, { winnerId: 'opponent' }).includes('rope_a_dope'), false);
+  assertEquals(featsFor('player', dodged.slice(1), { winnerId: 'player' }).includes('rope_a_dope'), false);
+  const hit = [...dodged.slice(1), punch('opponent', { landed: true, targetPlayerId: 'player' })];
+  assertEquals(featsFor('player', hit, { winnerId: 'player' }).includes('rope_a_dope'), false);
+});
+
+Deno.test('Wire to Wire needs the lead after every turn from your first one', () => {
+  const card = { ones: 3, chance: 25, sucker: 50 };
+  const wire = featsFor('player', [], {
+    opponentScorecard: { chance: 20, twos: 4 },
+    scorecard: card,
+    turns: [
+      turn(1, 'opponent', 'chance', 20),
+      turn(2, 'player', 'chance', 25),
+      turn(3, 'opponent', 'twos', 4),
+      turn(4, 'player', 'ones', 3),
+      turn(5, 'player', 'sucker', 50),
+    ],
+    winnerId: 'player',
+  });
+  assertEquals(wire.includes('wire_to_wire'), true);
+
+  // Trailing after any later turn, even one, breaks it.
+  const caught = featsFor('player', [], {
+    opponentScorecard: { chance: 20, fullHouse: 25 },
+    scorecard: card,
+    turns: [
+      turn(1, 'opponent', 'chance', 20),
+      turn(2, 'player', 'chance', 25),
+      turn(3, 'opponent', 'fullHouse', 25),
+      turn(4, 'player', 'ones', 3),
+      turn(5, 'player', 'sucker', 50),
+    ],
+    winnerId: 'player',
+  });
+  assertEquals(caught.includes('wire_to_wire'), false);
+});
+
+Deno.test('punched replays that score more backfire on the puncher', () => {
+  const backfire = [
+    scored('opponent', 'chance', 12),
+    punch('player', { landed: true, chanceDie: 4 }),
+    scored('opponent', 'fullHouse', 25),
+  ];
+  assertEquals(featsFor('player', backfire).includes('backfire'), true);
+  assertEquals(featsFor('opponent', backfire).includes('thanks_i_needed_that'), true);
+  assertEquals(featsFor('opponent', backfire).includes('backfire'), false);
+
+  // A replay that scores the same or less is the punch working.
+  const worked = [...backfire.slice(0, 2), scored('opponent', 'ones', 3)];
+  assertEquals(featsFor('player', worked).includes('backfire'), false);
+  assertEquals(featsFor('opponent', worked).includes('thanks_i_needed_that'), false);
+
+  // A scratched turn counts as zero, so any points on the replay backfire.
+  const scratchedTurn = [
+    scratched('opponent', 'largeStraight'),
+    punch('player', { landed: true }),
+    scored('opponent', 'ones', 2),
+  ];
+  assertEquals(featsFor('player', scratchedTurn).includes('backfire'), true);
+
+  // Misses erase nothing.
+  const missed = [
+    scored('opponent', 'chance', 12),
+    punch('player', { landed: false }),
+    scored('opponent', 'sucker', 50),
+  ];
+  assertEquals(featsFor('player', missed).includes('backfire'), false);
+});
+
+Deno.test('Mulliganing a submitted turn is a Do-Over when it pays and a defeat when it costs', () => {
+  const redo = (score: number) =>
+    buildInstantPlayerFeats({
+      actions: [
+        scored('player', 'chance', 12),
+        { action_type: 'mulligan', actor_id: 'player', payload: { turnId: 'turn' } },
+        roll('player', [1, 2, 3, 4, 6]),
+        scored('player', 'smallStraight', score),
+      ],
+      opponentId: 'opponent',
+      playerId: 'player',
+    });
+  assertEquals(redo(32).includes('do_over'), true);
+  assertEquals(redo(31).includes('do_over'), false);
+  assertEquals(redo(12).includes('shouldve_kept_it'), false);
+  assertEquals(redo(0).includes('shouldve_kept_it'), true);
+
+  // Mulliganing the turn in progress has no score to compare.
+  const current = featsFor('player', [
+    roll('player', [1, 2, 3, 4, 6]),
+    { action_type: 'mulligan', actor_id: 'player' },
+    scored('player', 'sucker', 50),
+  ]);
+  assertEquals(current.includes('do_over'), false);
+});
+
+Deno.test('final card feats read the total, the zeros, and the tie', () => {
+  const full = (score: number) => Object.fromEntries(scoreCategories.map((category) => [category, score]));
+  const big = featsFor('player', [], { scorecard: full(31), winnerId: 'player' });
+  assertEquals(big.includes('club_400'), true);
+  assertEquals(big.includes('club_500'), false);
+  assertEquals(big.includes('spotless'), true);
+  assertEquals(featsFor('player', [], { scorecard: full(38) }).includes('club_500'), true);
+  assertEquals(featsFor('player', [], { scorecard: full(25) }).includes('club_400'), false);
+
+  const zero = featsFor('player', [], { scorecard: { ...full(31), sucker: 0 } });
+  assertEquals(zero.includes('spotless'), false);
+
+  const low = featsFor('player', [], { scorecard: full(7), winnerId: 'opponent' });
+  assertEquals(low.includes('double_digits'), true);
+  assertEquals(low.includes('dead_heat'), false);
+  assertEquals(featsFor('player', [], { scorecard: full(8), winnerId: 'player' }).includes('double_digits'), false);
+
+  assertEquals(featsFor('player', [], { winnerId: null }).includes('dead_heat'), true);
+});
+
 Deno.test('every feat and defeat has a name, a tone, and a database-safe key', () => {
   for (const key of featKeys) {
     assertEquals(/^[a-z0-9_]{1,40}$/.test(key), true, key);
@@ -604,8 +734,8 @@ function turn(turnIndex: number, playerId: string, category: string, score: numb
   return { category, player_id: playerId, score, status: 'submitted', turn_index: turnIndex };
 }
 
-function scored(actorId: string, category = 'chance'): SuckerStatAction {
-  return { action_type: 'score_category', actor_id: actorId, payload: { category, scratched: false } };
+function scored(actorId: string, category = 'chance', score?: number): SuckerStatAction {
+  return { action_type: 'score_category', actor_id: actorId, payload: { category, scratched: false, score } };
 }
 
 function scratched(actorId: string, category: string): SuckerStatAction {

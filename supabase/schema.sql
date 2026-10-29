@@ -118,6 +118,9 @@ create table public.turn_actions (
   created_at timestamptz not null default now()
 );
 
+-- game-action replays a game's actions on most moves to award instant feats.
+create index turn_actions_game_created_idx on public.turn_actions (game_id, created_at);
+
 create unique index turn_actions_one_taunt_per_turn
 on public.turn_actions (
   game_id,
@@ -1471,6 +1474,8 @@ create table public.player_standings (
   current_win_streak integer not null default 0,
   best_win_streak integer not null default 0,
   current_loss_streak integer not null default 0,
+  -- Bits 1 to 6 mark the Sucker faces the player has rolled in finished games.
+  sucker_faces integer not null default 0,
   updated_at timestamptz not null default now()
 );
 
@@ -1691,7 +1696,8 @@ $$;
 revoke all on function public.rate_completed_game(uuid) from public, anon, authenticated;
 grant execute on function public.rate_completed_game(uuid) to service_role;
 
--- Glicko rating, then streaks and milestone feats.
+-- Glicko rating, then streaks, milestone feats, and per-game feats that need
+-- ratings or timing.
 -- Idempotent: a game whose results already carry ratings is skipped.
 create function public.apply_completed_game_standings(target_game_id uuid)
 returns void
@@ -1708,8 +1714,12 @@ declare
   beaten integer;
   player_lost boolean;
   loss_streak integer;
+  win_streak integer;
   losses integer;
   quits integer;
+  rage_quit boolean;
+  first_roll timestamptz;
+  rating_gap numeric;
 begin
   select array_agg(r order by r.player_id) into results
   from public.game_player_results r
@@ -1723,6 +1733,31 @@ begin
 
   -- Creates and locks both standings rows.
   perform public.rate_completed_game(target_game_id);
+
+  rage_quit := exists(select 1 from public.rage_quits quit where quit.game_id = target_game_id);
+  select min(action.created_at) into first_roll
+  from public.turn_actions action
+  where action.game_id = target_game_id and action.action_type = 'roll';
+
+  -- Every Sucker face each player has rolled in a finished game, as bits 1 to 6.
+  update public.player_standings standing set
+    sucker_faces = standing.sucker_faces | faces.rolled
+  from (
+    select action.actor_id, bit_or(1 << ((action.payload -> 'dice' ->> 0)::integer - 1)) as rolled
+    from public.turn_actions action
+    where action.game_id = target_game_id
+      and action.action_type = 'roll'
+      and action.payload -> 'dice' ->> 0 in ('1', '2', '3', '4', '5', '6')
+      and action.payload -> 'dice' = jsonb_build_array(
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0
+      )
+    group by action.actor_id
+  ) faces
+  where standing.player_id = faces.actor_id;
 
   update public.player_standings set
     current_win_streak = case when (results[1]).won then current_win_streak + 1 else 0 end,
@@ -1750,6 +1785,13 @@ begin
     if beaten >= 25 then perform public.award_milestone_feat(result.player_id, 'globetrotter_25', target_game_id, completed); end if;
     if beaten >= 100 then perform public.award_milestone_feat(result.player_id, 'globetrotter_100', target_game_id, completed); end if;
     if player_games >= 100 then perform public.award_milestone_feat(result.player_id, 'centurion', target_game_id, completed); end if;
+    select standing.current_win_streak into win_streak
+    from public.player_standings standing where standing.player_id = result.player_id;
+    if win_streak >= 5 then perform public.award_milestone_feat(result.player_id, 'hot_streak', target_game_id, completed); end if;
+    if win_streak >= 10 then perform public.award_milestone_feat(result.player_id, 'on_fire', target_game_id, completed); end if;
+    if (select standing.sucker_faces = 63 from public.player_standings standing where standing.player_id = result.player_id) then
+      perform public.award_milestone_feat(result.player_id, 'sucker_collector', target_game_id, completed);
+    end if;
     if opponent_games = 1 and player_games >= 6 then
       perform public.award_milestone_feat(result.player_id, 'welcome_wagon', target_game_id, completed);
     end if;
@@ -1759,9 +1801,54 @@ begin
     ) >= 10 then
       perform public.award_milestone_feat(result.player_id, 'nemesis', target_game_id, completed);
     end if;
+    if result.won and (
+      select count(*) = 5 and bool_and(recent.won)
+      from (
+        select r.won
+        from public.game_player_results r
+        where r.player_id = result.player_id and r.opponent_id = result.opponent_id and r.completed_at <= completed
+        order by r.completed_at desc, r.game_id desc
+        limit 5
+      ) recent
+    ) then
+      perform public.award_milestone_feat(result.player_id, 'got_your_number', target_game_id, completed);
+    end if;
 
     -- Defeats: a loss means the opponent won; ties are neither.
     player_lost := case when result.player_id = (results[1]).player_id then (results[2]).won else (results[1]).won end;
+
+    -- Per-game feats that need ratings or timing. A Rage Quit awards none.
+    -- Rating gaps use the shown ratings before the game, once both players
+    -- have 5 earlier games, so new players' settling ratings never count.
+    if not rage_quit then
+      if player_games >= 6 and opponent_games >= 6 then
+        select opponent.rating_before - own.rating_before into rating_gap
+        from public.game_player_results own
+        join public.game_player_results opponent
+          on opponent.game_id = own.game_id and opponent.player_id = own.opponent_id
+        where own.game_id = target_game_id and own.player_id = result.player_id;
+        if result.won and rating_gap >= 200 then
+          insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+          values (target_game_id, result.player_id, 'giant_killer', completed)
+          on conflict do nothing;
+        end if;
+        if player_lost and rating_gap <= -200 then
+          insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+          values (target_game_id, result.player_id, 'banana_peel', completed)
+          on conflict do nothing;
+        end if;
+      end if;
+      if completed - first_roll <= interval '1 hour' then
+        insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+        values (target_game_id, result.player_id, 'blitz', completed)
+        on conflict do nothing;
+      end if;
+      if completed - first_roll >= interval '30 days' then
+        insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+        values (target_game_id, result.player_id, 'the_long_game', completed)
+        on conflict do nothing;
+      end if;
+    end if;
     select standing.current_loss_streak into loss_streak
     from public.player_standings standing where standing.player_id = result.player_id;
     if loss_streak >= 5 then perform public.award_milestone_feat(result.player_id, 'ice_cold', target_game_id, completed); end if;

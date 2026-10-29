@@ -1886,15 +1886,26 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     true,
   );
 
-  // Every category was scratched, including the game-ending move, so both earn Scratch Fever.
+  // Every category was scratched, including the game-ending move, so both earn
+  // Scratch Fever. The 0-0 tie is a Dead Heat and Double Digits, and the
+  // database awards Blitz because the game finished within an hour of its first roll.
   const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
     admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
   );
+  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz']) {
+    assertEquals(
+      {
+        earned: [alice.id, bob.id].every((id) =>
+          completionFeats.some((feat) => feat.player_id === id && feat.feat_key === featKey),
+        ),
+        featKey,
+      },
+      { earned: true, featKey },
+    );
+  }
   assertEquals(
-    [alice.id, bob.id].every((id) =>
-      completionFeats.some((feat) => feat.player_id === id && feat.feat_key === 'scratch_fever'),
-    ),
-    true,
+    completionFeats.some((feat) => feat.feat_key === 'giant_killer' || feat.feat_key === 'banana_peel'),
+    false,
   );
 
   const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {

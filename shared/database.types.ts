@@ -49,6 +49,7 @@ export type Database = {
           rated_games: number;
           rating: number;
           rating_deviation: number;
+          sucker_faces: number;
           updated_at: string;
         };
         Insert: { player_id: string };
