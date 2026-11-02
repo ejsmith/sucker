@@ -20,6 +20,7 @@ test('revoked permission does not leave an older installation registered at sign
     then: (resolve) => { events.push('delete'); return Promise.resolve({ error: null }).then(resolve); },
   };
   const modules = {
+    '../monitoring/exceptionless': { reportError: async () => {} },
     'expo-constants': { __esModule: true, default: { easConfig: { projectId: 'project' } } },
     'expo-device': { isDevice: true },
     'expo-notifications': notifications,

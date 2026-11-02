@@ -37,7 +37,7 @@ never scrolls.
 
 ## Implementation
 
-- Migration `20261023120000_add_end_game_recap.sql`: the `parting_shot` action
+- Migration `20261102120000_add_end_game_recap.sql`: the `parting_shot` action
   type and `get_game_recap`.
 - `game-action` `parting_shot { gameId, lineId }` appends to
   `state.partingShots` through `commit_game_move`, whose version check keeps the

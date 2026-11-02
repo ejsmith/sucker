@@ -123,7 +123,8 @@ for (const scenario of ['refresh-during-check', 'hung-check'] as const) {
               },
             ]),
           );
-          if (topic === `realtime:game:${gameId}`) {
+          // Each subscription appends its own suffix to the game topic.
+          if (topic.startsWith(`realtime:game:${gameId}:`)) {
             sendGameUpdate = () =>
               socket.send(
                 JSON.stringify([

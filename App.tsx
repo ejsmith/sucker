@@ -48,6 +48,7 @@ import {
   type ComputerTurnResult,
   type LocalPendingTurn,
 } from './src/game/computer';
+import { reportError, reportErrorMessage, setMonitoringGame } from './src/monitoring/exceptionless';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
 import type { ComputerSession } from './src/game/computerSession';
@@ -573,6 +574,11 @@ export function RemoteGameScreen({
   const retryRemoteLoadRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    setMonitoringGame(gameId);
+    return () => setMonitoringGame(null);
+  }, [gameId]);
+
+  useEffect(() => {
     let isMounted = true;
     let hasGameSnapshot = false;
     let isLoading = false;
@@ -612,6 +618,7 @@ export function RemoteGameScreen({
 
         setRemoteTaunt(latestTaunt);
       } catch (loadError) {
+        void reportError(loadError, { Operation: 'Load remote game' });
         if (isMounted && (!hasGameSnapshot || !profileIdRef.current)) {
           const isTemporary = isTemporarySessionError(loadError);
           setError(
@@ -746,7 +753,10 @@ export function RemoteGameScreen({
           setUnresolvedRequestId(null);
           setError(null);
         },
-        onFailure: () => setError('Unable to refresh the recovered move. Retrying…'),
+        onFailure: (refreshError) => {
+          void reportError(refreshError, { Operation: 'Refresh recovered move' });
+          setError('Unable to refresh the recovered move. Retrying…');
+        },
       });
     }
 
@@ -778,7 +788,7 @@ export function RemoteGameScreen({
       })
       .catch((turnError) => {
         if (isMounted) {
-          setError(turnError instanceof Error ? turnError.message : 'Unable to load latest turn.');
+          setError(reportErrorMessage(turnError, 'Unable to load latest turn.'));
           setRemoteLastTurnLoadFailedId(turnId);
           setRemoteLastTurn(null);
         }
@@ -830,7 +840,7 @@ export function RemoteGameScreen({
           }
         })
         .catch((pollError) => {
-          setError(pollError instanceof Error ? pollError.message : 'Unable to refresh game.');
+          setError(reportErrorMessage(pollError, 'Unable to refresh game.'));
         });
     }, 2500);
 
@@ -872,7 +882,7 @@ export function RemoteGameScreen({
       })
       .catch((refreshError) => {
         if (isCurrent) {
-          setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh game.');
+          setError(reportErrorMessage(refreshError, 'Unable to refresh game.'));
         }
       });
 
@@ -960,7 +970,7 @@ export function RemoteGameScreen({
         setError('Confirming your previous move before play continues…');
         void confirmPendingAction(actionError.requestId);
       } else {
-        setError(actionError instanceof Error ? actionError.message : 'Unable to update game.');
+        setError(reportErrorMessage(actionError, 'Unable to update game.'));
       }
       return null;
     } finally {
@@ -986,7 +996,7 @@ export function RemoteGameScreen({
       setUnresolvedRequestId((current) => (current === requestId ? null : current));
       setError(null);
     } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : 'Unable to confirm the previous move.');
+      setError(reportErrorMessage(refreshError, 'Unable to confirm the previous move.'));
     }
   }
 
@@ -1055,7 +1065,7 @@ export function RemoteGameScreen({
       void syncRemoteGameList(activeProfileId);
       onOpenGame(result.game.id);
     } catch (startError) {
-      const startMessage = startError instanceof Error ? startError.message : 'Unable to start the game.';
+      const startMessage = reportErrorMessage(startError, 'Unable to start the game.');
       setError(startMessage);
       throw new Error(startMessage);
     } finally {
@@ -1068,12 +1078,23 @@ export function RemoteGameScreen({
     onExit();
   }
 
-  if (!remoteGame || !profileId) {
+  // An open invite has only its creator until a friend accepts. The board needs
+  // both players, so wait here; realtime swaps in the board once they join.
+  const isWaitingForFriend = Boolean(remoteGame && remoteGame.state.players.length < 2);
+  if (!remoteGame || !profileId || isWaitingForFriend) {
     const loadingStage = (
-      <View style={[styles.remoteLoadingScreen, remoteStageStyle]} testID="remote-loading-screen">
+      <View
+        style={[styles.remoteLoadingScreen, remoteStageStyle]}
+        testID={isWaitingForFriend ? 'remote-waiting-for-friend' : 'remote-loading-screen'}
+      >
         <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteLoadingTitle}>
-          Loading Game
+          {isWaitingForFriend ? 'Waiting for Friend' : 'Loading Game'}
         </Text>
+        {isWaitingForFriend && !error && (
+          <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
+            The game starts when your friend accepts the invite.
+          </Text>
+        )}
         {error && (
           <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={styles.remoteMessage}>
             {error}
@@ -1660,7 +1681,10 @@ export function LocalGameScreen({
     let isCurrent = true;
     setTableFlip({ gameId: rageQuitGameId, status: 'checking' });
     void (async () => {
-      const seen = await hasSeenRageQuit(rageQuitGameId).catch(() => false);
+      const seen = await hasSeenRageQuit(rageQuitGameId).catch((seenError: unknown) => {
+        void reportError(seenError, { Operation: 'Check rage quit seen' });
+        return false;
+      });
       if (!isCurrent) return;
       if (seen) {
         tableFlipProgress.setValue(1);
@@ -1677,7 +1701,9 @@ export function LocalGameScreen({
       playHaptic('tableFlip');
       await runTableFlip(tableFlipProgress, shouldReduceMotion);
       if (!isCurrent) return;
-      void markRageQuitSeen(rageQuitGameId).catch(() => undefined);
+      void markRageQuitSeen(rageQuitGameId).catch((seenError: unknown) =>
+        reportError(seenError, { Operation: 'Mark rage quit seen' }),
+      );
       setTableFlip({ gameId: rageQuitGameId, status: 'done' });
     })();
 

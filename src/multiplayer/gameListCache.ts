@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { RemoteGameRow } from './types';
+import { reportError } from '../monitoring/exceptionless';
 
 const gameListCacheKey = 'sucker.multiplayerGameList.v1';
 
@@ -19,7 +20,8 @@ export async function loadCachedGameList(): Promise<CachedGameList | null> {
   try {
     const cached: unknown = JSON.parse(serialized);
     return isCachedGameList(cached) ? cached : null;
-  } catch {
+  } catch (error) {
+    void reportError(error, { Operation: 'Read cached game list' });
     return null;
   }
 }

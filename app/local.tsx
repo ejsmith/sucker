@@ -8,6 +8,7 @@ import { isMultiplayerConfigured } from '../src/multiplayer';
 import { queueComputerGameResult } from '../src/multiplayer/computerStats';
 import { flushComputerResults } from '../src/multiplayer/computerResultQueue';
 import { getStoredSessionSnapshot } from '../src/multiplayer/auth';
+import { reportError } from '../src/monitoring/exceptionless';
 import { useGameList } from '../src/navigation/GameListProvider';
 import { Pressable } from '../src/ui/Pressable';
 
@@ -38,7 +39,9 @@ export default function LocalGameRoute() {
         if (!active.current) return;
         if (session?.game.phase === 'complete' && !session.recordedGameIds.includes(session.game.id)) {
           await queueComputerGameResult(session.game, session.actions, session.turns, ownerId.current);
-          void flushComputerResults().catch(() => undefined);
+          void flushComputerResults().catch((flushError: unknown) =>
+            reportError(flushError, { Operation: 'Flush computer results' }),
+          );
         }
         if (!active.current) return;
         const resumable = session?.game.phase === 'complete' ? null : session;
@@ -47,7 +50,8 @@ export default function LocalGameRoute() {
         setLoaded({ profileId: ownerId.current, session: resumable });
         setError(null);
       })
-      .catch(() => {
+      .catch((loadError: unknown) => {
+        void reportError(loadError, { Operation: 'Open computer game' });
         if (active.current) {
           setOwnerKnown(ownerResolved.current);
           setError('Your saved computer game could not be opened. Retry or start a new game.');
@@ -65,7 +69,8 @@ export default function LocalGameRoute() {
 
   const persist = useCallback((session: ComputerSession) => {
     latestSession.current = session;
-    void saveComputerSession(ownerId.current, session).catch(() => {
+    void saveComputerSession(ownerId.current, session).catch((saveError: unknown) => {
+      void reportError(saveError, { Operation: 'Save computer game' });
       if (active.current) setError('Your computer game could not be saved. Retry before leaving.');
     });
   }, []);
@@ -75,7 +80,8 @@ export default function LocalGameRoute() {
     try {
       await saveComputerSession(ownerId.current, latestSession.current);
       setError(null);
-    } catch {
+    } catch (saveError) {
+      void reportError(saveError, { Operation: 'Retry computer game save' });
       setError('Your computer game could not be saved. Retry before leaving.');
     }
   }
@@ -85,7 +91,8 @@ export default function LocalGameRoute() {
       if (latestSession.current) await saveComputerSession(ownerId.current, latestSession.current);
       if (router.canGoBack()) router.back();
       else router.replace('/');
-    } catch {
+    } catch (saveError) {
+      void reportError(saveError, { Operation: 'Save computer game before leaving' });
       setError('Your computer game could not be saved. Retry before leaving.');
     }
   }
@@ -98,7 +105,8 @@ export default function LocalGameRoute() {
       setGeneration((value) => value + 1);
       setError(null);
       setConfirmNew(false);
-    } catch {
+    } catch (replaceError) {
+      void reportError(replaceError, { Operation: 'Replace computer game' });
       setError('Your saved computer game could not be replaced. Please retry.');
     }
   }

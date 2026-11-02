@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
+import { reportError } from '../monitoring/exceptionless';
 import { createHapticDriver, type HapticSupport } from './driver';
 import { createHapticPlayer } from './player';
 import {
@@ -54,7 +55,8 @@ export function HapticsProvider({ children }: { children: ReactNode }) {
         readyRef.current = true;
         setReady(true);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        void reportError(error, { Operation: 'Load haptic preferences' });
         setLoadError(true);
         readyRef.current = true;
         setReady(true);

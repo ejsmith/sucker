@@ -20,6 +20,7 @@
     "src/multiplayer/jab.ts",
     "src/multiplayer/localDevelopment.ts",
     "src/multiplayer/realtimeTopics.ts",
+    "src/monitoring/errorPolicy.ts",
     "src/network/actionRequestStatus.ts",
     "src/ui/bonusVisuals.ts",
     "src/ui/gameLayout.ts",
@@ -27,6 +28,7 @@
     "src/ui/statsFormat.ts",
     "shared/gameRecap.ts",
     "shared/partingShots.ts",
+    "shared/redaction.ts",
     "shared/taunts.ts"
   ]
 }

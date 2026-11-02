@@ -38,7 +38,7 @@
         "npm:expo-image-picker@~57.0.20",
         "npm:expo-image@~57.0.5",
         "npm:expo-linking@~57.0.13",
-        "npm:expo-notifications@~57.0.23",
+        "npm:expo-notifications@~57.0.24",
         "npm:expo-router@~57.0.29",
         "npm:expo-secure-store@~57.0.4",
         "npm:expo-splash-screen@~57.0.10",

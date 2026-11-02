@@ -1787,9 +1787,37 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   latestGame.state.players[1].revengePunchDiscount = 2;
   assertNoError((await admin.from('games').update({ state: latestGame.state }).eq('id', gameId)).error);
 
-  for (const category of scoreCategories) {
+  for (const [index, category] of scoreCategories.entries()) {
     latestGame = await scratchAndPass(gameId, alice, bob, category);
     latestGame = await scratchAndPass(gameId, bob, alice, category);
+    if (index === 5) {
+      // The fixed test die rolls five 1s every turn: a Natural, a Sucker on
+      // every turn so far, and back-to-back with each other. They and the sixth
+      // scratch are awarded the moment they happen, not when the game ends.
+      assertEquals(latestGame.status === 'complete', false);
+      const midGameFeats = await selectMany<{ feat_key: string; player_id: string }>(
+        admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
+      );
+      for (const id of [alice.id, bob.id]) {
+        assertEquals(
+          midGameFeats
+            .filter((feat) => feat.player_id === id)
+            .map((feat) => feat.feat_key)
+            .sort(),
+          [
+            'anything_you_can_do',
+            'back_to_back',
+            'four_score',
+            'hat_trick',
+            'high_five',
+            'natural',
+            'scratch_fever',
+            'seeing_double',
+            'six_pack',
+          ],
+        );
+      }
+    }
   }
 
   assertEquals(latestGame.status, 'complete');
@@ -1842,24 +1870,42 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
   );
   assertEquals(standings.length, 2);
+  // A tie leaves the rating at 1200 but narrows its uncertainty, so the shown rating rises from 900.
   assertEquals(
-    standings.every((row) => Number(row.rating) === 1200 && row.rated_games === 1 && row.current_win_streak === 0),
+    standings.every(
+      (row) =>
+        Number(row.rating) === 1200 &&
+        Number(row.rating_deviation) === 139.76 &&
+        row.rated_games === 1 &&
+        row.current_win_streak === 0,
+    ),
     true,
   );
   assertEquals(
-    results.every((result) => Number(result.rating_before) === 1200 && Number(result.rating_after) === 1200),
+    results.every((result) => Number(result.rating_before) === 900 && Number(result.rating_after) === 920.48),
     true,
   );
 
-  // Every category was scratched, including the game-ending move, so both earn Scratch Fever.
+  // Every category was scratched, including the game-ending move, so both earn
+  // Scratch Fever. The 0-0 tie is a Dead Heat and Double Digits, and the
+  // database awards Blitz because the game finished within an hour of its first roll.
   const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
     admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
   );
+  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz']) {
+    assertEquals(
+      {
+        earned: [alice.id, bob.id].every((id) =>
+          completionFeats.some((feat) => feat.player_id === id && feat.feat_key === featKey),
+        ),
+        featKey,
+      },
+      { earned: true, featKey },
+    );
+  }
   assertEquals(
-    [alice.id, bob.id].every((id) =>
-      completionFeats.some((feat) => feat.player_id === id && feat.feat_key === 'scratch_fever'),
-    ),
-    true,
+    completionFeats.some((feat) => feat.feat_key === 'giant_killer' || feat.feat_key === 'banana_peel'),
+    false,
   );
 
   const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {
@@ -1886,7 +1932,8 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   });
   assertNoError(cardError);
   assertEquals(card?.[0]?.games_played, 1);
-  assertEquals(Number(card?.[0]?.rating), 1200);
+  // The card shows the rating as of now, which sinks a hair every second after the game.
+  assertEquals(Math.round(Number(card?.[0]?.rating)), 920);
   assertEquals(card?.[0]?.rating_rank, null);
   const { data: aliceRankings, error: aliceRankingsError } = await charlie.client.rpc('get_player_rankings', {
     target_profile_id: alice.id,
@@ -2205,8 +2252,8 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(results.find((result) => result.player_id === bob.id)?.won, false);
 
   // A forfeit still moves ratings and streaks, but never awards feats or posts scores.
-  assertEquals(Number(results.find((result) => result.player_id === alice.id)?.rating_after), 1220);
-  assertEquals(Number(results.find((result) => result.player_id === bob.id)?.rating_after), 1180);
+  assertEquals(Number(results.find((result) => result.player_id === alice.id)?.rating_after), 971.24);
+  assertEquals(Number(results.find((result) => result.player_id === bob.id)?.rating_after), 869.72);
   const quitStandings = await selectMany<Database['public']['Tables']['player_standings']['Row']>(
     admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
   );
