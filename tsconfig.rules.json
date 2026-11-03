@@ -26,6 +26,8 @@
     "src/ui/gameLayout.ts",
     "src/ui/phoneStage.ts",
     "src/ui/statsFormat.ts",
+    "shared/gameRecap.ts",
+    "shared/partingShots.ts",
     "shared/redaction.ts",
     "shared/taunts.ts"
   ]
