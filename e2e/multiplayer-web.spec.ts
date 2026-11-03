@@ -840,7 +840,7 @@ test('long player names stay inside the game summary dialog', async ({ browser }
 
     const panel = alicePage.getByTestId('game-over-panel');
     await expect(panel).toBeVisible();
-    await expect(alicePage.getByTestId('game-over-title')).toContainText(longName);
+    await expect(alicePage.getByTestId('game-over-title')).toHaveText(/^(You (win|lost) by \d+[!.]|Tie game!)$/);
     await expect(alicePage.getByTestId('game-over-opponent-name')).toHaveText(longName);
 
     const overflow = await panel.evaluate((node) => ({

@@ -130,7 +130,7 @@ import { getTableFlipBoardStyle, getTableFlipTrayStyle, runTableFlip, TableFlipD
 import { getRageQuitReplyText, rageQuitReplies, type RageQuitReplyId } from './shared/rageQuit';
 import { getPartingShotOptions, type PartingShotLineId } from './shared/partingShots';
 import { loadGameRecap, type RemoteGameRecap } from './src/multiplayer/gameRecap';
-import { GameRecap } from './src/ui/GameRecap';
+import { GameOverHighlights, LastWord, PartingShotSheet, RatingChange, RecapPage } from './src/ui/GameRecap';
 import { useHaptics } from './src/haptics/HapticsProvider';
 import { bonusVisualColors } from './src/ui/bonusVisuals';
 import { CloseIcon } from './src/ui/ControlIcon';
@@ -1321,6 +1321,8 @@ export function LocalGameScreen({
   const [isRageQuitting, setIsRageQuitting] = useState(false);
   const [isSendingRageReply, setIsSendingRageReply] = useState(false);
   const [isSendingPartingShot, setIsSendingPartingShot] = useState(false);
+  const [partingShotSheetGameId, setPartingShotSheetGameId] = useState<string | null>(null);
+  const [recapPageGameId, setRecapPageGameId] = useState<string | null>(null);
   const [gameRecap, setGameRecap] = useState<{
     failed: boolean;
     gameId: string;
@@ -1612,7 +1614,6 @@ export function LocalGameScreen({
     !gameOverVisible,
   );
   const winnerId = isGameOver ? getWinnerId(game) : null;
-  const winnerName = winnerId === homePlayer.id ? homePlayer.name : winnerId ? opponentPlayer.name : null;
   const rageQuit = isGameOver ? game.rageQuit : undefined;
   const didIRageQuit = Boolean(rageQuit && rageQuit.playerId === homePlayer.id);
   const rageQuitterName = rageQuit ? (didIRageQuit ? homePlayer.name : opponentPlayer.name) : null;
@@ -1621,11 +1622,11 @@ export function LocalGameScreen({
     ? didIRageQuit
       ? 'You rage quit.'
       : 'Victory by Tantrum!'
-    : winnerName
-      ? winnerName === 'You'
-        ? 'You win!'
-        : `${winnerName} wins!`
-      : 'Tie game!';
+    : winnerId === homePlayer.id
+      ? `You win by ${homeScore - opponentScore}!`
+      : winnerId
+        ? `You lost by ${opponentScore - homeScore}.`
+        : 'Tie game!';
   const isTableFlipped = Boolean(isRemoteGame && rageQuit);
   const rageQuitter = rageQuit ? game.players.find((player) => player.id === rageQuit.playerId) : undefined;
   const rematchLockSeconds = !didIRageQuit
@@ -1649,6 +1650,9 @@ export function LocalGameScreen({
   const loadRecap = useRef(remoteHandlers?.onLoadRecap);
   loadRecap.current = remoteHandlers?.onLoadRecap;
   const partingShotOptions = isRemoteGame && myProfileId ? getPartingShotOptions(game, myProfileId) : null;
+  const showRecap = Boolean(recapGameId);
+  const currentRecap = gameRecap?.gameId === game.id ? gameRecap.recap : null;
+  const recapFailed = Boolean(gameRecap?.gameId === game.id && gameRecap.failed);
 
   // Feats and results are written with the game-ending move, so one read per
   // finished game is enough. Parting shots arrive with the game itself.
@@ -3257,7 +3261,7 @@ export function LocalGameScreen({
     if (!remoteHandlers || isSendingPartingShot) return;
     setIsSendingPartingShot(true);
     try {
-      await remoteHandlers.onPartingShot(lineId);
+      if (await remoteHandlers.onPartingShot(lineId)) setPartingShotSheetGameId(null);
     } finally {
       setIsSendingPartingShot(false);
     }
@@ -4932,7 +4936,11 @@ export function LocalGameScreen({
                 )}
                 <View style={[styles.gameOverScores, gameLayout.styles.gameOverScores]}>
                   <View
-                    style={[styles.gameOverScoreBox, gameLayout.styles.gameOverScoreBox]}
+                    style={[
+                      styles.gameOverScoreBox,
+                      gameLayout.styles.gameOverScoreBox,
+                      showRecap && winnerId === homePlayer.id && styles.gameOverScoreBoxWinner,
+                    ]}
                     testID="game-over-home-score"
                   >
                     <Text
@@ -4952,9 +4960,14 @@ export function LocalGameScreen({
                     >
                       {homeScore}
                     </Text>
+                    {showRecap && <RatingChange result={currentRecap?.results[homePlayer.id]} unit={gameLayout.unit} />}
                   </View>
                   <View
-                    style={[styles.gameOverScoreBox, gameLayout.styles.gameOverScoreBox]}
+                    style={[
+                      styles.gameOverScoreBox,
+                      gameLayout.styles.gameOverScoreBox,
+                      showRecap && winnerId === opponentPlayer.id && styles.gameOverScoreBoxWinner,
+                    ]}
                     testID="game-over-opponent-score"
                   >
                     <Text
@@ -4974,20 +4987,31 @@ export function LocalGameScreen({
                     >
                       {opponentScore}
                     </Text>
+                    {showRecap && (
+                      <RatingChange result={currentRecap?.results[opponentPlayer.id]} unit={gameLayout.unit} />
+                    )}
                   </View>
                 </View>
-                {isRemoteGame && !rageQuit && (
-                  <GameRecap
-                    homePlayer={homePlayer}
-                    isSending={isSendingPartingShot}
-                    onSendPartingShot={(lineId) => void handlePartingShot(lineId)}
-                    opponentPlayer={opponentPlayer}
-                    partingShotOptions={partingShotOptions}
-                    partingShots={game.partingShots ?? []}
-                    recap={gameRecap?.gameId === game.id ? gameRecap.recap : null}
-                    recapFailed={gameRecap?.gameId === game.id && gameRecap.failed}
-                    unit={gameLayout.unit}
-                  />
+                {showRecap && (
+                  <>
+                    <GameOverHighlights
+                      home={homePlayer}
+                      maxShown={3}
+                      onOpenRecap={() => setRecapPageGameId(game.id)}
+                      opponent={opponentPlayer}
+                      recap={currentRecap}
+                      recapFailed={recapFailed}
+                      unit={gameLayout.unit}
+                    />
+                    <LastWord
+                      home={homePlayer}
+                      onOpenSheet={() => setPartingShotSheetGameId(game.id)}
+                      opponentName={opponentPlayer.name}
+                      options={partingShotOptions}
+                      shots={game.partingShots ?? []}
+                      unit={gameLayout.unit}
+                    />
+                  </>
                 )}
                 <View style={[styles.gameOverActions, gameLayout.styles.gameOverActions]}>
                   <Pressable
@@ -5026,27 +5050,55 @@ export function LocalGameScreen({
                     </Text>
                   </Pressable>
                   <Pressable
-                    accessibilityLabel="View game stats"
+                    accessibilityLabel={showRecap ? 'Open the game recap' : 'View game stats'}
                     accessibilityRole="button"
-                    onPress={() => handleOpenStats('gameOver')}
-                    ref={gameOverStatsButtonRef}
+                    onPress={() => (showRecap ? setRecapPageGameId(game.id) : handleOpenStats('gameOver'))}
+                    ref={showRecap ? undefined : gameOverStatsButtonRef}
                     style={({ pressed }) => [
                       styles.gameOverSecondaryButton,
                       gameLayout.styles.gameOverSecondaryButton,
                       pressed && styles.pressed,
                     ]}
-                    testID="game-over-stats-button"
+                    testID={showRecap ? 'game-over-recap-button' : 'game-over-stats-button'}
                   >
                     <View style={[styles.buttonInnerShade, gameLayout.styles.buttonInnerShade]} />
                     <Text
                       maxFontSizeMultiplier={1.2}
                       style={[styles.gameOverSecondaryText, gameLayout.styles.gameOverSecondaryText]}
                     >
-                      Stats
+                      {showRecap ? 'Recap' : 'Stats'}
                     </Text>
                   </Pressable>
                 </View>
               </View>
+              {showRecap && recapPageGameId === game.id && (
+                <RecapPage
+                  home={homePlayer}
+                  homeScore={homeScore}
+                  onClose={() => setRecapPageGameId(null)}
+                  onOpenStats={() => handleOpenStats('gameOver')}
+                  opponent={opponentPlayer}
+                  opponentScore={opponentScore}
+                  recap={currentRecap}
+                  recapFailed={recapFailed}
+                  shots={game.partingShots ?? []}
+                  statsButtonRef={gameOverStatsButtonRef}
+                  unit={gameLayout.unit}
+                />
+              )}
+              {showRecap && partingShotOptions && partingShotSheetGameId === game.id && (
+                <PartingShotSheet
+                  home={homePlayer}
+                  isSending={isSendingPartingShot}
+                  key={`${game.id}-${partingShotOptions.kind}`}
+                  onClose={() => setPartingShotSheetGameId(null)}
+                  onSend={(lineId) => void handlePartingShot(lineId)}
+                  opponentName={opponentPlayer.name}
+                  options={partingShotOptions}
+                  shots={game.partingShots ?? []}
+                  unit={gameLayout.unit}
+                />
+              )}
             </View>
           )}
           {showStatsPage && (
@@ -7678,6 +7730,10 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     paddingVertical: 8,
+  },
+  gameOverScoreBoxWinner: {
+    backgroundColor: '#FFD329',
+    borderColor: '#FFF3C2',
   },
   gameOverScoreName: {
     color: '#8F3B10',
