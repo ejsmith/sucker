@@ -38,6 +38,14 @@ export type RageQuit = {
   replyId?: string;
 };
 
+// Canned end-game trash talk, in the order sent. Each player gets one shot and
+// one comeback to the other's shot. Lines are cataloged in partingShots.ts.
+export type PartingShot = {
+  kind: 'shot' | 'comeback';
+  lineId: string;
+  playerId: string;
+};
+
 export type GameState = {
   id: string;
   // Set after any punch misses; expires when this player starts their next turn.
@@ -51,6 +59,7 @@ export type GameState = {
   rollNumber: number;
   phase: GamePhase;
   rageQuit?: RageQuit;
+  partingShots?: PartingShot[];
 };
 
 export const scoreCategories: ScoreCategory[] = [
@@ -455,11 +464,13 @@ export function toGameState(value: unknown): GameState {
     throw new Error('Stored game has invalid counterpunch cost.');
   }
   const rageQuit = game.rageQuit === undefined ? undefined : toRageQuit(game.rageQuit, players);
+  const partingShots = game.partingShots === undefined ? undefined : toPartingShots(game.partingShots, players);
 
   return {
     ...(typeof counterPunchPlayerId === 'string' ? { counterPunchPlayerId } : {}),
     ...(counterPunchCost === 1 || counterPunchCost === 2 ? { counterPunchCost } : {}),
     ...(rageQuit ? { rageQuit } : {}),
+    ...(partingShots ? { partingShots } : {}),
     currentPlayerIndex,
     dice: toDice(game.dice),
     extraRollsAvailable: toOptionalNonNegativeInteger(
@@ -600,6 +611,21 @@ function toRageQuit(value: unknown, players: Player[]): RageQuit {
     playerId,
     ...(typeof replyId === 'string' ? { replyId } : {}),
   };
+}
+
+function toPartingShots(value: unknown, players: Player[]): PartingShot[] {
+  return toArray(value, 'Stored game has invalid parting shots.').map((item) => {
+    const shot = toRecord(item, 'Stored game has invalid parting shot.');
+    const playerId = toString(shot.playerId, 'Stored game has invalid parting shot player.');
+    if (!players.some((player) => player.id === playerId)) {
+      throw new Error('Stored game has invalid parting shot player.');
+    }
+    if (shot.kind !== 'shot' && shot.kind !== 'comeback') {
+      throw new Error('Stored game has invalid parting shot kind.');
+    }
+
+    return { kind: shot.kind, lineId: toString(shot.lineId, 'Stored game has invalid parting shot line.'), playerId };
+  });
 }
 
 function toScorecard(value: unknown): Scorecard {

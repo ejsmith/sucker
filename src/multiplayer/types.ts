@@ -1,5 +1,6 @@
 import type { Dice, DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from '../game';
 import type { TauntId, TauntScenario } from '../../shared/taunts';
+import type { PartingShotLineId } from '../../shared/partingShots';
 import type { RageQuitReplyId } from '../../shared/rageQuit';
 
 export type RemoteGameStatus = 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
@@ -128,6 +129,11 @@ export type MultiplayerAction =
       type: 'rage_quit_reply';
       gameId: string;
       replyId: RageQuitReplyId;
+    }
+  | {
+      type: 'parting_shot';
+      gameId: string;
+      lineId: PartingShotLineId;
     };
 
 export type MultiplayerActionResult = {

@@ -819,6 +819,8 @@ test('two players can create an invite and play turns through the web UI', async
 
   await completeGameForScreenshot(gameId, bob.id);
   await expect(bobPage.getByTestId('game-over-overlay')).toBeVisible();
+  await expect(bobPage.getByTestId('game-recap-highlights')).toBeVisible();
+  await expect(bobPage.getByTestId('game-recap-loading')).toHaveCount(0);
   await expect(bobPage.getByTestId('game-over-panel')).toHaveScreenshot('game-over.png', {
     mask: [bobPage.getByTestId('game-over-home-score'), bobPage.getByTestId('game-over-opponent-score')],
     maxDiffPixelRatio: 0.12,
@@ -840,7 +842,7 @@ test('long player names stay inside the game summary dialog', async ({ browser }
 
     const panel = alicePage.getByTestId('game-over-panel');
     await expect(panel).toBeVisible();
-    await expect(alicePage.getByTestId('game-over-title')).toContainText(longName);
+    await expect(alicePage.getByTestId('game-over-title')).toHaveText(/^(You (win|lost) by \d+[!.]|Tie game!)$/);
     await expect(alicePage.getByTestId('game-over-opponent-name')).toHaveText(longName);
 
     const overflow = await panel.evaluate((node) => ({
