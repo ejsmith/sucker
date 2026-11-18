@@ -111,6 +111,7 @@ export function getActionKey(action: MultiplayerAction) {
     case 'mulligan':
     case 'rage_quit':
     case 'rage_quit_reply':
+    case 'finish_card':
       return JSON.stringify([action.type, action.gameId]);
     case 'extra_roll':
     case 'roll':

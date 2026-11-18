@@ -1405,7 +1405,28 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await bobPage.waitForTimeout(1_000);
     expect((await loadGame(gameId)).status).toBe('active');
 
-    // Ten fast taps in a row flip the table.
+    // Bob has not played 3 turns, so ten fast taps refuse instead of quitting.
+    for (let tap = 0; tap < 10; tap += 1) {
+      await rageButton.click();
+    }
+    await expect(rageButton).toHaveText(/^(Nope\.|Not a chance\.|Nice try, crybaby\.|Denied\.)$/);
+    await expect(bobPage.getByTestId('rage-quit-subtitle')).toContainText(
+      "You can't quit until you've played 3 turns.",
+    );
+    await expect(bobPage.getByTestId('rage-quit-cancel-button')).toHaveText("Fine, I'll play");
+    expect((await loadGame(gameId)).status).toBe('active');
+    await bobPage.getByTestId('rage-quit-cancel-button').click();
+
+    // Three boxes in, ten fast taps in a row flip the table.
+    const started = await loadGame(gameId);
+    const startedBob = started.state.players.find((player: { id: string }) => player.id === bob.id);
+    Object.assign(startedBob.scorecard, { ones: 0, threes: 0, twos: 0 });
+    assertNoError((await admin.from('games').update({ state: started.state }).eq('id', gameId)).error);
+    await bobPage.reload();
+    await expect(bobPage.getByTestId('game-screen')).toBeVisible();
+    await bobPage.getByTestId('game-menu-button').click();
+    await bobPage.getByTestId('rage-quit-menu-item').click();
+    await expect(rageButton).toHaveText('RAGE QUIT');
     for (let tap = 0; tap < 10; tap += 1) {
       await rageButton.click();
     }
@@ -1422,7 +1443,10 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     await alicePage.getByTestId('rage-quit-reply-need-tissue').click();
     await expect(alicePage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?');
     await expect(alicePage.getByTestId('rage-quit-replies')).toHaveCount(0);
+    // The winner may finish their card. The quitter may not.
+    await expect(alicePage.getByTestId('finish-card-button')).toBeVisible();
     await expect(bobPage.getByTestId('rage-quit-reply')).toContainText('Need a tissue?', { timeout: 15_000 });
+    await expect(bobPage.getByTestId('finish-card-button')).toHaveCount(0);
     await expect(bobPage.getByTestId('game-over-rematch-button')).toContainText('Quit quitting', { timeout: 8_000 });
 
     // The salt is public: Bob wears it in his own lobby and in Alice's history.
@@ -1435,6 +1459,24 @@ test('rage quit flips the table, hands the opponent the win, and salts the quitt
     const completedGame = alicePage.getByTestId(`completed-game-${gameId}`);
     await expect(completedGame).toContainText('They rage quit');
     await expect(completedGame.getByTestId('salt-badge')).toBeVisible({ timeout: 15_000 });
+
+    // Alice can still finish her card from its score card. Every turn is hers,
+    // and the game stays in her active list while she plays.
+    await completedGame.click();
+    await alicePage.getByTestId(`finish-card-detail-${gameId}`).click();
+    await expect(alicePage.getByTestId('game-screen')).toBeVisible({ timeout: 15_000 });
+    await expect(alicePage.getByTestId('game-over-title')).toHaveCount(0);
+    await waitForPressableEnabled(alicePage.getByTestId('roll-button'));
+    await alicePage.getByTestId('roll-button').click();
+    await expect.poll(async () => (await loadGame(gameId)).state.rollNumber).toBe(1);
+    const playing = await loadGame(gameId);
+    expect([playing.status, playing.winner_id]).toEqual(['complete', alice.id]);
+    expect(playing.state.rageQuit).toEqual({ playerId: bob.id, playOut: 'playing', replyId: 'need-tissue' });
+    await alicePage.goto('/');
+    await dismissTurnNotificationPrompt(alicePage);
+    await expect(alicePage.getByTestId(`game-hint-${gameId}`)).toHaveText('Tap to keep finishing your card.', {
+      timeout: 15_000,
+    });
   } finally {
     await Promise.all([alicePage.context().close(), bobPage.context().close()]);
   }
@@ -1460,6 +1502,11 @@ test('a finished game stays in the games list until its result is seen', async (
   try {
     gameId = await createAcceptedGame(alicePage, bobPage);
     // Quitting through the API means neither player has seen the result yet.
+    // Rage Quit unlocks once the quitter has filled 3 boxes.
+    const started = await loadGame(gameId);
+    const startedBob = started.state.players.find((player: { id: string }) => player.id === bob.id);
+    Object.assign(startedBob.scorecard, { ones: 0, threes: 0, twos: 0 });
+    assertNoError((await admin.from('games').update({ state: started.state }).eq('id', gameId)).error);
     await invokeTestGameAction(bob, { gameId, type: 'rage_quit' });
     expect(await loadSeen()).toEqual({ [alice.id]: false, [bob.id]: false });
 

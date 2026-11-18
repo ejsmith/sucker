@@ -23,7 +23,14 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createGameAgainst, createRematch, jabRemoteGame, removeRemoteGame, subscribeToGameListChanges } from './games';
+import {
+  createGameAgainst,
+  createRematch,
+  finishRemoteCard,
+  jabRemoteGame,
+  removeRemoteGame,
+  subscribeToGameListChanges,
+} from './games';
 import { acceptInviteCode, createInviteGame } from './invites';
 import { recoverPendingAvatar, removeAvatar, selectAvatar, uploadAvatar, type AvatarSource } from './avatars';
 import { deleteCurrentAccount } from './account';
@@ -45,7 +52,15 @@ import type { LocalTestPlayer } from './auth';
 import { AppleSignInButton } from './AppleSignInButton';
 import type { ProfileInput, RemoteGameRow } from './types';
 import { canJabGame } from './jab';
-import { categoryLabels, getWinnerId, scoreCategories, totalScore, upperBonus } from '../game';
+import {
+  canPlayOut,
+  categoryLabels,
+  getWinnerId,
+  isPlayingOut,
+  scoreCategories,
+  totalScore,
+  upperBonus,
+} from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { PlayerProfilePage, StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
@@ -763,6 +778,15 @@ export function MultiplayerLobby({
     });
   }
 
+  // After the opponent rage quit, start playing out your card and open it.
+  async function handleFinishCard(game: RemoteGameRow) {
+    await runAction(async () => {
+      await finishRemoteCard(game.id);
+      setSelectedCompletedGameId(null);
+      onOpenGame(game.id);
+    });
+  }
+
   async function handleRematchGame(game: RemoteGameRow) {
     await runAction(async () => {
       await createRematch(game.id);
@@ -1116,14 +1140,12 @@ export function MultiplayerLobby({
 
   const activeProfileId = profileId ?? session.user.id;
   const isGameListReady = gamesProfileId === activeProfileId;
-  // Finished games stay here until this player has seen how they ended.
-  const activeGames = sortActiveGames(
-    visibleGames.filter((game) => game.status !== 'complete' || game.has_unseen_result),
-    activeProfileId,
-  );
-  const completedGames = sortCompletedGames(
-    visibleGames.filter((game) => game.status === 'complete' && !game.has_unseen_result),
-  ).slice(0, 25);
+  // Finished games stay here until this player has seen how they ended, or
+  // while they are finishing their card after the opponent rage quit.
+  const isStillActive = (game: RemoteGameRow) =>
+    game.status !== 'complete' || game.has_unseen_result || isFinishingCard(game, activeProfileId);
+  const activeGames = sortActiveGames(visibleGames.filter(isStillActive), activeProfileId);
+  const completedGames = sortCompletedGames(visibleGames.filter((game) => !isStillActive(game))).slice(0, 25);
   const unfinishedGameCount = activeGames.filter((game) => game.status !== 'complete').length;
   const webPushPromptVisible = Boolean(
     profile &&
@@ -1283,6 +1305,7 @@ export function MultiplayerLobby({
             avatarUrl={profileAvatars[getGamePlayers(selectedCompletedGame, activeProfileId).opponent?.id ?? '']}
             game={selectedCompletedGame}
             isBusy={isBusy || isLoading}
+            onFinishCard={(game) => void handleFinishCard(game)}
             onOpenPlayerStats={(game) => void handleOpenCompletedGameStats(game, 'opponent')}
             onOpenStats={(game) => void handleOpenCompletedGameStats(game, null)}
             onRematchGame={handleRematchGame}
@@ -2683,6 +2706,7 @@ function CompletedGameScorecard({
   isOpponentSalty,
   onOpenPlayerStats,
   onOpenStats,
+  onFinishCard,
   onRematchGame,
   profileId,
 }: {
@@ -2692,6 +2716,7 @@ function CompletedGameScorecard({
   isOpponentSalty: boolean;
   onOpenPlayerStats: (game: RemoteGameRow) => void;
   onOpenStats: (game: RemoteGameRow) => void;
+  onFinishCard: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
@@ -2799,6 +2824,22 @@ function CompletedGameScorecard({
         />
       </View>
 
+      {canPlayOut(game.state, profileId) && (
+        <Pressable
+          accessibilityHint="Play your open boxes alone. Your final score counts toward high scores."
+          accessibilityRole="button"
+          disabled={isBusy}
+          onPress={() => onFinishCard(game)}
+          style={({ pressed }) => [
+            lobbyStyles.primaryButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`finish-card-detail-${game.id}`}
+        >
+          <Text style={lobbyStyles.primaryButtonText}>Finish your card</Text>
+        </Pressable>
+      )}
       <View style={lobbyStyles.completedDetailActions}>
         <Pressable
           disabled={isBusy}
@@ -2943,6 +2984,10 @@ function getGameStatusLabel(game: RemoteGameRow, profileId: string) {
   return game.current_player_id === profileId ? 'Your turn' : 'Their turn';
 }
 
+function isFinishingCard(game: RemoteGameRow, profileId: string) {
+  return isPlayingOut(game.state) && game.state.rageQuit?.playerId !== profileId;
+}
+
 function getUnseenResultHint(game: RemoteGameRow, profileId: string, opponentName: string) {
   const rageQuit = game.state.rageQuit;
   if (rageQuit?.replyId && rageQuit.playerId === profileId) {
@@ -2950,6 +2995,12 @@ function getUnseenResultHint(game: RemoteGameRow, profileId: string, opponentNam
   }
   if (rageQuit && rageQuit.playerId !== profileId && !rageQuit.replyId) {
     return 'Tap to send an insult.';
+  }
+  if (rageQuit && rageQuit.playerId !== profileId && canPlayOut(game.state, profileId)) {
+    return 'Tap to finish your card.';
+  }
+  if (isFinishingCard(game, profileId)) {
+    return 'Tap to keep finishing your card.';
   }
 
   return 'Tap to see the final score.';

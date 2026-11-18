@@ -82,6 +82,7 @@ type TokenEventsTable = {
 };
 
 type GamePlayerResult = {
+  played_out_at?: string | null;
   rating_after?: number | null;
   rating_before?: number | null;
   blowout_loss?: number;

@@ -36,6 +36,9 @@ export type RageQuit = {
   playerId: string;
   // The winner's one canned reply.
   replyId?: string;
+  // The winner chose to finish their own card. Their final score then counts
+  // toward high scores; the result stays settled at the quit.
+  playOut?: 'playing' | 'finished';
 };
 
 export type GameState = {
@@ -155,12 +158,26 @@ export function expireCounterPunch(game: GameState, playerId: string): GameState
   return nextGame;
 }
 
+// Rage Quit unlocks once the quitter has filled this many boxes. Before that
+// the game has barely started, so there is nothing to rage about.
+export const rageQuitUnlockTurns = 3;
+
+export function isRageQuitUnlocked(game: GameState, playerId: string): boolean {
+  const player = game.players.find((candidate) => candidate.id === playerId);
+  return (
+    Boolean(player) && scoreCategories.length - availableCategories(player!.scorecard).length >= rageQuitUnlockTurns
+  );
+}
+
 export function rageQuitGame(game: GameState, playerId: string): GameState {
   if (game.phase === 'complete') {
     throw new Error('This game is already over.');
   }
   if (!game.players.some((player) => player.id === playerId)) {
     throw new Error('Player is not in this game.');
+  }
+  if (!isRageQuitUnlocked(game, playerId)) {
+    throw new Error('Too soon to rage quit. Finish what you started.');
   }
 
   // Unused counterpunches and revenge discounts expire like any game end.
@@ -171,6 +188,41 @@ export function rageQuitGame(game: GameState, playerId: string): GameState {
     players: game.players.map(clearRevengePunchDiscount),
     rageQuit: { playerId },
   };
+}
+
+// Whether the player who stayed after a Rage Quit can still finish their card.
+export function canPlayOut(game: GameState, playerId: string): boolean {
+  const player = game.players.find((candidate) => candidate.id === playerId);
+  return Boolean(
+    game.rageQuit &&
+    !game.rageQuit.playOut &&
+    player &&
+    game.rageQuit.playerId !== playerId &&
+    availableCategories(player.scorecard).length > 0,
+  );
+}
+
+// The winner plays their open boxes alone. Nobody is left to punch, so every
+// turn is theirs until the card is full.
+export function startPlayOut(game: GameState, playerId: string): GameState {
+  if (!canPlayOut(game, playerId)) {
+    throw new Error('There is no card left to finish.');
+  }
+
+  return {
+    ...game,
+    currentPlayerIndex: game.players.findIndex((player) => player.id === playerId),
+    dice: [1, 1, 1, 1, 1],
+    extraRollsAvailable: 0,
+    held: [false, false, false, false, false],
+    phase: 'rolling',
+    rageQuit: { ...game.rageQuit!, playOut: 'playing' },
+    rollNumber: 0,
+  };
+}
+
+export function isPlayingOut(game: Pick<GameState, 'rageQuit'>): boolean {
+  return game.rageQuit?.playOut === 'playing';
 }
 
 export function getWinnerId(game: GameState): string | null {
@@ -595,10 +647,15 @@ function toRageQuit(value: unknown, players: Player[]): RageQuit {
   if (replyId !== undefined && typeof replyId !== 'string') {
     throw new Error('Stored game has invalid rage quit reply.');
   }
+  const playOut = rageQuit.playOut;
+  if (playOut !== undefined && playOut !== 'playing' && playOut !== 'finished') {
+    throw new Error('Stored game has invalid rage quit play-out.');
+  }
 
   return {
     playerId,
     ...(typeof replyId === 'string' ? { replyId } : {}),
+    ...(playOut ? { playOut } : {}),
   };
 }
 
