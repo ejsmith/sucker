@@ -7,7 +7,11 @@ import {
   instantFeatKeys,
   mayEarnInstantFeat,
   rolledSuckerThisTurn,
-  suckerSpreeFeatFor,
+  suckerSpreeFeatsFor,
+  suckerSpreeLookback,
+  type SuckerSpreeAward,
+  type SuckerSpreeFeatKey,
+  type SuckerSpreeTurn,
 } from './feats.ts';
 import { buildCompletedPlayerStats, type SuckerStatAction, type SuckerStatTurn } from './stats.ts';
 
@@ -528,7 +532,14 @@ Deno.test('Sucker streak tiers count your turns in a row with a Sucker', () => {
   assertEquals(earned(featsFor('player', run(3))), 'back_to_back, three_peat');
 
   // A turn without a Sucker starts the streak over.
-  const broken = featsFor('player', [...run(2), miss('player'), scored('player'), ...run(2)]);
+  const broken = featsFor('player', [
+    ...run(2),
+    miss('player'),
+    scored('player'),
+    miss('opponent'),
+    scored('opponent'),
+    ...run(2),
+  ]);
   assertEquals(earned(broken), 'back_to_back');
 
   // A punched-away turn is replaced by its replay, so a Sucker on the replay
@@ -554,15 +565,50 @@ Deno.test('a turn rolled a Sucker when any roll since its last Mulligan did', ()
   assertEquals(rolledSuckerThisTurn([roll('opponent', [3, 3, 3, 3, 3]), miss], 'player'), false);
 });
 
-Deno.test('Sucker Spree tiers are earned on the turn that reaches them', () => {
-  assertEquals(suckerSpreeFeatFor([]), null);
-  assertEquals(suckerSpreeFeatFor([true]), null);
-  assertEquals(suckerSpreeFeatFor([true, true]), 'sucker_spree_3');
-  assertEquals(suckerSpreeFeatFor([true, true, false, true]), 'sucker_spree_3');
-  assertEquals(suckerSpreeFeatFor([true, false, true, true]), null);
-  assertEquals(suckerSpreeFeatFor(Array(9).fill(true)), 'sucker_spree_10');
-  // Each tier comes once per streak, so a longer streak earns nothing more.
-  assertEquals(suckerSpreeFeatFor(Array(10).fill(true)), null);
+Deno.test('Sucker Spree tiers are earned once per streak, catching up after erased turns', () => {
+  // Earlier kept turns, newest first: minute n of the day, Sucker or not.
+  const turns = (...rolls: [number, boolean][]) =>
+    rolls.map(([minute, rolled]) => ({ created_at: at(minute), rolled_sucker: rolled }));
+  const at = (minute: number) => `2026-11-20T10:${String(minute).padStart(2, '0')}:00.123456+00:00`;
+  const award = (featKey: SuckerSpreeFeatKey, minute: number, gameId = 'other') => ({
+    earned_at: at(minute),
+    featKey,
+    game_id: gameId,
+  });
+  const spree = (earlier: SuckerSpreeTurn[], awarded: SuckerSpreeAward[] = []) =>
+    suckerSpreeFeatsFor(earlier, awarded, 'game').join(', ');
+
+  assertEquals(spree([]), '');
+  assertEquals(spree(turns([1, true])), '');
+  assertEquals(spree(turns([2, true], [1, true])), 'sucker_spree_3');
+  assertEquals(spree(turns([3, true], [2, true], [1, false], [0, true])), 'sucker_spree_3');
+  assertEquals(spree(turns([3, true], [2, false], [1, true], [0, true])), '');
+
+  // The next Sucker earns only the next tier.
+  assertEquals(spree(turns([3, true], [2, true], [1, true]), [award('sucker_spree_3', 3)]), 'sucker_spree_4');
+
+  // A turn erased between two streaks joins them; the merged streak catches up
+  // on the tiers neither half reached.
+  assertEquals(
+    spree(turns([5, true], [4, true], [2, true], [1, true])),
+    'sucker_spree_3, sucker_spree_4, sucker_spree_5',
+  );
+
+  // A streak shortened by an erased turn does not earn its tiers again.
+  assertEquals(spree(turns([5, true], [1, true]), [award('sucker_spree_3', 3)]), '');
+
+  // A tier from an earlier streak counts again, unless it is already in this game.
+  assertEquals(spree(turns([9, true], [8, true], [7, false]), [award('sucker_spree_3', 3)]), 'sucker_spree_3');
+  assertEquals(spree(turns([9, true], [8, true], [7, false]), [award('sucker_spree_3', 3, 'game')]), '');
+
+  // Every tier through Supernova, then nothing more once the streak runs past it,
+  // even when every turn game-action reads back was a Sucker.
+  const longest = Array.from(
+    { length: suckerSpreeLookback - 1 },
+    (_, index) => [20 - index, true] as [number, boolean],
+  );
+  assertEquals(spree(turns(...longest)).split(', ').length, 8);
+  assertEquals(spree(turns(...longest, [10, true])), '');
 });
 
 Deno.test('punching away a scored Sucker robs it, and a Sucker on the replay strikes twice', () => {

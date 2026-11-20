@@ -51,10 +51,11 @@ import {
 import {
   buildCompletedPlayerFeats,
   buildInstantPlayerFeats,
-  longestSuckerSpree,
   mayEarnInstantFeat,
   rolledSuckerThisTurn,
-  suckerSpreeFeatFor,
+  suckerSpreeFeatsFor,
+  suckerSpreeLookback,
+  type SuckerSpreeFeatKey,
 } from '../_shared/feats.ts';
 import {
   getTurnTauntScenario,
@@ -131,7 +132,12 @@ type ActionInput =
   | { type: 'rage_quit'; gameId: string }
   | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
 type Action = ActionInput & { requestId: string };
-type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
+type ActionMutationState = {
+  mayHaveWritten: boolean;
+  plan?: GameMovePlan;
+  // The game's committed stat actions, loaded once per move.
+  statActions?: Promise<SuckerStatAction[]>;
+};
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -211,7 +217,7 @@ Deno.serve(async (request) => {
         if (!result.game) throw new InternalServerError('A game move must return its game.');
         const plan = mutationState.plan;
         const game = result.game;
-        await timer.measure('feats', () => planInstantFeats(admin, game, plan));
+        await timer.measure('feats', () => planInstantFeats(admin, game, plan, mutationState));
         mutationState.mayHaveWritten = true;
         try {
           result = await commitGameMove(admin, mutationState.plan, user.id, action.requestId, {
@@ -1614,7 +1620,7 @@ async function scoreRemoteTurn(
   const [turnIndex, rolledSucker] = await Promise.all([
     loadNextTurnIndex(admin, gameId, game.last_turn_id),
     state.rollNumber > 0 && !isSuckerRoll(state.dice)
-      ? loadSuckerStatActions(admin, gameId).then((actions) => rolledSuckerThisTurn(actions, actorId))
+      ? loadStatActionsOnce(admin, gameId, mutationState).then((actions) => rolledSuckerThisTurn(actions, actorId))
       : state.rollNumber > 0,
   ]);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
@@ -1697,7 +1703,7 @@ async function scoreRemoteTurn(
   ]);
 
   if (rolledSucker) {
-    await planSuckerSpreeFeat(admin, actorId, gameId, mutationState.plan!);
+    await planSuckerSpreeFeats(admin, actorId, gameId, mutationState.plan!);
   }
   if (complete) {
     await planCompletedGameStats(admin, gameId, players, winner?.id ?? null, mutationState.plan!);
@@ -2466,7 +2472,12 @@ function plannedStatActions(plan: GameMovePlan) {
 // Feats that cannot depend on the result are awarded on the move that earns
 // them. A completing move leaves every feat to planCompletedGameStats, and a
 // Rage Quit awards nothing more, but feats earned before it stand.
-async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePlan) {
+async function planInstantFeats(
+  admin: DbClient,
+  game: GameRow,
+  plan: GameMovePlan,
+  mutationState: ActionMutationState,
+) {
   if (
     game.status === 'complete' ||
     !plannedStatActions(plan).some((action) => mayEarnInstantFeat(action, game.state.rollNumber))
@@ -2474,7 +2485,7 @@ async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePl
     return;
 
   const [storedActions, awardedFeats] = await Promise.all([
-    loadSuckerStatActions(admin, game.id),
+    loadStatActionsOnce(admin, game.id, mutationState),
     loadAwardedFeats(admin, game.id),
   ]);
   const actions = [...storedActions, ...plannedStatActions(plan)];
@@ -2494,32 +2505,38 @@ async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePl
 
 // A Sucker turn extends the player's streak across all their games: kept
 // turns in the order they were submitted, so a punched or Mulliganed turn
-// gives way to its replay. A streak earns each tier on the turn that reaches it.
-async function planSuckerSpreeFeat(admin: DbClient, playerId: string, gameId: string, plan: GameMovePlan) {
-  const { data: earlierTurns, error } = await admin
-    .from('turns')
-    .select('rolled_sucker')
-    .eq('player_id', playerId)
-    .in('status', ['submitted', 'blocked', 'finalized'])
-    .order('created_at', { ascending: false })
-    .limit(longestSuckerSpree - 1);
-  if (error) throw error;
+// gives way to its replay. The player's Spree feats are few, so read them all.
+async function planSuckerSpreeFeats(admin: DbClient, playerId: string, gameId: string, plan: GameMovePlan) {
+  const [earlierTurns, awarded] = await Promise.all([
+    admin
+      .from('turns')
+      .select('created_at, rolled_sucker')
+      .eq('player_id', playerId)
+      .in('status', ['submitted', 'blocked', 'finalized'])
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(suckerSpreeLookback),
+    admin
+      .from('player_feats')
+      .select('earned_at, feat_key, game_id')
+      .eq('player_id', playerId)
+      .like('feat_key', 'sucker_spree_%'),
+  ]);
+  if (earlierTurns.error) throw earlierTurns.error;
+  if (awarded.error) throw awarded.error;
 
-  const featKey = suckerSpreeFeatFor((earlierTurns ?? []).map((turn) => turn.rolled_sucker));
-  if (!featKey) return;
-  // A broken streak can reach the same tier again in the same game.
-  const { data: awarded, error: awardedError } = await admin
-    .from('player_feats')
-    .select('feat_key')
-    .match({ feat_key: featKey, game_id: gameId, player_id: playerId })
-    .maybeSingle();
-  if (awardedError) throw awardedError;
-  if (awarded) return;
-  plan.writes.push({
-    table: 'player_feats',
-    operation: 'insert',
-    data: { feat_key: featKey, game_id: gameId, player_id: playerId },
-  });
+  const featKeys = suckerSpreeFeatsFor(
+    earlierTurns.data ?? [],
+    (awarded.data ?? []).map((feat) => ({ ...feat, featKey: feat.feat_key as SuckerSpreeFeatKey })),
+    gameId,
+  );
+  for (const featKey of featKeys) {
+    plan.writes.push({
+      table: 'player_feats',
+      operation: 'insert',
+      data: { feat_key: featKey, game_id: gameId, player_id: playerId },
+    });
+  }
 }
 
 async function loadAwardedFeats(admin: DbClient, gameId: string) {
@@ -2547,6 +2564,11 @@ async function loadSuckerStatTurns(admin: DbClient, gameId: string) {
   }
 
   return (turns ?? []) as SuckerStatTurn[];
+}
+
+function loadStatActionsOnce(admin: DbClient, gameId: string, mutationState: ActionMutationState) {
+  mutationState.statActions ??= loadSuckerStatActions(admin, gameId);
+  return mutationState.statActions;
 }
 
 async function loadSuckerStatActions(admin: DbClient, gameId: string) {

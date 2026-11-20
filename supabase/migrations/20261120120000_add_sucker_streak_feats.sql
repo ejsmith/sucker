@@ -3,8 +3,7 @@
 -- submission and reads it across a player's games for Sucker Spree feats.
 alter table public.turns add column rolled_sucker boolean not null default false;
 
-create index turns_player_kept_idx on public.turns (player_id, created_at)
-  where status in ('submitted', 'blocked', 'finalized');
+create index turns_player_created_idx on public.turns (player_id, created_at);
 
 -- Credit past turns with the same check game-action uses: a run of rolls starts
 -- over at each submission and Mulligan, and a turn rolled a Sucker when its
@@ -27,7 +26,8 @@ sucker_runs as (
   select distinct runs.game_id, runs.actor_id, runs.run
   from runs
   where runs.action_type = 'roll'
-    and runs.payload -> 'dice' -> 0 is not null
+    and jsonb_typeof(runs.payload -> 'dice' -> 0) = 'number'
+    and (runs.payload -> 'dice' ->> 0)::numeric in (1, 2, 3, 4, 5, 6)
     and runs.payload -> 'dice' = jsonb_build_array(
       runs.payload -> 'dice' -> 0,
       runs.payload -> 'dice' -> 0,
@@ -50,7 +50,9 @@ where turn.id = sucker_turns.turn_id;
 
 -- Per-game streaks (Back-to-Back through Perfect Ten) are awarded the moment
 -- they happen. Credit finished games from each player's kept turns in order;
--- games still in progress pick theirs up on their next qualifying move.
+-- games still in progress pick theirs up on their next qualifying move. Live
+-- play also counts turns that were punched or Mulliganed after the streak's
+-- Sucker, so this can under-award those games but never over-awards.
 with kept_turns as (
   select
     turn.game_id,

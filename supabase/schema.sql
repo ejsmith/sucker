@@ -92,8 +92,7 @@ create table public.turns (
   unique (game_id, turn_index)
 );
 
-create index turns_player_kept_idx on public.turns (player_id, created_at)
-  where status in ('submitted', 'blocked', 'finalized');
+create index turns_player_created_idx on public.turns (player_id, created_at);
 
 create table public.turn_actions (
   id uuid primary key default gen_random_uuid(),

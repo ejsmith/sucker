@@ -332,14 +332,37 @@ export const suckerSpreeFeats: [number, SuckerSpreeFeatKey][] = [
   [10, 'sucker_spree_10'],
 ];
 
-export const longestSuckerSpree = suckerSpreeFeats[suckerSpreeFeats.length - 1][0];
+// How many earlier turns to read: the top tier's streak, so a streak that runs
+// past it reads as longer and earns nothing more.
+export const suckerSpreeLookback = suckerSpreeFeats[suckerSpreeFeats.length - 1][0];
 
-// The Sucker Spree tier a newly submitted Sucker turn reaches, given whether
-// each of the player's earlier kept turns rolled a Sucker, newest first.
-export function suckerSpreeFeatFor(earlierTurnsRolledSucker: boolean[]): SuckerSpreeFeatKey | null {
+export type SuckerSpreeTurn = { created_at: string; rolled_sucker: boolean };
+
+export type SuckerSpreeAward = { featKey: SuckerSpreeFeatKey; earned_at: string; game_id: string };
+
+// The Sucker Spree tiers a newly submitted Sucker turn earns, given the
+// player's earlier kept turns (newest first, up to the lookback) and the Spree
+// feats they already have. A streak earns every tier it has reached that it has
+// not earned yet: one earned since its first turn, or one already in this game.
+// A turn erased after later turns were played can join two streaks or lengthen
+// one, so this can catch up on tiers rather than only checking the newest.
+export function suckerSpreeFeatsFor(
+  earlierTurns: SuckerSpreeTurn[],
+  awarded: SuckerSpreeAward[],
+  gameId: string,
+): SuckerSpreeFeatKey[] {
   let streak = 1;
-  while (earlierTurnsRolledSucker[streak - 1]) streak += 1;
-  return suckerSpreeFeats.find(([turns]) => turns === streak)?.[1] ?? null;
+  while (earlierTurns[streak - 1]?.rolled_sucker) streak += 1;
+  if (streak > suckerSpreeLookback) return [];
+  const firstTurn = earlierTurns[streak - 2];
+  if (!firstTurn) return [];
+  const streakStart = Date.parse(firstTurn.created_at);
+  const earned = new Set(
+    awarded
+      .filter((award) => award.game_id === gameId || Date.parse(award.earned_at) >= streakStart)
+      .map((award) => award.featKey),
+  );
+  return suckerSpreeFeats.flatMap(([turns, key]) => (turns <= streak && !earned.has(key) ? [key] : []));
 }
 
 // Whether the player rolled a Sucker since their last submission or Mulligan,
