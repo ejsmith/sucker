@@ -281,7 +281,8 @@ turn's game, not at completion. Each streak earns each tier once, and a later
 streak can earn it again. A turn erased after later turns were played can join
 two streaks or lengthen one, so a submission awards every tier the streak has
 reached but not yet earned. A streak's earlier awards are the player's Spree
-feats earned since its first turn, plus any already in this game.
+feats earned after their latest kept turn without a Sucker, however long the
+streak has run, plus any already in this game.
 
 Two limits are accepted: a player's simultaneous submissions in two games
 cannot see each other's turn, and a player can hold a rolled turn open while

@@ -332,34 +332,37 @@ export const suckerSpreeFeats: [number, SuckerSpreeFeatKey][] = [
   [10, 'sucker_spree_10'],
 ];
 
-// How many earlier turns to read: the top tier's streak, so a streak that runs
-// past it reads as longer and earns nothing more.
-export const suckerSpreeLookback = suckerSpreeFeats[suckerSpreeFeats.length - 1][0];
-
-export type SuckerSpreeTurn = { created_at: string; rolled_sucker: boolean };
+// How many earlier turns to read: enough for the top tier's streak. A longer
+// streak counts as the top tier.
+export const suckerSpreeLookback = suckerSpreeFeats[suckerSpreeFeats.length - 1][0] - 1;
 
 export type SuckerSpreeAward = { featKey: SuckerSpreeFeatKey; earned_at: string; game_id: string };
 
-// The Sucker Spree tiers a newly submitted Sucker turn earns, given the
-// player's earlier kept turns (newest first, up to the lookback) and the Spree
-// feats they already have. A streak earns every tier it has reached that it has
-// not earned yet: one earned since its first turn, or one already in this game.
-// A turn erased after later turns were played can join two streaks or lengthen
-// one, so this can catch up on tiers rather than only checking the newest.
-export function suckerSpreeFeatsFor(
-  earlierTurns: SuckerSpreeTurn[],
-  awarded: SuckerSpreeAward[],
-  gameId: string,
-): SuckerSpreeFeatKey[] {
+// The Sucker Spree tiers a newly submitted Sucker turn earns. earlierTurns says
+// whether each of the player's earlier kept turns rolled a Sucker, newest first,
+// up to the lookback. streakBrokenAt is when their latest kept turn without a
+// Sucker was submitted, so the Spree feats earned after it belong to this
+// streak, however long it has run. A streak earns every tier it has reached and
+// not yet earned, except one already in this game. A turn erased after later
+// turns were played can join two streaks or lengthen one, so this catches up on
+// tiers rather than only checking the newest.
+export function suckerSpreeFeatsFor({
+  awarded,
+  earlierTurns,
+  gameId,
+  streakBrokenAt,
+}: {
+  awarded: SuckerSpreeAward[];
+  earlierTurns: boolean[];
+  gameId: string;
+  streakBrokenAt: string | null;
+}): SuckerSpreeFeatKey[] {
   let streak = 1;
-  while (earlierTurns[streak - 1]?.rolled_sucker) streak += 1;
-  if (streak > suckerSpreeLookback) return [];
-  const firstTurn = earlierTurns[streak - 2];
-  if (!firstTurn) return [];
-  const streakStart = Date.parse(firstTurn.created_at);
+  while (streak <= suckerSpreeLookback && earlierTurns[streak - 1]) streak += 1;
+  const brokenAt = streakBrokenAt === null ? -Infinity : Date.parse(streakBrokenAt);
   const earned = new Set(
     awarded
-      .filter((award) => award.game_id === gameId || Date.parse(award.earned_at) >= streakStart)
+      .filter((award) => award.game_id === gameId || Date.parse(award.earned_at) > brokenAt)
       .map((award) => award.featKey),
   );
   return suckerSpreeFeats.flatMap(([turns, key]) => (turns <= streak && !earned.has(key) ? [key] : []));
