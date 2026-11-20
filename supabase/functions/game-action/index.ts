@@ -2505,7 +2505,8 @@ async function planInstantFeats(
 
 // A Sucker turn extends the player's streak across all their games: kept
 // turns in the order they were submitted, so a punched or Mulliganed turn
-// gives way to its replay. The player's Spree feats are few, so read them all.
+// gives way to its replay. Only Spree feats earned since the streak's last
+// break, or already in this game, can stop a tier, so read just those.
 async function planSuckerSpreeFeats(admin: DbClient, playerId: string, gameId: string, plan: GameMovePlan) {
   const keptTurns = () =>
     admin
@@ -2515,24 +2516,37 @@ async function planSuckerSpreeFeats(admin: DbClient, playerId: string, gameId: s
       .in('status', ['submitted', 'blocked', 'finalized'])
       .order('created_at', { ascending: false })
       .order('id', { ascending: false });
-  const [earlierTurns, streakBreak, awarded] = await Promise.all([
+  const [earlierTurns, streakBreak] = await Promise.all([
     keptTurns().limit(suckerSpreeLookback),
     keptTurns().eq('rolled_sucker', false).limit(1).maybeSingle(),
+  ]);
+  if (earlierTurns.error) throw earlierTurns.error;
+  if (streakBreak.error) throw streakBreak.error;
+  const earlier = (earlierTurns.data ?? []).map((turn) => turn.rolled_sucker);
+  if (!earlier[0] || !earlier[1]) return;
+
+  const streakBrokenAt = streakBreak.data?.created_at ?? null;
+  const spreeFeats = () =>
     admin
       .from('player_feats')
       .select('earned_at, feat_key, game_id')
       .eq('player_id', playerId)
-      .like('feat_key', 'sucker_spree_%'),
+      .like('feat_key', 'sucker_spree_%');
+  const [sinceBreak, inGame] = await Promise.all([
+    streakBrokenAt === null ? spreeFeats() : spreeFeats().gt('earned_at', streakBrokenAt),
+    spreeFeats().eq('game_id', gameId),
   ]);
-  if (earlierTurns.error) throw earlierTurns.error;
-  if (streakBreak.error) throw streakBreak.error;
-  if (awarded.error) throw awarded.error;
+  if (sinceBreak.error) throw sinceBreak.error;
+  if (inGame.error) throw inGame.error;
 
   const featKeys = suckerSpreeFeatsFor({
-    awarded: (awarded.data ?? []).map((feat) => ({ ...feat, featKey: feat.feat_key as SuckerSpreeFeatKey })),
-    earlierTurns: (earlierTurns.data ?? []).map((turn) => turn.rolled_sucker),
+    awarded: [...(sinceBreak.data ?? []), ...(inGame.data ?? [])].map((feat) => ({
+      ...feat,
+      featKey: feat.feat_key as SuckerSpreeFeatKey,
+    })),
+    earlierTurns: earlier,
     gameId,
-    streakBrokenAt: streakBreak.data?.created_at ?? null,
+    streakBrokenAt,
   });
   for (const featKey of featKeys) {
     plan.writes.push({
