@@ -86,8 +86,14 @@ create table public.turns (
   status text not null default 'submitted' check (status in ('submitted', 'punched', 'blocked', 'mulliganed', 'finalized')),
   created_at timestamptz not null default now(),
   finalized_at timestamptz,
+  -- Rolled a Sucker at any point after the turn's last Mulligan. Sucker Spree
+  -- feats read it across a player's games.
+  rolled_sucker boolean not null default false,
   unique (game_id, turn_index)
 );
+
+create index turns_player_kept_idx on public.turns (player_id, created_at)
+  where status in ('submitted', 'blocked', 'finalized');
 
 create table public.turn_actions (
   id uuid primary key default gen_random_uuid(),

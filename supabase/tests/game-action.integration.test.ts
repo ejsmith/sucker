@@ -1807,13 +1807,21 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
           [
             'anything_you_can_do',
             'back_to_back',
+            'cant_stop',
+            'five_alarm_fire',
             'four_score',
             'hat_trick',
             'high_five',
             'natural',
+            'on_a_roll',
             'scratch_fever',
             'seeing_double',
             'six_pack',
+            'sucker_spree_3',
+            'sucker_spree_4',
+            'sucker_spree_5',
+            'sucker_spree_6',
+            'three_peat',
           ],
         );
       }
@@ -1889,10 +1897,12 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   // Every category was scratched, including the game-ending move, so both earn
   // Scratch Fever. The 0-0 tie is a Dead Heat and Double Digits, and the
   // database awards Blitz because the game finished within an hour of its first roll.
+  // Thirteen straight Sucker turns reach the top streak tiers, in this game and
+  // across each player's games.
   const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
     admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
   );
-  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz']) {
+  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz', 'perfect_ten', 'sucker_spree_10']) {
     assertEquals(
       {
         earned: [alice.id, bob.id].every((id) =>

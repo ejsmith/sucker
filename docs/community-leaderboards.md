@@ -146,7 +146,15 @@ the same actions, turns, and scorecards that already feed stats:
 | `six_pack`                | Six Pack                | Roll 6+ Suckers in one game                                        |
 | `lucky_seven`             | Lucky Seven             | Roll 7+ Suckers in one game                                        |
 | `crazy_eights`            | Crazy Eights            | Roll 8+ Suckers in one game                                        |
-| `back_to_back`            | Back-to-Back            | Roll a Sucker on two of your turns in a row                        |
+| `back_to_back`            | Back-to-Back            | Roll a Sucker on 2 of your turns in a row in one game              |
+| `three_peat`              | Three-Peat              | Roll a Sucker on 3 of your turns in a row in one game              |
+| `on_a_roll`               | On a Roll               | Roll a Sucker on 4 of your turns in a row in one game              |
+| `five_alarm_fire`         | Five-Alarm Fire         | Roll a Sucker on 5 of your turns in a row in one game              |
+| `cant_stop`               | Can't Stop              | Roll a Sucker on 6 of your turns in a row in one game              |
+| `seventh_heaven`          | Seventh Heaven          | Roll a Sucker on 7 of your turns in a row in one game              |
+| `unstoppable`             | Unstoppable             | Roll a Sucker on 8 of your turns in a row in one game              |
+| `cloud_nine`              | Cloud Nine              | Roll a Sucker on 9 of your turns in a row in one game              |
+| `perfect_ten`             | Perfect Ten             | Roll a Sucker on 10 of your turns in a row in one game             |
 | `anything_you_can_do`     | Anything You Can Do     | Roll a Sucker on the turn right after your opponent did            |
 | `lightning_strikes_twice` | Lightning Strikes Twice | Have a scored Sucker punched away, then roll another on the replay |
 | `straight_out_the_gate`   | Straight Out the Gate   | Roll a large straight on the first roll of a turn                  |
@@ -262,6 +270,29 @@ player's full history:
 | `centurion`                        | Centurion            | Complete 100 games                                                                         |
 | `hot_streak` / `on_fire`           | Hot Streak / On Fire | Win 5 / 10 in a row                                                                        |
 | `sucker_collector`                 | Sucker Collector     | Roll a Sucker of every number, 1 through 6, across finished games                          |
+
+**Sucker Spree feats** count turns in a row with a Sucker across all of a
+player's games, in the order they were submitted. They are separate from the
+per-game streak feats above, and their descriptions say "counting all your
+games" where the per-game ones say "in one game":
+
+| Key                                                                            | Name       | Trigger                                                      |
+| ------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------ |
+| `sucker_spree_3`                                                               | Hot Hand   | Roll a Sucker on 3 of your turns in a row, across your games |
+| `sucker_spree_4`                                                               | Heater     | 4 in a row, across your games                                |
+| `sucker_spree_5`                                                               | Red Hot    | 5 in a row, across your games                                |
+| `sucker_spree_6`                                                               | White Hot  | 6 in a row, across your games                                |
+| `sucker_spree_7`                                                               | Blue Flame | 7 in a row, across your games                                |
+| `sucker_spree_8`                                                               | Wildfire   | 8 in a row, across your games                                |
+| `sucker_spree_9`                                                               | Inferno    | 9 in a row, across your games                                |
+| `sucker_spree_10`                                                              | Supernova  | 10 in a row, across your games                               |
+| A turn counts when it rolled a Sucker                                          |
+| after its last Mulligan (`turns.rolled_sucker`), and punched or Mulliganed     |
+| turns give way to their replays. game-action awards a tier on the turn that    |
+| reaches it, in that turn's game, so each streak earns each tier once and a new |
+| streak can earn it again. Migration                                            |
+| `20261120120000_add_sucker_streak_feats.sql` backfills `rolled_sucker` from    |
+| the roll history, then both streak families.                                   |
 
 **Milestone defeats** use the same trigger. A loss means the opponent won;
 ties are neither:

@@ -48,7 +48,14 @@ import {
   type SuckerStatActionType,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
-import { buildCompletedPlayerFeats, buildInstantPlayerFeats, mayEarnInstantFeat } from '../_shared/feats.ts';
+import {
+  buildCompletedPlayerFeats,
+  buildInstantPlayerFeats,
+  longestSuckerSpree,
+  mayEarnInstantFeat,
+  rolledSuckerThisTurn,
+  suckerSpreeFeatFor,
+} from '../_shared/feats.ts';
 import {
   getTurnTauntScenario,
   isTauntAvailableForScenario,
@@ -1604,7 +1611,12 @@ async function scoreRemoteTurn(
   }
 
   const turnHeld = normalizeHeld(submittedHeld, state.held);
-  const turnIndex = await loadNextTurnIndex(admin, gameId, game.last_turn_id);
+  const [turnIndex, rolledSucker] = await Promise.all([
+    loadNextTurnIndex(admin, gameId, game.last_turn_id),
+    state.rollNumber > 0 && !isSuckerRoll(state.dice)
+      ? loadSuckerStatActions(admin, gameId).then((actions) => rolledSuckerThisTurn(actions, actorId))
+      : state.rollNumber > 0,
+  ]);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus = !scratch && hasExtraSuckerBonus(state.dice, category, currentPlayer.scorecard);
   const tokenDelta = scratch ? 1 : 0;
@@ -1652,6 +1664,7 @@ async function scoreRemoteTurn(
     held: turnHeld,
     player_id: actorId,
     roll_count: state.rollNumber,
+    rolled_sucker: rolledSucker,
     score: turnScore,
     status: complete ? 'finalized' : 'submitted',
     turn_index: turnIndex,
@@ -1683,6 +1696,9 @@ async function scoreRemoteTurn(
     ),
   ]);
 
+  if (rolledSucker) {
+    await planSuckerSpreeFeat(admin, actorId, gameId, mutationState.plan!);
+  }
   if (complete) {
     await planCompletedGameStats(admin, gameId, players, winner?.id ?? null, mutationState.plan!);
   }
@@ -2474,6 +2490,36 @@ async function planInstantFeats(admin: DbClient, game: GameRow, plan: GameMovePl
       });
     }
   }
+}
+
+// A Sucker turn extends the player's streak across all their games: kept
+// turns in the order they were submitted, so a punched or Mulliganed turn
+// gives way to its replay. A streak earns each tier on the turn that reaches it.
+async function planSuckerSpreeFeat(admin: DbClient, playerId: string, gameId: string, plan: GameMovePlan) {
+  const { data: earlierTurns, error } = await admin
+    .from('turns')
+    .select('rolled_sucker')
+    .eq('player_id', playerId)
+    .in('status', ['submitted', 'blocked', 'finalized'])
+    .order('created_at', { ascending: false })
+    .limit(longestSuckerSpree - 1);
+  if (error) throw error;
+
+  const featKey = suckerSpreeFeatFor((earlierTurns ?? []).map((turn) => turn.rolled_sucker));
+  if (!featKey) return;
+  // A broken streak can reach the same tier again in the same game.
+  const { data: awarded, error: awardedError } = await admin
+    .from('player_feats')
+    .select('feat_key')
+    .match({ feat_key: featKey, game_id: gameId, player_id: playerId })
+    .maybeSingle();
+  if (awardedError) throw awardedError;
+  if (awarded) return;
+  plan.writes.push({
+    table: 'player_feats',
+    operation: 'insert',
+    data: { feat_key: featKey, game_id: gameId, player_id: playerId },
+  });
 }
 
 async function loadAwardedFeats(admin: DbClient, gameId: string) {

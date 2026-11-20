@@ -155,6 +155,7 @@ export type Database = {
           id: string;
           player_id: string;
           roll_count: number;
+          rolled_sucker: boolean;
           score: number;
           status: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
           turn_index: number;
@@ -168,6 +169,7 @@ export type Database = {
           id?: string;
           player_id: string;
           roll_count: number;
+          rolled_sucker?: boolean;
           score: number;
           status?: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
           turn_index: number;
