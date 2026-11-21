@@ -134,6 +134,19 @@ export async function reportError(error: unknown, context?: Record<string, unkno
   });
 }
 
+export async function reportWarning(source: string, message: string, context?: Record<string, unknown>) {
+  if (!getApiKey()) {
+    return;
+  }
+
+  await initializeMonitoring();
+  let builder = Exceptionless.createLog(source, message, 'warn');
+  for (const [key, value] of Object.entries(context ?? {})) {
+    builder = builder.setProperty(key, value);
+  }
+  await builder.submit();
+}
+
 /** Reports a render crash caught by an error boundary as critical. */
 export async function reportCrash(error: unknown, componentStack: string) {
   if (!getApiKey() || !claimError(error)) {

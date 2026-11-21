@@ -126,6 +126,9 @@ create table public.turn_actions (
 -- game-action replays a game's actions on most moves to award instant feats.
 create index turn_actions_game_created_idx on public.turn_actions (game_id, created_at);
 
+create index turn_actions_game_type_created_idx
+on public.turn_actions (game_id, action_type, created_at);
+
 create unique index turn_actions_one_taunt_per_turn
 on public.turn_actions (
   game_id,

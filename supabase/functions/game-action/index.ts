@@ -142,11 +142,19 @@ type ActionMutationState = {
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Origin': '*',
+  // Lets web clients read timings for slow-action reports, as native already can.
+  'Access-Control-Expose-Headers': 'server-timing, x-sb-edge-region, x-sucker-action-duration-ms',
 };
+// Time spent loading this worker's modules, charged to the first request it serves.
+let pendingBootMs: number | null = performance.now();
 const nudgeTurnWaitMs = readPositiveInteger(readLocalTestHook('SUCKER_E2E_NUDGE_WAIT_MS')) ?? 60 * 60 * 1_000;
 
 Deno.serve(async (request) => {
-  const timer = new ActionTimer();
+  // A browser's CORS preflight is not an action, so leave the boot time for the
+  // action that follows it.
+  const bootMs = request.method === 'OPTIONS' ? null : pendingBootMs;
+  if (request.method !== 'OPTIONS') pendingBootMs = null;
+  const timer = new ActionTimer(bootMs);
   let actionType = 'unknown';
   let actorId: string | null = null;
   let requestId: string | null = null;
@@ -222,10 +230,11 @@ Deno.serve(async (request) => {
         await timer.measure('feats', () => planInstantFeats(admin, game, plan, mutationState));
         mutationState.mayHaveWritten = true;
         try {
-          result = await commitGameMove(admin, mutationState.plan, user.id, action.requestId, {
-            ...result,
-            game: result.game,
-          });
+          const plan = mutationState.plan;
+          const game = result.game;
+          result = await timer.measure('commit', () =>
+            commitGameMove(admin, plan, user.id, action.requestId, { ...result, game }),
+          );
         } catch (commitError) {
           // A PostgreSQL error confirms rollback. A transport error can hide a
           // successful commit, so keep that request pending for reconciliation.
@@ -240,7 +249,7 @@ Deno.serve(async (request) => {
           throw commitError;
         }
       } else {
-        await completeActionRequest(admin, user.id, action, result, 200);
+        await timer.measure('complete', () => completeActionRequest(admin, user.id, action, result, 200));
       }
       timer.logIfSlow(actionType);
       queueActionNotifications(admin, user.id, action, result);
@@ -2710,6 +2719,8 @@ class ActionTimer {
   private readonly marks: Array<{ durationMs: number; name: string }> = [];
   private readonly startedAt = performance.now();
 
+  constructor(private readonly bootMs: number | null) {}
+
   async measure<T>(name: string, task: () => Promise<T>): Promise<T> {
     const startedAt = performance.now();
     try {
@@ -2726,6 +2737,7 @@ class ActionTimer {
     const totalMs = performance.now() - this.startedAt;
     const timings = [
       `total;dur=${formatDuration(totalMs)}`,
+      ...(this.bootMs === null ? [] : [`boot;dur=${formatDuration(this.bootMs)}`]),
       ...this.marks.map((mark) => `${mark.name};dur=${formatDuration(mark.durationMs)}`),
     ];
 
@@ -2737,12 +2749,15 @@ class ActionTimer {
 
   logIfSlow(actionType: string) {
     const totalMs = performance.now() - this.startedAt;
-    if (totalMs < 750) {
+    const isSlow = totalMs >= 750;
+    if (!isSlow && this.bootMs === null) {
       return;
     }
 
-    console.info('slow game-action', {
+    console.info(isSlow ? 'slow game-action' : 'cold game-action', {
       actionType,
+      bootMs: this.bootMs === null ? null : formatDuration(this.bootMs),
+      coldStart: this.bootMs !== null,
       marks: this.marks.map((mark) => ({
         durationMs: formatDuration(mark.durationMs),
         name: mark.name,
