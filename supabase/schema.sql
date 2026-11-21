@@ -1024,6 +1024,17 @@ begin
   if tg_op <> 'DELETE' then
     perform realtime.send(jsonb_build_object('game', to_jsonb(new)), 'game', 'game:' || new.id, true);
   end if;
+  -- The game list shows turns, scores and results. Scores change only with a
+  -- new or removed turn, which moves last_turn_id, status or the current
+  -- player. Finished games always notify, so a Rage Quit reply shows as unseen.
+  if tg_op = 'UPDATE'
+    and old.status <> 'complete'
+    and new.status <> 'complete'
+    and (old.status, old.current_player_id, old.last_turn_id, old.winner_id)
+      is not distinct from (new.status, new.current_player_id, new.last_turn_id, new.winner_id)
+  then
+    return null;
+  end if;
   -- A deleted game is broadcast before the delete, while its players still exist.
   for participant_id in
     select player_id from public.game_players where game_id = game_row.id and hidden_at is null

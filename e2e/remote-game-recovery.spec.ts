@@ -5,18 +5,21 @@ for (const scenario of [
   'reconnect',
   'initial',
   'lobby-recovery',
-  'auth-retry',
-  'auth-manual',
-  'auth-foreground',
+  'load-retry',
+  'load-manual',
+  'load-foreground',
 ] as const) {
   const initialFails = scenario === 'reconnect';
   const lobbyRecovery = scenario === 'lobby-recovery';
-  const interruptedAuth = scenario.startsWith('auth-');
+  // The game opens on the lobby's cached copy, then its first server reads
+  // fail like a dropped connection.
+  const interruptedLoad = scenario.startsWith('load-');
   test(
     lobbyRecovery
       ? 'a background lobby cannot consume an open game recovery'
       : `a game opens when only the ${scenario} fetch succeeds`,
     async ({ page }, testInfo) => {
+      test.slow(interruptedLoad, 'Waits out the automatic load retries.');
       const user = {
         id: '00000000-0000-4000-8000-000000000001',
         email: 'recovery@example.test',
@@ -76,8 +79,8 @@ for (const scenario of [
         replacementFinished = resolve;
       });
       let gameRequests = 0;
-      let blockAuth = false;
-      let authFailures = 0;
+      let blockLoad = false;
+      let loadFailures = 0;
       let recovering = false;
       let releaseRecovery!: () => void;
       let recoveryRequested!: () => void;
@@ -94,14 +97,6 @@ for (const scenario of [
       await page.route(/\/(?:auth|rest)\/v1\//, async (route) => {
         const url = new URL(route.request().url());
         if (url.pathname === '/auth/v1/user') {
-          if (blockAuth) {
-            authFailures += 1;
-            if (scenario === 'auth-retry') blockAuth = false;
-            return route.fulfill({
-              status: 400,
-              json: { message: 'fetch failed: UnexpectedException: cancelled (at ExpoModulesCore/Promise.swift:56)' },
-            });
-          }
           return route.fulfill({ json: user });
         }
         if (url.pathname === '/rest/v1/profiles') {
@@ -111,8 +106,13 @@ for (const scenario of [
         }
         if (url.pathname === '/rest/v1/games' && url.searchParams.get('id') === `eq.${gameId}`) {
           const request = ++gameRequests;
-          if (interruptedAuth) {
+          if (interruptedLoad) {
             firstRequested();
+            if (blockLoad) {
+              loadFailures += 1;
+              if (scenario === 'load-retry') blockLoad = false;
+              return route.abort('internetdisconnected');
+            }
             return route.fulfill({ json: game });
           }
           if (lobbyRecovery) {
@@ -149,7 +149,7 @@ for (const scenario of [
           if (typeof raw !== 'string') return;
           const [joinRef, ref, topic, event, payload] = JSON.parse(raw);
           if (event === 'phx_join') {
-            if (topic === `realtime:game:${gameId}` && !interruptedAuth) await firstRequest;
+            if (topic === `realtime:game:${gameId}` && !interruptedLoad) await firstRequest;
             socket.send(
               JSON.stringify([
                 joinRef,
@@ -174,19 +174,18 @@ for (const scenario of [
 
       await page.goto('/');
       await expect(page.getByText('Hi, Recovery Tester')).toBeVisible();
-      if (interruptedAuth) {
-        blockAuth = true;
+      if (interruptedLoad) {
+        blockLoad = true;
         await page.getByTestId(`game-card-${gameId}`).click();
-        if (scenario !== 'auth-retry') {
-          await expect.poll(() => authFailures).toBeGreaterThanOrEqual(3);
-          await expect(page.getByRole('button', { name: 'Retry loading game' })).toBeVisible();
+        if (scenario !== 'load-retry') {
+          // The cached board shows, locked, while the load retries. PostgREST
+          // retries each read itself, so giving up takes a few cycles.
+          await expect(page.getByTestId('roll-button')).toBeDisabled();
+          await expect(page.getByRole('button', { name: 'Retry loading game' })).toBeVisible({ timeout: 45_000 });
           await expect(page.getByText('Unable to reach Sucker! services. Please try again.')).toBeVisible();
-          await expect(
-            page.getByTestId('remote-loading-screen').getByText('UnexpectedException', { exact: false }),
-          ).toHaveCount(0);
           await page.screenshot({ path: testInfo.outputPath('interrupted-game-load.png') });
-          blockAuth = false;
-          if (scenario === 'auth-manual') {
+          blockLoad = false;
+          if (scenario === 'load-manual') {
             await page.getByRole('button', { name: 'Retry loading game' }).click();
           } else {
             await page.evaluate(() => window.dispatchEvent(new Event('blur')));
@@ -196,7 +195,7 @@ for (const scenario of [
         }
         await expect(page.getByTestId('roll-button')).toBeEnabled();
         await expect(page.getByTestId('remote-loading-screen')).toHaveCount(0);
-        expect(authFailures).toBeGreaterThan(0);
+        expect(loadFailures).toBeGreaterThan(0);
         await page.screenshot({ path: testInfo.outputPath('recovered-game-load.png') });
         return;
       }
