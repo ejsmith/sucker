@@ -2355,6 +2355,67 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
 });
 
 Deno.test({
+  name: 'game broadcasts reach only the game’s players',
+  // Realtime sockets stay open until the cleanup test closes every client.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const [alice, bob, charlie] = await createUsers('broadcasts', ['Alice', 'Bob', 'Charlie']);
+    const invite = await invokeGameAction(alice, { type: 'create_invite' });
+    const accepted = await invokeGameAction(bob, { inviteCode: invite.inviteCode, type: 'accept_invite' });
+    const game = accepted.game as GameRow;
+    assertEquals(game.current_player_id, alice.id);
+
+    const aliceGame = await joinBroadcastTopic(alice, `game:${game.id}`);
+    const bobList = await joinBroadcastTopic(bob, `player:${bob.id}`);
+    assertEquals(aliceGame.status, 'SUBSCRIBED');
+    assertEquals(bobList.status, 'SUBSCRIBED');
+    assertEquals((await joinBroadcastTopic(charlie, `game:${game.id}`)).status, 'CHANNEL_ERROR');
+    assertEquals((await joinBroadcastTopic(charlie, `player:${bob.id}`)).status, 'CHANNEL_ERROR');
+
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+
+    const gameEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'game');
+    const broadcastGame = gameEvent.payload.game as GameRow;
+    assertEquals(broadcastGame.id, game.id);
+    assertEquals(broadcastGame.state.rollNumber, 1);
+    const actionEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'action');
+    assertEquals((actionEvent.payload.action as { action_type: string }).action_type, 'roll');
+    const listEvent = await waitForBroadcast(bobList.events, (event) => event.event === 'games_changed');
+    assertEquals(listEvent.payload.game_id, game.id);
+  },
+});
+
+type BroadcastEvent = { event: string; payload: Record<string, unknown> };
+
+async function joinBroadcastTopic(user: TestUser, topic: string) {
+  const events: BroadcastEvent[] = [];
+  await user.client.realtime.setAuth(user.session.access_token);
+  const channel = user.client
+    .channel(topic, { config: { private: true } })
+    .on('broadcast', { event: '*' }, (message) => events.push({ event: message.event, payload: message.payload }));
+  const status = await new Promise<string>((resolve) => {
+    const timer = setTimeout(() => resolve('TIMED_OUT'), 10_000);
+    channel.subscribe((nextStatus) => {
+      if (nextStatus === 'CLOSED') return;
+      clearTimeout(timer);
+      resolve(nextStatus);
+    });
+  });
+  return { events, status };
+}
+
+async function waitForBroadcast(events: BroadcastEvent[], matches: (event: BroadcastEvent) => boolean) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const event = events.find(matches);
+    if (event) return event;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`No matching broadcast among: ${events.map((event) => event.event).join(', ') || 'none'}`);
+}
+
+Deno.test({
   name: 'cleanup Supabase clients',
   sanitizeOps: false,
   sanitizeResources: false,

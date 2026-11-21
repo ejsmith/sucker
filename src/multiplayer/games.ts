@@ -30,7 +30,7 @@ import {
   type ActionRequest,
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
-import { createGameListRealtimeTopic, createRealtimeTopic } from './realtimeTopics';
+import { subscribeToPrivateTopic, type RealtimeStatus } from './sharedRealtime';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
 import { rageQuitSaltDurationMs, type RageQuitReplyId } from '../../shared/rageQuit';
@@ -686,103 +686,76 @@ export async function markRageQuitSeen(gameId: string) {
   await AsyncStorage.setItem(`${seenRageQuitKeyPrefix}:${gameId}`, '1');
 }
 
+// Game changes arrive as database broadcasts on private topics (see the
+// broadcast_game_changes migration). Polling Postgres changes ran every
+// listener's read policy on every write to every game.
 export function subscribeToGameTaunts(
   gameId: string,
   onTaunt: (taunt: RemoteTaunt) => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
   onOpportunityAction?: () => void,
 ) {
-  const channel = supabase
-    .channel(createRealtimeTopic(`game-taunts:${gameId}`))
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        filter: `game_id=eq.${gameId}`,
-        schema: 'public',
-        table: 'turn_actions',
-      },
-      (payload) => {
-        const action = payload.new as TurnActionRow;
-        if (action.action_type !== 'taunt') {
-          if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
-            onOpportunityAction?.();
-          }
-          return;
+  return subscribeToPrivateTopic(
+    `game:${gameId}`,
+    (event, payload) => {
+      if (event !== 'action') return;
+      const action = payload.action as TurnActionRow | undefined;
+      if (!action) return;
+      if (action.action_type !== 'taunt') {
+        if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
+          onOpportunityAction?.();
         }
+        return;
+      }
 
-        const taunt = toRemoteTaunt(action);
-        if (taunt) {
-          onTaunt(taunt);
-        }
-      },
-    )
-    .subscribe((status, error) => {
+      const taunt = toRemoteTaunt(action);
+      if (taunt) {
+        onTaunt(taunt);
+      }
+    },
+    (status, error) => {
       reportChannelStatus('taunts', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
 export function subscribeToGame(
   gameId: string,
   onChange: (game: ReturnType<typeof toRemoteGameRow>) => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
 ) {
-  const channel = supabase
-    .channel(createRealtimeTopic(`game:${gameId}`))
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        filter: `id=eq.${gameId}`,
-        schema: 'public',
-        table: 'games',
-      },
-      (payload) => {
-        if (payload.new) {
-          onChange(toRemoteGameRow(payload.new as GameRow));
-        }
-      },
-    )
-    .subscribe((status, error) => {
+  return subscribeToPrivateTopic(
+    `game:${gameId}`,
+    (event, payload) => {
+      if (event !== 'game') return;
+      const game = payload.game as GameRow | undefined;
+      if (game) {
+        onChange(toRemoteGameRow(game));
+      }
+    },
+    (status, error) => {
       reportChannelStatus('game', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
 export function subscribeToGameListChanges(
+  profileId: string,
   onChange: () => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
 ) {
-  const channel = supabase
-    .channel(createGameListRealtimeTopic())
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'games',
-      },
-      () => {
-        onChange();
-      },
-    )
-    .subscribe((status, error) => {
+  return subscribeToPrivateTopic(
+    `player:${profileId}`,
+    (event) => {
+      if (event === 'games_changed') onChange();
+    },
+    (status, error) => {
       reportChannelStatus('game list', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
 async function loadLastNudges(actorId: string, recipientIds: string[]) {

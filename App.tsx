@@ -912,7 +912,7 @@ export function RemoteGameScreen({
     }
 
     void refreshNextTurnGames();
-    const unsubscribe = subscribeToGameListChanges(() => void refreshNextTurnGames());
+    const unsubscribe = subscribeToGameListChanges(activeProfileId, () => void refreshNextTurnGames());
     const timer = setInterval(() => void refreshNextTurnGames(), nextTurnListRefreshMs);
 
     return () => {

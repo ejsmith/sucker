@@ -561,7 +561,7 @@ export function MultiplayerLobby({
     }
 
     void refreshGames({ surfaceError: false });
-    const unsubscribe = subscribeToGameListChanges(() => {
+    const unsubscribe = subscribeToGameListChanges(session.user.id, () => {
       if (realtimeRefreshTimer.current) {
         clearTimeout(realtimeRefreshTimer.current);
       }
