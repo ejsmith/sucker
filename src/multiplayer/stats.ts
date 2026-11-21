@@ -13,6 +13,7 @@ export type ProfileRecentGame = {
   opponent: ProfileRecentGamePlayer;
   player: ProfileRecentGamePlayer;
   rageQuitterId: string | null;
+  timedOutPlayerId: string | null;
   winnerId: string | null;
 };
 
@@ -93,6 +94,7 @@ function toProfileRecentGame(row: ProfileRecentGameRow): ProfileRecentGame {
     opponent: toProfileRecentGamePlayer(row, 'opponent'),
     player: toProfileRecentGamePlayer(row, 'player'),
     rageQuitterId: row.rage_quitter_id ?? null,
+    timedOutPlayerId: row.timed_out_player_id ?? null,
     winnerId: row.winner_id ?? null,
   };
 }

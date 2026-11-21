@@ -1158,7 +1158,7 @@ function PlayerGameHistory({
             const resultTone =
               result === 'Won' || result === 'Won by forfeit'
                 ? 'win'
-                : result === 'Lost' || result === 'Rage quit'
+                : result === 'Lost' || result === 'Rage quit' || result === 'Ran out of time'
                   ? 'loss'
                   : 'tie';
             const resultLabel = getPlayerGameResultLabel(result, isCurrentUser);
@@ -1402,6 +1402,7 @@ function GameScoreRow({
 function getPlayerGameResult(game: ProfileRecentGame) {
   // Rage quits are public record, whatever the partial scores say.
   if (game.rageQuitterId) return game.rageQuitterId === game.player.id ? 'Rage quit' : 'Won by forfeit';
+  if (game.timedOutPlayerId) return game.timedOutPlayerId === game.player.id ? 'Ran out of time' : 'Won by forfeit';
   if (game.winnerId) return game.winnerId === game.player.id ? 'Won' : 'Lost';
   if (game.player.score === game.opponent.score) return 'Tied';
   return game.player.score > game.opponent.score ? 'Won' : 'Lost';

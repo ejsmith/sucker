@@ -53,6 +53,7 @@ import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindow
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { SaltBadge } from '../ui/RageQuit';
 import { getRageQuitReplyText } from '../../shared/rageQuit';
+import { formatTurnTimeoutCountdown, turnTimeoutDays } from '../../shared/turnTimeout';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
@@ -2231,7 +2232,7 @@ function isWebShareAbort(error: unknown) {
 function getRemoveGameMessage(game: RemoteGameRow) {
   return game.status === 'inviting'
     ? 'This cancels the open invite and removes it from your games list.'
-    : 'This removes the game from your games list. The other player can still see their copy.';
+    : `This removes the game from your games list. It still counts, and you forfeit if you don't play your turn within ${turnTimeoutDays} days.`;
 }
 
 function canOfferWebPushPrompt() {
@@ -2476,11 +2477,12 @@ function GameListItem({
   const showJab = canJabGame(game, profileId, now);
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
+  const forfeitCountdown = isMyTurn ? formatTurnTimeoutCountdown(game.turn_started_at, now) : null;
   const waitText = isUnseenResult
     ? getUnseenResultHint(game, profileId, opponentName)
     : game.status === 'inviting'
       ? `Open invite for ${formatElapsed(now, game.updated_at)}`
-      : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
+      : (forfeitCountdown ?? `${waitPrefix} ${formatElapsed(now, game.updated_at)}`);
   const [translateX] = useState(() => new Animated.Value(0));
   const panResponder = useMemo(
     () =>
@@ -2917,12 +2919,16 @@ function getCompletedResultLabel(game: RemoteGameRow, profileId: string) {
   if (rageQuitterId) {
     return rageQuitterId === profileId ? 'You rage quit' : 'They rage quit';
   }
+  const timedOutPlayerId = game.state.timedOut?.playerId;
+  if (timedOutPlayerId) {
+    return timedOutPlayerId === profileId ? 'Out of time' : 'They ran out of time';
+  }
 
   const tone = getCompletedResultTone(game, profileId);
   return tone === 'tie' ? 'Tie' : tone === 'win' ? 'You won' : 'You lost';
 }
 
-// A rage quit decides the winner regardless of the partial scores.
+// A forfeit decides the winner regardless of the partial scores.
 function getCompletedResultTone(game: RemoteGameRow, profileId: string) {
   const winnerId = getWinnerId(game.state);
   if (!winnerId) {

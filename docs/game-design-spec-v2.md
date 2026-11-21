@@ -33,7 +33,7 @@ Dice
 
 Objective
 
-Finish with the highest score after all scorecard categories have been filled or scratched. A Rage Quit ends the game early and the player who stayed wins, whatever the score.
+Finish with the highest score after all scorecard categories have been filled or scratched. A Rage Quit or an inactivity forfeit ends the game early and the other player wins, whatever the score.
 
 ⸻
 
@@ -331,6 +331,20 @@ Rage Quit is surrender, made loud. Quitting must never help the quitter.
 
 ⸻
 
+Inactivity Forfeit
+
+Async games cannot be stalled forever.
+
+- If it is your turn (including a response window) and you do not finish it within 30 days of it becoming yours, you forfeit. Only the turn passing restarts the clock; rolls, punches, and other mid-turn actions do not.
+- Push warnings go to the player whose turn it is at 7 days left and at 1 day left, once each per turn.
+- Once 7 days or fewer remain, the lobby row for your turn says “Forfeits in N days” (“Forfeits today” on the last day). No confirmations or modals.
+- Removing (hiding) a started game does not stop the clock: hidden games still get warnings and still forfeit. The Remove dialog says so.
+- The forfeit ends the game: the opponent wins regardless of score. Both players get a push (“Bob ran out of time — you win.” / “You ran out of time against Alice.”), and the game-over screen and game history say who ran out of time.
+- Stats match a rage quit: a game played, a win and a loss, and a rating change, but partial scores and plays never count toward averages, highs, rates, or per-game feats. It is not a rage quit: no salt shaker, no rage-quit counts, no Table Flipper, no insult reply.
+- Does not apply to unaccepted invites or computer games.
+
+⸻
+
 Notifications
 
 Examples:
@@ -355,6 +369,8 @@ Game Events
 - Game complete.
 - Opponent flipped the table! (Rage Quit. They rage quit, so you win.)
 - Opponent saw you rage quit. (Their insult.)
+- Your turn is waiting. (Inactivity warning at 7 days and 1 day left.)
+- Opponent ran out of time. (Inactivity forfeit, sent to both players.)
 
 ⸻
 

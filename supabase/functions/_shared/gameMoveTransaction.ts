@@ -11,6 +11,7 @@ type MoveTable =
   | 'game_player_results'
   | 'head_to_head_stats'
   | 'rage_quits'
+  | 'timeout_forfeits'
   | 'player_feats';
 export type GameMoveWrite = {
   table: MoveTable;

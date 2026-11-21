@@ -19,6 +19,9 @@ export type RemoteGameRow = {
   state: GameState;
   status: RemoteGameStatus;
   sucker_tokens_spent: Record<string, number>;
+  // When the current player's turn began. Older rows loaded before the
+  // inactivity forfeit existed may lack it.
+  turn_started_at?: string;
   updated_at: string;
   winner_id: string | null;
 };

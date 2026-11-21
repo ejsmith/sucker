@@ -1602,15 +1602,21 @@ export function LocalGameScreen({
   const didIRageQuit = Boolean(rageQuit && rageQuit.playerId === homePlayer.id);
   const rageQuitterName = rageQuit ? (didIRageQuit ? homePlayer.name : opponentPlayer.name) : null;
   const rageQuitWinnerName = rageQuit ? (didIRageQuit ? opponentPlayer.name : homePlayer.name) : null;
+  const timedOut = isGameOver ? game.timedOut : undefined;
+  const didITimeOut = Boolean(timedOut && timedOut.playerId === homePlayer.id);
   const gameOverTitle = rageQuit
     ? didIRageQuit
       ? 'You rage quit.'
       : 'Victory by Tantrum!'
-    : winnerName
-      ? winnerName === 'You'
-        ? 'You win!'
-        : `${winnerName} wins!`
-      : 'Tie game!';
+    : timedOut
+      ? didITimeOut
+        ? 'Out of time.'
+        : 'You win!'
+      : winnerName
+        ? winnerName === 'You'
+          ? 'You win!'
+          : `${winnerName} wins!`
+        : 'Tie game!';
   const isTableFlipped = Boolean(isRemoteGame && rageQuit);
   const rageQuitter = rageQuit ? game.players.find((player) => player.id === rageQuit.playerId) : undefined;
   const rematchLockSeconds = !didIRageQuit
@@ -4783,7 +4789,7 @@ export function LocalGameScreen({
                 </Pressable>
                 {!didIRageQuit && (
                   <Text maxFontSizeMultiplier={1.2} style={[styles.gameOverEyebrow, gameLayout.styles.gameOverEyebrow]}>
-                    {rageQuit ? 'Rage Quit' : 'Game Over'}
+                    {rageQuit ? 'Rage Quit' : timedOut ? 'Forfeit' : 'Game Over'}
                   </Text>
                 )}
                 <Text
@@ -4880,6 +4886,17 @@ export function LocalGameScreen({
                       )
                     )}
                   </View>
+                )}
+                {timedOut && (
+                  <Text
+                    maxFontSizeMultiplier={1.2}
+                    style={[styles.rageQuitDetail, { fontSize: gameLayout.unit(13), lineHeight: gameLayout.unit(18) }]}
+                    testID="timeout-summary"
+                  >
+                    {didITimeOut
+                      ? `You ran out of time. ${opponentPlayer.name} wins.`
+                      : `${opponentPlayer.name} ran out of time. You win.`}
+                  </Text>
                 )}
                 <View style={[styles.gameOverScores, gameLayout.styles.gameOverScores]}>
                   <View

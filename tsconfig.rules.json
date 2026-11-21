@@ -27,6 +27,7 @@
     "src/ui/phoneStage.ts",
     "src/ui/statsFormat.ts",
     "shared/redaction.ts",
-    "shared/taunts.ts"
+    "shared/taunts.ts",
+    "shared/turnTimeout.ts"
   ]
 }
