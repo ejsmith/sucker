@@ -744,6 +744,10 @@ export type Database = {
         };
         Returns: Database['public']['Tables']['web_push_subscriptions']['Row'];
       };
+      delete_old_game_action_requests: {
+        Args: { max_rows?: number };
+        Returns: number;
+      };
       get_unseen_game_results: {
         Args: Record<PropertyKey, never>;
         Returns: { game_id: string }[];

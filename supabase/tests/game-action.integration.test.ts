@@ -545,6 +545,26 @@ Deno.test('concurrent first matchup completions accumulate both games atomically
   );
 });
 
+Deno.test('week-old completed action requests are deleted and recent ones kept', async () => {
+  const [alice] = await createUsers('expire-requests', ['Alice']);
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = [
+    { created_at: eightDaysAgo, status: 'completed' as const },
+    { created_at: eightDaysAgo, status: 'processing' as const },
+    { created_at: new Date().toISOString(), status: 'completed' as const },
+  ].map((row) => ({ ...row, action_type: 'roll', actor_id: alice.id, request_id: crypto.randomUUID() }));
+  assertNoError((await admin.from('game_action_requests').insert(rows)).error);
+
+  const { data: deleted, error } = await admin.rpc('delete_old_game_action_requests');
+  assertNoError(error);
+  assertEquals((deleted ?? 0) >= 1, true);
+
+  const remaining = await selectMany<{ request_id: string }>(
+    admin.from('game_action_requests').select('request_id').eq('actor_id', alice.id),
+  );
+  assertEquals(remaining.map((row) => row.request_id).sort(), [rows[1].request_id, rows[2].request_id].sort());
+});
+
 Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {
   const [alice, bob] = await createUsers('idempotent-actions', ['Alice', 'Bob']);
   const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
