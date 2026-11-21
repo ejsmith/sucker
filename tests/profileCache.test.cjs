@@ -16,6 +16,7 @@ function loadCache({ read = async () => null } = {}) {
   vm.runInNewContext(compiled, {
     exports,
     require(name) {
+      if (name === '../monitoring/exceptionless') return { reportError: async () => {} };
       if (name === './env') return { getMultiplayerConfig: () => ({ supabaseUrl: 'https://example.test' }) };
       assert.equal(name, '@react-native-async-storage/async-storage');
       return {

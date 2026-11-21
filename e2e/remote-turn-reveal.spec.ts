@@ -123,6 +123,7 @@ for (const scenario of ['refresh-during-check', 'hung-check'] as const) {
               },
             ]),
           );
+          // The game's moves and taunts share one channel on the game topic.
           if (topic === `realtime:game:${gameId}`) {
             sendGameUpdate = () =>
               socket.send(
@@ -130,19 +131,11 @@ for (const scenario of ['refresh-during-check', 'hung-check'] as const) {
                   null,
                   null,
                   topic,
-                  'postgres_changes',
+                  'broadcast',
                   {
-                    ids: [1],
-                    data: {
-                      columns: [],
-                      commit_timestamp: '2026-01-01T00:05:01Z',
-                      errors: null,
-                      old_record: { id: gameId },
-                      record: { ...game, updated_at: '2026-01-01T00:05:01Z' },
-                      schema: 'public',
-                      table: 'games',
-                      type: 'UPDATE',
-                    },
+                    type: 'broadcast',
+                    event: 'game',
+                    payload: { game: { ...game, updated_at: '2026-01-01T00:05:01Z' } },
                   },
                 ]),
               );

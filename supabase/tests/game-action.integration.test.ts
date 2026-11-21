@@ -153,6 +153,20 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
   assertEquals(hiddenFromCharlie, null);
 
+  const alicePlayers = await selectMany(alice.client.from('game_players').select('game_id').eq('game_id', game.id));
+  assertEquals(alicePlayers.length, 2);
+  const aliceActions = await selectMany(alice.client.from('turn_actions').select('game_id').eq('game_id', game.id));
+  assertEquals(aliceActions.length > 0, true);
+  for (const table of ['game_players', 'turns', 'turn_actions', 'token_events'] as const) {
+    assertEquals(
+      await selectMany<{ game_id: string }>(charlie.client.from(table).select('game_id').eq('game_id', game.id)),
+      [],
+    );
+  }
+  const aliceGameIds = await selectMany<string>(alice.client.rpc('my_visible_game_ids'));
+  assertEquals(aliceGameIds.includes(game.id), true);
+  assertEquals((await selectMany<string>(charlie.client.rpc('my_visible_game_ids'))).includes(game.id), false);
+
   const players = await selectMany<GamePlayerTokenRow>(
     admin.from('game_players').select('player_id, sucker_tokens').eq('game_id', game.id).order('seat_index'),
   );
@@ -1787,9 +1801,45 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   latestGame.state.players[1].revengePunchDiscount = 2;
   assertNoError((await admin.from('games').update({ state: latestGame.state }).eq('id', gameId)).error);
 
-  for (const category of scoreCategories) {
+  for (const [index, category] of scoreCategories.entries()) {
     latestGame = await scratchAndPass(gameId, alice, bob, category);
     latestGame = await scratchAndPass(gameId, bob, alice, category);
+    if (index === 5) {
+      // The fixed test die rolls five 1s every turn: a Natural, a Sucker on
+      // every turn so far, and back-to-back with each other. They and the sixth
+      // scratch are awarded the moment they happen, not when the game ends.
+      assertEquals(latestGame.status === 'complete', false);
+      const midGameFeats = await selectMany<{ feat_key: string; player_id: string }>(
+        admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
+      );
+      for (const id of [alice.id, bob.id]) {
+        assertEquals(
+          midGameFeats
+            .filter((feat) => feat.player_id === id)
+            .map((feat) => feat.feat_key)
+            .sort(),
+          [
+            'anything_you_can_do',
+            'back_to_back',
+            'cant_stop',
+            'five_alarm_fire',
+            'four_score',
+            'hat_trick',
+            'high_five',
+            'natural',
+            'on_a_roll',
+            'scratch_fever',
+            'seeing_double',
+            'six_pack',
+            'sucker_spree_3',
+            'sucker_spree_4',
+            'sucker_spree_5',
+            'sucker_spree_6',
+            'three_peat',
+          ],
+        );
+      }
+    }
   }
 
   assertEquals(latestGame.status, 'complete');
@@ -1842,24 +1892,44 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
   );
   assertEquals(standings.length, 2);
+  // A tie leaves the rating at 1200 but narrows its uncertainty, so the shown rating rises from 900.
   assertEquals(
-    standings.every((row) => Number(row.rating) === 1200 && row.rated_games === 1 && row.current_win_streak === 0),
+    standings.every(
+      (row) =>
+        Number(row.rating) === 1200 &&
+        Number(row.rating_deviation) === 139.76 &&
+        row.rated_games === 1 &&
+        row.current_win_streak === 0,
+    ),
     true,
   );
   assertEquals(
-    results.every((result) => Number(result.rating_before) === 1200 && Number(result.rating_after) === 1200),
+    results.every((result) => Number(result.rating_before) === 900 && Number(result.rating_after) === 920.48),
     true,
   );
 
-  // Every category was scratched, including the game-ending move, so both earn Scratch Fever.
+  // Every category was scratched, including the game-ending move, so both earn
+  // Scratch Fever. The 0-0 tie is a Dead Heat and Double Digits, and the
+  // database awards Blitz because the game finished within an hour of its first roll.
+  // Thirteen straight Sucker turns reach the top streak tiers, in this game and
+  // across each player's games.
   const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
     admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
   );
+  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz', 'perfect_ten', 'sucker_spree_10']) {
+    assertEquals(
+      {
+        earned: [alice.id, bob.id].every((id) =>
+          completionFeats.some((feat) => feat.player_id === id && feat.feat_key === featKey),
+        ),
+        featKey,
+      },
+      { earned: true, featKey },
+    );
+  }
   assertEquals(
-    [alice.id, bob.id].every((id) =>
-      completionFeats.some((feat) => feat.player_id === id && feat.feat_key === 'scratch_fever'),
-    ),
-    true,
+    completionFeats.some((feat) => feat.feat_key === 'giant_killer' || feat.feat_key === 'banana_peel'),
+    false,
   );
 
   const { data: board, error: boardError } = await alice.client.rpc('get_leaderboard', {
@@ -1886,7 +1956,8 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   });
   assertNoError(cardError);
   assertEquals(card?.[0]?.games_played, 1);
-  assertEquals(Number(card?.[0]?.rating), 1200);
+  // The card shows the rating as of now, which sinks a hair every second after the game.
+  assertEquals(Math.round(Number(card?.[0]?.rating)), 920);
   assertEquals(card?.[0]?.rating_rank, null);
   const { data: aliceRankings, error: aliceRankingsError } = await charlie.client.rpc('get_player_rankings', {
     target_profile_id: alice.id,
@@ -1956,6 +2027,52 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   assertEquals(
     actions.filter((action) => action.action_type === 'pass_response').length,
     scoreCategories.length * 2 - 1,
+  );
+});
+
+Deno.test("Sucker Spree counts Sucker turns in a row across all of a player's games", async () => {
+  const [alice, bob] = await createUsers('sucker-spree', ['Alice', 'Bob']);
+  const first = ((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow)
+    .id;
+  const second = ((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow)
+    .id;
+
+  // The fixed test die rolls a Sucker on every turn that rolls.
+  await scratchAndPass(first, alice, bob, 'ones');
+  await scratchAndPass(first, bob, alice, 'ones');
+  await scratchAndPass(first, alice, bob, 'twos');
+  await scratchAndPass(first, bob, alice, 'twos');
+  // Each player's third Sucker turn in a row lands in the other game.
+  await scratchAndPass(second, alice, bob, 'ones');
+  await scratchAndPass(second, bob, alice, 'ones');
+  // A Sucker Deal without rolling breaks Alice's streak; Bob's fourth goes on.
+  await invokeGameAction(alice, { category: 'threes', gameId: first, type: 'scratch_category' });
+  await invokeGameAction(bob, { gameId: first, type: 'pass_response' });
+  await scratchAndPass(first, bob, alice, 'threes');
+  await scratchAndPass(second, alice, bob, 'twos');
+
+  const spreeFeats = await selectMany<{ feat_key: string; game_id: string; player_id: string }>(
+    admin
+      .from('player_feats')
+      .select('feat_key, game_id, player_id')
+      .in('game_id', [first, second])
+      .like('feat_key', 'sucker_spree_%'),
+  );
+  const earned = (player: TestUser) =>
+    spreeFeats
+      .filter((feat) => feat.player_id === player.id)
+      .map((feat) => `${feat.game_id === first ? 'first' : 'second'}:${feat.feat_key}`)
+      .sort()
+      .join(', ');
+  assertEquals(earned(alice), 'second:sucker_spree_3');
+  assertEquals(earned(bob), 'first:sucker_spree_4, second:sucker_spree_3');
+
+  const turns = await selectMany<TurnRow>(
+    admin.from('turns').select('*').eq('game_id', first).eq('player_id', alice.id).order('turn_index'),
+  );
+  assertEquals(
+    turns.map((turn) => turn.rolled_sucker),
+    [true, true, false],
   );
 });
 
@@ -2130,8 +2247,8 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(results.find((result) => result.player_id === bob.id)?.won, false);
 
   // A forfeit still moves ratings and streaks, but never awards feats or posts scores.
-  assertEquals(Number(results.find((result) => result.player_id === alice.id)?.rating_after), 1220);
-  assertEquals(Number(results.find((result) => result.player_id === bob.id)?.rating_after), 1180);
+  assertEquals(Number(results.find((result) => result.player_id === alice.id)?.rating_after), 971.24);
+  assertEquals(Number(results.find((result) => result.player_id === bob.id)?.rating_after), 869.72);
   const quitStandings = await selectMany<Database['public']['Tables']['player_standings']['Row']>(
     admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
   );
@@ -2236,6 +2353,67 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(finalStats.games_played, 4);
   assertEquals(Number(finalStats.average_score), 10);
 });
+
+Deno.test({
+  name: 'game broadcasts reach only the game’s players',
+  // Realtime sockets stay open until the cleanup test closes every client.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const [alice, bob, charlie] = await createUsers('broadcasts', ['Alice', 'Bob', 'Charlie']);
+    const invite = await invokeGameAction(alice, { type: 'create_invite' });
+    const accepted = await invokeGameAction(bob, { inviteCode: invite.inviteCode, type: 'accept_invite' });
+    const game = accepted.game as GameRow;
+    assertEquals(game.current_player_id, alice.id);
+
+    const aliceGame = await joinBroadcastTopic(alice, `game:${game.id}`);
+    const bobList = await joinBroadcastTopic(bob, `player:${bob.id}`);
+    assertEquals(aliceGame.status, 'SUBSCRIBED');
+    assertEquals(bobList.status, 'SUBSCRIBED');
+    assertEquals((await joinBroadcastTopic(charlie, `game:${game.id}`)).status, 'CHANNEL_ERROR');
+    assertEquals((await joinBroadcastTopic(charlie, `player:${bob.id}`)).status, 'CHANNEL_ERROR');
+
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+
+    const gameEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'game');
+    const broadcastGame = gameEvent.payload.game as GameRow;
+    assertEquals(broadcastGame.id, game.id);
+    assertEquals(broadcastGame.state.rollNumber, 1);
+    const actionEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'action');
+    assertEquals((actionEvent.payload.action as { action_type: string }).action_type, 'roll');
+    const listEvent = await waitForBroadcast(bobList.events, (event) => event.event === 'games_changed');
+    assertEquals(listEvent.payload.game_id, game.id);
+  },
+});
+
+type BroadcastEvent = { event: string; payload: Record<string, unknown> };
+
+async function joinBroadcastTopic(user: TestUser, topic: string) {
+  const events: BroadcastEvent[] = [];
+  await user.client.realtime.setAuth(user.session.access_token);
+  const channel = user.client
+    .channel(topic, { config: { private: true } })
+    .on('broadcast', { event: '*' }, (message) => events.push({ event: message.event, payload: message.payload }));
+  const status = await new Promise<string>((resolve) => {
+    const timer = setTimeout(() => resolve('TIMED_OUT'), 10_000);
+    channel.subscribe((nextStatus) => {
+      if (nextStatus === 'CLOSED') return;
+      clearTimeout(timer);
+      resolve(nextStatus);
+    });
+  });
+  return { events, status };
+}
+
+async function waitForBroadcast(events: BroadcastEvent[], matches: (event: BroadcastEvent) => boolean) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const event = events.find(matches);
+    if (event) return event;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`No matching broadcast among: ${events.map((event) => event.event).join(', ') || 'none'}`);
+}
 
 Deno.test({
   name: 'cleanup Supabase clients',

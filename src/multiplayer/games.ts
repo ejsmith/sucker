@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { getRandomBytes } from 'expo-crypto';
-import { gameActionRegion, supabase } from './supabase';
+import { supabase } from './supabase';
 import { getCurrentSession } from './auth';
 import type { Database } from './database.types';
 import type {
@@ -32,7 +32,7 @@ import {
   type ActionRequest,
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
-import { createGameListRealtimeTopic } from './realtimeTopics';
+import { subscribeToPrivateTopic, type RealtimeStatus } from './sharedRealtime';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
 import { rageQuitSaltDurationMs, type RageQuitReplyId } from '../../shared/rageQuit';
@@ -46,7 +46,7 @@ const seenRageQuitKeyPrefix = 'sucker:seen-rage-quit:v1';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
 let pendingStorageOperation: Promise<unknown> = Promise.resolve();
-const recoveryPromises = new Map<string, Promise<RecoveredMultiplayerAction[]>>();
+const recoveryPromises = new Map<string, Promise<PendingActionRecovery>>();
 
 export class PendingMultiplayerActionError extends Error {
   constructor(
@@ -96,7 +96,7 @@ export async function listMyGames() {
   ];
   const completedGameIds = completedGames.map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
-    loadLastNudges(currentPlayerIds),
+    loadLastNudges(session.user.id, currentPlayerIds),
     loadSuckerTokensSpent(completedGameIds),
   ]);
   return data.map((game) =>
@@ -309,15 +309,18 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
   } catch (error) {
     if (isRetryableActionError(error)) {
       void reportError(error, {
-        ActionType: request.type,
+        ...getActionReportContext(request),
         Operation: 'MultiplayerAction',
-        RequestId: request.requestId,
       });
       throw new PendingMultiplayerActionError(
         'We could not confirm the move yet. It will be recovered before play continues.',
         request.requestId,
       );
     } else {
+      void reportError(error, {
+        ...getActionReportContext(request),
+        Operation: 'MultiplayerAction',
+      });
       await removePendingAction(request.requestId);
     }
     throw error;
@@ -357,7 +360,6 @@ async function invokeActionRequest<TResult>(request: ActionRequest, attempts?: A
       response: invokeResponse,
     } = await supabase.functions.invoke<TResult>('game-action', {
       body,
-      region: gameActionRegion,
     });
     attempts?.push(toActionAttempt(Date.now() - attemptStartedAt, invokeResponse));
     if (!error && data) {
@@ -375,9 +377,17 @@ async function invokeActionRequest<TResult>(request: ActionRequest, attempts?: A
   throw lastError instanceof Error ? lastError : new Error('Unable to update game.');
 }
 
-async function recoverPendingActions(actorId: string) {
+export type PendingActionRecovery = {
+  recovered: RecoveredMultiplayerAction[];
+  // The last temporary failure. Those actions stay pending for a retry, so the
+  // caller reports this only if retrying never succeeds.
+  retryableError: unknown;
+};
+
+async function recoverPendingActions(actorId: string): Promise<PendingActionRecovery> {
   const pending = await getPendingActionsForRecovery(actorId);
   const recovered: RecoveredMultiplayerAction[] = [];
+  let retryableError: unknown = null;
   for (const request of pending) {
     try {
       const result = await invokeActionRequest<MultiplayerActionResult | { removedGameId: string }>(request);
@@ -389,17 +399,36 @@ async function recoverPendingActions(actorId: string) {
         result,
       });
     } catch (error) {
-      if (!isRetryableActionError(error)) {
-        await removePendingAction(request.requestId);
+      if (isRetryableActionError(error)) {
+        retryableError = error;
+        continue;
       }
-      await reportError(error, {
-        ActionType: request.type,
-        Operation: 'RecoverPendingMultiplayerAction',
-        RequestId: request.requestId,
-      });
+      await removePendingAction(request.requestId);
+      await reportError(error, { ...getActionReportContext(request), Operation: 'RecoverPendingMultiplayerAction' });
     }
   }
-  return recovered;
+  return { recovered, retryableError };
+}
+
+function getActionReportContext(request: ActionRequest) {
+  return {
+    ActionType: request.type,
+    GameId: 'gameId' in request ? request.gameId : undefined,
+    RequestId: request.requestId,
+  };
+}
+
+// Realtime retries on its own, so a failing channel reports once per window
+// instead of on every reconnect attempt.
+function reportChannelStatus(channelName: string, status: string, error: Error | undefined) {
+  if (status !== 'CHANNEL_ERROR' && status !== 'TIMED_OUT') return;
+  const channelError =
+    error ?? new Error(status === 'TIMED_OUT' ? 'Realtime subscription timed out' : 'Realtime channel error');
+  void reportError(
+    channelError,
+    { Operation: `Realtime ${channelName} subscription`, RealtimeStatus: status },
+    { throttleMs: 10 * 60_000 },
+  );
 }
 
 function getOrCreatePendingAction(actorId: string, action: MultiplayerAction) {
@@ -456,7 +485,8 @@ async function loadPendingActions(): Promise<ActionRequest[]> {
     }
     const actions = JSON.parse(value) as unknown;
     return Array.isArray(actions) ? (actions.filter(isActionRequest) as ActionRequest[]) : [];
-  } catch {
+  } catch (error) {
+    void reportError(error, { Operation: 'LoadPendingActionStorage' });
     return [];
   }
 }
@@ -688,116 +718,87 @@ export async function markRageQuitSeen(gameId: string) {
   await AsyncStorage.setItem(`${seenRageQuitKeyPrefix}:${gameId}`, '1');
 }
 
+// Game changes arrive as database broadcasts on private topics (see the
+// broadcast_game_changes migration). Polling Postgres changes ran every
+// listener's read policy on every write to every game.
 export function subscribeToGameTaunts(
   gameId: string,
   onTaunt: (taunt: RemoteTaunt) => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
   onOpportunityAction?: () => void,
 ) {
-  const channel = supabase
-    .channel(`game-taunts:${gameId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        filter: `game_id=eq.${gameId}`,
-        schema: 'public',
-        table: 'turn_actions',
-      },
-      (payload) => {
-        const action = payload.new as TurnActionRow;
-        if (action.action_type !== 'taunt') {
-          if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
-            onOpportunityAction?.();
-          }
-          return;
+  return subscribeToPrivateTopic(
+    `game:${gameId}`,
+    (event, payload) => {
+      if (event !== 'action') return;
+      const action = payload.action as TurnActionRow | undefined;
+      if (!action) return;
+      if (action.action_type !== 'taunt') {
+        if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
+          onOpportunityAction?.();
         }
+        return;
+      }
 
-        const taunt = toRemoteTaunt(action);
-        if (taunt) {
-          onTaunt(taunt);
-        }
-      },
-    )
-    .subscribe((status) => onStatus?.(status));
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+      const taunt = toRemoteTaunt(action);
+      if (taunt) {
+        onTaunt(taunt);
+      }
+    },
+    (status, error) => {
+      reportChannelStatus('taunts', status, error);
+      onStatus?.(status);
+    },
+  );
 }
 
 export function subscribeToGame(
   gameId: string,
   onChange: (game: ReturnType<typeof toRemoteGameRow>) => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
 ) {
-  const channel = supabase
-    .channel(`game:${gameId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        filter: `id=eq.${gameId}`,
-        schema: 'public',
-        table: 'games',
-      },
-      (payload) => {
-        if (payload.new) {
-          onChange(toRemoteGameRow(payload.new as GameRow));
-        }
-      },
-    )
-    .subscribe((status) => {
+  return subscribeToPrivateTopic(
+    `game:${gameId}`,
+    (event, payload) => {
+      if (event !== 'game') return;
+      const game = payload.game as GameRow | undefined;
+      if (game) {
+        onChange(toRemoteGameRow(game));
+      }
+    },
+    (status, error) => {
+      reportChannelStatus('game', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
 export function subscribeToGameListChanges(
+  profileId: string,
   onChange: () => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
 ) {
-  const channel = supabase
-    .channel(createGameListRealtimeTopic())
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'games',
-      },
-      () => {
-        onChange();
-      },
-    )
-    .subscribe((status) => {
+  return subscribeToPrivateTopic(
+    `player:${profileId}`,
+    (event) => {
+      if (event === 'games_changed') onChange();
+    },
+    (status, error) => {
+      reportChannelStatus('game list', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
-async function loadLastNudges(recipientIds: string[]) {
+async function loadLastNudges(actorId: string, recipientIds: string[]) {
   if (recipientIds.length === 0) {
-    return new Map<string, string>();
-  }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
     return new Map<string, string>();
   }
 
   const { data, error } = await supabase
     .from('turn_actions')
     .select('payload, created_at')
-    .eq('actor_id', user.id)
+    .eq('actor_id', actorId)
     .eq('action_type', 'nudge_turn')
     .in('payload->>targetPlayerId', recipientIds)
     .gte('created_at', new Date(Date.now() - jabCooldownMs).toISOString())
@@ -846,16 +847,26 @@ function toRemoteGameRow(
   };
 }
 
+// A finished game's token spending never changes, and the list refreshes on
+// every game change and every 15 seconds. Read each game's actions once.
+const completedGameTokensSpent = new Map<string, Record<string, number>>();
+
 async function loadSuckerTokensSpent(gameIds: string[]) {
   const spentByGame = new Map<string, Record<string, number>>();
-  if (gameIds.length === 0) {
+  const missingGameIds: string[] = [];
+  for (const gameId of gameIds) {
+    const cached = completedGameTokensSpent.get(gameId);
+    if (cached) spentByGame.set(gameId, cached);
+    else missingGameIds.push(gameId);
+  }
+  if (missingGameIds.length === 0) {
     return spentByGame;
   }
 
   const { data, error } = await supabase
     .from('turn_actions')
     .select('action_type, actor_id, game_id, payload')
-    .in('game_id', gameIds)
+    .in('game_id', missingGameIds)
     .in('action_type', ['extra_roll', 'mulligan', 'sucker_punch', 'sucker_blocker'])
     .order('created_at', { ascending: true });
 
@@ -870,14 +881,14 @@ async function loadSuckerTokensSpent(gameIds: string[]) {
     actionsByGame.set(action.game_id, actions);
   }
 
-  for (const [gameId, actions] of actionsByGame) {
+  for (const gameId of missingGameIds) {
+    const actions = actionsByGame.get(gameId) ?? [];
     const playerIds = new Set(actions.map((action) => action.actor_id));
-    spentByGame.set(
-      gameId,
-      Object.fromEntries(
-        [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
-      ),
+    const spent = Object.fromEntries(
+      [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
     );
+    completedGameTokensSpent.set(gameId, spent);
+    spentByGame.set(gameId, spent);
   }
 
   return spentByGame;

@@ -49,6 +49,7 @@ function loadApple({
   const synchronizationTokens = [];
   const authResult = { data: { session }, error: authError ?? null };
   const modules = {
+    '../monitoring/exceptionless': { reportError: async () => {} },
     './appleIdentity': identityExports,
     'expo-apple-authentication': {
       isAvailableAsync: async () => {
@@ -313,6 +314,7 @@ function loadCallback(error = null) {
   const exchanges = [];
   const clearedUrls = [];
   const modules = {
+    '../monitoring/exceptionless': { reportError: async () => {} },
     'react-native': { Platform: { OS: 'web' } },
     'expo-router': { router: { setParams() {} } },
     './env': {},

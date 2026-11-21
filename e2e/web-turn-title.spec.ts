@@ -72,7 +72,7 @@ async function openLobby(page: Page) {
       if (typeof raw !== 'string') return;
       const [joinRef, ref, topic, event, payload] = JSON.parse(raw);
       if (event === 'phx_join') {
-        if (topic.startsWith('realtime:games:list:')) channels.set(topic, { joinRef, socket });
+        if (topic === `realtime:player:${actorId}`) channels.set(topic, { joinRef, socket });
         socket.send(
           JSON.stringify([
             joinRef,
@@ -112,20 +112,8 @@ async function openLobby(page: Page) {
             joinRef,
             null,
             topic,
-            'postgres_changes',
-            {
-              ids: [1],
-              data: {
-                schema: 'public',
-                table: 'games',
-                type: 'UPDATE',
-                columns: [],
-                record: games()[0],
-                old_record: {},
-                errors: null,
-                commit_timestamp: new Date().toISOString(),
-              },
-            },
+            'broadcast',
+            { type: 'broadcast', event: 'games_changed', payload: { game_id: games()[0].id } },
           ]),
         );
       }

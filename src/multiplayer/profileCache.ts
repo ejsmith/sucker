@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMultiplayerConfig } from './env';
+import { reportError } from '../monitoring/exceptionless';
 
 export type CachedProfile = {
   id: string;
@@ -34,7 +35,7 @@ function persist(value: string | null) {
   writes = writes
     .catch(() => undefined)
     .then(() => (value === null ? AsyncStorage.removeItem(cacheKey) : AsyncStorage.setItem(cacheKey, value)))
-    .catch(() => undefined);
+    .catch((error: unknown) => reportError(error, { Operation: 'Write profile cache' }));
 }
 
 export function hydrateProfileCache() {
@@ -58,7 +59,7 @@ export function hydrateProfileCache() {
         profiles = { ...Object.fromEntries(cached.map((profile) => [profile.id, profile])), ...profiles };
         publish();
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => reportError(error, { Operation: 'Read profile cache' }));
   }
   return hydration;
 }

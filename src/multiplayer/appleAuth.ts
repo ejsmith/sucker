@@ -1,6 +1,7 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { Platform } from 'react-native';
+import { reportError } from '../monitoring/exceptionless';
 import { isMultiplayerConfigured, supabase } from './supabase';
 import { hasAppleIdentity } from './appleIdentity';
 
@@ -73,16 +74,18 @@ export async function authenticateWithApple(action: AppleAuthAction = 'signIn') 
     if (data.session.user.id !== linkingUserId) return rejectAccountMismatch();
     // Linking has already succeeded. Updating its snapshot is best effort: a
     // network failure here must not send the player through linking a second time.
-    const { data: refreshed } = await supabase.auth.refreshSession(data.session).catch(() => ({
-      data: { session: null },
-    }));
+    const { data: refreshed } = await supabase.auth.refreshSession(data.session).catch((error: unknown) => {
+      void reportError(error, { Operation: 'Refresh session after Apple link' });
+      return { data: { session: null } };
+    });
     if (refreshed.session && refreshed.session.user.id !== linkingUserId) return rejectAccountMismatch();
     if (refreshed.session && hasAppleIdentity(refreshed.session.user)) return refreshed.session;
 
     const linkedSession = refreshed.session ?? data.session;
-    const { data: current } = await supabase.auth.getUser(linkedSession.access_token).catch(() => ({
-      data: { user: null },
-    }));
+    const { data: current } = await supabase.auth.getUser(linkedSession.access_token).catch((error: unknown) => {
+      void reportError(error, { Operation: 'Load user after Apple link' });
+      return { data: { user: null } };
+    });
     if (current.user && current.user.id !== linkingUserId) return rejectAccountMismatch();
     // Do not restore an old account after a sign-out or switch during these reads.
     const { data: active, error: sessionError } = await supabase.auth.getSession();

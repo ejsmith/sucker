@@ -86,8 +86,13 @@ create table public.turns (
   status text not null default 'submitted' check (status in ('submitted', 'punched', 'blocked', 'mulliganed', 'finalized')),
   created_at timestamptz not null default now(),
   finalized_at timestamptz,
+  -- Rolled a Sucker at any point after the turn's last Mulligan. Sucker Spree
+  -- feats read it across a player's games.
+  rolled_sucker boolean not null default false,
   unique (game_id, turn_index)
 );
+
+create index turns_player_created_idx on public.turns (player_id, created_at);
 
 create table public.turn_actions (
   id uuid primary key default gen_random_uuid(),
@@ -117,6 +122,9 @@ create table public.turn_actions (
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+-- game-action replays a game's actions on most moves to award instant feats.
+create index turn_actions_game_created_idx on public.turn_actions (game_id, created_at);
 
 create index turn_actions_game_type_created_idx
 on public.turn_actions (game_id, action_type, created_at);
@@ -881,6 +889,22 @@ as $$
   );
 $$;
 
+-- Read policies use this set once per query. is_game_participant, called per
+-- row, made every read scan the whole game table.
+create or replace function public.my_visible_game_ids()
+returns setof uuid
+language sql
+security definer
+set search_path = public
+stable
+rows 50
+as $$
+  select game_id
+  from public.game_players
+  where player_id = (select auth.uid())
+    and hidden_at is null;
+$$;
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -982,6 +1006,97 @@ begin
   end if;
 end $$;
 
+-- Older binaries listen with Postgres Changes. Current clients receive these
+-- database broadcasts on private topics instead:
+--   player:<profile id>  games_changed {game_id}
+--   game:<game id>       game {game} and action {action}
+create or replace function public.broadcast_game_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  game_row public.games;
+  participant_id uuid;
+begin
+  game_row := case when tg_op = 'DELETE' then old else new end;
+  if tg_op <> 'DELETE' then
+    perform realtime.send(jsonb_build_object('game', to_jsonb(new)), 'game', 'game:' || new.id, true);
+  end if;
+  -- A deleted game is broadcast before the delete, while its players still exist.
+  for participant_id in
+    select player_id from public.game_players where game_id = game_row.id and hidden_at is null
+  loop
+    perform realtime.send(jsonb_build_object('game_id', game_row.id), 'games_changed', 'player:' || participant_id, true);
+  end loop;
+  return case when tg_op = 'DELETE' then old else null end;
+end;
+$$;
+
+create trigger games_broadcast_change
+after insert or update on public.games
+for each row execute function public.broadcast_game_change();
+
+create trigger games_broadcast_delete
+before delete on public.games
+for each row execute function public.broadcast_game_change();
+
+-- Joining or hiding a game changes that player's list without touching the game.
+create or replace function public.broadcast_game_player_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform realtime.send(jsonb_build_object('game_id', new.game_id), 'games_changed', 'player:' || new.player_id, true);
+  return null;
+end;
+$$;
+
+create trigger game_players_broadcast_change
+after insert or update of hidden_at on public.game_players
+for each row execute function public.broadcast_game_player_change();
+
+create or replace function public.broadcast_turn_action()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform realtime.send(jsonb_build_object('action', to_jsonb(new)), 'action', 'game:' || new.game_id, true);
+  return null;
+end;
+$$;
+
+create trigger turn_actions_broadcast_insert
+after insert on public.turn_actions
+for each row execute function public.broadcast_turn_action();
+
+revoke all on function public.broadcast_game_change() from public, anon, authenticated;
+revoke all on function public.broadcast_game_player_change() from public, anon, authenticated;
+revoke all on function public.broadcast_turn_action() from public, anon, authenticated;
+
+-- Players may listen to their own list topic and to the games they can read.
+-- Nobody may send on these topics from a client.
+create policy "Players receive their game broadcasts"
+on realtime.messages for select
+to authenticated
+using (
+  realtime.messages.extension = 'broadcast'
+  and (
+    (select realtime.topic()) = 'player:' || (select auth.uid())::text
+    or (
+      (select realtime.topic()) like 'game:%'
+      and split_part((select realtime.topic()), ':', 2) in (
+        select game_id::text from public.my_visible_game_ids() as game_id
+      )
+    )
+  )
+);
+
 create policy "Profiles are readable to authenticated users"
 on public.profiles for select
 to authenticated
@@ -1040,12 +1155,12 @@ with check ((select auth.uid()) in (requester_id, addressee_id));
 create policy "Participants can read games"
 on public.games for select
 to authenticated
-using (public.is_game_participant(id, (select auth.uid())));
+using (id in (select public.my_visible_game_ids()));
 
 create policy "Participants can read game players"
 on public.game_players for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Relevant users can read invites"
 on public.game_invites for select
@@ -1055,17 +1170,17 @@ using ((select auth.uid()) in (inviter_id, invitee_id));
 create policy "Participants can read turns"
 on public.turns for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Participants can read turn actions"
 on public.turn_actions for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Participants can read token events"
 on public.token_events for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Users manage their own push tokens"
 on public.push_tokens for all
@@ -1152,6 +1267,7 @@ revoke all on public.rage_quits from anon, authenticated;
 grant select on public.rage_quits to authenticated;
 grant all on all routines in schema public to authenticated;
 revoke all on function public.discard_unconfirmed_password() from public, anon, authenticated;
+revoke all on function public.my_visible_game_ids() from public, anon;
 grant all on all sequences in schema public to authenticated;
 
 -- A move is prepared by the trusted Edge Function and committed with its replay
@@ -1282,6 +1398,45 @@ end;
 $$;
 revoke all on function public.commit_game_move(uuid,uuid,uuid,timestamptz,jsonb,jsonb,jsonb) from public,anon,authenticated;
 grant execute on function public.commit_game_move(uuid,uuid,uuid,timestamptz,jsonb,jsonb,jsonb) to service_role;
+
+-- game-action claimed a request with an insert, then counted the player's
+-- recent requests for rate limiting, or read the existing request on a retry:
+-- two sequential round trips before every move. This does both in one.
+create or replace function public.claim_game_action_request(
+  p_actor_id uuid,
+  p_request_id uuid,
+  p_action_type text,
+  p_game_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  existing public.game_action_requests;
+  recent_count integer;
+begin
+  insert into public.game_action_requests (actor_id, request_id, action_type, game_id)
+  values (p_actor_id, p_request_id, p_action_type, p_game_id)
+  on conflict (actor_id, request_id) do nothing;
+
+  if found then
+    select count(*) into recent_count
+    from public.game_action_requests
+    where actor_id = p_actor_id
+      and created_at >= now() - interval '60 seconds';
+    return jsonb_build_object('claimed', true, 'recent_count', recent_count);
+  end if;
+
+  select * into strict existing
+  from public.game_action_requests
+  where actor_id = p_actor_id and request_id = p_request_id;
+  return jsonb_build_object('claimed', false, 'request', to_jsonb(existing));
+end;
+$$;
+
+revoke all on function public.claim_game_action_request(uuid, uuid, text, uuid) from public, anon, authenticated;
+grant execute on function public.claim_game_action_request(uuid, uuid, text, uuid) to service_role;
 -- Every active-turn action uses the same version check and transaction.
 create or replace function public.commit_game_mutation(
   target_game_id uuid,
@@ -1467,15 +1622,18 @@ on public.game_player_results (player_id, opponent_id, completed_at desc);
 create table public.player_standings (
   player_id uuid primary key references public.profiles(id) on delete cascade,
   rating numeric(7, 2) not null default 1200,
+  rating_deviation numeric(6, 2) not null default 150,
+  rated_at timestamptz,
   rated_games integer not null default 0,
-  peak_rating numeric(7, 2) not null default 1200,
+  peak_rating numeric(7, 2) not null default 900,
   current_win_streak integer not null default 0,
   best_win_streak integer not null default 0,
   current_loss_streak integer not null default 0,
+  -- Bits 1 to 6 mark the Sucker faces the player has rolled in finished games.
+  sucker_faces integer not null default 0,
   updated_at timestamptz not null default now()
 );
 
-create index player_standings_rating_idx on public.player_standings (rating desc);
 
 alter table public.player_standings enable row level security;
 grant all on public.player_standings to service_role;
@@ -1519,33 +1677,77 @@ $$;
 revoke all on function public.award_milestone_feat(uuid, text, uuid, timestamptz) from public, anon, authenticated;
 grant execute on function public.award_milestone_feat(uuid, text, uuid, timestamptz) to service_role;
 
--- Elo with provisional K and repeat-opponent damping, plus streaks and
--- milestone feats. Idempotent: a game whose results already carry ratings is skipped.
-create function public.apply_completed_game_standings(target_game_id uuid)
+-- Uncertainty grows while a player sits out (its variance gains 10² a day),
+-- back up to the starting 150.
+create function public.rating_deviation_at(deviation numeric, rated_at timestamptz, as_of timestamptz)
+returns numeric
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when rated_at is null then deviation
+    else least(150, sqrt(deviation ^ 2 + 100 * greatest(extract(epoch from as_of - rated_at) / 86400, 0)))
+  end;
+$$;
+
+revoke all on function public.rating_deviation_at(numeric, timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function public.rating_deviation_at(numeric, timestamptz, timestamptz) to service_role;
+
+-- The rating players see and rank by.
+create function public.conservative_rating(rating numeric, deviation numeric, rated_at timestamptz, as_of timestamptz)
+returns numeric
+language sql
+immutable
+set search_path = ''
+as $$
+  select round(rating - 2 * public.rating_deviation_at(deviation, rated_at, as_of), 2);
+$$;
+
+revoke all on function public.conservative_rating(numeric, numeric, timestamptz, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.conservative_rating(numeric, numeric, timestamptz, timestamptz) to service_role;
+
+-- Glicko-1, one game at a time. The first 3 games a pair plays in 7 days count
+-- fully and later ones a quarter. Once either player has won 19 of the pair's
+-- last 20 games, their games stop counting, so throwing games to a second
+-- account goes nowhere. Each result records the shown rating before and after.
+-- Idempotent: a game whose results already carry ratings is skipped.
+create function public.rate_completed_game(target_game_id uuid)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
+  q constant double precision := ln(10) / 400;
   results public.game_player_results[];
-  result public.game_player_results;
   standing_a public.player_standings;
   standing_b public.player_standings;
   completed timestamptz;
   pair_games integer;
-  damping numeric;
-  score_a numeric;
-  expected_a numeric;
-  next_a numeric;
-  next_b numeric;
-  player_games integer;
-  opponent_games integer;
-  beaten integer;
-  player_lost boolean;
-  loss_streak integer;
-  losses integer;
-  quits integer;
+  lopsided boolean;
+  weight double precision;
+  score_a double precision;
+  rating_a double precision;
+  rating_b double precision;
+  deviation_a double precision;
+  deviation_b double precision;
+  -- How much a result against each player reveals, given their uncertainty.
+  reveal_a double precision;
+  reveal_b double precision;
+  expected_a double precision;
+  expected_b double precision;
+  variance_a double precision;
+  variance_b double precision;
+  next_rating_a numeric;
+  next_rating_b numeric;
+  next_deviation_a numeric;
+  next_deviation_b numeric;
+  before_a numeric;
+  before_b numeric;
+  after_a numeric;
+  after_b numeric;
 begin
   select array_agg(r order by r.player_id) into results
   from public.game_player_results r
@@ -1570,31 +1772,149 @@ begin
   select * into strict standing_a from public.player_standings where player_id = (results[1]).player_id;
   select * into strict standing_b from public.player_standings where player_id = (results[2]).player_id;
 
+  before_a := public.conservative_rating(standing_a.rating, standing_a.rating_deviation, standing_a.rated_at, completed);
+  before_b := public.conservative_rating(standing_b.rating, standing_b.rating_deviation, standing_b.rated_at, completed);
+
   select count(*) into pair_games
   from public.game_player_results r
   where r.player_id = (results[1]).player_id
     and r.opponent_id = (results[2]).player_id
     and r.completed_at > completed - interval '7 days'
     and r.completed_at <= completed;
-  damping := case when pair_games <= 3 then 1 else 0.25 end;
 
+  select count(*) = 20 and greatest(count(*) filter (where recent.a_won), count(*) filter (where recent.b_won)) >= 19
+  into lopsided
+  from (
+    select own.won as a_won, other.won as b_won
+    from public.game_player_results own
+    join public.game_player_results other on other.game_id = own.game_id and other.player_id = own.opponent_id
+    where own.player_id = (results[1]).player_id
+      and own.opponent_id = (results[2]).player_id
+      and own.game_id <> target_game_id
+      and own.completed_at <= completed
+    order by own.completed_at desc, own.game_id desc
+    limit 20
+  ) recent;
+
+  if lopsided then
+    update public.game_player_results set rating_before = before_a, rating_after = before_a
+    where game_id = target_game_id and player_id = (results[1]).player_id;
+    update public.game_player_results set rating_before = before_b, rating_after = before_b
+    where game_id = target_game_id and player_id = (results[2]).player_id;
+    return;
+  end if;
+
+  weight := case when pair_games <= 3 then 1 else 0.25 end;
   score_a := case when (results[1]).won then 1 when (results[2]).won then 0 else 0.5 end;
-  expected_a := 1 / (1 + power(10::numeric, (standing_b.rating - standing_a.rating) / 400));
-  next_a := round(
-    standing_a.rating
-      + (case when standing_a.rated_games < 10 then 40 else 24 end) * damping * (score_a - expected_a),
-    2
-  );
-  next_b := round(
-    standing_b.rating
-      + (case when standing_b.rated_games < 10 then 40 else 24 end) * damping * ((1 - score_a) - (1 - expected_a)),
-    2
-  );
+  rating_a := standing_a.rating;
+  rating_b := standing_b.rating;
+  deviation_a := public.rating_deviation_at(standing_a.rating_deviation, standing_a.rated_at, completed);
+  deviation_b := public.rating_deviation_at(standing_b.rating_deviation, standing_b.rated_at, completed);
+  reveal_a := 1 / sqrt(1 + 3 * q ^ 2 * deviation_a ^ 2 / pi() ^ 2);
+  reveal_b := 1 / sqrt(1 + 3 * q ^ 2 * deviation_b ^ 2 / pi() ^ 2);
+  expected_a := 1 / (1 + 10 ^ (-reveal_b * (rating_a - rating_b) / 400));
+  expected_b := 1 / (1 + 10 ^ (-reveal_a * (rating_b - rating_a) / 400));
+  variance_a := 1 / (1 / deviation_a ^ 2 + weight * q ^ 2 * reveal_b ^ 2 * expected_a * (1 - expected_a));
+  variance_b := 1 / (1 / deviation_b ^ 2 + weight * q ^ 2 * reveal_a ^ 2 * expected_b * (1 - expected_b));
+  next_rating_a := round((rating_a + q * variance_a * weight * reveal_b * (score_a - expected_a))::numeric, 2);
+  next_rating_b := round((rating_b + q * variance_b * weight * reveal_a * ((1 - score_a) - expected_b))::numeric, 2);
+  next_deviation_a := round(sqrt(variance_a)::numeric, 2);
+  next_deviation_b := round(sqrt(variance_b)::numeric, 2);
+  after_a := public.conservative_rating(next_rating_a, next_deviation_a, completed, completed);
+  after_b := public.conservative_rating(next_rating_b, next_deviation_b, completed, completed);
 
   update public.player_standings set
-    rating = next_a,
+    rating = next_rating_a,
+    rating_deviation = next_deviation_a,
+    rated_at = completed,
     rated_games = rated_games + 1,
-    peak_rating = greatest(peak_rating, next_a),
+    peak_rating = greatest(peak_rating, after_a),
+    updated_at = now()
+  where player_id = (results[1]).player_id;
+
+  update public.player_standings set
+    rating = next_rating_b,
+    rating_deviation = next_deviation_b,
+    rated_at = completed,
+    rated_games = rated_games + 1,
+    peak_rating = greatest(peak_rating, after_b),
+    updated_at = now()
+  where player_id = (results[2]).player_id;
+
+  update public.game_player_results set rating_before = before_a, rating_after = after_a
+  where game_id = target_game_id and player_id = (results[1]).player_id;
+  update public.game_player_results set rating_before = before_b, rating_after = after_b
+  where game_id = target_game_id and player_id = (results[2]).player_id;
+end;
+$$;
+
+revoke all on function public.rate_completed_game(uuid) from public, anon, authenticated;
+grant execute on function public.rate_completed_game(uuid) to service_role;
+
+-- Glicko rating, then streaks, milestone feats, and per-game feats that need
+-- ratings or timing.
+-- Idempotent: a game whose results already carry ratings is skipped.
+create function public.apply_completed_game_standings(target_game_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  results public.game_player_results[];
+  result public.game_player_results;
+  completed timestamptz;
+  player_games integer;
+  opponent_games integer;
+  beaten integer;
+  player_lost boolean;
+  loss_streak integer;
+  win_streak integer;
+  losses integer;
+  quits integer;
+  rage_quit boolean;
+  first_roll timestamptz;
+  rating_gap numeric;
+begin
+  select array_agg(r order by r.player_id) into results
+  from public.game_player_results r
+  where r.game_id = target_game_id;
+
+  if coalesce(array_length(results, 1), 0) <> 2 or (results[1]).rating_after is not null then
+    return;
+  end if;
+
+  completed := greatest((results[1]).completed_at, (results[2]).completed_at);
+
+  -- Creates and locks both standings rows.
+  perform public.rate_completed_game(target_game_id);
+
+  rage_quit := exists(select 1 from public.rage_quits quit where quit.game_id = target_game_id);
+  select min(action.created_at) into first_roll
+  from public.turn_actions action
+  where action.game_id = target_game_id and action.action_type = 'roll';
+
+  -- Every Sucker face each player has rolled in a finished game, as bits 1 to 6.
+  update public.player_standings standing set
+    sucker_faces = standing.sucker_faces | faces.rolled
+  from (
+    select action.actor_id, bit_or(1 << ((action.payload -> 'dice' ->> 0)::integer - 1)) as rolled
+    from public.turn_actions action
+    where action.game_id = target_game_id
+      and action.action_type = 'roll'
+      and action.payload -> 'dice' ->> 0 in ('1', '2', '3', '4', '5', '6')
+      and action.payload -> 'dice' = jsonb_build_array(
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0,
+        action.payload -> 'dice' -> 0
+      )
+    group by action.actor_id
+  ) faces
+  where standing.player_id = faces.actor_id;
+
+  update public.player_standings set
     current_win_streak = case when (results[1]).won then current_win_streak + 1 else 0 end,
     current_loss_streak = case when (results[2]).won then current_loss_streak + 1 else 0 end,
     best_win_streak = greatest(best_win_streak, case when (results[1]).won then current_win_streak + 1 else 0 end),
@@ -1602,19 +1922,11 @@ begin
   where player_id = (results[1]).player_id;
 
   update public.player_standings set
-    rating = next_b,
-    rated_games = rated_games + 1,
-    peak_rating = greatest(peak_rating, next_b),
     current_win_streak = case when (results[2]).won then current_win_streak + 1 else 0 end,
     current_loss_streak = case when (results[1]).won then current_loss_streak + 1 else 0 end,
     best_win_streak = greatest(best_win_streak, case when (results[2]).won then current_win_streak + 1 else 0 end),
     updated_at = now()
   where player_id = (results[2]).player_id;
-
-  update public.game_player_results set rating_before = standing_a.rating, rating_after = next_a
-  where game_id = target_game_id and player_id = (results[1]).player_id;
-  update public.game_player_results set rating_before = standing_b.rating, rating_after = next_b
-  where game_id = target_game_id and player_id = (results[2]).player_id;
 
   foreach result in array results loop
     select count(*) into player_games from public.game_player_results r
@@ -1628,6 +1940,13 @@ begin
     if beaten >= 25 then perform public.award_milestone_feat(result.player_id, 'globetrotter_25', target_game_id, completed); end if;
     if beaten >= 100 then perform public.award_milestone_feat(result.player_id, 'globetrotter_100', target_game_id, completed); end if;
     if player_games >= 100 then perform public.award_milestone_feat(result.player_id, 'centurion', target_game_id, completed); end if;
+    select standing.current_win_streak into win_streak
+    from public.player_standings standing where standing.player_id = result.player_id;
+    if win_streak >= 5 then perform public.award_milestone_feat(result.player_id, 'hot_streak', target_game_id, completed); end if;
+    if win_streak >= 10 then perform public.award_milestone_feat(result.player_id, 'on_fire', target_game_id, completed); end if;
+    if (select standing.sucker_faces = 63 from public.player_standings standing where standing.player_id = result.player_id) then
+      perform public.award_milestone_feat(result.player_id, 'sucker_collector', target_game_id, completed);
+    end if;
     if opponent_games = 1 and player_games >= 6 then
       perform public.award_milestone_feat(result.player_id, 'welcome_wagon', target_game_id, completed);
     end if;
@@ -1637,9 +1956,54 @@ begin
     ) >= 10 then
       perform public.award_milestone_feat(result.player_id, 'nemesis', target_game_id, completed);
     end if;
+    if result.won and (
+      select count(*) = 5 and bool_and(recent.won)
+      from (
+        select r.won
+        from public.game_player_results r
+        where r.player_id = result.player_id and r.opponent_id = result.opponent_id and r.completed_at <= completed
+        order by r.completed_at desc, r.game_id desc
+        limit 5
+      ) recent
+    ) then
+      perform public.award_milestone_feat(result.player_id, 'got_your_number', target_game_id, completed);
+    end if;
 
     -- Defeats: a loss means the opponent won; ties are neither.
     player_lost := case when result.player_id = (results[1]).player_id then (results[2]).won else (results[1]).won end;
+
+    -- Per-game feats that need ratings or timing. A Rage Quit awards none.
+    -- Rating gaps use the shown ratings before the game, once both players
+    -- have 5 earlier games, so new players' settling ratings never count.
+    if not rage_quit then
+      if player_games >= 6 and opponent_games >= 6 then
+        select opponent.rating_before - own.rating_before into rating_gap
+        from public.game_player_results own
+        join public.game_player_results opponent
+          on opponent.game_id = own.game_id and opponent.player_id = own.opponent_id
+        where own.game_id = target_game_id and own.player_id = result.player_id;
+        if result.won and rating_gap >= 200 then
+          insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+          values (target_game_id, result.player_id, 'giant_killer', completed)
+          on conflict do nothing;
+        end if;
+        if player_lost and rating_gap <= -200 then
+          insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+          values (target_game_id, result.player_id, 'banana_peel', completed)
+          on conflict do nothing;
+        end if;
+      end if;
+      if completed - first_roll <= interval '1 hour' then
+        insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+        values (target_game_id, result.player_id, 'blitz', completed)
+        on conflict do nothing;
+      end if;
+      if completed - first_roll >= interval '30 days' then
+        insert into public.player_feats (game_id, player_id, feat_key, earned_at)
+        values (target_game_id, result.player_id, 'the_long_game', completed)
+        on conflict do nothing;
+      end if;
+    end if;
     select standing.current_loss_streak into loss_streak
     from public.player_standings standing where standing.player_id = result.player_id;
     if loss_streak >= 5 then perform public.award_milestone_feat(result.player_id, 'ice_cold', target_game_id, completed); end if;
@@ -1733,7 +2097,10 @@ begin
   return query
   -- Forfeits count toward ratings and streaks only, never scores or punch rates.
   with entries as (
-    select standing.player_id, standing.rating as value, standing.rated_games as sample_size
+    select
+      standing.player_id,
+      public.conservative_rating(standing.rating, standing.rating_deviation, standing.rated_at, now()) as value,
+      standing.rated_games as sample_size
     from public.player_standings standing
     where board = 'rating' and standing.rated_games >= 5
     union all
@@ -1900,17 +2267,11 @@ begin
     profile.username,
     profile.avatar_url,
     profile.show_on_leaderboards,
-    standing.rating,
+    public.conservative_rating(standing.rating, standing.rating_deviation, standing.rated_at, now()),
     coalesce(standing.rated_games, 0),
     standing.peak_rating,
-    case
-      when profile.show_on_leaderboards and standing.rated_games >= 5 then (
-        select count(*)::integer + 1
-        from public.player_standings other
-        join public.profiles other_profile on other_profile.id = other.player_id
-        where other_profile.show_on_leaderboards and other.rated_games >= 5 and other.rating > standing.rating
-      )
-    end,
+    -- The rating board's own rank, so a card never disagrees with the board.
+    (select ranked.rank from public.ranked_leaderboard('rating') ranked where ranked.player_id = profile.id),
     coalesce(standing.current_win_streak, 0),
     coalesce(standing.best_win_streak, 0),
     coalesce(totals.games_played, 0),
@@ -1986,3 +2347,73 @@ $$;
 
 revoke all on function public.get_player_feats(uuid) from public;
 grant execute on function public.get_player_feats(uuid) to authenticated;
+
+create or replace function public.claim_push_token(
+  push_token text,
+  push_platform text,
+  push_device_name text default null
+)
+returns public.push_tokens
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  caller_id uuid := auth.uid();
+  claimed public.push_tokens;
+begin
+  if caller_id is null then
+    raise exception 'You must be signed in to register notifications.' using errcode = '42501';
+  end if;
+
+  insert into public.push_tokens (profile_id, expo_push_token, platform, device_name)
+  values (caller_id, push_token, push_platform, push_device_name)
+  on conflict (expo_push_token) do update
+  set profile_id = excluded.profile_id,
+    platform = excluded.platform,
+    device_name = excluded.device_name
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_push_token(text, text, text) from public, anon;
+grant execute on function public.claim_push_token(text, text, text) to authenticated;
+
+create or replace function public.claim_web_push_subscription(
+  push_endpoint text,
+  push_p256dh_key text,
+  push_auth_key text,
+  push_expiration_time timestamptz default null,
+  push_user_agent text default null
+)
+returns public.web_push_subscriptions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  caller_id uuid := auth.uid();
+  claimed public.web_push_subscriptions;
+begin
+  if caller_id is null then
+    raise exception 'You must be signed in to register notifications.' using errcode = '42501';
+  end if;
+
+  insert into public.web_push_subscriptions (profile_id, endpoint, p256dh_key, auth_key, expiration_time, user_agent)
+  values (caller_id, push_endpoint, push_p256dh_key, push_auth_key, push_expiration_time, push_user_agent)
+  on conflict (endpoint) do update
+  set profile_id = excluded.profile_id,
+    p256dh_key = excluded.p256dh_key,
+    auth_key = excluded.auth_key,
+    expiration_time = excluded.expiration_time,
+    user_agent = excluded.user_agent
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_web_push_subscription(text, text, text, timestamptz, text) from public, anon;
+grant execute on function public.claim_web_push_subscription(text, text, text, timestamptz, text) to authenticated;

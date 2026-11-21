@@ -60,11 +60,13 @@ test('a real Realtime update reaches the board while fallback timers are paused'
   });
   try {
     // Let the lobby establish its connection first, exercising socket reuse on entry.
-    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
+    await expect
+      .poll(() => frames.some((frame) => frame.includes(`player:${alice.id}`) && frame.includes('phx_reply')))
+      .toBe(true);
     await page.clock.install();
     await openGameFromLobby(page, game.id);
     await expect
-      .poll(() => frames.some((frame) => frame.includes(`game:${game.id}`) && frame.includes('postgres_changes')))
+      .poll(() => frames.some((frame) => frame.includes(`game:${game.id}`) && frame.includes('phx_reply')))
       .toBe(true);
     // Freeze timers after subscription so polling cannot supply this update.
     // Real HTTP and WebSocket events still run.
@@ -74,7 +76,8 @@ test('a real Realtime update reaches the board while fallback timers are paused'
     game.state.players[0].suckerTokens = 6;
     assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
     await expect(page.getByTestId('token-menu-button')).toHaveText('6');
-    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
+    // Broadcasts arrive as binary frames, so match the game topic they carry.
+    await expect.poll(() => frames.some((frame) => frame.includes(`game:${game.id}`))).toBe(true);
   } finally {
     await page.context().close();
   }
@@ -339,6 +342,23 @@ test('local development offers reusable Test 1 and Test 2 logins at the bottom',
   }
 });
 
+test('opening your own open invite waits for the friend instead of crashing', async ({ browser }) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`invite-wait-a-${runId}`, 'Alice Waiting');
+  const bob = await createUser(`invite-wait-b-${runId}`, 'Bob Joining');
+  const { game, inviteCode } = await invokeTestGameAction(alice, { type: 'create_invite' });
+  const page = await openAuthedPage(browser, alice);
+  try {
+    await page.getByTestId(`game-card-${game.id}`).click();
+    await expect(page.getByTestId('remote-waiting-for-friend')).toBeVisible();
+    await expect(page.getByText('Something went wrong')).toHaveCount(0);
+    await invokeTestGameAction(bob, { type: 'accept_invite', inviteCode });
+    await expect(page.getByTestId('game-screen')).toBeVisible();
+  } finally {
+    await page.context().close();
+  }
+});
+
 for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
   test(`signing out releases this browser notification endpoint for the next account (${unsubscribeResult})`, async ({
     browser,
@@ -396,6 +416,30 @@ for (const unsubscribeResult of ['success', 'false', 'error'] as const) {
     }
   });
 }
+
+test('a browser endpoint still owned by an account that never signed out moves to the new account', async ({
+  browser,
+}) => {
+  const runId = crypto.randomUUID();
+  const alice = await createUser(`push-stale-a-${runId}`, 'Alice Stale');
+  const bob = await createUser(`push-stale-b-${runId}`, 'Bob Claims');
+  const endpoint = `https://push.example.test/stale-${runId}`;
+  const stale = await admin.from('web_push_subscriptions').insert({
+    endpoint,
+    auth_key: 'stale-auth',
+    p256dh_key: 'stale-key',
+    profile_id: alice.id,
+  });
+  expect(stale.error).toBeNull();
+  const page = await openAuthedPage(browser, bob, endpoint);
+  try {
+    await expect
+      .poll(async () => (await admin.from('web_push_subscriptions').select('profile_id').eq('endpoint', endpoint)).data)
+      .toEqual([{ profile_id: bob.id }]);
+  } finally {
+    await page.context().close();
+  }
+});
 
 test('auth sign-out failure restores notification ownership before reporting the error', async ({ browser }) => {
   const runId = crypto.randomUUID();
@@ -1666,8 +1710,11 @@ test('Hall of Suckers opens the same player profile with head-to-head stats', as
       total_score: 330,
       wins: 1,
     }),
-    // Far above any rating other tests can reach, so Bob tops the board.
-    admin.from('player_standings').insert({ best_win_streak: 4, player_id: bob.id, rated_games: 6, rating: 4321 }),
+    // Far above any rating other tests can reach, so Bob tops the board. With no
+    // uncertainty, the shown rating is the rating itself.
+    admin
+      .from('player_standings')
+      .insert({ best_win_streak: 4, player_id: bob.id, rated_games: 6, rating: 4321, rating_deviation: 0 }),
   ]);
   inserted.forEach((result) => assertNoError(result.error));
 

@@ -48,7 +48,15 @@ import {
   type SuckerStatActionType,
   type SuckerStatTurn,
 } from '../_shared/stats.ts';
-import { buildCompletedPlayerFeats } from '../_shared/feats.ts';
+import {
+  buildCompletedPlayerFeats,
+  buildInstantPlayerFeats,
+  mayEarnInstantFeat,
+  rolledSuckerThisTurn,
+  suckerSpreeFeatsFor,
+  suckerSpreeLookback,
+  type SuckerSpreeFeatKey,
+} from '../_shared/feats.ts';
 import {
   getTurnTauntScenario,
   isTauntAvailableForScenario,
@@ -56,6 +64,12 @@ import {
   type TauntId,
   type TauntScenario,
 } from '../_shared/taunts.ts';
+import {
+  InternalServerError,
+  isUnexpectedServerError,
+  logServerError,
+  reportServerError,
+} from '../_shared/monitoring.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
 
 type DbClient = SupabaseClient<Database>;
@@ -118,10 +132,15 @@ type ActionInput =
   | { type: 'rage_quit'; gameId: string }
   | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
 type Action = ActionInput & { requestId: string };
-type ActionMutationState = { mayHaveWritten: boolean; plan?: GameMovePlan };
+type ActionMutationState = {
+  mayHaveWritten: boolean;
+  plan?: GameMovePlan;
+  // The game's committed stat actions, loaded once per move.
+  statActions?: Promise<SuckerStatAction[]>;
+};
 
 const corsHeaders = {
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, x-region, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Origin': '*',
   // Lets web clients read timings for slow-action reports, as native already can.
   'Access-Control-Expose-Headers': 'server-timing, x-sb-edge-region, x-sucker-action-duration-ms',
@@ -134,6 +153,9 @@ Deno.serve(async (request) => {
   const timer = new ActionTimer(pendingBootMs);
   pendingBootMs = null;
   let actionType = 'unknown';
+  let actorId: string | null = null;
+  let requestId: string | null = null;
+  let gameId: string | null = null;
 
   try {
     if (request.method === 'OPTIONS') {
@@ -153,6 +175,8 @@ Deno.serve(async (request) => {
 
     const action = await timer.measure('parse', async () => toAction(await request.json()));
     actionType = action.type;
+    requestId = action.requestId;
+    gameId = 'gameId' in action ? action.gameId : null;
     const authHeader = request.headers.get('Authorization') ?? '';
     const supabaseUrl = requireEnv('SUPABASE_URL');
     const anonKey = requireEnv('SUPABASE_ANON_KEY');
@@ -161,14 +185,17 @@ Deno.serve(async (request) => {
       global: { headers: { Authorization: authHeader } },
     });
     const admin = createClient<Database>(supabaseUrl, serviceRoleKey);
-    const {
-      data: { user },
-      error: userError,
-    } = await timer.measure('auth', () => authClient.auth.getUser());
-
-    if (userError || !user) {
+    // getClaims verifies the asymmetric JWT locally against the cached signing
+    // keys. getUser asked the Auth server on every move, a full round trip.
+    const { data: claimsData, error: claimsError } = await timer.measure('auth', () =>
+      authClient.auth.getClaims(authHeader.replace(/^Bearer\s+/i, '')),
+    );
+    const subject = claimsData?.claims.sub;
+    if (claimsError || !subject || claimsData.claims.role !== 'authenticated') {
       return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
     }
+    const user = { id: subject };
+    actorId = user.id;
 
     const claim = await timer.measure('claim', () => claimActionRequest(admin, user.id, action));
     if (claim.kind === 'completed') {
@@ -194,7 +221,10 @@ Deno.serve(async (request) => {
     try {
       let result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
       if (mutationState.plan) {
-        if (!result.game) throw new Error('A game move must return its game.');
+        if (!result.game) throw new InternalServerError('A game move must return its game.');
+        const plan = mutationState.plan;
+        const game = result.game;
+        await timer.measure('feats', () => planInstantFeats(admin, game, plan, mutationState));
         mutationState.mayHaveWritten = true;
         try {
           const plan = mutationState.plan;
@@ -241,6 +271,16 @@ Deno.serve(async (request) => {
     console.error('game-action failed', error);
     const message = toErrorMessage(error);
     const status = toErrorStatus(error);
+    // Game rule rejections are expected. Faults are reported with the ids the
+    // app's own event carries, so the two can be linked.
+    if (isUnexpectedServerError(error, status)) {
+      reportServerError(error, {
+        functionName: 'game-action',
+        operation: actionType,
+        userId: actorId,
+        properties: { GameId: gameId, HttpStatus: status, RequestId: requestId },
+      });
+    }
     timer.logIfSlow(actionType);
     return json({ error: message }, status, timer.toHeaders());
   }
@@ -327,43 +367,28 @@ async function claimActionRequest(
   | { kind: 'completed'; httpStatus: number; response: unknown }
   | { kind: 'processing'; isStale: boolean }
 > {
-  const { error } = await admin.from('game_action_requests').insert({
-    action_type: action.type,
-    actor_id: actorId,
-    game_id: actionGameId(action),
-    request_id: action.requestId,
+  // One round trip: claims a new request and counts recent ones, or returns the
+  // request a retry already claimed.
+  const { data, error } = await admin.rpc('claim_game_action_request', {
+    p_action_type: action.type,
+    p_actor_id: actorId,
+    p_game_id: actionGameId(action),
+    p_request_id: action.requestId,
   });
-  if (!error) {
-    const rateLimitCutoff = new Date(Date.now() - 60_000).toISOString();
-    const { count, error: countError } = await admin
-      .from('game_action_requests')
-      .select('request_id', { count: 'exact', head: true })
-      .eq('actor_id', actorId)
-      .gte('created_at', rateLimitCutoff);
-    if (countError) {
-      throw countError;
-    }
-    if ((count ?? 0) > 120) {
+  if (error) {
+    throw error;
+  }
+  const claim = data as { claimed: true; recent_count: number } | { claimed: false; request: ActionRequestRow };
+  if (claim.claimed) {
+    if (claim.recent_count > 120) {
       const response = { error: 'Too many game actions. Wait a moment and try again.' };
       await completeActionRequest(admin, actorId, action, response, 429);
       return { httpStatus: 429, kind: 'completed', response };
     }
     return { kind: 'claimed' };
   }
-  if (error.code !== '23505') {
-    throw error;
-  }
 
-  const { data: existing, error: existingError } = await admin
-    .from('game_action_requests')
-    .select('*')
-    .eq('actor_id', actorId)
-    .eq('request_id', action.requestId)
-    .single();
-  if (existingError) {
-    throw existingError;
-  }
-  const request = existing as ActionRequestRow;
+  const request = claim.request;
   if (request.action_type !== action.type || request.game_id !== actionGameId(action)) {
     throw new Error('Request id was already used for a different action.');
   }
@@ -423,7 +448,12 @@ function queueActionNotifications(admin: DbClient, actorId: string, action: Acti
   const task = deliverActionNotifications(admin, actorId, action.requestId, () =>
     sendActionNotifications(admin, actorId, action, result),
   ).catch((notificationError) => {
-    console.error('Unable to send action notifications', notificationError);
+    logServerError('Unable to send action notifications', notificationError, {
+      functionName: 'game-action',
+      operation: 'Send action notifications',
+      userId: actorId,
+      properties: { ActionType: action.type },
+    });
   });
   const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
 
@@ -464,7 +494,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
 
   const latestTurn = game.last_turn_id
     ? await loadTurn(admin, game.last_turn_id).catch((turnError) => {
-        console.error('Unable to load latest turn for notification', turnError);
+        logServerError('Unable to load latest turn for notification', turnError, {
+          functionName: 'game-action',
+          operation: 'Load latest turn for notification',
+        });
         return null;
       })
     : null;
@@ -508,7 +541,7 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
   }
 
   await settleNotificationSends([
-    sendExpoPushMessages(messages),
+    sendExpoPushMessages(admin, messages),
     sendWebPushNotifications(
       admin,
       webPushSubscriptions as WebPushSubscriptionRow[] | null,
@@ -522,7 +555,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
   ]);
 }
 
-async function sendExpoPushMessages(messages: unknown[]) {
+type ExpoPushMessage = { to: string };
+type ExpoPushTicket = { details?: { error?: string }; message?: string; status?: string };
+
+async function sendExpoPushMessages(admin: DbClient, messages: ExpoPushMessage[]) {
   if (!messages.length) {
     return;
   }
@@ -538,8 +574,49 @@ async function sendExpoPushMessages(messages: unknown[]) {
     });
 
     if (!response.ok) {
-      throw new Error(`Expo push send failed: ${response.status} ${await response.text()}`);
+      // The body can list push tokens, so it stays in the function log only.
+      console.error('Expo push send failed', response.status, await response.text());
+      throw new Error(`Expo push send failed: ${response.status}`);
     }
+
+    await handleExpoPushTickets(admin, chunk, await response.json().catch(() => null));
+  }
+}
+
+// Expo accepts the request even when individual messages fail. Tickets line up
+// with the messages sent. Retrying would duplicate the delivered ones, so
+// failures are cleaned up or reported instead of thrown.
+async function handleExpoPushTickets(admin: DbClient, chunk: ExpoPushMessage[], body: unknown) {
+  const tickets = (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(tickets)) return;
+
+  const unregisteredTokens: string[] = [];
+  const failures = new Map<string, number>();
+  tickets.forEach((ticket: ExpoPushTicket, index) => {
+    if (ticket?.status !== 'error') return;
+    const reason = ticket.details?.error ?? 'Unknown';
+    if (reason === 'DeviceNotRegistered' && chunk[index]?.to) {
+      unregisteredTokens.push(chunk[index].to);
+    } else {
+      failures.set(reason, (failures.get(reason) ?? 0) + 1);
+    }
+  });
+
+  if (unregisteredTokens.length) {
+    const { error } = await admin.from('push_tokens').delete().in('expo_push_token', unregisteredTokens);
+    if (error) {
+      logServerError('Unable to remove unregistered push tokens', error, {
+        functionName: 'game-action',
+        operation: 'Remove unregistered push tokens',
+      });
+    }
+  }
+  for (const [reason, count] of failures) {
+    logServerError('Expo rejected push messages', new Error(`Expo push ticket error: ${reason}`), {
+      functionName: 'game-action',
+      operation: 'Send Expo push messages',
+      properties: { FailedMessages: count },
+    });
   }
 }
 
@@ -619,7 +696,10 @@ async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
     .is('hidden_at', null);
 
   if (visiblePlayersError) {
-    console.error('Unable to load visible games for badge counts', visiblePlayersError);
+    logServerError('Unable to load visible games for badge counts', visiblePlayersError, {
+      functionName: 'game-action',
+      operation: 'Load visible games for badge counts',
+    });
     return counts;
   }
 
@@ -639,7 +719,10 @@ async function loadBadgeCounts(admin: DbClient, profileIds: string[]) {
     .neq('status', 'inviting');
 
   if (gamesError) {
-    console.error('Unable to load games for badge counts', gamesError);
+    logServerError('Unable to load games for badge counts', gamesError, {
+      functionName: 'game-action',
+      operation: 'Load games for badge counts',
+    });
     return counts;
   }
 
@@ -1527,7 +1610,12 @@ async function scoreRemoteTurn(
   }
 
   const turnHeld = normalizeHeld(submittedHeld, state.held);
-  const turnIndex = await loadNextTurnIndex(admin, gameId, game.last_turn_id);
+  const [turnIndex, rolledSucker] = await Promise.all([
+    loadNextTurnIndex(admin, gameId, game.last_turn_id),
+    state.rollNumber > 0 && !isSuckerRoll(state.dice)
+      ? loadStatActionsOnce(admin, gameId, mutationState).then((actions) => rolledSuckerThisTurn(actions, actorId))
+      : state.rollNumber > 0,
+  ]);
   const turnScore = scratch ? 0 : scoreCategoryForScorecard(state.dice, category, currentPlayer.scorecard);
   const extraSuckerBonus = !scratch && hasExtraSuckerBonus(state.dice, category, currentPlayer.scorecard);
   const tokenDelta = scratch ? 1 : 0;
@@ -1575,6 +1663,7 @@ async function scoreRemoteTurn(
     held: turnHeld,
     player_id: actorId,
     roll_count: state.rollNumber,
+    rolled_sucker: rolledSucker,
     score: turnScore,
     status: complete ? 'finalized' : 'submitted',
     turn_index: turnIndex,
@@ -1606,6 +1695,9 @@ async function scoreRemoteTurn(
     ),
   ]);
 
+  if (rolledSucker) {
+    await planSuckerSpreeFeats(admin, actorId, gameId, mutationState.plan!);
+  }
   if (complete) {
     await planCompletedGameStats(admin, gameId, players, winner?.id ?? null, mutationState.plan!);
   }
@@ -2258,7 +2350,10 @@ async function planCompletedGameStats(
   plan: GameMovePlan,
   rageQuitterId?: string,
 ) {
-  const { actions, turns } = await loadCompletedGameHistory(admin, gameId, plan);
+  const [{ actions, turns }, awardedFeats] = await Promise.all([
+    loadCompletedGameHistory(admin, gameId, plan),
+    loadAwardedFeats(admin, gameId),
+  ]);
   for (const player of [...players].sort((left, right) => left.id.localeCompare(right.id))) {
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = buildCompletedPlayerStats({ actions, gameId, opponent, player, players, turns, winnerId });
@@ -2288,6 +2383,7 @@ async function planCompletedGameStats(
     }
     plan.writes.push({ table: 'game_player_results', operation: 'upsert', data: result });
     for (const featKey of buildCompletedPlayerFeats({ actions, opponent, player, result, turns, winnerId })) {
+      if (awardedFeats.has(awardedFeatId(player.id, featKey))) continue;
       plan.writes.push({
         table: 'player_feats',
         operation: 'insert',
@@ -2350,14 +2446,121 @@ async function loadCompletedGameHistory(admin: DbClient, gameId: string, plan: G
   // The final turn and its submission are part of this transaction and are not
   // in the database yet.
   for (const write of plan.writes) {
-    if (write.operation !== 'insert') continue;
-    if (write.table === 'turns') turns.push(write.data as unknown as SuckerStatTurn);
-    if (write.table === 'turn_actions' && statActionTypes.includes(write.data.action_type as SuckerStatActionType)) {
-      actions.push(write.data as unknown as SuckerStatAction);
-    }
+    if (write.operation === 'insert' && write.table === 'turns') turns.push(write.data as unknown as SuckerStatTurn);
   }
 
-  return { actions, turns };
+  return { actions: [...actions, ...plannedStatActions(plan)], turns };
+}
+
+function plannedStatActions(plan: GameMovePlan) {
+  return plan.writes.flatMap((write) =>
+    write.operation === 'insert' &&
+    write.table === 'turn_actions' &&
+    statActionTypes.includes(write.data.action_type as SuckerStatActionType)
+      ? [write.data as unknown as SuckerStatAction]
+      : [],
+  );
+}
+
+// Feats that cannot depend on the result are awarded on the move that earns
+// them. A completing move leaves every feat to planCompletedGameStats, and a
+// Rage Quit awards nothing more, but feats earned before it stand.
+async function planInstantFeats(
+  admin: DbClient,
+  game: GameRow,
+  plan: GameMovePlan,
+  mutationState: ActionMutationState,
+) {
+  if (
+    game.status === 'complete' ||
+    !plannedStatActions(plan).some((action) => mayEarnInstantFeat(action, game.state.rollNumber))
+  )
+    return;
+
+  const [storedActions, awardedFeats] = await Promise.all([
+    loadStatActionsOnce(admin, game.id, mutationState),
+    loadAwardedFeats(admin, game.id),
+  ]);
+  const actions = [...storedActions, ...plannedStatActions(plan)];
+  for (const player of game.state.players) {
+    const opponent = game.state.players.find((candidate) => candidate.id !== player.id);
+    if (!opponent) continue;
+    for (const featKey of buildInstantPlayerFeats({ actions, opponentId: opponent.id, playerId: player.id })) {
+      if (awardedFeats.has(awardedFeatId(player.id, featKey))) continue;
+      plan.writes.push({
+        table: 'player_feats',
+        operation: 'insert',
+        data: { feat_key: featKey, game_id: game.id, player_id: player.id },
+      });
+    }
+  }
+}
+
+// A Sucker turn extends the player's streak across all their games: kept
+// turns in the order they were submitted, so a punched or Mulliganed turn
+// gives way to its replay. Only Spree feats earned since the streak's last
+// break, or already in this game, can stop a tier, so read just those.
+async function planSuckerSpreeFeats(admin: DbClient, playerId: string, gameId: string, plan: GameMovePlan) {
+  const keptTurns = () =>
+    admin
+      .from('turns')
+      .select('created_at, rolled_sucker')
+      .eq('player_id', playerId)
+      .in('status', ['submitted', 'blocked', 'finalized'])
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+  const [earlierTurns, streakBreak] = await Promise.all([
+    keptTurns().limit(suckerSpreeLookback),
+    keptTurns().eq('rolled_sucker', false).limit(1).maybeSingle(),
+  ]);
+  if (earlierTurns.error) throw earlierTurns.error;
+  if (streakBreak.error) throw streakBreak.error;
+  const earlier = (earlierTurns.data ?? []).map((turn) => turn.rolled_sucker);
+  if (!earlier[0] || !earlier[1]) return;
+
+  const streakBrokenAt = streakBreak.data?.created_at ?? null;
+  const spreeFeats = () =>
+    admin
+      .from('player_feats')
+      .select('earned_at, feat_key, game_id')
+      .eq('player_id', playerId)
+      .like('feat_key', 'sucker_spree_%');
+  const [sinceBreak, inGame] = await Promise.all([
+    streakBrokenAt === null ? spreeFeats() : spreeFeats().gt('earned_at', streakBrokenAt),
+    spreeFeats().eq('game_id', gameId),
+  ]);
+  if (sinceBreak.error) throw sinceBreak.error;
+  if (inGame.error) throw inGame.error;
+
+  const featKeys = suckerSpreeFeatsFor({
+    awarded: [...(sinceBreak.data ?? []), ...(inGame.data ?? [])].map((feat) => ({
+      ...feat,
+      featKey: feat.feat_key as SuckerSpreeFeatKey,
+    })),
+    earlierTurns: earlier,
+    gameId,
+    streakBrokenAt,
+  });
+  for (const featKey of featKeys) {
+    plan.writes.push({
+      table: 'player_feats',
+      operation: 'insert',
+      data: { feat_key: featKey, game_id: gameId, player_id: playerId },
+    });
+  }
+}
+
+async function loadAwardedFeats(admin: DbClient, gameId: string) {
+  const { data, error } = await admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId);
+  if (error) {
+    throw error;
+  }
+
+  return new Set((data ?? []).map((feat) => awardedFeatId(feat.player_id, feat.feat_key)));
+}
+
+function awardedFeatId(playerId: string, featKey: string) {
+  return `${playerId}:${featKey}`;
 }
 
 async function loadSuckerStatTurns(admin: DbClient, gameId: string) {
@@ -2372,6 +2575,11 @@ async function loadSuckerStatTurns(admin: DbClient, gameId: string) {
   }
 
   return (turns ?? []) as SuckerStatTurn[];
+}
+
+function loadStatActionsOnce(admin: DbClient, gameId: string, mutationState: ActionMutationState) {
+  mutationState.statActions ??= loadSuckerStatActions(admin, gameId);
+  return mutationState.statActions;
 }
 
 async function loadSuckerStatActions(admin: DbClient, gameId: string) {
@@ -2451,7 +2659,7 @@ async function insertTokenEvent(
 function requireEnv(name: string): string {
   const value = Deno.env.get(name);
   if (!value) {
-    throw new Error(`${name} is not configured.`);
+    throw new InternalServerError(`${name} is not configured.`);
   }
   return value;
 }
@@ -2568,5 +2776,5 @@ function json(body: unknown, status = 200, extraHeaders: Record<string, string> 
 }
 
 function assertNever(value: never): never {
-  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+  throw new InternalServerError(`Unhandled value: ${JSON.stringify(value)}`);
 }

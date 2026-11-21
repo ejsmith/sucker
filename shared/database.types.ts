@@ -45,8 +45,11 @@ export type Database = {
           current_win_streak: number;
           peak_rating: number;
           player_id: string;
+          rated_at: string | null;
           rated_games: number;
           rating: number;
+          rating_deviation: number;
+          sucker_faces: number;
           updated_at: string;
         };
         Insert: { player_id: string };
@@ -152,6 +155,7 @@ export type Database = {
           id: string;
           player_id: string;
           roll_count: number;
+          rolled_sucker: boolean;
           score: number;
           status: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
           turn_index: number;
@@ -165,6 +169,7 @@ export type Database = {
           id?: string;
           player_id: string;
           roll_count: number;
+          rolled_sucker?: boolean;
           score: number;
           status?: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
           turn_index: number;
@@ -569,6 +574,15 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      claim_game_action_request: {
+        Args: {
+          p_actor_id: string;
+          p_request_id: string;
+          p_action_type: string;
+          p_game_id: string | null;
+        };
+        Returns: Json;
+      };
       commit_game_move: {
         Args: {
           p_actor_id: string;
@@ -716,6 +730,20 @@ export type Database = {
           wins: number;
         }[];
       };
+      claim_push_token: {
+        Args: { push_token: string; push_platform: 'ios' | 'android'; push_device_name?: string | null };
+        Returns: Database['public']['Tables']['push_tokens']['Row'];
+      };
+      claim_web_push_subscription: {
+        Args: {
+          push_endpoint: string;
+          push_p256dh_key: string;
+          push_auth_key: string;
+          push_expiration_time?: string | null;
+          push_user_agent?: string | null;
+        };
+        Returns: Database['public']['Tables']['web_push_subscriptions']['Row'];
+      };
       get_unseen_game_results: {
         Args: Record<PropertyKey, never>;
         Returns: { game_id: string }[];
@@ -723,6 +751,10 @@ export type Database = {
       mark_game_result_seen: {
         Args: { target_game_id: string; seen_updated_at: string };
         Returns: undefined;
+      };
+      my_visible_game_ids: {
+        Args: Record<PropertyKey, never>;
+        Returns: string[];
       };
       record_computer_game_result_once: {
         Args: { p_owner_id: string; p_game_id: string; p_result: Json };
