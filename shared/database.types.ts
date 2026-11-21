@@ -574,6 +574,15 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      claim_game_action_request: {
+        Args: {
+          p_actor_id: string;
+          p_request_id: string;
+          p_action_type: string;
+          p_game_id: string | null;
+        };
+        Returns: Json;
+      };
       commit_game_move: {
         Args: {
           p_actor_id: string;
@@ -742,6 +751,10 @@ export type Database = {
       mark_game_result_seen: {
         Args: { target_game_id: string; seen_updated_at: string };
         Returns: undefined;
+      };
+      my_visible_game_ids: {
+        Args: Record<PropertyKey, never>;
+        Returns: string[];
       };
       record_computer_game_result_once: {
         Args: { p_owner_id: string; p_game_id: string; p_result: Json };

@@ -180,14 +180,16 @@ Deno.serve(async (request) => {
       global: { headers: { Authorization: authHeader } },
     });
     const admin = createClient<Database>(supabaseUrl, serviceRoleKey);
-    const {
-      data: { user },
-      error: userError,
-    } = await timer.measure('auth', () => authClient.auth.getUser());
-
-    if (userError || !user) {
+    // getClaims verifies the asymmetric JWT locally against the cached signing
+    // keys. getUser asked the Auth server on every move, a full round trip.
+    const { data: claimsData, error: claimsError } = await timer.measure('auth', () =>
+      authClient.auth.getClaims(authHeader.replace(/^Bearer\s+/i, '')),
+    );
+    const subject = claimsData?.claims.sub;
+    if (claimsError || !subject || claimsData.claims.role !== 'authenticated') {
       return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
     }
+    const user = { id: subject };
     actorId = user.id;
 
     const claim = await timer.measure('claim', () => claimActionRequest(admin, user.id, action));
@@ -359,43 +361,28 @@ async function claimActionRequest(
   | { kind: 'completed'; httpStatus: number; response: unknown }
   | { kind: 'processing'; isStale: boolean }
 > {
-  const { error } = await admin.from('game_action_requests').insert({
-    action_type: action.type,
-    actor_id: actorId,
-    game_id: actionGameId(action),
-    request_id: action.requestId,
+  // One round trip: claims a new request and counts recent ones, or returns the
+  // request a retry already claimed.
+  const { data, error } = await admin.rpc('claim_game_action_request', {
+    p_action_type: action.type,
+    p_actor_id: actorId,
+    p_game_id: actionGameId(action),
+    p_request_id: action.requestId,
   });
-  if (!error) {
-    const rateLimitCutoff = new Date(Date.now() - 60_000).toISOString();
-    const { count, error: countError } = await admin
-      .from('game_action_requests')
-      .select('request_id', { count: 'exact', head: true })
-      .eq('actor_id', actorId)
-      .gte('created_at', rateLimitCutoff);
-    if (countError) {
-      throw countError;
-    }
-    if ((count ?? 0) > 120) {
+  if (error) {
+    throw error;
+  }
+  const claim = data as { claimed: true; recent_count: number } | { claimed: false; request: ActionRequestRow };
+  if (claim.claimed) {
+    if (claim.recent_count > 120) {
       const response = { error: 'Too many game actions. Wait a moment and try again.' };
       await completeActionRequest(admin, actorId, action, response, 429);
       return { httpStatus: 429, kind: 'completed', response };
     }
     return { kind: 'claimed' };
   }
-  if (error.code !== '23505') {
-    throw error;
-  }
 
-  const { data: existing, error: existingError } = await admin
-    .from('game_action_requests')
-    .select('*')
-    .eq('actor_id', actorId)
-    .eq('request_id', action.requestId)
-    .single();
-  if (existingError) {
-    throw existingError;
-  }
-  const request = existing as ActionRequestRow;
+  const request = claim.request;
   if (request.action_type !== action.type || request.game_id !== actionGameId(action)) {
     throw new Error('Request id was already used for a different action.');
   }

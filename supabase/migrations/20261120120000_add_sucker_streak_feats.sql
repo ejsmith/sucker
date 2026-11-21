@@ -8,6 +8,9 @@ create index turns_player_created_idx on public.turns (player_id, created_at);
 -- Credit past turns with the same check game-action uses: a run of rolls starts
 -- over at each submission and Mulligan, and a turn rolled a Sucker when its
 -- run did.
+-- One window pass marks each run that rolled a Sucker. Joining runs back to a
+-- list of Sucker runs ran as a nested loop over every action, which timed out
+-- on the hosted database.
 with runs as (
   select
     action.game_id,
@@ -22,31 +25,36 @@ with runs as (
   from public.turn_actions action
   where action.action_type in ('roll', 'score_category', 'scratch_category', 'mulligan')
 ),
-sucker_runs as (
-  select distinct runs.game_id, runs.actor_id, runs.run
+flagged as (
+  select
+    runs.action_type,
+    runs.payload,
+    bool_or(
+      runs.action_type = 'roll'
+      and jsonb_typeof(runs.payload -> 'dice' -> 0) = 'number'
+      and (runs.payload -> 'dice' ->> 0)::numeric in (1, 2, 3, 4, 5, 6)
+      and runs.payload -> 'dice' = jsonb_build_array(
+        runs.payload -> 'dice' -> 0,
+        runs.payload -> 'dice' -> 0,
+        runs.payload -> 'dice' -> 0,
+        runs.payload -> 'dice' -> 0,
+        runs.payload -> 'dice' -> 0
+      )
+    ) over (partition by runs.game_id, runs.actor_id, runs.run) as had_sucker
   from runs
-  where runs.action_type = 'roll'
-    and jsonb_typeof(runs.payload -> 'dice' -> 0) = 'number'
-    and (runs.payload -> 'dice' ->> 0)::numeric in (1, 2, 3, 4, 5, 6)
-    and runs.payload -> 'dice' = jsonb_build_array(
-      runs.payload -> 'dice' -> 0,
-      runs.payload -> 'dice' -> 0,
-      runs.payload -> 'dice' -> 0,
-      runs.payload -> 'dice' -> 0,
-      runs.payload -> 'dice' -> 0
-    )
 ),
 sucker_turns as (
-  select (runs.payload ->> 'turnId')::uuid as turn_id
-  from runs
-  join sucker_runs using (game_id, actor_id, run)
-  where runs.action_type in ('score_category', 'scratch_category')
-    and runs.payload ->> 'turnId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  select distinct (flagged.payload ->> 'turnId')::uuid as turn_id
+  from flagged
+  where flagged.had_sucker
+    and flagged.action_type in ('score_category', 'scratch_category')
+    and flagged.payload ->> 'turnId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 )
 update public.turns turn
 set rolled_sucker = true
 from sucker_turns
-where turn.id = sucker_turns.turn_id;
+where turn.id = sucker_turns.turn_id
+  and not turn.rolled_sucker;
 
 -- Per-game streaks (Back-to-Back through Perfect Ten) are awarded the moment
 -- they happen. Credit finished games from each player's kept turns in order;
