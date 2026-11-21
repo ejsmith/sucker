@@ -94,7 +94,7 @@ export async function listMyGames() {
   ];
   const completedGameIds = completedGames.map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
-    loadLastNudges(currentPlayerIds),
+    loadLastNudges(session.user.id, currentPlayerIds),
     loadSuckerTokensSpent(completedGameIds),
   ]);
   return data.map((game) =>
@@ -785,22 +785,15 @@ export function subscribeToGameListChanges(
   };
 }
 
-async function loadLastNudges(recipientIds: string[]) {
+async function loadLastNudges(actorId: string, recipientIds: string[]) {
   if (recipientIds.length === 0) {
-    return new Map<string, string>();
-  }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
     return new Map<string, string>();
   }
 
   const { data, error } = await supabase
     .from('turn_actions')
     .select('payload, created_at')
-    .eq('actor_id', user.id)
+    .eq('actor_id', actorId)
     .eq('action_type', 'nudge_turn')
     .in('payload->>targetPlayerId', recipientIds)
     .gte('created_at', new Date(Date.now() - jabCooldownMs).toISOString())
@@ -849,16 +842,26 @@ function toRemoteGameRow(
   };
 }
 
+// A finished game's token spending never changes, and the list refreshes on
+// every game change and every 15 seconds. Read each game's actions once.
+const completedGameTokensSpent = new Map<string, Record<string, number>>();
+
 async function loadSuckerTokensSpent(gameIds: string[]) {
   const spentByGame = new Map<string, Record<string, number>>();
-  if (gameIds.length === 0) {
+  const missingGameIds: string[] = [];
+  for (const gameId of gameIds) {
+    const cached = completedGameTokensSpent.get(gameId);
+    if (cached) spentByGame.set(gameId, cached);
+    else missingGameIds.push(gameId);
+  }
+  if (missingGameIds.length === 0) {
     return spentByGame;
   }
 
   const { data, error } = await supabase
     .from('turn_actions')
     .select('action_type, actor_id, game_id, payload')
-    .in('game_id', gameIds)
+    .in('game_id', missingGameIds)
     .in('action_type', ['extra_roll', 'mulligan', 'sucker_punch', 'sucker_blocker'])
     .order('created_at', { ascending: true });
 
@@ -873,14 +876,14 @@ async function loadSuckerTokensSpent(gameIds: string[]) {
     actionsByGame.set(action.game_id, actions);
   }
 
-  for (const [gameId, actions] of actionsByGame) {
+  for (const gameId of missingGameIds) {
+    const actions = actionsByGame.get(gameId) ?? [];
     const playerIds = new Set(actions.map((action) => action.actor_id));
-    spentByGame.set(
-      gameId,
-      Object.fromEntries(
-        [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
-      ),
+    const spent = Object.fromEntries(
+      [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
     );
+    completedGameTokensSpent.set(gameId, spent);
+    spentByGame.set(gameId, spent);
   }
 
   return spentByGame;

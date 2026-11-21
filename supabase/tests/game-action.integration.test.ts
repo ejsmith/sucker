@@ -153,6 +153,20 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
   );
   assertEquals(hiddenFromCharlie, null);
 
+  const alicePlayers = await selectMany(alice.client.from('game_players').select('game_id').eq('game_id', game.id));
+  assertEquals(alicePlayers.length, 2);
+  const aliceActions = await selectMany(alice.client.from('turn_actions').select('game_id').eq('game_id', game.id));
+  assertEquals(aliceActions.length > 0, true);
+  for (const table of ['game_players', 'turns', 'turn_actions', 'token_events'] as const) {
+    assertEquals(
+      await selectMany<{ game_id: string }>(charlie.client.from(table).select('game_id').eq('game_id', game.id)),
+      [],
+    );
+  }
+  const aliceGameIds = await selectMany<string>(alice.client.rpc('my_visible_game_ids'));
+  assertEquals(aliceGameIds.includes(game.id), true);
+  assertEquals((await selectMany<string>(charlie.client.rpc('my_visible_game_ids'))).includes(game.id), false);
+
   const players = await selectMany<GamePlayerTokenRow>(
     admin.from('game_players').select('player_id, sucker_tokens').eq('game_id', game.id).order('seat_index'),
   );
