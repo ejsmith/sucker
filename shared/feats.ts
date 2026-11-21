@@ -45,6 +45,14 @@ export type GameFeatKey =
   | 'lucky_seven'
   | 'crazy_eights'
   | 'back_to_back'
+  | 'three_peat'
+  | 'on_a_roll'
+  | 'five_alarm_fire'
+  | 'cant_stop'
+  | 'seventh_heaven'
+  | 'unstoppable'
+  | 'cloud_nine'
+  | 'perfect_ten'
   | 'anything_you_can_do'
   | 'lightning_strikes_twice'
   | 'straight_out_the_gate'
@@ -107,7 +115,20 @@ export type MilestoneFeatKey =
   | 'table_flipper'
   | 'glutton_for_punishment';
 
-export type FeatKey = GameFeatKey | DatabaseGameFeatKey | MilestoneFeatKey;
+// Turns in a row with a Sucker across all of a player's games, in the order
+// they were submitted. game-action awards one on the turn that reaches it, so
+// every streak earns each tier it reaches once.
+export type SuckerSpreeFeatKey =
+  | 'sucker_spree_3'
+  | 'sucker_spree_4'
+  | 'sucker_spree_5'
+  | 'sucker_spree_6'
+  | 'sucker_spree_7'
+  | 'sucker_spree_8'
+  | 'sucker_spree_9'
+  | 'sucker_spree_10';
+
+export type FeatKey = GameFeatKey | DatabaseGameFeatKey | MilestoneFeatKey | SuckerSpreeFeatKey;
 
 export type FeatDefinition = {
   description: string;
@@ -122,6 +143,16 @@ function feat(name: string, description: string, kind: FeatDefinition['kind'] = 
 
 function defeat(name: string, description: string, kind: FeatDefinition['kind'] = 'game'): FeatDefinition {
   return { description, kind, name, tone: 'defeat' };
+}
+
+// Streak feats say whether the turns must come from one game or may span all
+// of a player's games, since both families exist.
+function suckerStreak(name: string, turns: number): FeatDefinition {
+  return feat(name, `Roll a Sucker on ${turns} of your turns in a row in one game.`);
+}
+
+function suckerSpree(name: string, turns: number): FeatDefinition {
+  return feat(name, `Roll a Sucker on ${turns} of your turns in a row, counting all your games.`, 'milestone');
 }
 
 const closeGameMargin = 5;
@@ -153,7 +184,15 @@ export const featCatalog: Record<FeatKey, FeatDefinition> = {
   six_pack: feat('Six Pack', 'Roll 6 Suckers in one game.'),
   lucky_seven: feat('Lucky Seven', 'Roll 7 Suckers in one game.'),
   crazy_eights: feat('Crazy Eights', 'Roll 8 Suckers in one game.'),
-  back_to_back: feat('Back-to-Back', 'Roll a Sucker on two of your turns in a row.'),
+  back_to_back: suckerStreak('Back-to-Back', 2),
+  three_peat: suckerStreak('Three-Peat', 3),
+  on_a_roll: suckerStreak('On a Roll', 4),
+  five_alarm_fire: suckerStreak('Five-Alarm Fire', 5),
+  cant_stop: suckerStreak("Can't Stop", 6),
+  seventh_heaven: suckerStreak('Seventh Heaven', 7),
+  unstoppable: suckerStreak('Unstoppable', 8),
+  cloud_nine: suckerStreak('Cloud Nine', 9),
+  perfect_ten: suckerStreak('Perfect Ten', 10),
   anything_you_can_do: feat('Anything You Can Do', 'Roll a Sucker on the turn right after your opponent rolled one.'),
   lightning_strikes_twice: feat(
     'Lightning Strikes Twice',
@@ -195,6 +234,14 @@ export const featCatalog: Record<FeatKey, FeatDefinition> = {
     'Roll a Sucker of every number, 1 through 6, across your games.',
     'milestone',
   ),
+  sucker_spree_3: suckerSpree('Hot Hand', 3),
+  sucker_spree_4: suckerSpree('Heater', 4),
+  sucker_spree_5: suckerSpree('Red Hot', 5),
+  sucker_spree_6: suckerSpree('White Hot', 6),
+  sucker_spree_7: suckerSpree('Blue Flame', 7),
+  sucker_spree_8: suckerSpree('Wildfire', 8),
+  sucker_spree_9: suckerSpree('Inferno', 9),
+  sucker_spree_10: suckerSpree('Supernova', 10),
   glass_jaw: defeat('Glass Jaw', 'Lose after taking 2 or more landed punches.'),
   choke_artist: defeat('Choke Artist', `Lose after leading by ${comebackPointMargin} or more.`),
   walked_off: defeat('Walked Off', "Lead going into your opponent's last turn, then lose on it."),
@@ -260,6 +307,87 @@ const suckerCountFeats: [number, GameFeatKey][] = [
   [8, 'crazy_eights'],
 ];
 
+// Turns in a row with a Sucker, counting the one being played. Each tier is its
+// own feat, so a 4-turn run earns Back-to-Back, Three-Peat, and On a Roll.
+const suckerStreakFeats: [number, GameFeatKey][] = [
+  [2, 'back_to_back'],
+  [3, 'three_peat'],
+  [4, 'on_a_roll'],
+  [5, 'five_alarm_fire'],
+  [6, 'cant_stop'],
+  [7, 'seventh_heaven'],
+  [8, 'unstoppable'],
+  [9, 'cloud_nine'],
+  [10, 'perfect_ten'],
+];
+
+export const suckerSpreeFeats: [number, SuckerSpreeFeatKey][] = [
+  [3, 'sucker_spree_3'],
+  [4, 'sucker_spree_4'],
+  [5, 'sucker_spree_5'],
+  [6, 'sucker_spree_6'],
+  [7, 'sucker_spree_7'],
+  [8, 'sucker_spree_8'],
+  [9, 'sucker_spree_9'],
+  [10, 'sucker_spree_10'],
+];
+
+// How many earlier turns to read: enough for the top tier's streak. A longer
+// streak counts as the top tier.
+export const suckerSpreeLookback = suckerSpreeFeats[suckerSpreeFeats.length - 1][0] - 1;
+
+export type SuckerSpreeAward = { featKey: SuckerSpreeFeatKey; earned_at: string; game_id: string };
+
+// The Sucker Spree tiers a newly submitted Sucker turn earns. earlierTurns says
+// whether each of the player's earlier kept turns rolled a Sucker, newest first,
+// up to the lookback. streakBrokenAt is when their latest kept turn without a
+// Sucker was submitted, so the Spree feats earned after it belong to this
+// streak, however long it has run. A streak earns every tier it has reached and
+// not yet earned, except one already in this game. A turn erased after later
+// turns were played can join two streaks or lengthen one, so this catches up on
+// tiers rather than only checking the newest.
+export function suckerSpreeFeatsFor({
+  awarded,
+  earlierTurns,
+  gameId,
+  streakBrokenAt,
+}: {
+  awarded: SuckerSpreeAward[];
+  earlierTurns: boolean[];
+  gameId: string;
+  streakBrokenAt: string | null;
+}): SuckerSpreeFeatKey[] {
+  let streak = 1;
+  while (streak <= suckerSpreeLookback && earlierTurns[streak - 1]) streak += 1;
+  const brokenAt = streakBrokenAt === null ? -Infinity : Date.parse(streakBrokenAt);
+  const earned = new Set(
+    awarded
+      .filter((award) => award.game_id === gameId || Date.parse(award.earned_at) > brokenAt)
+      .map((award) => award.featKey),
+  );
+  return suckerSpreeFeats.flatMap(([turns, key]) => (turns <= streak && !earned.has(key) ? [key] : []));
+}
+
+// Whether the player rolled a Sucker since their last submission or Mulligan,
+// the same turn check Back-to-Back uses.
+export function rolledSuckerThisTurn(actions: SuckerStatAction[], playerId: string) {
+  let rolled = false;
+  for (const action of actions) {
+    if (action.actor_id !== playerId) continue;
+    if (action.action_type === 'roll') {
+      const dice = rolledDice(action.payload);
+      if (dice && isSuckerRoll(dice)) rolled = true;
+    } else if (
+      action.action_type === 'score_category' ||
+      action.action_type === 'scratch_category' ||
+      action.action_type === 'mulligan'
+    ) {
+      rolled = false;
+    }
+  }
+  return rolled;
+}
+
 // Feats settled the moment they happen, whatever the final score. The
 // game-action function awards these mid-game; the rest wait for completion.
 // Each one only ever turns on as more actions are replayed, so a later move
@@ -288,6 +416,14 @@ export const instantFeatKeys: ReadonlySet<GameFeatKey> = new Set<GameFeatKey>([
   'lucky_seven',
   'crazy_eights',
   'back_to_back',
+  'three_peat',
+  'on_a_roll',
+  'five_alarm_fire',
+  'cant_stop',
+  'seventh_heaven',
+  'unstoppable',
+  'cloud_nine',
+  'perfect_ten',
   'anything_you_can_do',
   'lightning_strikes_twice',
   'straight_out_the_gate',
@@ -476,7 +612,11 @@ function scanTurnHistory(actions: SuckerStatAction[], playerId: string, opponent
             suckers += 1;
             for (const [count, key] of suckerCountFeats) if (suckers >= count) feats.add(key);
           }
-          if (sucker && player.turns.at(-1)?.sucker) feats.add('back_to_back');
+          if (sucker) {
+            let streak = 1;
+            while (player.turns.at(-streak)?.sucker) streak += 1;
+            for (const [count, key] of suckerStreakFeats) if (streak >= count) feats.add(key);
+          }
           if (sucker && opponent.turns.at(-1)?.sucker) feats.add('anything_you_can_do');
           if (sucker && player.erased?.by === 'punch' && player.erased.scoredSucker) {
             feats.add('lightning_strikes_twice');

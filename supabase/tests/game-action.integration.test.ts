@@ -1807,13 +1807,21 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
           [
             'anything_you_can_do',
             'back_to_back',
+            'cant_stop',
+            'five_alarm_fire',
             'four_score',
             'hat_trick',
             'high_five',
             'natural',
+            'on_a_roll',
             'scratch_fever',
             'seeing_double',
             'six_pack',
+            'sucker_spree_3',
+            'sucker_spree_4',
+            'sucker_spree_5',
+            'sucker_spree_6',
+            'three_peat',
           ],
         );
       }
@@ -1889,10 +1897,12 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   // Every category was scratched, including the game-ending move, so both earn
   // Scratch Fever. The 0-0 tie is a Dead Heat and Double Digits, and the
   // database awards Blitz because the game finished within an hour of its first roll.
+  // Thirteen straight Sucker turns reach the top streak tiers, in this game and
+  // across each player's games.
   const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
     admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
   );
-  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz']) {
+  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz', 'perfect_ten', 'sucker_spree_10']) {
     assertEquals(
       {
         earned: [alice.id, bob.id].every((id) =>
@@ -2003,6 +2013,52 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   assertEquals(
     actions.filter((action) => action.action_type === 'pass_response').length,
     scoreCategories.length * 2 - 1,
+  );
+});
+
+Deno.test("Sucker Spree counts Sucker turns in a row across all of a player's games", async () => {
+  const [alice, bob] = await createUsers('sucker-spree', ['Alice', 'Bob']);
+  const first = ((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow)
+    .id;
+  const second = ((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow)
+    .id;
+
+  // The fixed test die rolls a Sucker on every turn that rolls.
+  await scratchAndPass(first, alice, bob, 'ones');
+  await scratchAndPass(first, bob, alice, 'ones');
+  await scratchAndPass(first, alice, bob, 'twos');
+  await scratchAndPass(first, bob, alice, 'twos');
+  // Each player's third Sucker turn in a row lands in the other game.
+  await scratchAndPass(second, alice, bob, 'ones');
+  await scratchAndPass(second, bob, alice, 'ones');
+  // A Sucker Deal without rolling breaks Alice's streak; Bob's fourth goes on.
+  await invokeGameAction(alice, { category: 'threes', gameId: first, type: 'scratch_category' });
+  await invokeGameAction(bob, { gameId: first, type: 'pass_response' });
+  await scratchAndPass(first, bob, alice, 'threes');
+  await scratchAndPass(second, alice, bob, 'twos');
+
+  const spreeFeats = await selectMany<{ feat_key: string; game_id: string; player_id: string }>(
+    admin
+      .from('player_feats')
+      .select('feat_key, game_id, player_id')
+      .in('game_id', [first, second])
+      .like('feat_key', 'sucker_spree_%'),
+  );
+  const earned = (player: TestUser) =>
+    spreeFeats
+      .filter((feat) => feat.player_id === player.id)
+      .map((feat) => `${feat.game_id === first ? 'first' : 'second'}:${feat.feat_key}`)
+      .sort()
+      .join(', ');
+  assertEquals(earned(alice), 'second:sucker_spree_3');
+  assertEquals(earned(bob), 'first:sucker_spree_4, second:sucker_spree_3');
+
+  const turns = await selectMany<TurnRow>(
+    admin.from('turns').select('*').eq('game_id', first).eq('player_id', alice.id).order('turn_index'),
+  );
+  assertEquals(
+    turns.map((turn) => turn.rolled_sucker),
+    [true, true, false],
   );
 });
 
