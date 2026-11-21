@@ -19,7 +19,6 @@
     "src/multiplayer/heldDice.ts",
     "src/multiplayer/jab.ts",
     "src/multiplayer/localDevelopment.ts",
-    "src/multiplayer/realtimeTopics.ts",
     "src/monitoring/errorPolicy.ts",
     "src/network/actionRequestStatus.ts",
     "src/ui/bonusVisuals.ts",
