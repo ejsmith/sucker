@@ -150,8 +150,11 @@ let pendingBootMs: number | null = performance.now();
 const nudgeTurnWaitMs = readPositiveInteger(readLocalTestHook('SUCKER_E2E_NUDGE_WAIT_MS')) ?? 60 * 60 * 1_000;
 
 Deno.serve(async (request) => {
-  const timer = new ActionTimer(pendingBootMs);
-  pendingBootMs = null;
+  // A browser's CORS preflight is not an action, so leave the boot time for the
+  // action that follows it.
+  const bootMs = request.method === 'OPTIONS' ? null : pendingBootMs;
+  if (request.method !== 'OPTIONS') pendingBootMs = null;
+  const timer = new ActionTimer(bootMs);
   let actionType = 'unknown';
   let actorId: string | null = null;
   let requestId: string | null = null;
