@@ -493,13 +493,16 @@ function PlayerStatsPage({
     setPage('games');
     setIsLoading(true);
     setMessage(null);
-    try {
-      setGames(await getProfileRecentGames(visibleProfile.id));
-    } catch (historyError) {
-      setMessage(reportErrorMessage(historyError, 'Unable to load completed games.'));
-    } finally {
-      setIsLoading(false);
-    }
+    await getProfileRecentGames(visibleProfile.id).then(
+      (recentGames) => {
+        setIsLoading(false);
+        setGames(recentGames);
+      },
+      (historyError: unknown) => {
+        setIsLoading(false);
+        setMessage(reportErrorMessage(historyError, 'Unable to load completed games.'));
+      },
+    );
   }
 
   async function openPlayer(player: ProfileRecentGamePlayer) {
@@ -508,22 +511,27 @@ function PlayerStatsPage({
 
     setIsLoading(true);
     setMessage(null);
-    try {
-      const nextProfile = await loadPlayerStatsProfile(player.id, currentUserProfileId, player);
-      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame }]);
-      setActiveProfile(nextProfile);
-      setGames([]);
-      setSelectedGame(null);
-      setPage('stats');
-      setSection('stats');
-    } catch (profileError) {
-      setMessage(reportErrorMessage(profileError, 'Unable to load player stats.'));
-    } finally {
+    const finishNavigation = () => {
       setIsLoading(false);
       requestAnimationFrame(() => {
         playerNavigationPendingRef.current = false;
       });
-    }
+    };
+    await loadPlayerStatsProfile(player.id, currentUserProfileId, player).then(
+      (nextProfile) => {
+        finishNavigation();
+        setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame }]);
+        setActiveProfile(nextProfile);
+        setGames([]);
+        setSelectedGame(null);
+        setPage('stats');
+        setSection('stats');
+      },
+      (profileError: unknown) => {
+        finishNavigation();
+        setMessage(reportErrorMessage(profileError, 'Unable to load player stats.'));
+      },
+    );
   }
 
   const goBack = useCallback(() => {
@@ -561,13 +569,13 @@ function PlayerStatsPage({
     if (!onStartGameAgainst) return;
     setIsLoading(true);
     setMessage(null);
-    try {
-      await onStartGameAgainst(visibleProfile.id);
-    } catch (startError) {
-      setMessage(reportErrorMessage(startError, 'Unable to start the game.'));
-    } finally {
-      setIsLoading(false);
-    }
+    await onStartGameAgainst(visibleProfile.id).then(
+      () => setIsLoading(false),
+      (startError: unknown) => {
+        setIsLoading(false);
+        setMessage(reportErrorMessage(startError, 'Unable to start the game.'));
+      },
+    );
   }
 
   const title = page === 'detail' ? 'Game Card' : 'Player Profile';

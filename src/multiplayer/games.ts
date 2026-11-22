@@ -45,6 +45,7 @@ const seenRemoteTauntKeyPrefix = 'sucker:seen-remote-taunt:v1';
 const seenRageQuitKeyPrefix = 'sucker:seen-rage-quit:v1';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
+const gameActionTimeoutMs = 12_000;
 let pendingStorageOperation: Promise<unknown> = Promise.resolve();
 const recoveryPromises = new Map<string, Promise<PendingActionRecovery>>();
 
@@ -360,6 +361,10 @@ async function invokeActionRequest<TResult>(request: ActionRequest, attempts?: A
       response: invokeResponse,
     } = await supabase.functions.invoke<TResult>('game-action', {
       body,
+      // Without a limit a dead connection holds the board locked until the OS
+      // gives up (never, on Android). A timed-out move has no status, so it is
+      // retried with the same request id and then recovered.
+      timeout: gameActionTimeoutMs,
     });
     attempts?.push(toActionAttempt(Date.now() - attemptStartedAt, invokeResponse));
     if (!error && data) {
@@ -619,11 +624,11 @@ export async function passRemoteResponse(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'pass_response' });
 }
 
-export async function useRemoteMulligan(gameId: string) {
+export async function applyRemoteMulligan(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'mulligan' });
 }
 
-export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
+export async function throwRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
   return applyMultiplayerAction({ chanceDie, chanceProtocol: 'prepared', gameId, turnId, type: 'sucker_punch' });
 }
 

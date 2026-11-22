@@ -82,13 +82,13 @@ import {
   subscribeToGame,
   subscribeToGameListChanges,
   subscribeToGameTaunts,
-  useRemoteMulligan,
-  useRemoteSuckerPunch,
+  applyRemoteMulligan,
+  throwRemoteSuckerPunch,
 } from './src/multiplayer/games';
 import { preserveLocalHeldDice } from './src/multiplayer/heldDice';
 import { countGamesAwaitingTurn, syncAppBadgeCount } from './src/multiplayer/notifications';
 import { useProfileAvatars } from './src/multiplayer/useProfileAvatars';
-import { supabase } from './src/multiplayer/supabase';
+import { getCurrentSession } from './src/multiplayer/auth';
 import { getHeadToHeadStats } from './src/multiplayer/stats';
 import type {
   RemoteGameRow,
@@ -105,6 +105,7 @@ import {
   type GameViewportPresetKey,
 } from './src/ui/gameLayout';
 import { useAppActivity } from './src/ui/useAppActivity';
+import { runWithCleanup } from './src/ui/runWithCleanup';
 import { shouldFillWebViewport } from './src/ui/phoneStage';
 import { useKeyboardStableWindowDimensions } from './src/ui/useKeyboardStableWindowDimensions';
 import {
@@ -451,6 +452,32 @@ function getNextTurnGames(games: RemoteGameRow[], profileId: string, currentGame
     .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
 }
 
+function getPunchTargetDisplayScore(player: GameState['players'][number] | null | undefined, turn: RemoteTurnRow) {
+  return (
+    displayScoreWithoutSuckerBonus(
+      player?.scorecard[turn.category] ?? null,
+      (player?.suckerBonusCategories ?? []).includes(turn.category),
+    ) ?? turn.score
+  );
+}
+
+function didTurnOwnershipChange(previous: RemoteGameRow | null, next: RemoteGameRow) {
+  return (
+    !previous ||
+    previous.id !== next.id ||
+    previous.current_player_id !== next.current_player_id ||
+    previous.status !== next.status
+  );
+}
+
+async function getSignedInProfileId() {
+  const session = await getCurrentSession();
+  if (!session) {
+    throw new Error('Sign in again to open this game.');
+  }
+  return session.user.id;
+}
+
 export function RemoteGameScreen({
   gameId,
   games,
@@ -489,9 +516,15 @@ export function RemoteGameScreen({
     (remoteStageStyle.width > remoteStageViewportWidth || remoteStageStyle.height > remoteStageViewportHeight);
   const remoteStableHostStyle = Platform.OS === 'web' ? { minHeight: windowHeight, minWidth: windowWidth } : null;
   const isAppActive = useAppActivity();
+  // Open straight onto the lobby's copy of the game while the fresh one loads.
+  // Input stays off until a server copy replaces it.
+  const [cachedGame] = useState<RemoteGameRow | null>(() =>
+    gamesProfileId ? (games.find((game) => game.id === gameId) ?? null) : null,
+  );
   const [error, setError] = useState<string | null>(null);
-  const [profileId, setProfileId] = useState<string | null>(null);
-  const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(() => (cachedGame ? gamesProfileId : null));
+  const [remoteGame, setRemoteGame] = useState<RemoteGameRow | null>(cachedGame);
+  const isShowingCachedGame = remoteGame !== null && remoteGame === cachedGame;
   const [remoteTaunt, setRemoteTaunt] = useState<RemoteTaunt | null>(null);
   const [remoteTauntOpportunity, setRemoteTauntOpportunity] = useState<RemoteTauntOpportunity | null>(null);
   const [tauntOpportunityRefreshKey, setTauntOpportunityRefreshKey] = useState(0);
@@ -503,7 +536,7 @@ export function RemoteGameScreen({
   const [nextTurnPrompt, setNextTurnPrompt] = useState<NextTurnPrompt | null>(null);
   const nextTurnPromptRef = useRef(nextTurnPrompt);
   const wasAppActive = useRef(isAppActive);
-  const profileIdRef = useRef<string | null>(null);
+  const profileIdRef = useRef<string | null>(profileId);
   const activeGameIdRef = useRef(gameId);
   const nextTurnGames =
     nextTurnPrompt?.isGameListReady && profileId && gamesProfileId === profileId
@@ -594,41 +627,49 @@ export function RemoteGameScreen({
       retryTimer = null;
       isLoading = true;
       setError(null);
-      try {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (userError) {
-          throw userError;
-        }
-        if (!userData.user) {
-          throw new Error('Sign in again to open this game.');
-        }
-        if (!isMounted) return;
-        profileIdRef.current = userData.user.id;
-        setProfileId(userData.user.id);
-        const [, latestTaunt] = await Promise.all([refresh.refresh(), getLatestRemoteTaunt(gameId, userData.user.id)]);
-        if (!isMounted) {
-          return;
-        }
+      await runWithCleanup(
+        () => attemptLoad().catch(handleLoadError),
+        () => {
+          isLoading = false;
+        },
+      );
+    }
 
+    async function attemptLoad() {
+      // The stored session is enough to know who is playing; the server checks
+      // the token on every read and move.
+      const signedInProfileId = await getSignedInProfileId();
+      if (!isMounted) return;
+      if (profileIdRef.current && profileIdRef.current !== signedInProfileId) {
+        setRemoteGame(null);
+      }
+      profileIdRef.current = signedInProfileId;
+      setProfileId(signedInProfileId);
+      const [, latestTaunt] = await Promise.all([refresh.refresh(), getLatestRemoteTaunt(gameId, signedInProfileId)]);
+      if (isMounted) {
         setRemoteTaunt(latestTaunt);
-      } catch (loadError) {
-        void reportError(loadError, { Operation: 'Load remote game' });
-        if (isMounted && (!hasGameSnapshot || !profileIdRef.current)) {
-          const isTemporary = isTemporarySessionError(loadError);
-          setError(
-            isTemporary
-              ? sessionConnectionMessage
-              : loadError instanceof Error
-                ? loadError.message
-                : 'Unable to load game.',
-          );
-          if (isTemporary && retryCount < 2) {
-            retryCount += 1;
-            retryTimer = setTimeout(() => void loadRemoteGame(), retryCount * 1000);
-          }
+      }
+    }
+
+    function handleLoadError(loadError: unknown) {
+      void reportError(loadError, { Operation: 'Load remote game' });
+      if (isMounted && (!hasGameSnapshot || !profileIdRef.current)) {
+        const isTemporary = isTemporarySessionError(loadError);
+        setError(
+          isTemporary
+            ? sessionConnectionMessage
+            : loadError instanceof Error
+              ? loadError.message
+              : 'Unable to load game.',
+        );
+        if (isTemporary && retryCount < 2) {
+          retryCount += 1;
+          retryTimer = setTimeout(() => void loadRemoteGame(), retryCount * 1000);
+        } else {
+          // Out of automatic retries: swap the locked cached board for the
+          // loading screen, which offers Retry.
+          setRemoteGame((current) => (current === cachedGame ? null : current));
         }
-      } finally {
-        isLoading = false;
       }
     }
 
@@ -703,7 +744,7 @@ export function RemoteGameScreen({
       unsubscribe();
       unsubscribeTaunts();
     };
-  }, [gameId, onGameChange]);
+  }, [cachedGame, gameId, onGameChange]);
 
   const pendingGameAction = pendingActions.find(
     (request) => request.actorId === profileId && 'gameId' in request && request.gameId === gameId,
@@ -793,14 +834,20 @@ export function RemoteGameScreen({
     };
   }, [remoteGame?.last_turn_id]);
 
+  // Rolls and holds update the game row too; the taunt check only depends on
+  // the turn and on punches, which change the status or the current player.
+  const tauntCheckGameId = remoteGame?.id ?? null;
+  const tauntCheckLastTurnId = remoteGame?.last_turn_id ?? null;
+  const tauntCheckStatus = remoteGame?.status ?? null;
+  const tauntCheckCurrentPlayerId = remoteGame?.current_player_id ?? null;
   useEffect(() => {
     let isMounted = true;
-    if (!remoteGame || !profileId || !remoteLastTurn || remoteLastTurn.id !== remoteGame.last_turn_id) {
+    if (!tauntCheckGameId || !profileId || !remoteLastTurn || remoteLastTurn.id !== tauntCheckLastTurnId) {
       setRemoteTauntOpportunity(null);
       return;
     }
 
-    void getRemoteTauntOpportunity(remoteGame.id, profileId, remoteLastTurn)
+    void getRemoteTauntOpportunity(tauntCheckGameId, profileId, remoteLastTurn)
       .then((opportunity) => {
         if (isMounted) {
           setRemoteTauntOpportunity(opportunity);
@@ -816,7 +863,15 @@ export function RemoteGameScreen({
     return () => {
       isMounted = false;
     };
-  }, [profileId, remoteGame, remoteLastTurn, tauntOpportunityRefreshKey]);
+  }, [
+    profileId,
+    remoteLastTurn,
+    tauntCheckCurrentPlayerId,
+    tauntCheckGameId,
+    tauntCheckLastTurnId,
+    tauntCheckStatus,
+    tauntOpportunityRefreshKey,
+  ]);
 
   useEffect(() => {
     if (!remoteGame || !profileId || isRealtimeConnected || !isAppActive) {
@@ -841,6 +896,206 @@ export function RemoteGameScreen({
     return () => clearInterval(interval);
   }, [gameId, isAppActive, isRealtimeConnected, onGameChange, profileId, remoteGame]);
 
+  useEffect(() => {
+    if (!profileId || !isAppActive || !isNextTurnPromptReady) {
+      return;
+    }
+
+    const activeProfileId = profileId;
+    let isCurrent = true;
+    let isRefreshRunning = false;
+
+    async function refreshNextTurnGames() {
+      if (isRefreshRunning) {
+        return;
+      }
+
+      isRefreshRunning = true;
+      await syncRemoteGameList(activeProfileId).then(
+        () => {
+          isRefreshRunning = false;
+        },
+        (refreshError: unknown) => {
+          isRefreshRunning = false;
+          if (isCurrent) {
+            console.warn('Unable to refresh next turns', refreshError);
+          }
+        },
+      );
+    }
+
+    void refreshNextTurnGames();
+    const unsubscribe = subscribeToGameListChanges(activeProfileId, () => void refreshNextTurnGames());
+    const timer = setInterval(() => void refreshNextTurnGames(), nextTurnListRefreshMs);
+
+    return () => {
+      isCurrent = false;
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, [isAppActive, isNextTurnPromptReady, profileId, syncRemoteGameList]);
+
+  async function confirmPendingAction(requestId: string) {
+    if (!profileId) {
+      return;
+    }
+
+    await refreshNetwork();
+    if (await hasPendingMultiplayerAction(profileId, requestId)) {
+      return;
+    }
+
+    await getGame(gameId).then(
+      (nextGame) => {
+        refreshRemoteGameRef.current?.invalidate();
+        setRemoteGame(nextGame);
+        onGameChange(profileId, nextGame);
+        setUnresolvedRequestId((current) => (current === requestId ? null : current));
+        setError(null);
+      },
+      (refreshError: unknown) => {
+        setError(reportErrorMessage(refreshError, 'Unable to confirm the previous move.'));
+      },
+    );
+  }
+
+  async function prepareNextTurnPrompt(
+    profileId: string,
+    completedGame: RemoteGameRow,
+    { isResume = false }: { isResume?: boolean } = {},
+  ) {
+    const prompt: NextTurnPrompt = {
+      gameId: completedGame.id,
+      gameUpdatedAt: completedGame.updated_at,
+      isGameListReady: false,
+      isResume,
+    };
+    setNextTurnPrompt(prompt);
+    let games: RemoteGameRow[];
+    try {
+      games = await syncRemoteGameList(profileId);
+    } catch (promptError) {
+      console.warn('Unable to load next turns', promptError);
+      setNextTurnPrompt(null);
+      return;
+    }
+    const refreshedGame = games.find((game) => game.id === prompt.gameId);
+    if (activeGameIdRef.current !== prompt.gameId) {
+      return;
+    }
+
+    if (
+      !refreshedGame ||
+      shouldDismissNextTurnPrompt(prompt, refreshedGame, profileId) ||
+      (isResume && getNextTurnGames(games, profileId, prompt.gameId).length === 0)
+    ) {
+      setNextTurnPrompt(null);
+      return;
+    }
+
+    setNextTurnPrompt({ ...prompt, isGameListReady: true });
+  }
+
+  async function runRemoteActionResult<Result extends { game: RemoteGameRow }>(
+    action: () => Promise<Result>,
+    {
+      applyGameResult = true,
+      preserveNextTurns = false,
+      showNextTurns = true,
+    }: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
+  ) {
+    setIsRemoteBusy(true);
+    setError(null);
+    const previousGame = remoteGame;
+    let result: Result;
+    try {
+      result = await action();
+    } catch (actionError) {
+      setIsRemoteBusy(false);
+      handleRemoteActionError(actionError);
+      return null;
+    }
+    setIsRemoteBusy(false);
+    if (applyGameResult) {
+      refreshRemoteGameRef.current?.invalidate();
+      setRemoteGame(result.game);
+    }
+    if (profileId && applyGameResult) {
+      onGameChange(profileId, result.game);
+      if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
+        void prepareNextTurnPrompt(profileId, result.game);
+      } else {
+        if (!preserveNextTurns) {
+          setNextTurnPrompt(null);
+        }
+        // onGameChange already merged this game into the lobby list. Reload
+        // the list only when whose turn it is changed, which moves the badge.
+        if (didTurnOwnershipChange(previousGame, result.game)) {
+          void syncRemoteGameList(profileId);
+        }
+      }
+    }
+    return result;
+  }
+
+  function handleRemoteActionError(actionError: unknown) {
+    if (actionError instanceof PendingMultiplayerActionError) {
+      setUnresolvedRequestId(actionError.requestId);
+      setError('Confirming your previous move before play continues…');
+      void confirmPendingAction(actionError.requestId);
+    } else {
+      setError(reportErrorMessage(actionError, 'Unable to update game.'));
+    }
+  }
+
+  async function runRemoteAction(
+    action: () => Promise<{ game: RemoteGameRow }>,
+    options: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
+  ) {
+    const result = await runRemoteActionResult(action, options);
+    return result?.game.state ?? null;
+  }
+
+  function openNextTurnGame(nextGameId: string) {
+    setNextTurnPrompt(null);
+    setError(null);
+    refreshRemoteGameRef.current?.invalidate();
+    setRemoteGame(null);
+    setRemoteTaunt(null);
+    setRemoteTauntOpportunity(null);
+    setRemoteLastTurn(null);
+    setRemoteLastTurnLoadFailedId(null);
+    onOpenGame(nextGameId);
+  }
+
+  async function startGameAgainst(opponentProfileId: string) {
+    const activeProfileId = profileIdRef.current;
+    if (!activeProfileId) {
+      throw new Error('Sign in again to start a game.');
+    }
+    setIsRemoteBusy(true);
+    setError(null);
+    let result: Awaited<ReturnType<typeof createGameAgainst>>;
+    try {
+      result = await createGameAgainst(opponentProfileId);
+    } catch (startError) {
+      setIsRemoteBusy(false);
+      const startMessage = reportErrorMessage(startError, 'Unable to start the game.');
+      setError(startMessage);
+      throw new Error(startMessage);
+    }
+    setIsRemoteBusy(false);
+    setNextTurnPrompt(null);
+    refreshRemoteGameRef.current?.invalidate();
+    setRemoteGame(result.game);
+    setRemoteLastTurn(null);
+    setRemoteLastTurnLoadFailedId(null);
+    onGameChange(activeProfileId, result.game);
+    void syncRemoteGameList(activeProfileId);
+    onOpenGame(result.game.id);
+  }
+
+  // Declared after prepareNextTurnPrompt, which React Compiler needs to see first.
   useEffect(() => {
     const wasActive = wasAppActive.current;
     wasAppActive.current = isAppActive;
@@ -884,188 +1139,6 @@ export function RemoteGameScreen({
       isCurrent = false;
     };
   }, [gameId, isAppActive, onGameChange, profileId, remoteGame, syncRemoteBadgeCount]);
-
-  useEffect(() => {
-    if (!profileId || !isAppActive || !isNextTurnPromptReady) {
-      return;
-    }
-
-    const activeProfileId = profileId;
-    let isCurrent = true;
-    let isRefreshRunning = false;
-
-    async function refreshNextTurnGames() {
-      if (isRefreshRunning) {
-        return;
-      }
-
-      isRefreshRunning = true;
-      try {
-        await syncRemoteGameList(activeProfileId);
-      } catch (refreshError) {
-        if (isCurrent) {
-          console.warn('Unable to refresh next turns', refreshError);
-        }
-      } finally {
-        isRefreshRunning = false;
-      }
-    }
-
-    void refreshNextTurnGames();
-    const unsubscribe = subscribeToGameListChanges(activeProfileId, () => void refreshNextTurnGames());
-    const timer = setInterval(() => void refreshNextTurnGames(), nextTurnListRefreshMs);
-
-    return () => {
-      isCurrent = false;
-      unsubscribe();
-      clearInterval(timer);
-    };
-  }, [isAppActive, isNextTurnPromptReady, profileId, syncRemoteGameList]);
-
-  async function runRemoteAction(
-    action: () => Promise<{ game: RemoteGameRow }>,
-    options: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
-  ) {
-    const result = await runRemoteActionResult(action, options);
-    return result?.game.state ?? null;
-  }
-
-  async function runRemoteActionResult<Result extends { game: RemoteGameRow }>(
-    action: () => Promise<Result>,
-    {
-      applyGameResult = true,
-      preserveNextTurns = false,
-      showNextTurns = true,
-    }: { applyGameResult?: boolean; preserveNextTurns?: boolean; showNextTurns?: boolean } = {},
-  ) {
-    setIsRemoteBusy(true);
-    setError(null);
-    try {
-      const result = await action();
-      if (applyGameResult) {
-        refreshRemoteGameRef.current?.invalidate();
-        setRemoteGame(result.game);
-      }
-      if (profileId && applyGameResult) {
-        onGameChange(profileId, result.game);
-        if (showNextTurns && shouldShowNextTurnsAfterAction(result.game, profileId)) {
-          void prepareNextTurnPrompt(profileId, result.game);
-        } else {
-          if (!preserveNextTurns) {
-            setNextTurnPrompt(null);
-          }
-          void syncRemoteGameList(profileId);
-        }
-      }
-      return result;
-    } catch (actionError) {
-      if (actionError instanceof PendingMultiplayerActionError) {
-        setUnresolvedRequestId(actionError.requestId);
-        setError('Confirming your previous move before play continues…');
-        void confirmPendingAction(actionError.requestId);
-      } else {
-        setError(reportErrorMessage(actionError, 'Unable to update game.'));
-      }
-      return null;
-    } finally {
-      setIsRemoteBusy(false);
-    }
-  }
-
-  async function confirmPendingAction(requestId: string) {
-    if (!profileId) {
-      return;
-    }
-
-    await refreshNetwork();
-    if (await hasPendingMultiplayerAction(profileId, requestId)) {
-      return;
-    }
-
-    try {
-      const nextGame = await getGame(gameId);
-      refreshRemoteGameRef.current?.invalidate();
-      setRemoteGame(nextGame);
-      onGameChange(profileId, nextGame);
-      setUnresolvedRequestId((current) => (current === requestId ? null : current));
-      setError(null);
-    } catch (refreshError) {
-      setError(reportErrorMessage(refreshError, 'Unable to confirm the previous move.'));
-    }
-  }
-
-  async function prepareNextTurnPrompt(
-    profileId: string,
-    completedGame: RemoteGameRow,
-    { isResume = false }: { isResume?: boolean } = {},
-  ) {
-    const prompt: NextTurnPrompt = {
-      gameId: completedGame.id,
-      gameUpdatedAt: completedGame.updated_at,
-      isGameListReady: false,
-      isResume,
-    };
-    setNextTurnPrompt(prompt);
-    try {
-      const games = await syncRemoteGameList(profileId);
-      const refreshedGame = games.find((game) => game.id === prompt.gameId);
-      if (activeGameIdRef.current !== prompt.gameId) {
-        return;
-      }
-
-      if (
-        !refreshedGame ||
-        shouldDismissNextTurnPrompt(prompt, refreshedGame, profileId) ||
-        (isResume && getNextTurnGames(games, profileId, prompt.gameId).length === 0)
-      ) {
-        setNextTurnPrompt(null);
-        return;
-      }
-
-      setNextTurnPrompt({ ...prompt, isGameListReady: true });
-    } catch (promptError) {
-      console.warn('Unable to load next turns', promptError);
-      setNextTurnPrompt(null);
-    }
-  }
-
-  function openNextTurnGame(nextGameId: string) {
-    setNextTurnPrompt(null);
-    setError(null);
-    refreshRemoteGameRef.current?.invalidate();
-    setRemoteGame(null);
-    setRemoteTaunt(null);
-    setRemoteTauntOpportunity(null);
-    setRemoteLastTurn(null);
-    setRemoteLastTurnLoadFailedId(null);
-    onOpenGame(nextGameId);
-  }
-
-  async function startGameAgainst(opponentProfileId: string) {
-    const activeProfileId = profileIdRef.current;
-    if (!activeProfileId) {
-      throw new Error('Sign in again to start a game.');
-    }
-    setIsRemoteBusy(true);
-    setError(null);
-    try {
-      const result = await createGameAgainst(opponentProfileId);
-      setNextTurnPrompt(null);
-      refreshRemoteGameRef.current?.invalidate();
-      setRemoteGame(result.game);
-      setRemoteLastTurn(null);
-      setRemoteLastTurnLoadFailedId(null);
-      onGameChange(activeProfileId, result.game);
-      void syncRemoteGameList(activeProfileId);
-      onOpenGame(result.game.id);
-    } catch (startError) {
-      const startMessage = reportErrorMessage(startError, 'Unable to start the game.');
-      setError(startMessage);
-      throw new Error(startMessage);
-    } finally {
-      setIsRemoteBusy(false);
-    }
-  }
 
   function exitToLobby() {
     setNextTurnPrompt(null);
@@ -1142,7 +1215,7 @@ export function RemoteGameScreen({
 
   const handlers: RemoteActionHandlers = {
     onExtraRoll: (held) => runRemoteAction(() => buyRemoteExtraRoll(remoteGame.id, held)),
-    onMulligan: () => runRemoteAction(() => useRemoteMulligan(remoteGame.id)),
+    onMulligan: () => runRemoteAction(() => applyRemoteMulligan(remoteGame.id)),
     onRematch: async () => {
       return runRemoteAction(
         async () => {
@@ -1165,7 +1238,7 @@ export function RemoteGameScreen({
       return result?.suckerPunchChanceDie ?? null;
     },
     onSuckerPunch: async (turnId, chanceDie) => {
-      const result = await runRemoteActionResult(() => useRemoteSuckerPunch(remoteGame.id, turnId, chanceDie));
+      const result = await runRemoteActionResult(() => throwRemoteSuckerPunch(remoteGame.id, turnId, chanceDie));
       return result ? { game: result.game.state, outcome: result.suckerPunchOutcome ?? null } : null;
     },
     onTaunt: (tauntId) =>
@@ -1181,7 +1254,7 @@ export function RemoteGameScreen({
 
   return (
     <LocalGameScreen
-      isRemoteBusy={isRemoteBusy || isRecovering || isPendingGameAction}
+      isRemoteBusy={isRemoteBusy || isRecovering || isPendingGameAction || isShowingCachedGame}
       myProfileId={profileId}
       nextTurnGames={nextTurnGames}
       nextTurnsEyebrow={nextTurnPrompt?.isResume ? 'Your Move' : 'Turn Finished'}
@@ -1202,6 +1275,41 @@ export function RemoteGameScreen({
       remoteStatus={remoteGame.status}
     />
   );
+}
+
+function useBackSwipeResponder(canSwipeBack: boolean, onSwipeBack: () => void) {
+  return useMemo(() => createBackSwipeResponder(canSwipeBack, onSwipeBack), [canSwipeBack, onSwipeBack]);
+}
+
+function createBackSwipeResponder(canSwipeBack: boolean, onSwipeBack: () => void) {
+  let startedAtEdge = false;
+  return PanResponder.create({
+    onStartShouldSetPanResponderCapture: (event) => {
+      startedAtEdge = canSwipeBack && event.nativeEvent.locationX <= backSwipeEdgeWidth;
+      return false;
+    },
+    onMoveShouldSetPanResponder: (_event, gestureState) => {
+      if (!startedAtEdge) {
+        return false;
+      }
+
+      const horizontalMove = gestureState.dx > backSwipeMinimumMove;
+      const mostlyHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4;
+      return horizontalMove && mostlyHorizontal;
+    },
+    onPanResponderRelease: (_event, gestureState) => {
+      const shouldExit =
+        gestureState.dx > backSwipeTriggerDistance ||
+        (gestureState.dx > backSwipeMinimumMove && gestureState.vx > backSwipeVelocity);
+      startedAtEdge = false;
+      if (shouldExit) {
+        onSwipeBack();
+      }
+    },
+    onPanResponderTerminate: () => {
+      startedAtEdge = false;
+    },
+  });
 }
 
 export function LocalGameScreen({
@@ -1315,10 +1423,12 @@ export function LocalGameScreen({
   const [tableFlip, setTableFlip] = useState<{ gameId: string; status: 'checking' | 'flipping' | 'done' } | null>(null);
   const [rematchUnlockAt, setRematchUnlockAt] = useState<number | null>(null);
   const [rematchCountdownNow, setRematchCountdownNow] = useState(() => Date.now());
-  const tableFlipProgress = useRef(new Animated.Value(0)).current;
+  const [tableFlipProgress] = useState(() => new Animated.Value(0));
   const [computerStats, setComputerStats] = useState<ComputerStatsSnapshot>(null);
   const [headToHeadStats, setHeadToHeadStats] = useState<HeadToHeadStatsSnapshot | null>(null);
-  const [rollingFaces, setRollingFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
+  const [rollingStartFaces, setRollingStartFaces] = useState<DieValue[]>([1, 1, 1, 1, 1]);
+  // Null while the dice are still in the air and their faces are shuffling.
+  const [rollingFinalFaces, setRollingFinalFaces] = useState<DieValue[] | null>(null);
   const [rollingDieIndexes, setRollingDieIndexes] = useState<number[]>([]);
   const [rollingLaunches, setRollingLaunches] = useState<Partial<Record<number, RollingLaunch>>>({});
   const [selectedCategory, setSelectedCategory] = useState<ScoreCategory | null>(null);
@@ -1356,13 +1466,13 @@ export function LocalGameScreen({
   const lastRemotePunchNoticeId = useRef<string | null>(null);
   const lastRemoteBlockedPunchNoticeId = useRef<string | null>(null);
   const remoteBlockedPunchRevealCheckTurnId = useRef<string | null>(null);
-  const lastAnimatedRemoteScoreTurnId = useRef<string | null>(null);
+  const [lastAnimatedRemoteScoreTurnId, setLastAnimatedRemoteScoreTurnId] = useState<string | null>(null);
   const lastQueuedIncomingTauntId = useRef<string | null>(null);
   const suckerRollNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suckerPunchWipeStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visibleRemoteTurnId = useRef<string | null>(null);
-  const diceAnimations = useRef([...Array(5)].map(() => new Animated.Value(0))).current;
-  const suckerPunchDieAnimation = useRef(new Animated.Value(0)).current;
+  const [visibleRemoteTurnId, setVisibleRemoteTurnId] = useState<string | null>(null);
+  const [diceAnimations] = useState(() => [...Array(5)].map(() => new Animated.Value(0)));
+  const [suckerPunchDieAnimation] = useState(() => new Animated.Value(0));
   const suckerPunchResultCompletion = useRef<(() => void) | null>(null);
   useEffect(() => {
     const wasOpen = tokenMenuWasOpen.current;
@@ -1373,11 +1483,18 @@ export function LocalGameScreen({
     );
     return () => cancelAnimationFrame(frame);
   }, [isTokenMenuOpen, suckerPunchDialog]);
-  const bgFloat = useRef(new Animated.Value(0)).current;
-  const selectedPulse = useRef(new Animated.Value(0)).current;
-  const sectionBonusPulse = useRef(new Animated.Value(0)).current;
+  const [bgFloat] = useState(() => new Animated.Value(0));
+  const [selectedPulse] = useState(() => new Animated.Value(0));
+  const [sectionBonusPulse] = useState(() => new Animated.Value(0));
   const previousHomeSectionBonusAwarded = useRef<boolean | null>(null);
-  const backSwipeStartedAtEdge = useRef(false);
+  function clearSuckerPunchWipe() {
+    if (suckerPunchWipeStartTimer.current) {
+      clearTimeout(suckerPunchWipeStartTimer.current);
+      suckerPunchWipeStartTimer.current = null;
+    }
+    setSuckerPunchWipe(null);
+  }
+
   const exitGame = useCallback(() => {
     setIsMenuOpen(false);
     setIsRageQuitOpen(false);
@@ -1391,35 +1508,7 @@ export function LocalGameScreen({
     setSuckerPunchDialog(null);
     onExit?.();
   }, [onExit]);
-  const backSwipeResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponderCapture: (event) => {
-        backSwipeStartedAtEdge.current = Boolean(onExit && event.nativeEvent.locationX <= backSwipeEdgeWidth);
-        return false;
-      },
-      onMoveShouldSetPanResponder: (_event, gestureState) => {
-        if (!backSwipeStartedAtEdge.current) {
-          return false;
-        }
-
-        const horizontalMove = gestureState.dx > backSwipeMinimumMove;
-        const mostlyHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4;
-        return horizontalMove && mostlyHorizontal;
-      },
-      onPanResponderRelease: (_event, gestureState) => {
-        const shouldExit =
-          gestureState.dx > backSwipeTriggerDistance ||
-          (gestureState.dx > backSwipeMinimumMove && gestureState.vx > backSwipeVelocity);
-        backSwipeStartedAtEdge.current = false;
-        if (shouldExit) {
-          exitGame();
-        }
-      },
-      onPanResponderTerminate: () => {
-        backSwipeStartedAtEdge.current = false;
-      },
-    }),
-  ).current;
+  const backSwipeResponder = useBackSwipeResponder(Boolean(onExit), exitGame);
   const game = isRemoteGame ? (visibleRemoteGame ?? remoteGame ?? localGame) : localGame;
   const incomingTauntRollNumber = remoteGame?.rollNumber ?? game.rollNumber;
   const avatarProfileIds = [
@@ -1446,7 +1535,7 @@ export function LocalGameScreen({
   const isRemoteTurnRevealPending = Boolean(
     isRemoteGame &&
     remoteLastTurnId &&
-    visibleRemoteTurnId.current !== remoteLastTurnId &&
+    visibleRemoteTurnId !== remoteLastTurnId &&
     remoteLastTurnLoadFailedId !== remoteLastTurnId,
   );
   const isComputerTurn = !isRemoteGame && game.currentPlayerIndex === computerPlayerIndex && game.phase !== 'complete';
@@ -1704,8 +1793,8 @@ export function LocalGameScreen({
     remoteLastTurn.id === remoteLastTurnId &&
     remoteLastTurn.player_id !== myProfileId &&
     revealingRemoteTurnId !== remoteLastTurn.id &&
-    visibleRemoteTurnId.current !== remoteLastTurn.id &&
-    lastAnimatedRemoteScoreTurnId.current !== remoteLastTurn.id,
+    visibleRemoteTurnId !== remoteLastTurn.id &&
+    lastAnimatedRemoteScoreTurnId !== remoteLastTurn.id,
   );
   const shouldCheckRemoteBlockedPunchBeforeReveal = Boolean(
     isRemoteGame &&
@@ -1736,7 +1825,7 @@ export function LocalGameScreen({
     remoteGame &&
     remoteNextTurnIsMine &&
     remoteLastTurnId &&
-    visibleRemoteTurnId.current !== remoteLastTurnId &&
+    visibleRemoteTurnId !== remoteLastTurnId &&
     remoteLastTurnLoadFailedId !== remoteLastTurnId &&
     (remoteStatus === 'active' || remoteStatus === 'response_window' || remoteStatus === 'complete') &&
     (!remoteLastTurn ||
@@ -1919,14 +2008,6 @@ export function LocalGameScreen({
     }, suckerPunchScoreWipeDelayMs);
   }
 
-  function clearSuckerPunchWipe() {
-    if (suckerPunchWipeStartTimer.current) {
-      clearTimeout(suckerPunchWipeStartTimer.current);
-      suckerPunchWipeStartTimer.current = null;
-    }
-    setSuckerPunchWipe(null);
-  }
-
   function showSuckerPunchNoticeAndWipe(details: Omit<SuckerPunchWipe, 'progress'>) {
     setSuckerPunchWipe(createSuckerPunchWipe(details));
     setShowSuckerPunchNotice(true);
@@ -1939,6 +2020,14 @@ export function LocalGameScreen({
     runSuckerPunchScoreWipe(wipe);
   }
 
+  async function refreshComputerStats() {
+    try {
+      setComputerStats(await getComputerStats());
+    } catch (statsError) {
+      console.warn('Unable to load computer stats', statsError);
+    }
+  }
+
   useEffect(() => {
     if (isRemoteGame) {
       return;
@@ -1946,28 +2035,6 @@ export function LocalGameScreen({
 
     void refreshComputerStats();
   }, [isRemoteGame]);
-
-  useEffect(() => {
-    if (isRemoteGame) {
-      return;
-    }
-
-    if (!isComputerTurn || isComputerThinking || isRolling || isScoring || opponentTurnReveal) {
-      return;
-    }
-
-    setSelectedCategory(null);
-    setIsChoosingSuckerDeal(false);
-    setIsComputerThinking(true);
-    const timer = setTimeout(() => {
-      const result = resolveComputerTurn(game, pendingTurn);
-      void animateComputerTurnResult(result);
-    }, computerThinkingDelayMs);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [game, isComputerTurn, isRemoteGame, isRolling, isScoring, opponentTurnReveal, pendingTurn]);
 
   useEffect(() => {
     if (!showSuckerPunchNotice) {
@@ -2114,6 +2181,12 @@ export function LocalGameScreen({
       });
   }, [game, isRemoteGame, localPlayerProfileId]);
 
+  function savedLocalPunch(nextPendingTurn: ComputerSession['pendingTurn']) {
+    return nextPendingTurn?.status === 'submitted' && preparedLocalPunch.current?.targetTurnId === nextPendingTurn.id
+      ? preparedLocalPunch.current
+      : null;
+  }
+
   useEffect(() => {
     if (isRemoteGame || !onLocalSessionChange) return;
     const resolved = resolvedLocalSave.current;
@@ -2130,12 +2203,6 @@ export function LocalGameScreen({
       recordedGameIds: [...recordedComputerGameIds.current],
     });
   }, [isRemoteGame, localGame, localPendingTurn, onLocalSessionChange]);
-
-  function savedLocalPunch(nextPendingTurn: ComputerSession['pendingTurn']) {
-    return nextPendingTurn?.status === 'submitted' && preparedLocalPunch.current?.targetTurnId === nextPendingTurn.id
-      ? preparedLocalPunch.current
-      : null;
-  }
 
   function prepareLocalPunchChance(targetTurnId: string): DieValue {
     if (preparedLocalPunch.current?.targetTurnId !== targetTurnId) {
@@ -2186,7 +2253,7 @@ export function LocalGameScreen({
   useEffect(() => {
     if (!isRemoteGame) {
       setVisibleRemoteGame(null);
-      visibleRemoteTurnId.current = null;
+      setVisibleRemoteTurnId(null);
       return;
     }
 
@@ -2200,7 +2267,7 @@ export function LocalGameScreen({
     ) {
       const gameWithLocalHolds = preserveLocalHeldDice(remoteGame, liveGameRef.current, myProfileId);
       setVisibleRemoteGame(concealActiveOpponentDice(gameWithLocalHolds, myProfileId));
-      visibleRemoteTurnId.current = remoteLastTurnId ?? null;
+      setVisibleRemoteTurnId(remoteLastTurnId ?? null);
     }
   }, [
     isAwaitingRemoteRoll,
@@ -2212,31 +2279,6 @@ export function LocalGameScreen({
     remoteGame,
     remoteLastTurnId,
     shouldHoldRemoteTurnReveal,
-  ]);
-
-  useEffect(() => {
-    if (
-      !remoteOpponentTurnNeedsReveal ||
-      !remoteGame ||
-      !remoteLastTurn ||
-      isRolling ||
-      isScoring ||
-      opponentTurnReveal ||
-      shouldHoldRemoteTurnRevealForBlockedPunch
-    ) {
-      return;
-    }
-
-    setRevealingRemoteTurnId(remoteLastTurn.id);
-    void animateRemoteOpponentScoreTurn(remoteGame, remoteLastTurn);
-  }, [
-    isRolling,
-    isScoring,
-    opponentTurnReveal,
-    remoteGame,
-    remoteLastTurn,
-    remoteOpponentTurnNeedsReveal,
-    shouldHoldRemoteTurnRevealForBlockedPunch,
   ]);
 
   useEffect(() => {
@@ -2336,14 +2378,6 @@ export function LocalGameScreen({
     shouldHoldRemoteTurnReveal,
     visibleIncomingTaunt,
   ]);
-
-  async function refreshComputerStats() {
-    try {
-      setComputerStats(await getComputerStats());
-    } catch (statsError) {
-      console.warn('Unable to load computer stats', statsError);
-    }
-  }
 
   async function refreshVisibleStats() {
     if (!isRemoteGame) {
@@ -2500,7 +2534,8 @@ export function LocalGameScreen({
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
-    setRollingFaces(sourceGame.dice);
+    setRollingStartFaces(sourceGame.dice);
+    setRollingFinalFaces(null);
     rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
 
     if (rollingIndexes.length === 0) {
@@ -2542,11 +2577,6 @@ export function LocalGameScreen({
       resolvedNextGame = gameResult;
       return gameResult;
     });
-    const scrambleTimer = setInterval(() => {
-      setRollingFaces(
-        (faces) => faces.map((face, index) => (rollingIndexes.includes(index) ? rollDisplayDie() : face)) as DieValue[],
-      );
-    }, 65);
     const rollAnimation = Animated.parallel(
       rollingIndexes.map((index) => {
         const launch = launches[index] ?? defaultRollingLaunch;
@@ -2563,13 +2593,8 @@ export function LocalGameScreen({
       }),
     );
 
-    let nextGame: ReturnType<typeof createGame> | null = null;
-    try {
-      await runAnimation(rollAnimation);
-      nextGame = resolvedNextGame === undefined ? await trackedNextGamePromise : resolvedNextGame;
-    } finally {
-      clearInterval(scrambleTimer);
-    }
+    await runAnimation(rollAnimation);
+    const nextGame = resolvedNextGame === undefined ? await trackedNextGamePromise : resolvedNextGame;
 
     if (!nextGame) {
       rollingIndexes.forEach((index) => diceAnimations[index].setValue(0));
@@ -2580,7 +2605,7 @@ export function LocalGameScreen({
     }
     const finalDice = nextGame.dice;
 
-    setRollingFaces(finalDice);
+    setRollingFinalFaces(finalDice);
     await wait(rollFinalFaceHoldMs);
 
     if (isRemoteGame) {
@@ -2856,12 +2881,34 @@ export function LocalGameScreen({
     });
   }
 
+  useEffect(() => {
+    if (isRemoteGame) {
+      return;
+    }
+
+    if (!isComputerTurn || isComputerThinking || isRolling || isScoring || opponentTurnReveal) {
+      return;
+    }
+
+    setSelectedCategory(null);
+    setIsChoosingSuckerDeal(false);
+    setIsComputerThinking(true);
+    const timer = setTimeout(() => {
+      const result = resolveComputerTurn(game, pendingTurn);
+      void animateComputerTurnResult(result);
+    }, computerThinkingDelayMs);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [game, isComputerTurn, isRemoteGame, isRolling, isScoring, opponentTurnReveal, pendingTurn]);
+
   async function animateRemoteOpponentScoreTurn(nextRemoteGame: GameState, turn: RemoteTurnRow) {
     const previousGame = buildRemoteGameBeforeTurn(nextRemoteGame, turn) ?? visibleRemoteGame;
     if (!previousGame) {
       setVisibleRemoteGame(nextRemoteGame);
-      visibleRemoteTurnId.current = turn.id;
-      lastAnimatedRemoteScoreTurnId.current = turn.id;
+      setVisibleRemoteTurnId(turn.id);
+      setLastAnimatedRemoteScoreTurnId(turn.id);
       setRevealingRemoteTurnId(null);
       return;
     }
@@ -2893,8 +2940,8 @@ export function LocalGameScreen({
 
     setVisibleRemoteGame(nextRemoteGame);
     liveGameRef.current = nextRemoteGame;
-    visibleRemoteTurnId.current = turn.id;
-    lastAnimatedRemoteScoreTurnId.current = turn.id;
+    setVisibleRemoteTurnId(turn.id);
+    setLastAnimatedRemoteScoreTurnId(turn.id);
     setRevealingRemoteTurnId(null);
     setHighlightCategory(null);
 
@@ -2905,6 +2952,31 @@ export function LocalGameScreen({
       setScoreFlyNumber(null);
     }
   }
+
+  useEffect(() => {
+    if (
+      !remoteOpponentTurnNeedsReveal ||
+      !remoteGame ||
+      !remoteLastTurn ||
+      isRolling ||
+      isScoring ||
+      opponentTurnReveal ||
+      shouldHoldRemoteTurnRevealForBlockedPunch
+    ) {
+      return;
+    }
+
+    setRevealingRemoteTurnId(remoteLastTurn.id);
+    void animateRemoteOpponentScoreTurn(remoteGame, remoteLastTurn);
+  }, [
+    isRolling,
+    isScoring,
+    opponentTurnReveal,
+    remoteGame,
+    remoteLastTurn,
+    remoteOpponentTurnNeedsReveal,
+    shouldHoldRemoteTurnRevealForBlockedPunch,
+  ]);
 
   async function handleUseExtraRoll() {
     if (!canUseLocalExtraRoll && !canUseRemoteExtraRoll) {
@@ -3046,16 +3118,16 @@ export function LocalGameScreen({
       useNativeDriver: true,
     });
 
-    let chanceDie: DieValue | null = null;
-    try {
-      const chanceRequest =
-        dialog.scope === 'remote'
-          ? (remoteHandlers?.onPrepareSuckerPunch(dialog.targetTurnId) ?? Promise.resolve(null))
-          : Promise.resolve(prepareLocalPunchChance(dialog.targetTurnId));
-      [chanceDie] = await Promise.all([chanceRequest, runAnimation(chanceRollAnimation)]);
-    } finally {
-      clearInterval(scrambleTimer);
-    }
+    const [chanceDie] = await runWithCleanup(
+      () => {
+        const chanceRequest =
+          dialog.scope === 'remote'
+            ? (remoteHandlers?.onPrepareSuckerPunch(dialog.targetTurnId) ?? Promise.resolve(null))
+            : Promise.resolve(prepareLocalPunchChance(dialog.targetTurnId));
+        return Promise.all([chanceRequest, runAnimation(chanceRollAnimation)]);
+      },
+      () => clearInterval(scrambleTimer),
+    );
 
     if (chanceDie === null) {
       setSuckerPunchDialog(null);
@@ -3162,15 +3234,11 @@ export function LocalGameScreen({
       if (result.game) {
         const targetTurn = remoteLastTurn;
         const targetPlayer = targetTurn ? game.players.find((player) => player.id === targetTurn.player_id) : null;
-        const targetScore = targetTurn
-          ? (displayScoreWithoutSuckerBonus(
-              targetPlayer?.scorecard[targetTurn.category] ?? null,
-              Boolean(targetPlayer?.suckerBonusCategories?.includes(targetTurn.category)),
-            ) ?? targetTurn.score)
-          : null;
+        const targetScore = targetTurn ? getPunchTargetDisplayScore(targetPlayer, targetTurn) : null;
+        const landed = Boolean(outcome?.landed);
         completeAfterResult = () => {
           setLiveRemoteGame(result.game as ReturnType<typeof createGame>);
-          if (outcome?.landed && targetTurn && targetScore !== null) {
+          if (landed && targetTurn && targetScore !== null) {
             showSuckerPunchScoreWipe({
               category: targetTurn.category,
               playerId: targetTurn.player_id,
@@ -3196,22 +3264,22 @@ export function LocalGameScreen({
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
     setHighlightCategory(null);
-    try {
-      await remoteHandlers.onRageQuit();
-    } finally {
-      setIsRageQuitting(false);
-      setIsRageQuitOpen(false);
-    }
+    await runWithCleanup(
+      () => remoteHandlers.onRageQuit(),
+      () => {
+        setIsRageQuitting(false);
+        setIsRageQuitOpen(false);
+      },
+    );
   }
 
   async function handleRageQuitReply(replyId: RageQuitReplyId) {
     if (!remoteHandlers || isSendingRageReply) return;
     setIsSendingRageReply(true);
-    try {
-      await remoteHandlers.onRageQuitReply(replyId);
-    } finally {
-      setIsSendingRageReply(false);
-    }
+    await runWithCleanup(
+      () => remoteHandlers.onRageQuitReply(replyId),
+      () => setIsSendingRageReply(false),
+    );
   }
 
   async function handleRematch() {
@@ -3493,14 +3561,13 @@ export function LocalGameScreen({
     }
 
     setIsSendingTaunt(true);
-    try {
-      const result = await remoteHandlers.onTaunt(tauntId);
-      if (result) {
-        setSentTauntTurnId(tauntOpportunityTurnId);
-        setIsTauntPickerOpen(false);
-      }
-    } finally {
-      setIsSendingTaunt(false);
+    const result = await runWithCleanup(
+      () => remoteHandlers.onTaunt(tauntId),
+      () => setIsSendingTaunt(false),
+    );
+    if (result) {
+      setSentTauntTurnId(tauntOpportunityTurnId);
+      setIsTauntPickerOpen(false);
     }
   }
 
@@ -4107,73 +4174,16 @@ export function LocalGameScreen({
 
             {isRolling && (
               <View pointerEvents="none" style={styles.rollingDiceOverlay}>
-                {rollingDieIndexes.map((index) => {
-                  const face = rollingFaces[index];
-                  const launch = rollingLaunches[index] ?? defaultRollingLaunch;
-                  const flyY = diceAnimations[index].interpolate({
-                    inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
-                    outputRange: [
-                      launch.fromY,
-                      launch.midY - 10,
-                      launch.midY,
-                      launch.toY - 12,
-                      launch.toY - 3,
-                      launch.toY,
-                    ],
-                  });
-                  const flyX = diceAnimations[index].interpolate({
-                    inputRange: [0, 0.22, 0.5, 0.74, 0.9, 1],
-                    outputRange: [
-                      launch.fromX,
-                      launch.fromX * 0.62 + launch.midX * 0.38,
-                      launch.midX,
-                      launch.toX + (launch.side === 'left' ? -12 : 12),
-                      launch.toX + (launch.side === 'left' ? -4 : 4),
-                      launch.toX,
-                    ],
-                  });
-                  const flyScale = diceAnimations[index].interpolate({
-                    inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
-                    outputRange: createRollingScaleOutputRange(index, launch),
-                  });
-                  const flyRotate = diceAnimations[index].interpolate({
-                    inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
-                    outputRange: [
-                      `${launch.side === 'left' ? -28 : 28}deg`,
-                      `${launch.spin}deg`,
-                      `${-launch.spin * 0.72}deg`,
-                      `${launch.spin * 0.46}deg`,
-                      `${-launch.spin * 0.14}deg`,
-                      '0deg',
-                    ],
-                  });
-                  const flyOpacity = diceAnimations[index].interpolate({
-                    inputRange: [0, 0.76, 1],
-                    outputRange: [1, 1, 1],
-                  });
-
-                  return (
-                    <Animated.View
-                      key={`flying-die-${index}`}
-                      style={[
-                        styles.rollingDieTrack,
-                        gameLayout.styles.rollingDieTrack,
-                        {
-                          opacity: flyOpacity,
-                          transform: [
-                            { translateX: flyX },
-                            { translateY: flyY },
-                            { rotate: flyRotate },
-                            { scale: flyScale },
-                          ],
-                        },
-                      ]}
-                      testID={`flying-die-${index}`}
-                    >
-                      <DieFace face={face} style={[styles.rollingDieImage, gameLayout.styles.rollingDieImage]} />
-                    </Animated.View>
-                  );
-                })}
+                {rollingDieIndexes.map((index) => (
+                  <FlyingDie
+                    animation={diceAnimations[index]}
+                    finalFace={rollingFinalFaces?.[index] ?? null}
+                    index={index}
+                    key={`flying-die-${index}`}
+                    launch={rollingLaunches[index] ?? defaultRollingLaunch}
+                    startFace={rollingStartFaces[index]}
+                  />
+                ))}
               </View>
             )}
 
@@ -5526,6 +5536,81 @@ function SuckerPunchResultImage({
       style={styles.suckerPunchResultImage}
       testID={testID}
     />
+  );
+}
+
+// Owns the face shuffle so the 65 ms ticks during a roll re-render one die,
+// not the whole game screen.
+function FlyingDie({
+  animation,
+  finalFace,
+  index,
+  launch,
+  startFace,
+}: {
+  animation: Animated.Value;
+  finalFace: DieValue | null;
+  index: number;
+  launch: RollingLaunch;
+  startFace: DieValue;
+}) {
+  const gameLayout = useGameLayout();
+  const [scrambledFace, setScrambledFace] = useState<DieValue>(startFace);
+  useEffect(() => {
+    if (finalFace !== null) return;
+    const timer = setInterval(() => setScrambledFace(rollDisplayDie()), 65);
+    return () => clearInterval(timer);
+  }, [finalFace]);
+  const face = finalFace ?? scrambledFace;
+  const flyY = animation.interpolate({
+    inputRange: [0, 0.2, 0.45, 0.72, 0.9, 1],
+    outputRange: [launch.fromY, launch.midY - 10, launch.midY, launch.toY - 12, launch.toY - 3, launch.toY],
+  });
+  const flyX = animation.interpolate({
+    inputRange: [0, 0.22, 0.5, 0.74, 0.9, 1],
+    outputRange: [
+      launch.fromX,
+      launch.fromX * 0.62 + launch.midX * 0.38,
+      launch.midX,
+      launch.toX + (launch.side === 'left' ? -12 : 12),
+      launch.toX + (launch.side === 'left' ? -4 : 4),
+      launch.toX,
+    ],
+  });
+  const flyScale = animation.interpolate({
+    inputRange: [0, 0.25, 0.55, 0.76, 0.9, 1],
+    outputRange: createRollingScaleOutputRange(index, launch),
+  });
+  const flyRotate = animation.interpolate({
+    inputRange: [0, 0.2, 0.4, 0.62, 0.84, 1],
+    outputRange: [
+      `${launch.side === 'left' ? -28 : 28}deg`,
+      `${launch.spin}deg`,
+      `${-launch.spin * 0.72}deg`,
+      `${launch.spin * 0.46}deg`,
+      `${-launch.spin * 0.14}deg`,
+      '0deg',
+    ],
+  });
+  const flyOpacity = animation.interpolate({
+    inputRange: [0, 0.76, 1],
+    outputRange: [1, 1, 1],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        styles.rollingDieTrack,
+        gameLayout.styles.rollingDieTrack,
+        {
+          opacity: flyOpacity,
+          transform: [{ translateX: flyX }, { translateY: flyY }, { rotate: flyRotate }, { scale: flyScale }],
+        },
+      ]}
+      testID={`flying-die-${index}`}
+    >
+      <DieFace face={face} style={[styles.rollingDieImage, gameLayout.styles.rollingDieImage]} />
+    </Animated.View>
   );
 }
 
