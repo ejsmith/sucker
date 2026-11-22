@@ -33,7 +33,8 @@ type ActionType =
   | 'sucker_blocker'
   | 'taunt'
   | 'rage_quit'
-  | 'rage_quit_reply';
+  | 'rage_quit_reply'
+  | 'turn_timeout';
 
 type TurnActionTable = {
   Row: {

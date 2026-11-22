@@ -32,6 +32,7 @@ import {
   startingSuckerTokens,
   type SuckerPunchOutcome,
   suckerTokenCosts,
+  timeOutGame,
   toDice,
   toGameState,
   toHeldDice,
@@ -71,6 +72,16 @@ import {
   reportServerError,
 } from '../_shared/monitoring.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
+import {
+  buildTurnTimeoutNotification,
+  buildTurnTimeoutWarning,
+  hasTurnTimedOut,
+  isInactivitySweepAuthorized,
+  turnTimeoutDays,
+  turnTimeoutMs,
+  turnTimeoutRequestId,
+  turnTimeoutWarningDays,
+} from '../_shared/turnTimeout.ts';
 
 type DbClient = SupabaseClient<Database>;
 type GameRow = Database['public']['Tables']['games']['Row'];
@@ -132,6 +143,12 @@ type ActionInput =
   | { type: 'rage_quit'; gameId: string }
   | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
 type Action = ActionInput & { requestId: string };
+// Server-initiated: the sweep forfeits a turn left unfinished too long. Players
+// can never send it.
+type TurnTimeoutAction = { type: 'turn_timeout'; gameId: string; requestId: string };
+type NotifiedAction = Action | TurnTimeoutAction;
+type NotificationContentBuilder = (recipientId: string) => NotificationContent | null;
+type GameForfeitReason = 'rage_quit' | 'timeout';
 type ActionMutationState = {
   mayHaveWritten: boolean;
   plan?: GameMovePlan;
@@ -176,7 +193,12 @@ Deno.serve(async (request) => {
       return json({ error: 'Request body is too large.' }, 413);
     }
 
-    const action = await timer.measure('parse', async () => toAction(await request.json()));
+    const body = await timer.measure('parse', () => request.json());
+    if (isInactivitySweepRequest(body)) {
+      actionType = body.type;
+      return await runInactivitySweep(request, timer);
+    }
+    const action = toAction(body);
     actionType = action.type;
     requestId = action.requestId;
     gameId = 'gameId' in action ? action.gameId : null;
@@ -236,16 +258,7 @@ Deno.serve(async (request) => {
             commitGameMove(admin, plan, user.id, action.requestId, { ...result, game }),
           );
         } catch (commitError) {
-          // A PostgreSQL error confirms rollback. A transport error can hide a
-          // successful commit, so keep that request pending for reconciliation.
-          if (
-            typeof commitError === 'object' &&
-            commitError &&
-            'code' in commitError &&
-            /^[0-9A-Z]{5}$/.test(String(commitError.code)) &&
-            !String(commitError.code).startsWith('08')
-          )
-            mutationState.mayHaveWritten = false;
+          if (isConfirmedRollback(commitError)) mutationState.mayHaveWritten = false;
           throw commitError;
         }
       } else {
@@ -431,7 +444,7 @@ async function completeActionRequest(
   }
 }
 
-async function releaseActionRequest(admin: DbClient, actorId: string, action: Action) {
+async function releaseActionRequest(admin: DbClient, actorId: string, action: Pick<Action, 'requestId'>) {
   const { error } = await admin
     .from('game_action_requests')
     .delete()
@@ -447,7 +460,7 @@ function actionGameId(action: Action) {
   return 'gameId' in action ? action.gameId : null;
 }
 
-function queueActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
+function queueActionNotifications(admin: DbClient, actorId: string, action: NotifiedAction, result: ActionResult) {
   const task = deliverActionNotifications(admin, actorId, action.requestId, () =>
     sendActionNotifications(admin, actorId, action, result),
   ).catch((notificationError) => {
@@ -468,13 +481,39 @@ function queueActionNotifications(admin: DbClient, actorId: string, action: Acti
   void task;
 }
 
-async function sendActionNotifications(admin: DbClient, actorId: string, action: Action, result: ActionResult) {
+async function sendActionNotifications(admin: DbClient, actorId: string, action: NotifiedAction, result: ActionResult) {
   const game = result.game;
-  const profileIds = result.notificationProfileIds?.filter((profileId) => profileId !== actorId);
+  // Nobody is told about their own move, but a timeout happens to its player.
+  const profileIds =
+    action.type === 'turn_timeout'
+      ? result.notificationProfileIds
+      : result.notificationProfileIds?.filter((profileId) => profileId !== actorId);
   if (!game || !profileIds?.length) {
     return;
   }
 
+  await sendGameNotifications(admin, game.id, profileIds, action.type, async () => {
+    const latestTurn = game.last_turn_id
+      ? await loadTurn(admin, game.last_turn_id).catch((turnError) => {
+          logServerError('Unable to load latest turn for notification', turnError, {
+            functionName: 'game-action',
+            operation: 'Load latest turn for notification',
+          });
+          return null;
+        })
+      : null;
+    return (recipientId) => buildNotificationContent(action, result, game, latestTurn, actorId, recipientId);
+  });
+}
+
+// Content is prepared only when a recipient has somewhere to receive it.
+async function sendGameNotifications(
+  admin: DbClient,
+  gameId: string,
+  profileIds: string[],
+  actionType: string,
+  loadContentBuilder: () => Promise<NotificationContentBuilder>,
+) {
   const uniqueProfileIds = [...new Set(profileIds)];
   const [{ data: pushTokens, error: pushTokenError }, { data: webPushSubscriptions, error: webPushError }] =
     await Promise.all([
@@ -495,19 +534,11 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
     return;
   }
 
-  const latestTurn = game.last_turn_id
-    ? await loadTurn(admin, game.last_turn_id).catch((turnError) => {
-        logServerError('Unable to load latest turn for notification', turnError, {
-          functionName: 'game-action',
-          operation: 'Load latest turn for notification',
-        });
-        return null;
-      })
-    : null;
+  const contentFor = await loadContentBuilder();
   const tokens = (pushTokens ?? []) as PushTokenRow[];
   const badgeCounts = await loadBadgeCounts(admin, uniqueProfileIds);
   const messages = tokens.flatMap((pushToken) => {
-    const content = buildNotificationContent(action, result, game, latestTurn, actorId, pushToken.profile_id);
+    const content = contentFor(pushToken.profile_id);
     if (!content) {
       return [];
     }
@@ -517,10 +548,10 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
         badge: badgeCounts.get(pushToken.profile_id) ?? 0,
         body: content.body,
         data: {
-          actionType: action.type,
+          actionType,
           badgeCount: badgeCounts.get(pushToken.profile_id) ?? 0,
-          gameId: game.id,
-          url: getGameNotificationUrl(game.id),
+          gameId,
+          url: getGameNotificationUrl(gameId),
         },
         sound: 'default',
         title: content.title,
@@ -529,30 +560,14 @@ async function sendActionNotifications(admin: DbClient, actorId: string, action:
     ];
   });
 
-  if (!messages.length) {
-    await sendWebPushNotifications(
-      admin,
-      webPushSubscriptions as WebPushSubscriptionRow[] | null,
-      action,
-      result,
-      game,
-      latestTurn,
-      actorId,
-      badgeCounts,
-    );
-    return;
-  }
-
   await settleNotificationSends([
     sendExpoPushMessages(admin, messages),
     sendWebPushNotifications(
       admin,
       webPushSubscriptions as WebPushSubscriptionRow[] | null,
-      action,
-      result,
-      game,
-      latestTurn,
-      actorId,
+      actionType,
+      gameId,
+      contentFor,
       badgeCounts,
     ),
   ]);
@@ -626,11 +641,9 @@ async function handleExpoPushTickets(admin: DbClient, chunk: ExpoPushMessage[], 
 async function sendWebPushNotifications(
   admin: DbClient,
   subscriptions: WebPushSubscriptionRow[] | null,
-  action: Action,
-  result: ActionResult,
-  game: GameRow,
-  latestTurn: TurnRow | null,
-  actorId: string,
+  actionType: string,
+  gameId: string,
+  contentFor: NotificationContentBuilder,
   badgeCounts: Map<string, number>,
 ) {
   if (!subscriptions?.length) {
@@ -643,7 +656,7 @@ async function sendWebPushNotifications(
 
   await settleNotificationSends(
     subscriptions.map(async (subscription) => {
-      const content = buildNotificationContent(action, result, game, latestTurn, actorId, subscription.profile_id);
+      const content = contentFor(subscription.profile_id);
       if (!content) {
         return;
       }
@@ -658,12 +671,12 @@ async function sendWebPushNotifications(
             },
           },
           JSON.stringify({
-            actionType: action.type,
+            actionType,
             badgeCount: badgeCounts.get(subscription.profile_id) ?? 0,
             body: content.body,
-            gameId: game.id,
+            gameId,
             title: content.title,
-            url: getGameNotificationUrl(game.id),
+            url: getGameNotificationUrl(gameId),
           }),
         );
       } catch (pushError) {
@@ -771,7 +784,7 @@ function getGameNotificationUrl(gameId: string) {
 }
 
 function buildNotificationContent(
-  action: Action,
+  action: NotifiedAction,
   result: ActionResult,
   game: GameRow,
   latestTurn: TurnRow | null,
@@ -781,6 +794,10 @@ function buildNotificationContent(
   const actor = game.state.players.find((player) => player.id === actorId);
   const actorName = actor?.name ?? 'Your opponent';
 
+  if (action.type === 'turn_timeout') {
+    const opponentName = game.state.players.find((player) => player.id !== actorId)?.name ?? 'your opponent';
+    return buildTurnTimeoutNotification(actorName, opponentName, recipientId === actorId);
+  }
   if (action.type === 'rage_quit') {
     return {
       body: 'They rage quit. You win.',
@@ -1434,7 +1451,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
   }
 
   const now = Date.now();
-  const turnStartedAt = new Date(game.updated_at).getTime();
+  const turnStartedAt = new Date(game.turn_started_at).getTime();
   if (!Number.isFinite(turnStartedAt) || now - turnStartedAt < nudgeTurnWaitMs) {
     throw new Error('You can jab after it has been their turn for 1 hour.');
   }
@@ -1783,7 +1800,10 @@ async function rageQuitRemoteGame(
     syncGamePlayers(admin, gameId, nextState, true, mutationState.plan),
     insertAction(admin, gameId, actorId, 'rage_quit', {}, mutationState.plan),
   ]);
-  await planCompletedGameStats(admin, gameId, nextState.players, winnerId, mutationState.plan!, actorId);
+  await planCompletedGameStats(admin, gameId, nextState.players, winnerId, mutationState.plan!, {
+    playerId: actorId,
+    reason: 'rage_quit',
+  });
 
   return {
     game: updatedGame,
@@ -1823,6 +1843,217 @@ async function replyToRageQuit(
   });
   await insertAction(admin, gameId, actorId, 'rage_quit_reply', { replyId }, mutationState.plan);
   return { game: updatedGame, notificationProfileIds: [rageQuit.playerId] };
+}
+
+// Inactivity forfeits run hourly from pg_cron through pg_net. The request
+// carries a server-only secret instead of a player's session.
+const maxForfeitsPerSweep = 25;
+const maxWarningsPerSweep = 100;
+const unfinishedTurnStatuses: GameRow['status'][] = ['active', 'response_window'];
+
+function isInactivitySweepRequest(body: unknown): body is { type: 'expire_inactive_games' } {
+  return Boolean(body && typeof body === 'object' && (body as { type?: unknown }).type === 'expire_inactive_games');
+}
+
+async function runInactivitySweep(request: Request, timer: ActionTimer) {
+  const secret = Deno.env.get('INACTIVITY_SWEEP_SECRET');
+  if (!secret) {
+    return json({ error: 'The inactivity sweep is not configured.' }, 503, timer.toHeaders());
+  }
+  if (!(await isInactivitySweepAuthorized(request.headers.get('x-inactivity-sweep-secret'), secret))) {
+    return json({ error: 'Unauthorized' }, 401, timer.toHeaders());
+  }
+
+  const admin = createClient<Database>(requireEnv('SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'));
+  const forfeited = await timer.measure('forfeits', () => forfeitExpiredTurns(admin));
+  const warned = await timer.measure('warnings', () => sendTurnTimeoutWarnings(admin));
+  timer.logIfSlow('expire_inactive_games');
+  return json({ forfeited, warned }, 200, timer.toHeaders());
+}
+
+// Hidden games are included: hiding a game never stops its clock.
+async function forfeitExpiredTurns(admin: DbClient) {
+  const { data, error } = await admin
+    .from('games')
+    .select('id')
+    .in('status', unfinishedTurnStatuses)
+    .not('current_player_id', 'is', null)
+    .lte('turn_started_at', new Date(Date.now() - turnTimeoutMs).toISOString())
+    .order('turn_started_at')
+    .limit(maxForfeitsPerSweep);
+  if (error) throw error;
+
+  const forfeited: string[] = [];
+  for (const { id } of data ?? []) {
+    try {
+      if (await forfeitExpiredTurn(admin, id)) forfeited.push(id);
+    } catch (forfeitError) {
+      logServerError('Unable to forfeit an expired turn', forfeitError, {
+        functionName: 'game-action',
+        operation: 'Forfeit expired turn',
+        properties: { GameId: id },
+      });
+    }
+  }
+  return forfeited;
+}
+
+async function forfeitExpiredTurn(admin: DbClient, gameId: string) {
+  const { data, error } = await admin.from('games').select('*').eq('id', gameId).single();
+  if (error) throw error;
+  const game: GameRow = { ...data, state: toGameState(data.state) };
+  const playerId = game.current_player_id;
+  if (
+    !playerId ||
+    !unfinishedTurnStatuses.includes(game.status) ||
+    game.state.phase === 'complete' ||
+    !hasTurnTimedOut(game.turn_started_at, Date.now())
+  ) {
+    return false;
+  }
+
+  const action: TurnTimeoutAction = {
+    gameId,
+    requestId: await turnTimeoutRequestId(gameId, game.turn_started_at),
+    type: 'turn_timeout',
+  };
+  if (!(await claimTurnTimeout(admin, playerId, action))) return false;
+
+  const mutationState: ActionMutationState = { mayHaveWritten: false };
+  let result: ActionResult;
+  try {
+    const planned = await planTurnTimeout(admin, game, playerId, mutationState);
+    mutationState.mayHaveWritten = true;
+    // The version check loses to any move committed since the game was read,
+    // and that move started a new turn.
+    result = await commitGameMove(admin, mutationState.plan!, playerId, action.requestId, planned);
+  } catch (commitError) {
+    if (!mutationState.mayHaveWritten || isConfirmedRollback(commitError)) {
+      await releaseActionRequest(admin, playerId, action);
+    }
+    if (isPostgresError(commitError, 'PT409')) return false;
+    throw commitError;
+  }
+
+  await deliverActionNotifications(admin, playerId, action.requestId, () =>
+    sendActionNotifications(admin, playerId, action, result),
+  ).catch((notificationError) => {
+    logServerError('Unable to send timeout notifications', notificationError, {
+      functionName: 'game-action',
+      operation: 'Send timeout notifications',
+      properties: { GameId: gameId },
+    });
+  });
+  return true;
+}
+
+// A forfeit is claimed like a player's action, as the player who timed out, so
+// overlapping sweeps commit it once.
+async function claimTurnTimeout(admin: DbClient, playerId: string, action: TurnTimeoutAction) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { data, error } = await admin.rpc('claim_game_action_request', {
+      p_action_type: action.type,
+      p_actor_id: playerId,
+      p_game_id: action.gameId,
+      p_request_id: action.requestId,
+    });
+    if (error) throw error;
+    const claim = data as { claimed: true } | { claimed: false; request: ActionRequestRow };
+    if (claim.claimed) return true;
+    // Another sweep finished it, or is still working on it.
+    if (claim.request.status === 'completed') return false;
+    if (Date.now() - new Date(claim.request.created_at).getTime() <= 120_000) return false;
+    // The game is still unfinished, so the abandoned claim never committed.
+    await releaseActionRequest(admin, playerId, action);
+  }
+  return false;
+}
+
+async function planTurnTimeout(
+  admin: DbClient,
+  game: GameRow,
+  playerId: string,
+  mutationState: ActionMutationState,
+): Promise<ActionResult & { game: GameRow }> {
+  const nextState = timeOutGame(game.state, playerId);
+  const winnerId = getWinnerId(nextState);
+  const updatedGame = stageGameMove(mutationState, game, {
+    completed_at: new Date().toISOString(),
+    current_player_id: null,
+    state: nextState,
+    status: 'complete',
+    winner_id: winnerId,
+  });
+  mutationState.plan!.writes.push({
+    table: 'timeout_forfeits',
+    operation: 'insert',
+    data: { game_id: game.id, player_id: playerId },
+  });
+
+  await Promise.all([
+    syncGamePlayers(admin, game.id, nextState, true, mutationState.plan),
+    insertAction(admin, game.id, playerId, 'turn_timeout', { turnStartedAt: game.turn_started_at }, mutationState.plan),
+  ]);
+  await planCompletedGameStats(admin, game.id, nextState.players, winnerId, mutationState.plan!, {
+    playerId,
+    reason: 'timeout',
+  });
+
+  return {
+    game: updatedGame,
+    notificationProfileIds: nextState.players.map((player) => player.id),
+  };
+}
+
+async function sendTurnTimeoutWarnings(admin: DbClient) {
+  const { data: claimed, error } = await admin.rpc('claim_turn_timeout_warnings', {
+    p_limit: maxWarningsPerSweep,
+    p_timeout_days: turnTimeoutDays,
+    p_warning_days: [...turnTimeoutWarningDays],
+  });
+  if (error) throw error;
+  if (!claimed?.length) return [];
+
+  const { data: games, error: gamesError } = await admin
+    .from('games')
+    .select('id, state, turn_started_at')
+    .in(
+      'id',
+      claimed.map((warning) => warning.game_id),
+    );
+  if (gamesError) throw gamesError;
+  const gamesById = new Map((games ?? []).map((game) => [game.id, game]));
+
+  const warned: Array<{ daysLeft: number; gameId: string }> = [];
+  for (const warning of claimed) {
+    const game = gamesById.get(warning.game_id);
+    try {
+      if (!game) throw new Error('The warned game is missing.');
+      const opponentName =
+        toGameState(game.state).players.find((player) => player.id !== warning.player_id)?.name ?? 'your opponent';
+      const content = buildTurnTimeoutWarning(opponentName, warning.days_left);
+      await sendGameNotifications(admin, warning.game_id, [warning.player_id], 'turn_timeout_warning', () =>
+        Promise.resolve((recipientId) => (recipientId === warning.player_id ? content : null)),
+      );
+      warned.push({ daysLeft: warning.days_left, gameId: warning.game_id });
+    } catch (warningError) {
+      // Unclaim it so the next sweep tries again.
+      if (game) {
+        await admin
+          .from('turn_timeout_warnings')
+          .delete()
+          .eq('game_id', warning.game_id)
+          .eq('turn_started_at', game.turn_started_at)
+          .eq('days_left', warning.days_left);
+      }
+      logServerError('Unable to send a turn timeout warning', warningError, {
+        functionName: 'game-action',
+        operation: 'Send turn timeout warning',
+        properties: { DaysLeft: warning.days_left, GameId: warning.game_id },
+      });
+    }
+  }
+  return warned;
 }
 
 async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mutationState: ActionMutationState) {
@@ -2351,7 +2582,7 @@ async function planCompletedGameStats(
   players: Player[],
   winnerId: string | null,
   plan: GameMovePlan,
-  rageQuitterId?: string,
+  forfeit?: { playerId: string; reason: GameForfeitReason },
 ) {
   const [{ actions, turns }, awardedFeats] = await Promise.all([
     loadCompletedGameHistory(admin, gameId, plan),
@@ -2361,9 +2592,10 @@ async function planCompletedGameStats(
     const opponent = players.find((candidate) => candidate.id !== player.id)!;
     const result = buildCompletedPlayerStats({ actions, gameId, opponent, player, players, turns, winnerId });
     const lost = winnerId !== null && !result.won;
-    if (rageQuitterId) {
+    if (forfeit) {
       // A forfeit counts toward the record only. Its partial scores and plays
       // never reach averages, highs, rates, or score-based achievements.
+      // rage_quit_games counts every forfeit; only a rage quit is a quit.
       plan.writes.push({
         table: 'game_player_results',
         operation: 'upsert',
@@ -2379,7 +2611,7 @@ async function planCompletedGameStats(
           wins: result.won ? 1 : 0,
           losses: lost ? 1 : 0,
           rage_quit_games: 1,
-          rage_quits: player.id === rageQuitterId ? 1 : 0,
+          rage_quits: forfeit.reason === 'rage_quit' && player.id === forfeit.playerId ? 1 : 0,
         },
       });
       continue;
@@ -2706,6 +2938,22 @@ function toErrorStatus(error: unknown) {
     return 503;
   }
   return 400;
+}
+
+function isPostgresError(error: unknown, code: string) {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === code);
+}
+
+// A PostgreSQL error confirms rollback. A transport error can hide a successful
+// commit, so that request stays pending for reconciliation.
+function isConfirmedRollback(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    /^[0-9A-Z]{5}$/.test(String(error.code)) &&
+    !String(error.code).startsWith('08')
+  );
 }
 
 class ActionRequestPersistenceError extends Error {

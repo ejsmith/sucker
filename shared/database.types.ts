@@ -91,6 +91,8 @@ export type Database = {
           rematch_of_game_id: string | null;
           state: Json;
           status: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
+          // When the current player's turn began. Only a turn change resets it.
+          turn_started_at: string;
           updated_at: string;
           winner_id: string | null;
         };
@@ -110,6 +112,7 @@ export type Database = {
           rematch_of_game_id?: string | null;
           state?: Json;
           status?: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
+          turn_started_at?: string;
           updated_at?: string;
           winner_id?: string | null;
         };
@@ -197,7 +200,8 @@ export type Database = {
             | 'sucker_blocker'
             | 'taunt'
             | 'rage_quit'
-            | 'rage_quit_reply';
+            | 'rage_quit_reply'
+            | 'turn_timeout';
           actor_id: string;
           created_at: string;
           game_id: string;
@@ -222,7 +226,8 @@ export type Database = {
             | 'sucker_blocker'
             | 'taunt'
             | 'rage_quit'
-            | 'rage_quit_reply';
+            | 'rage_quit_reply'
+            | 'turn_timeout';
           actor_id: string;
           game_id: string;
           id?: string;
@@ -571,6 +576,16 @@ export type Database = {
         Insert: { created_at?: string; game_id: string; player_id: string };
         Update: never;
       };
+      timeout_forfeits: {
+        Row: { created_at: string; game_id: string; player_id: string };
+        Insert: { created_at?: string; game_id: string; player_id: string };
+        Update: never;
+      };
+      turn_timeout_warnings: {
+        Row: { days_left: number; game_id: string; sent_at: string; turn_started_at: string };
+        Insert: { days_left: number; game_id: string; sent_at?: string; turn_started_at: string };
+        Update: never;
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -582,6 +597,10 @@ export type Database = {
           p_game_id: string | null;
         };
         Returns: Json;
+      };
+      claim_turn_timeout_warnings: {
+        Args: { p_limit?: number; p_timeout_days: number; p_warning_days: number[] };
+        Returns: { days_left: number; game_id: string; player_id: string }[];
       };
       commit_game_move: {
         Args: {
@@ -638,6 +657,7 @@ export type Database = {
           player_sucker_tokens: number;
           player_sucker_tokens_spent: number;
           rage_quitter_id: string | null;
+          timed_out_player_id: string | null;
           winner_id: string | null;
         }[];
       };

@@ -847,6 +847,7 @@ function toRemoteGameRow(
     state: toGameState(row.state),
     status: row.status,
     sucker_tokens_spent: suckerTokensSpent,
+    turn_started_at: row.turn_started_at,
     updated_at: row.updated_at,
     winner_id: row.winner_id,
   };

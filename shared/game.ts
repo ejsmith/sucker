@@ -38,6 +38,11 @@ export type RageQuit = {
   replyId?: string;
 };
 
+// A forfeit by inactivity: this player let their turn run out. Not a rage quit.
+export type TimedOut = {
+  playerId: string;
+};
+
 export type GameState = {
   id: string;
   // Set after any punch misses; expires when this player starts their next turn.
@@ -51,6 +56,7 @@ export type GameState = {
   rollNumber: number;
   phase: GamePhase;
   rageQuit?: RageQuit;
+  timedOut?: TimedOut;
 };
 
 export const scoreCategories: ScoreCategory[] = [
@@ -173,9 +179,32 @@ export function rageQuitGame(game: GameState, playerId: string): GameState {
   };
 }
 
+// The server ends a game this way when the current player's turn runs out.
+export function timeOutGame(game: GameState, playerId: string): GameState {
+  if (game.phase === 'complete') {
+    throw new Error('This game is already over.');
+  }
+  if (!game.players.some((player) => player.id === playerId)) {
+    throw new Error('Player is not in this game.');
+  }
+
+  const { counterPunchPlayerId: _counter, counterPunchCost: _counterCost, ...nextGame } = game;
+  return {
+    ...nextGame,
+    phase: 'complete',
+    players: game.players.map(clearRevengePunchDiscount),
+    timedOut: { playerId },
+  };
+}
+
+export function getForfeiterId(game: GameState): string | null {
+  return game.rageQuit?.playerId ?? game.timedOut?.playerId ?? null;
+}
+
 export function getWinnerId(game: GameState): string | null {
-  if (game.rageQuit) {
-    return game.players.find((player) => player.id !== game.rageQuit?.playerId)?.id ?? null;
+  const forfeiterId = getForfeiterId(game);
+  if (forfeiterId) {
+    return game.players.find((player) => player.id !== forfeiterId)?.id ?? null;
   }
 
   const [first, second] = [...game.players].sort(
@@ -455,11 +484,13 @@ export function toGameState(value: unknown): GameState {
     throw new Error('Stored game has invalid counterpunch cost.');
   }
   const rageQuit = game.rageQuit === undefined ? undefined : toRageQuit(game.rageQuit, players);
+  const timedOut = game.timedOut === undefined ? undefined : toTimedOut(game.timedOut, players);
 
   return {
     ...(typeof counterPunchPlayerId === 'string' ? { counterPunchPlayerId } : {}),
     ...(counterPunchCost === 1 || counterPunchCost === 2 ? { counterPunchCost } : {}),
     ...(rageQuit ? { rageQuit } : {}),
+    ...(timedOut ? { timedOut } : {}),
     currentPlayerIndex,
     dice: toDice(game.dice),
     extraRollsAvailable: toOptionalNonNegativeInteger(
@@ -600,6 +631,16 @@ function toRageQuit(value: unknown, players: Player[]): RageQuit {
     playerId,
     ...(typeof replyId === 'string' ? { replyId } : {}),
   };
+}
+
+function toTimedOut(value: unknown, players: Player[]): TimedOut {
+  const timedOut = toRecord(value, 'Stored game has invalid timeout.');
+  const playerId = toString(timedOut.playerId, 'Stored game has invalid timeout player.');
+  if (!players.some((player) => player.id === playerId)) {
+    throw new Error('Stored game has invalid timeout player.');
+  }
+
+  return { playerId };
 }
 
 function toScorecard(value: unknown): Scorecard {

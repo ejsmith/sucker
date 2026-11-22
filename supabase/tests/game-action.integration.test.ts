@@ -29,6 +29,7 @@ const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const functionUrl = `${supabaseUrl}/functions/v1/game-action`;
+const sweepSecret = requireEnv('INACTIVITY_SWEEP_SECRET');
 const admin = createClient<Database>(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -2374,6 +2375,227 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(Number(finalStats.average_score), 10);
 });
 
+Deno.test(
+  'a turn left for 30 days forfeits, even when hidden, and counts like a rage quit without being one',
+  async () => {
+    const [alice, bob, charlie] = await createUsers('turn-timeout', ['Alice', 'Bob', 'Charlie']);
+    // Two earlier played-out games: 30 points total, high 20, one section bonus each.
+    for (const [player, opponent] of [
+      [alice, bob],
+      [bob, alice],
+    ]) {
+      assertNoError(
+        (
+          await admin.from('head_to_head_stats').insert({
+            average_score: 15,
+            games_played: 2,
+            highest_score: 20,
+            losses: 1,
+            opponent_id: opponent.id,
+            player_id: player.id,
+            total_score: 30,
+            upper_bonus_games: 1,
+            wins: 1,
+          })
+        ).error,
+      );
+    }
+    const created = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    const gameId = created.id;
+    assertEquals(created.current_player_id, alice.id);
+    // Alice leads, so only the forfeit can make Bob the winner.
+    const leadingState: GameState = {
+      ...created.state,
+      players: created.state.players.map((player) =>
+        player.id === alice.id ? { ...player, scorecard: { ...player.scorecard, chance: 30 } } : player,
+      ),
+    };
+    assertNoError((await admin.from('games').update({ state: leadingState }).eq('id', gameId)).error);
+
+    // Rolling mid-turn does not restart the clock.
+    const startedAt = (await loadGameRow(gameId)).turn_started_at;
+    const rolled = (await invokeGameAction(alice, { gameId, held: falseHeld, type: 'roll' })).game as GameRow;
+    assertEquals(rolled.turn_started_at, startedAt);
+
+    // Hiding the game does not stop the clock either.
+    await invokeGameAction(alice, { gameId, type: 'remove_game' });
+    await setTurnStartedAt(gameId, daysAgo(29.9));
+    assertEquals((await runInactivitySweep()).forfeited.includes(gameId), false);
+
+    assertEquals((await runInactivitySweep('wrong-secret', 401)).error, 'Unauthorized');
+    assertEquals((await runInactivitySweep(null, 401)).error, 'Unauthorized');
+    // A player cannot send the server's action.
+    const forgedTimeout = await invokeGameAction(bob, { gameId, type: 'turn_timeout' }, 400);
+    assertEquals(forgedTimeout.error, 'Invalid multiplayer action.');
+
+    // Feats earned before the timeout stand; the forfeit adds none.
+    const featsBeforeTimeout = await loadGameFeats(gameId);
+    await setTurnStartedAt(gameId, daysAgo(30.01));
+    const sweep = await runInactivitySweep();
+    assertEquals(sweep.forfeited.includes(gameId), true);
+    assertEquals((await runInactivitySweep()).forfeited.includes(gameId), false);
+
+    const ended = await loadGameRow(gameId);
+    assertEquals(ended.status, 'complete');
+    assertEquals(ended.winner_id, bob.id);
+    assertEquals(ended.current_player_id, null);
+    assertString(ended.completed_at);
+    assertEquals(ended.state.timedOut, { playerId: alice.id });
+    assertEquals(ended.state.rageQuit, undefined);
+    const players = await selectMany<{ hidden_at: string | null; player_id: string }>(
+      admin.from('game_players').select('hidden_at, player_id').eq('game_id', gameId),
+    );
+    assertString(players.find((player) => player.player_id === alice.id)?.hidden_at);
+
+    const timeouts = await selectMany<{ player_id: string }>(
+      admin.from('timeout_forfeits').select('player_id').eq('game_id', gameId),
+    );
+    assertEquals(timeouts, [{ player_id: alice.id }]);
+    // No salt, and players cannot read or write the record directly.
+    const quits = await selectMany<{ game_id: string }>(
+      admin.from('rage_quits').select('game_id').eq('game_id', gameId),
+    );
+    assertEquals(quits.length, 0);
+    const forged = await charlie.client.from('timeout_forfeits').insert({ game_id: gameId, player_id: bob.id });
+    assertEquals(Boolean(forged.error), true);
+    const actions = await loadActions(gameId);
+    assertEquals(
+      actions.filter((action) => action.action_type === 'turn_timeout').map((action) => action.actor_id),
+      [alice.id],
+    );
+
+    const results = await selectMany<GamePlayerResultRow>(
+      admin.from('game_player_results').select('*').eq('game_id', gameId),
+    );
+    assertEquals(results.find((result) => result.player_id === bob.id)?.won, true);
+    assertEquals(results.find((result) => result.player_id === alice.id)?.won, false);
+    // Ratings and streaks move; no game feats are awarded.
+    assertString(String(results.find((result) => result.player_id === alice.id)?.rating_after ?? ''));
+    const standings = await selectMany<Database['public']['Tables']['player_standings']['Row']>(
+      admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
+    );
+    assertEquals(standings.find((row) => row.player_id === bob.id)?.current_win_streak, 1);
+    assertEquals(standings.find((row) => row.player_id === alice.id)?.current_loss_streak, 1);
+    assertEquals(await loadGameFeats(gameId), featsBeforeTimeout);
+
+    const stats = await selectMany<HeadToHeadStatsRow>(
+      admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+    );
+    const aliceStats = stats.find((row) => row.player_id === alice.id);
+    const bobStats = stats.find((row) => row.player_id === bob.id);
+    assertEquals([aliceStats?.games_played, aliceStats?.wins, aliceStats?.losses], [3, 1, 2]);
+    assertEquals([bobStats?.games_played, bobStats?.wins, bobStats?.losses], [3, 2, 1]);
+    assertEquals([aliceStats?.rage_quits, bobStats?.rage_quits], [0, 0]);
+    assertEquals([aliceStats?.rage_quit_games, bobStats?.rage_quit_games], [1, 1]);
+    // Alice's 30-point partial game is not a new high, and no average moves.
+    assertEquals([aliceStats?.highest_score, aliceStats?.total_score, Number(aliceStats?.average_score)], [20, 30, 15]);
+    const { data: aliceProfile, error: aliceProfileError } = await charlie.client.rpc('get_profile_stat_rates', {
+      target_profile_id: alice.id,
+    });
+    assertNoError(aliceProfileError);
+    assertEquals(aliceProfile?.[0]?.rage_quits, 0);
+    assertEquals(Number(aliceProfile?.[0]?.average_score), 15);
+    assertEquals(Number(aliceProfile?.[0]?.upper_bonus_pct), 50);
+
+    const { data: history, error: historyError } = await charlie.client.rpc('get_profile_recent_games', {
+      game_limit: 25,
+      target_profile_id: bob.id,
+    });
+    assertNoError(historyError);
+    const historyGame = history?.find((row) => row.game_id === gameId);
+    assertEquals(
+      [historyGame?.timed_out_player_id, historyGame?.rage_quitter_id, historyGame?.winner_id],
+      [alice.id, null, bob.id],
+    );
+    const insult = await invokeGameAction(bob, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
+    assertEquals(insult.error, 'Nobody rage quit this game.');
+  },
+);
+
+Deno.test('forfeit warnings go out once each, and passing the turn restarts the clock', async () => {
+  const [alice, bob] = await createUsers('turn-timeout-warnings', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const warnedHere = (sweep: InactivitySweep) => sweep.warned.filter((warning) => warning.gameId === game.id);
+
+  await setTurnStartedAt(game.id, daysAgo(22.9));
+  assertEquals(warnedHere(await runInactivitySweep()), []);
+
+  await setTurnStartedAt(game.id, daysAgo(23.1));
+  assertEquals(warnedHere(await runInactivitySweep()), [{ daysLeft: 7, gameId: game.id }]);
+  assertEquals(warnedHere(await runInactivitySweep()), []);
+
+  // A turn first seen with under a day left gets only the urgent warning.
+  await setTurnStartedAt(game.id, daysAgo(29.1));
+  assertEquals(warnedHere(await runInactivitySweep()), [{ daysLeft: 1, gameId: game.id }]);
+  assertEquals(warnedHere(await runInactivitySweep()), []);
+  const sent = await selectMany<{ days_left: number }>(
+    admin.from('turn_timeout_warnings').select('days_left').eq('game_id', game.id).order('sent_at'),
+  );
+  assertEquals(
+    sent.map((warning) => warning.days_left),
+    [7, 1],
+  );
+
+  // Alice's turn passes to Bob, whose clock starts now: no warning, no forfeit.
+  const passed = await scratchAndPass(game.id, alice, bob, 'ones');
+  assertEquals(passed.current_player_id, bob.id);
+  const elapsedMs = Date.now() - new Date(passed.turn_started_at).getTime();
+  assertEquals(elapsedMs >= 0 && elapsedMs < 60_000, true);
+  const sweep = await runInactivitySweep();
+  assertEquals(sweep.forfeited.includes(game.id), false);
+  assertEquals(warnedHere(sweep), []);
+  assertEquals((await loadGameRow(game.id)).status, 'active');
+});
+
+Deno.test('a move racing the forfeit sweep and the forfeit never both commit', async () => {
+  for (let round = 0; round < 3; round += 1) {
+    const [alice, bob] = await createUsers(`turn-timeout-race-${round}`, ['Alice', 'Bob']);
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+    await setTurnStartedAt(game.id, daysAgo(31));
+
+    const [move, sweep] = await Promise.all([
+      fetchJsonWithRetry(
+        functionUrl,
+        {
+          body: JSON.stringify({
+            category: 'ones',
+            gameId: game.id,
+            held: falseHeld,
+            requestId: crypto.randomUUID(),
+            type: 'scratch_category',
+          }),
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${alice.session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          method: 'POST',
+        },
+        200,
+      ),
+      runInactivitySweep(),
+    ]);
+    const moved = move.status === 200;
+    const forfeited = sweep.forfeited.includes(game.id);
+    assertEquals(moved !== forfeited, true);
+
+    const final = await loadGameRow(game.id);
+    const scratches = (await loadActions(game.id)).filter((action) => action.action_type === 'scratch_category');
+    const timeouts = await selectMany<{ game_id: string }>(
+      admin.from('timeout_forfeits').select('game_id').eq('game_id', game.id),
+    );
+    if (moved) {
+      assertEquals(
+        [final.status, final.current_player_id, scratches.length, timeouts.length],
+        ['response_window', bob.id, 1, 0],
+      );
+    } else {
+      assertEquals([final.status, final.winner_id, scratches.length, timeouts.length], ['complete', bob.id, 0, 1]);
+    }
+  }
+});
+
 Deno.test({
   name: 'game broadcasts reach only the game’s players',
   // Realtime sockets stay open until the cleanup test closes every client.
@@ -2452,6 +2674,48 @@ Deno.test({
     });
   },
 });
+
+type InactivitySweep = { error?: string; forfeited: string[]; warned: Array<{ daysLeft: number; gameId: string }> };
+
+async function runInactivitySweep(secret: string | null = sweepSecret, expectedStatus = 200) {
+  const { body, status } = await fetchJsonWithRetry(
+    functionUrl,
+    {
+      body: JSON.stringify({ type: 'expire_inactive_games' }),
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        'Content-Type': 'application/json',
+        ...(secret === null ? {} : { 'x-inactivity-sweep-secret': secret }),
+      },
+      method: 'POST',
+    },
+    expectedStatus,
+  );
+  if (status !== expectedStatus) {
+    throw new Error(`Expected inactivity sweep ${expectedStatus}, received ${status}: ${JSON.stringify(body)}`);
+  }
+  return body as unknown as InactivitySweep;
+}
+
+async function loadGameFeats(gameId: string) {
+  const feats = await selectMany<{ feat_key: string; player_id: string }>(
+    admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
+  );
+  return feats.map((feat) => `${feat.player_id}:${feat.feat_key}`).sort();
+}
+
+async function setTurnStartedAt(gameId: string, turnStartedAt: string) {
+  assertNoError((await admin.from('games').update({ turn_started_at: turnStartedAt }).eq('id', gameId)).error);
+}
+
+async function loadGameRow(gameId: string) {
+  return await selectSingle<GameRow>(admin.from('games').select('*').eq('id', gameId).single());
+}
+
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString();
+}
 
 async function scratchAndPass(gameId: string, actor: TestUser, responder: TestUser, category: ScoreCategory) {
   await invokeGameAction(actor, { gameId, held: falseHeld, type: 'roll' });
