@@ -1451,7 +1451,7 @@ async function nudgeTurn(admin: DbClient, actorId: string, gameId: string, mutat
   }
 
   const now = Date.now();
-  const turnStartedAt = new Date(game.updated_at).getTime();
+  const turnStartedAt = new Date(game.turn_started_at).getTime();
   if (!Number.isFinite(turnStartedAt) || now - turnStartedAt < nudgeTurnWaitMs) {
     throw new Error('You can jab after it has been their turn for 1 hour.');
   }
