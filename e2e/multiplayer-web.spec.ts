@@ -109,11 +109,12 @@ test('Jab keeps cards stable and other eligible buttons visible while sending', 
     const games = await response.json();
     await route.fulfill({
       response,
-      json: games.map((row: { id: string; turn_started_at: string }) =>
+      json: games.map((row: { id: string; turn_started_at: string; updated_at: string }) =>
         [game.id, otherGame.id, differentOpponentGame.id].includes(row.id)
           ? {
               ...row,
               turn_started_at: new Date(Date.parse(row.turn_started_at) - 2 * 60 * 60 * 1_000).toISOString(),
+              updated_at: new Date(Date.parse(row.updated_at) - 2 * 60 * 60 * 1_000).toISOString(),
             }
           : row,
       ),
