@@ -2401,8 +2401,13 @@ Deno.test({
     assertEquals(broadcastGame.state.rollNumber, 1);
     const actionEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'action');
     assertEquals((actionEvent.payload.action as { action_type: string }).action_type, 'roll');
+
+    await invokeGameAction(alice, { category: 'ones', gameId: game.id, held: falseHeld, type: 'scratch_category' });
     const listEvent = await waitForBroadcast(bobList.events, (event) => event.event === 'games_changed');
     assertEquals(listEvent.payload.game_id, game.id);
+    // A roll doesn't change anything a game list shows, so only the finished
+    // turn reached Bob's list.
+    assertEquals(bobList.events.filter((event) => event.event === 'games_changed').length, 1);
   },
 });
 
