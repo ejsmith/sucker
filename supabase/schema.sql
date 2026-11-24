@@ -41,6 +41,9 @@ create table public.games (
   rematch_of_game_id uuid unique references public.games(id) on delete set null,
   state jsonb not null,
   last_turn_id uuid,
+  -- When the current player's turn began. Only a turn change resets it. A turn
+  -- left unfinished for 30 days forfeits the game.
+  turn_started_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz
@@ -86,8 +89,13 @@ create table public.turns (
   status text not null default 'submitted' check (status in ('submitted', 'punched', 'blocked', 'mulliganed', 'finalized')),
   created_at timestamptz not null default now(),
   finalized_at timestamptz,
+  -- Rolled a Sucker at any point after the turn's last Mulligan. Sucker Spree
+  -- feats read it across a player's games.
+  rolled_sucker boolean not null default false,
   unique (game_id, turn_index)
 );
+
+create index turns_player_created_idx on public.turns (player_id, created_at);
 
 create table public.turn_actions (
   id uuid primary key default gen_random_uuid(),
@@ -112,6 +120,7 @@ create table public.turn_actions (
       'taunt',
       'rage_quit',
       'rage_quit_reply',
+      'turn_timeout',
       'parting_shot'
     )
   ),
@@ -121,6 +130,9 @@ create table public.turn_actions (
 
 -- game-action replays a game's actions on most moves to award instant feats.
 create index turn_actions_game_created_idx on public.turn_actions (game_id, created_at);
+
+create index turn_actions_game_type_created_idx
+on public.turn_actions (game_id, action_type, created_at);
 
 create unique index turn_actions_one_taunt_per_turn
 on public.turn_actions (
@@ -322,6 +334,24 @@ create table public.rage_quits (
 
 create index rage_quits_player_created_idx
 on public.rage_quits (player_id, created_at desc);
+
+-- A forfeit by inactivity: the player let their turn run out. Stats treat it
+-- like a rage quit (record and rating only), but it is never public shame.
+create table public.timeout_forfeits (
+  game_id uuid primary key references public.games(id) on delete cascade,
+  player_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+-- One row per forfeit warning push, so each is sent once per turn. A new turn
+-- has a new turn_started_at, so its warnings start over.
+create table public.turn_timeout_warnings (
+  game_id uuid not null references public.games(id) on delete cascade,
+  turn_started_at timestamptz not null,
+  days_left integer not null,
+  sent_at timestamptz not null default now(),
+  primary key (game_id, turn_started_at, days_left)
+);
 
 create table public.computer_stats (
   profile_id uuid primary key references public.profiles(id) on delete cascade,
@@ -580,7 +610,8 @@ returns table (
   opponent_sucker_tokens integer,
   opponent_sucker_tokens_spent integer,
   winner_id uuid,
-  rage_quitter_id uuid
+  rage_quitter_id uuid,
+  timed_out_player_id uuid
 )
 language plpgsql
 security definer
@@ -611,7 +642,8 @@ begin
     opponent_result.sucker_tokens_leftover,
     opponent_result.sucker_tokens_spent,
     game.winner_id,
-    rage_quit.player_id
+    rage_quit.player_id,
+    timeout.player_id
   from public.games game
   join public.game_players selected_player
     on selected_player.game_id = game.id
@@ -629,6 +661,7 @@ begin
   join public.profiles selected_profile on selected_profile.id = selected_player.player_id
   join public.profiles opponent_profile on opponent_profile.id = opponent_player.player_id
   left join public.rage_quits rage_quit on rage_quit.game_id = game.id
+  left join public.timeout_forfeits timeout on timeout.game_id = game.id
   cross join lateral (
     select player.value
     from jsonb_array_elements(game.state -> 'players') player(value)
@@ -672,6 +705,29 @@ for each row execute function public.touch_updated_at();
 create trigger games_touch_updated_at
 before update on public.games
 for each row execute function public.touch_updated_at();
+
+-- The inactivity clock starts when the turn passes, or when an invite is
+-- accepted. Rolls and other mid-turn actions do not reset it.
+create or replace function public.track_turn_start()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.current_player_id is distinct from old.current_player_id
+    or (old.status = 'inviting' and new.status <> 'inviting') then
+    new.turn_started_at = now();
+  end if;
+  return new;
+end;
+$$;
+
+create trigger games_track_turn_start
+before update on public.games
+for each row execute function public.track_turn_start();
+
+create index games_turn_started_idx
+on public.games (turn_started_at)
+where status in ('active', 'response_window');
 
 create trigger game_invites_touch_updated_at
 before update on public.game_invites
@@ -882,6 +938,22 @@ as $$
   );
 $$;
 
+-- Read policies use this set once per query. is_game_participant, called per
+-- row, made every read scan the whole game table.
+create or replace function public.my_visible_game_ids()
+returns setof uuid
+language sql
+security definer
+set search_path = public
+stable
+rows 50
+as $$
+  select game_id
+  from public.game_players
+  where player_id = (select auth.uid())
+    and hidden_at is null;
+$$;
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -954,6 +1026,8 @@ alter table public.game_player_results enable row level security;
 alter table public.head_to_head_stats enable row level security;
 alter table public.computer_stats enable row level security;
 alter table public.rage_quits enable row level security;
+alter table public.timeout_forfeits enable row level security;
+alter table public.turn_timeout_warnings enable row level security;
 
 alter table public.games replica identity full;
 
@@ -982,6 +1056,108 @@ begin
     alter publication supabase_realtime add table public.turn_actions;
   end if;
 end $$;
+
+-- Older binaries listen with Postgres Changes. Current clients receive these
+-- database broadcasts on private topics instead:
+--   player:<profile id>  games_changed {game_id}
+--   game:<game id>       game {game} and action {action}
+create or replace function public.broadcast_game_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  game_row public.games;
+  participant_id uuid;
+begin
+  game_row := case when tg_op = 'DELETE' then old else new end;
+  if tg_op <> 'DELETE' then
+    perform realtime.send(jsonb_build_object('game', to_jsonb(new)), 'game', 'game:' || new.id, true);
+  end if;
+  -- The game list shows turns, scores and results. Scores change only with a
+  -- new or removed turn, which moves last_turn_id, status or the current
+  -- player. Finished games always notify, so a Rage Quit reply shows as unseen.
+  if tg_op = 'UPDATE'
+    and old.status <> 'complete'
+    and new.status <> 'complete'
+    and (old.status, old.current_player_id, old.last_turn_id, old.winner_id)
+      is not distinct from (new.status, new.current_player_id, new.last_turn_id, new.winner_id)
+  then
+    return null;
+  end if;
+  -- A deleted game is broadcast before the delete, while its players still exist.
+  for participant_id in
+    select player_id from public.game_players where game_id = game_row.id and hidden_at is null
+  loop
+    perform realtime.send(jsonb_build_object('game_id', game_row.id), 'games_changed', 'player:' || participant_id, true);
+  end loop;
+  return case when tg_op = 'DELETE' then old else null end;
+end;
+$$;
+
+create trigger games_broadcast_change
+after insert or update on public.games
+for each row execute function public.broadcast_game_change();
+
+create trigger games_broadcast_delete
+before delete on public.games
+for each row execute function public.broadcast_game_change();
+
+-- Joining or hiding a game changes that player's list without touching the game.
+create or replace function public.broadcast_game_player_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform realtime.send(jsonb_build_object('game_id', new.game_id), 'games_changed', 'player:' || new.player_id, true);
+  return null;
+end;
+$$;
+
+create trigger game_players_broadcast_change
+after insert or update of hidden_at on public.game_players
+for each row execute function public.broadcast_game_player_change();
+
+create or replace function public.broadcast_turn_action()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform realtime.send(jsonb_build_object('action', to_jsonb(new)), 'action', 'game:' || new.game_id, true);
+  return null;
+end;
+$$;
+
+create trigger turn_actions_broadcast_insert
+after insert on public.turn_actions
+for each row execute function public.broadcast_turn_action();
+
+revoke all on function public.broadcast_game_change() from public, anon, authenticated;
+revoke all on function public.broadcast_game_player_change() from public, anon, authenticated;
+revoke all on function public.broadcast_turn_action() from public, anon, authenticated;
+
+-- Players may listen to their own list topic and to the games they can read.
+-- Nobody may send on these topics from a client.
+create policy "Players receive their game broadcasts"
+on realtime.messages for select
+to authenticated
+using (
+  realtime.messages.extension = 'broadcast'
+  and (
+    (select realtime.topic()) = 'player:' || (select auth.uid())::text
+    or (
+      (select realtime.topic()) like 'game:%'
+      and split_part((select realtime.topic()), ':', 2) in (
+        select game_id::text from public.my_visible_game_ids() as game_id
+      )
+    )
+  )
+);
 
 create policy "Profiles are readable to authenticated users"
 on public.profiles for select
@@ -1041,12 +1217,12 @@ with check ((select auth.uid()) in (requester_id, addressee_id));
 create policy "Participants can read games"
 on public.games for select
 to authenticated
-using (public.is_game_participant(id, (select auth.uid())));
+using (id in (select public.my_visible_game_ids()));
 
 create policy "Participants can read game players"
 on public.game_players for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Relevant users can read invites"
 on public.game_invites for select
@@ -1056,17 +1232,17 @@ using ((select auth.uid()) in (inviter_id, invitee_id));
 create policy "Participants can read turns"
 on public.turns for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Participants can read turn actions"
 on public.turn_actions for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Participants can read token events"
 on public.token_events for select
 to authenticated
-using (public.is_game_participant(game_id, (select auth.uid())));
+using (game_id in (select public.my_visible_game_ids()));
 
 create policy "Users manage their own push tokens"
 on public.push_tokens for all
@@ -1151,8 +1327,11 @@ revoke all on public.head_to_head_stat_rates from anon, authenticated;
 grant select on public.head_to_head_stat_rates to authenticated;
 revoke all on public.rage_quits from anon, authenticated;
 grant select on public.rage_quits to authenticated;
+revoke all on public.timeout_forfeits from anon, authenticated;
+revoke all on public.turn_timeout_warnings from anon, authenticated;
 grant all on all routines in schema public to authenticated;
 revoke all on function public.discard_unconfirmed_password() from public, anon, authenticated;
+revoke all on function public.my_visible_game_ids() from public, anon;
 grant all on all sequences in schema public to authenticated;
 
 -- A move is prepared by the trusted Edge Function and committed with its replay
@@ -1211,7 +1390,7 @@ begin
   for change in select value from jsonb_array_elements(p_writes) loop
     table_name := change->>'table';
     operation := change->>'operation';
-    if table_name not in ('turns','turn_actions','token_events','game_players','game_player_results','head_to_head_stats','rage_quits','player_feats')
+    if table_name not in ('turns','turn_actions','token_events','game_players','game_player_results','head_to_head_stats','rage_quits','timeout_forfeits','player_feats')
       or operation not in ('insert','update','upsert','increment') then raise exception 'Invalid game move write'; end if;
     if table_name <> 'head_to_head_stats' and
       coalesce(change->'data'->>'game_id',change->'match'->>'game_id','') <> p_game_id::text then
@@ -1229,6 +1408,10 @@ begin
       operation <> 'insert'
       or not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'player_id')::uuid)
     ) then raise exception 'Rage quit must belong to a player in this game'; end if;
+    if table_name = 'timeout_forfeits' and (
+      operation <> 'insert'
+      or not exists(select 1 from public.game_players where game_id=p_game_id and player_id=(change->'data'->>'player_id')::uuid)
+    ) then raise exception 'Timeout must belong to a player in this game'; end if;
     select string_agg(format('%I',key),',') into fields from jsonb_object_keys(change->'data') key;
     if fields is null then raise exception 'Empty game move write'; end if;
 
@@ -1283,6 +1466,45 @@ end;
 $$;
 revoke all on function public.commit_game_move(uuid,uuid,uuid,timestamptz,jsonb,jsonb,jsonb) from public,anon,authenticated;
 grant execute on function public.commit_game_move(uuid,uuid,uuid,timestamptz,jsonb,jsonb,jsonb) to service_role;
+
+-- game-action claimed a request with an insert, then counted the player's
+-- recent requests for rate limiting, or read the existing request on a retry:
+-- two sequential round trips before every move. This does both in one.
+create or replace function public.claim_game_action_request(
+  p_actor_id uuid,
+  p_request_id uuid,
+  p_action_type text,
+  p_game_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  existing public.game_action_requests;
+  recent_count integer;
+begin
+  insert into public.game_action_requests (actor_id, request_id, action_type, game_id)
+  values (p_actor_id, p_request_id, p_action_type, p_game_id)
+  on conflict (actor_id, request_id) do nothing;
+
+  if found then
+    select count(*) into recent_count
+    from public.game_action_requests
+    where actor_id = p_actor_id
+      and created_at >= now() - interval '60 seconds';
+    return jsonb_build_object('claimed', true, 'recent_count', recent_count);
+  end if;
+
+  select * into strict existing
+  from public.game_action_requests
+  where actor_id = p_actor_id and request_id = p_request_id;
+  return jsonb_build_object('claimed', false, 'request', to_jsonb(existing));
+end;
+$$;
+
+revoke all on function public.claim_game_action_request(uuid, uuid, text, uuid) from public, anon, authenticated;
+grant execute on function public.claim_game_action_request(uuid, uuid, text, uuid) to service_role;
 -- Every active-turn action uses the same version check and transaction.
 create or replace function public.commit_game_mutation(
   target_game_id uuid,
@@ -1718,7 +1940,7 @@ declare
   win_streak integer;
   losses integer;
   quits integer;
-  rage_quit boolean;
+  forfeited boolean;
   first_roll timestamptz;
   rating_gap numeric;
 begin
@@ -1735,7 +1957,8 @@ begin
   -- Creates and locks both standings rows.
   perform public.rate_completed_game(target_game_id);
 
-  rage_quit := exists(select 1 from public.rage_quits quit where quit.game_id = target_game_id);
+  forfeited := exists(select 1 from public.rage_quits quit where quit.game_id = target_game_id)
+    or exists(select 1 from public.timeout_forfeits timeout where timeout.game_id = target_game_id);
   select min(action.created_at) into first_roll
   from public.turn_actions action
   where action.game_id = target_game_id and action.action_type = 'roll';
@@ -1818,10 +2041,10 @@ begin
     -- Defeats: a loss means the opponent won; ties are neither.
     player_lost := case when result.player_id = (results[1]).player_id then (results[2]).won else (results[1]).won end;
 
-    -- Per-game feats that need ratings or timing. A Rage Quit awards none.
+    -- Per-game feats that need ratings or timing. A forfeit awards none.
     -- Rating gaps use the shown ratings before the game, once both players
     -- have 5 earlier games, so new players' settling ratings never count.
-    if not rage_quit then
+    if not forfeited then
       if player_games >= 6 and opponent_games >= 6 then
         select opponent.rating_before - own.rating_before into rating_gap
         from public.game_player_results own
@@ -1954,12 +2177,14 @@ begin
     from public.game_player_results r
     where board = 'weekly_high_score' and r.completed_at >= week_start
       and not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id)
+      and not exists (select 1 from public.timeout_forfeits timeout where timeout.game_id = r.game_id)
     group by r.player_id
     union all
     select r.player_id, max(r.final_score)::numeric, count(*)::integer
     from public.game_player_results r
     where board = 'all_time_high_score'
       and not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id)
+      and not exists (select 1 from public.timeout_forfeits timeout where timeout.game_id = r.game_id)
     group by r.player_id
     union all
     select r.player_id,
@@ -1968,6 +2193,7 @@ begin
     from public.game_player_results r
     where board = 'sharpshooter'
       and not exists (select 1 from public.rage_quits quit where quit.game_id = r.game_id)
+      and not exists (select 1 from public.timeout_forfeits timeout where timeout.game_id = r.game_id)
     group by r.player_id
     having sum(r.sucker_punches_used) >= 10
     union all
@@ -2307,3 +2533,145 @@ $$;
 
 revoke all on function public.claim_web_push_subscription(text, text, text, timestamptz, text) from public, anon;
 grant execute on function public.claim_web_push_subscription(text, text, text, timestamptz, text) to authenticated;
+
+-- game_action_requests keeps each action's full response so a retried request
+-- returns the same result. Clients give up on a pending action after five
+-- minutes, so week-old rows are never read again; they made up nearly all of
+-- the table's 147 MB. Delete them in batches every hour.
+create extension if not exists pg_cron with schema pg_catalog;
+
+create or replace function public.delete_old_game_action_requests(max_rows integer default 20000)
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  deleted integer;
+begin
+  delete from public.game_action_requests
+  where ctid in (
+    select ctid
+    from public.game_action_requests
+    where created_at < now() - interval '7 days'
+      and status = 'completed'
+    limit max_rows
+  );
+  get diagnostics deleted = row_count;
+  return deleted;
+end;
+$$;
+
+revoke all on function public.delete_old_game_action_requests(integer) from public, anon, authenticated;
+grant execute on function public.delete_old_game_action_requests(integer) to service_role;
+
+select cron.schedule(
+  'delete-old-game-action-requests',
+  '17 * * * *',
+  $$select public.delete_old_game_action_requests()$$
+);
+
+-- Claims the most urgent forfeit warning now due on each unfinished turn,
+-- unless it or a more urgent one was already sent this turn. game-action passes
+-- the shared timeout constants. Overlapping sweeps cannot both claim one.
+create or replace function public.claim_turn_timeout_warnings(
+  p_timeout_days integer,
+  p_warning_days integer[],
+  p_limit integer default 100
+)
+returns table (game_id uuid, player_id uuid, days_left integer)
+language sql
+security definer
+set search_path = ''
+as $$
+  with due as (
+    select
+      game.id,
+      game.current_player_id,
+      game.turn_started_at,
+      (
+        select min(warning.days)
+        from unnest(p_warning_days) warning(days)
+        where game.turn_started_at <= now() - make_interval(days => p_timeout_days - warning.days)
+      ) as days_left
+    from public.games game
+    where game.status in ('active', 'response_window')
+      and game.current_player_id is not null
+      and game.turn_started_at > now() - make_interval(days => p_timeout_days)
+      and game.turn_started_at <= now() - make_interval(
+        days => p_timeout_days - (select max(warning.days) from unnest(p_warning_days) warning(days))
+      )
+  ),
+  claimed as (
+    insert into public.turn_timeout_warnings (game_id, turn_started_at, days_left)
+    select due.id, due.turn_started_at, due.days_left
+    from due
+    where due.days_left is not null
+      and not exists (
+        select 1
+        from public.turn_timeout_warnings sent
+        where sent.game_id = due.id
+          and sent.turn_started_at = due.turn_started_at
+          and sent.days_left <= due.days_left
+      )
+    order by due.turn_started_at
+    limit greatest(coalesce(p_limit, 100), 1)
+    on conflict do nothing
+    returning turn_timeout_warnings.game_id, turn_timeout_warnings.days_left
+  )
+  select claimed.game_id, due.current_player_id, claimed.days_left
+  from claimed
+  join due on due.id = claimed.game_id;
+$$;
+
+revoke all on function public.claim_turn_timeout_warnings(integer, integer[], integer) from public, anon, authenticated;
+grant execute on function public.claim_turn_timeout_warnings(integer, integer[], integer) to service_role;
+
+-- A turn left unfinished for 30 days forfeits the game. Every hour, ask
+-- game-action to send due warnings and forfeit expired turns: stats, ratings,
+-- and pushes live in the Edge Function, so the database only schedules it.
+-- Vault holds the project URL, a key the Functions gateway accepts (anon_key),
+-- and the sweep secret game-action checks. Without all three the job is a no-op.
+create extension if not exists pg_net with schema extensions;
+
+create or replace function public.request_inactive_game_sweep()
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  project_url text;
+  gateway_key text;
+  sweep_secret text;
+begin
+  select secret.decrypted_secret into project_url from vault.decrypted_secrets secret where secret.name = 'project_url';
+  select secret.decrypted_secret into gateway_key from vault.decrypted_secrets secret where secret.name = 'anon_key';
+  select secret.decrypted_secret into sweep_secret
+  from vault.decrypted_secrets secret where secret.name = 'inactivity_sweep_secret';
+  if project_url is null or gateway_key is null or sweep_secret is null then
+    return null;
+  end if;
+
+  return net.http_post(
+    url := rtrim(project_url, '/') || '/functions/v1/game-action',
+    body := jsonb_build_object('type', 'expire_inactive_games'),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || gateway_key,
+      'apikey', gateway_key,
+      'x-inactivity-sweep-secret', sweep_secret
+    ),
+    timeout_milliseconds := 120000
+  );
+end;
+$$;
+
+revoke all on function public.request_inactive_game_sweep() from public, anon, authenticated;
+grant execute on function public.request_inactive_game_sweep() to service_role;
+
+select cron.schedule(
+  'expire-inactive-games',
+  '43 * * * *',
+  $$select public.request_inactive_game_sweep()$$
+);

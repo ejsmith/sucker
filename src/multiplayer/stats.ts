@@ -1,6 +1,7 @@
 import type { Scorecard } from '../game';
 import type { Database } from '../../shared/database.types';
 import { getSafeAvatarUrl } from './profiles';
+import { getCurrentSession } from './auth';
 import { supabase } from './supabase';
 
 export type ProfileStats = Database['public']['Functions']['get_profile_stat_rates']['Returns'][number];
@@ -12,6 +13,7 @@ export type ProfileRecentGame = {
   opponent: ProfileRecentGamePlayer;
   player: ProfileRecentGamePlayer;
   rageQuitterId: string | null;
+  timedOutPlayerId: string | null;
   winnerId: string | null;
 };
 
@@ -33,14 +35,9 @@ export type AllTimeOpponentRecord = {
 };
 
 export async function getHeadToHeadStats(opponentProfileId: string) {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    throw userError;
-  }
+  // The stored session is enough: RLS checks the token on the server. getUser
+  // would add an Auth server round trip to every lobby refresh.
+  const user = (await getCurrentSession())?.user;
   if (!user) {
     throw new Error('You must be signed in to view stats.');
   }
@@ -97,6 +94,7 @@ function toProfileRecentGame(row: ProfileRecentGameRow): ProfileRecentGame {
     opponent: toProfileRecentGamePlayer(row, 'opponent'),
     player: toProfileRecentGamePlayer(row, 'player'),
     rageQuitterId: row.rage_quitter_id ?? null,
+    timedOutPlayerId: row.timed_out_player_id ?? null,
     winnerId: row.winner_id ?? null,
   };
 }
@@ -115,14 +113,9 @@ function toProfileRecentGamePlayer(row: ProfileRecentGameRow, side: 'opponent' |
 }
 
 export async function getAllTimeOpponentRecord(): Promise<AllTimeOpponentRecord> {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    throw userError;
-  }
+  // The stored session is enough: RLS checks the token on the server. getUser
+  // would add an Auth server round trip to every lobby refresh.
+  const user = (await getCurrentSession())?.user;
   if (!user) {
     throw new Error('You must be signed in to view stats.');
   }

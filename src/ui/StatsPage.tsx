@@ -493,13 +493,16 @@ function PlayerStatsPage({
     setPage('games');
     setIsLoading(true);
     setMessage(null);
-    try {
-      setGames(await getProfileRecentGames(visibleProfile.id));
-    } catch (historyError) {
-      setMessage(reportErrorMessage(historyError, 'Unable to load completed games.'));
-    } finally {
-      setIsLoading(false);
-    }
+    await getProfileRecentGames(visibleProfile.id).then(
+      (recentGames) => {
+        setIsLoading(false);
+        setGames(recentGames);
+      },
+      (historyError: unknown) => {
+        setIsLoading(false);
+        setMessage(reportErrorMessage(historyError, 'Unable to load completed games.'));
+      },
+    );
   }
 
   async function openPlayer(player: ProfileRecentGamePlayer) {
@@ -508,22 +511,27 @@ function PlayerStatsPage({
 
     setIsLoading(true);
     setMessage(null);
-    try {
-      const nextProfile = await loadPlayerStatsProfile(player.id, currentUserProfileId, player);
-      setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame }]);
-      setActiveProfile(nextProfile);
-      setGames([]);
-      setSelectedGame(null);
-      setPage('stats');
-      setSection('stats');
-    } catch (profileError) {
-      setMessage(reportErrorMessage(profileError, 'Unable to load player stats.'));
-    } finally {
+    const finishNavigation = () => {
       setIsLoading(false);
       requestAnimationFrame(() => {
         playerNavigationPendingRef.current = false;
       });
-    }
+    };
+    await loadPlayerStatsProfile(player.id, currentUserProfileId, player).then(
+      (nextProfile) => {
+        finishNavigation();
+        setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame }]);
+        setActiveProfile(nextProfile);
+        setGames([]);
+        setSelectedGame(null);
+        setPage('stats');
+        setSection('stats');
+      },
+      (profileError: unknown) => {
+        finishNavigation();
+        setMessage(reportErrorMessage(profileError, 'Unable to load player stats.'));
+      },
+    );
   }
 
   const goBack = useCallback(() => {
@@ -561,13 +569,13 @@ function PlayerStatsPage({
     if (!onStartGameAgainst) return;
     setIsLoading(true);
     setMessage(null);
-    try {
-      await onStartGameAgainst(visibleProfile.id);
-    } catch (startError) {
-      setMessage(reportErrorMessage(startError, 'Unable to start the game.'));
-    } finally {
-      setIsLoading(false);
-    }
+    await onStartGameAgainst(visibleProfile.id).then(
+      () => setIsLoading(false),
+      (startError: unknown) => {
+        setIsLoading(false);
+        setMessage(reportErrorMessage(startError, 'Unable to start the game.'));
+      },
+    );
   }
 
   const title = page === 'detail' ? 'Game Card' : 'Player Profile';
@@ -1158,7 +1166,7 @@ function PlayerGameHistory({
             const resultTone =
               result === 'Won' || result === 'Won by forfeit'
                 ? 'win'
-                : result === 'Lost' || result === 'Rage quit'
+                : result === 'Lost' || result === 'Rage quit' || result === 'Ran out of time'
                   ? 'loss'
                   : 'tie';
             const resultLabel = getPlayerGameResultLabel(result, isCurrentUser);
@@ -1402,6 +1410,7 @@ function GameScoreRow({
 function getPlayerGameResult(game: ProfileRecentGame) {
   // Rage quits are public record, whatever the partial scores say.
   if (game.rageQuitterId) return game.rageQuitterId === game.player.id ? 'Rage quit' : 'Won by forfeit';
+  if (game.timedOutPlayerId) return game.timedOutPlayerId === game.player.id ? 'Ran out of time' : 'Won by forfeit';
   if (game.winnerId) return game.winnerId === game.player.id ? 'Won' : 'Lost';
   if (game.player.score === game.opponent.score) return 'Tied';
   return game.player.score > game.opponent.score ? 'Won' : 'Lost';

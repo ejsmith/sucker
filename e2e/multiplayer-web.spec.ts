@@ -60,11 +60,13 @@ test('a real Realtime update reaches the board while fallback timers are paused'
   });
   try {
     // Let the lobby establish its connection first, exercising socket reuse on entry.
-    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
+    await expect
+      .poll(() => frames.some((frame) => frame.includes(`player:${alice.id}`) && frame.includes('phx_reply')))
+      .toBe(true);
     await page.clock.install();
     await openGameFromLobby(page, game.id);
     await expect
-      .poll(() => frames.some((frame) => frame.includes(`game:${game.id}`) && frame.includes('postgres_changes')))
+      .poll(() => frames.some((frame) => frame.includes(`game:${game.id}`) && frame.includes('phx_reply')))
       .toBe(true);
     // Freeze timers after subscription so polling cannot supply this update.
     // Real HTTP and WebSocket events still run.
@@ -74,7 +76,8 @@ test('a real Realtime update reaches the board while fallback timers are paused'
     game.state.players[0].suckerTokens = 6;
     assertNoError((await admin.from('games').update({ state: game.state }).eq('id', game.id)).error);
     await expect(page.getByTestId('token-menu-button')).toHaveText('6');
-    await expect.poll(() => frames.some((frame) => frame.includes('postgres_changes'))).toBe(true);
+    // Broadcasts arrive as binary frames, so match the game topic they carry.
+    await expect.poll(() => frames.some((frame) => frame.includes(`game:${game.id}`))).toBe(true);
   } finally {
     await page.context().close();
   }
@@ -106,9 +109,13 @@ test('Jab keeps cards stable and other eligible buttons visible while sending', 
     const games = await response.json();
     await route.fulfill({
       response,
-      json: games.map((row: { id: string; updated_at: string }) =>
+      json: games.map((row: { id: string; turn_started_at: string; updated_at: string }) =>
         [game.id, otherGame.id, differentOpponentGame.id].includes(row.id)
-          ? { ...row, updated_at: new Date(Date.parse(row.updated_at) - 2 * 60 * 60 * 1_000).toISOString() }
+          ? {
+              ...row,
+              turn_started_at: new Date(Date.parse(row.turn_started_at) - 2 * 60 * 60 * 1_000).toISOString(),
+              updated_at: new Date(Date.parse(row.updated_at) - 2 * 60 * 60 * 1_000).toISOString(),
+            }
           : row,
       ),
     });

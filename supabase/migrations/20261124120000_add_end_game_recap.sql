@@ -23,6 +23,7 @@ add constraint turn_actions_action_type_check check (
     'taunt',
     'rage_quit',
     'rage_quit_reply',
+    'turn_timeout',
     'parting_shot'
   )
 );

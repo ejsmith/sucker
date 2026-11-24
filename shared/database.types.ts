@@ -91,6 +91,8 @@ export type Database = {
           rematch_of_game_id: string | null;
           state: Json;
           status: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
+          // When the current player's turn began. Only a turn change resets it.
+          turn_started_at: string;
           updated_at: string;
           winner_id: string | null;
         };
@@ -110,6 +112,7 @@ export type Database = {
           rematch_of_game_id?: string | null;
           state?: Json;
           status?: 'inviting' | 'active' | 'response_window' | 'blocked_response' | 'complete';
+          turn_started_at?: string;
           updated_at?: string;
           winner_id?: string | null;
         };
@@ -155,6 +158,7 @@ export type Database = {
           id: string;
           player_id: string;
           roll_count: number;
+          rolled_sucker: boolean;
           score: number;
           status: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
           turn_index: number;
@@ -168,6 +172,7 @@ export type Database = {
           id?: string;
           player_id: string;
           roll_count: number;
+          rolled_sucker?: boolean;
           score: number;
           status?: 'submitted' | 'punched' | 'blocked' | 'mulliganed' | 'finalized';
           turn_index: number;
@@ -196,6 +201,7 @@ export type Database = {
             | 'taunt'
             | 'rage_quit'
             | 'rage_quit_reply'
+            | 'turn_timeout'
             | 'parting_shot';
           actor_id: string;
           created_at: string;
@@ -222,6 +228,7 @@ export type Database = {
             | 'taunt'
             | 'rage_quit'
             | 'rage_quit_reply'
+            | 'turn_timeout'
             | 'parting_shot';
           actor_id: string;
           game_id: string;
@@ -571,9 +578,32 @@ export type Database = {
         Insert: { created_at?: string; game_id: string; player_id: string };
         Update: never;
       };
+      timeout_forfeits: {
+        Row: { created_at: string; game_id: string; player_id: string };
+        Insert: { created_at?: string; game_id: string; player_id: string };
+        Update: never;
+      };
+      turn_timeout_warnings: {
+        Row: { days_left: number; game_id: string; sent_at: string; turn_started_at: string };
+        Insert: { days_left: number; game_id: string; sent_at?: string; turn_started_at: string };
+        Update: never;
+      };
     };
     Views: Record<string, never>;
     Functions: {
+      claim_game_action_request: {
+        Args: {
+          p_actor_id: string;
+          p_request_id: string;
+          p_action_type: string;
+          p_game_id: string | null;
+        };
+        Returns: Json;
+      };
+      claim_turn_timeout_warnings: {
+        Args: { p_limit?: number; p_timeout_days: number; p_warning_days: number[] };
+        Returns: { days_left: number; game_id: string; player_id: string }[];
+      };
       commit_game_move: {
         Args: {
           p_actor_id: string;
@@ -629,6 +659,7 @@ export type Database = {
           player_sucker_tokens: number;
           player_sucker_tokens_spent: number;
           rage_quitter_id: string | null;
+          timed_out_player_id: string | null;
           winner_id: string | null;
         }[];
       };
@@ -744,6 +775,10 @@ export type Database = {
         };
         Returns: Database['public']['Tables']['web_push_subscriptions']['Row'];
       };
+      delete_old_game_action_requests: {
+        Args: { max_rows?: number };
+        Returns: number;
+      };
       get_unseen_game_results: {
         Args: Record<PropertyKey, never>;
         Returns: { game_id: string }[];
@@ -751,6 +786,10 @@ export type Database = {
       mark_game_result_seen: {
         Args: { target_game_id: string; seen_updated_at: string };
         Returns: undefined;
+      };
+      my_visible_game_ids: {
+        Args: Record<PropertyKey, never>;
+        Returns: string[];
       };
       record_computer_game_result_once: {
         Args: { p_owner_id: string; p_game_id: string; p_result: Json };

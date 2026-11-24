@@ -34,6 +34,7 @@ type ActionType =
   | 'taunt'
   | 'rage_quit'
   | 'rage_quit_reply'
+  | 'turn_timeout'
   | 'parting_shot';
 
 type TurnActionTable = {

@@ -1,5 +1,11 @@
 import { createGame, getWinnerId, rageQuitGame, toGameState, type GameState } from './game.ts';
-import { getRageQuitReplyText, isRageQuitReplyId, isSaltyAt, rageQuitReplies, rageQuitSaltDurationMs } from './rageQuit.ts';
+import {
+  getRageQuitReplyText,
+  isRageQuitReplyId,
+  isSaltyAt,
+  rageQuitReplies,
+  rageQuitSaltDurationMs,
+} from './rageQuit.ts';
 
 function leadingGame(): GameState {
   const game = createGame(['Quitter', 'Stayer']);

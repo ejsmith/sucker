@@ -16,7 +16,7 @@ const {
 
 const root = path.resolve(__dirname, '..');
 
-function finishedGame({ alice = 50, bob = 20, partingShots, rageQuit } = {}) {
+function finishedGame({ alice = 50, bob = 20, partingShots, rageQuit, timedOut } = {}) {
   const game = createGame(['Alice', 'Bob']);
   const players = game.players.map((player, index) => ({
     ...player,
@@ -29,6 +29,7 @@ function finishedGame({ alice = 50, bob = 20, partingShots, rageQuit } = {}) {
     players,
     ...(partingShots ? { partingShots } : {}),
     ...(rageQuit ? { rageQuit } : {}),
+    ...(timedOut ? { timedOut } : {}),
   };
 }
 
@@ -114,8 +115,11 @@ test('each player gets one last word, whatever the other player does', () => {
   assert.equal(getPartingShotPool(both, 'bob'), null);
 });
 
-test('Rage Quit games keep their single reply instead of parting shots', () => {
+test('forfeits get no parting shots: Rage Quit keeps its single reply, and timeouts get nothing', () => {
   const quit = finishedGame({ rageQuit: { playerId: 'bob' } });
   assert.equal(getPartingShotPool(quit, 'alice'), null);
   assert.equal(getPartingShotHand(quit, 'bob'), null);
+  const timedOut = finishedGame({ timedOut: { playerId: 'alice' } });
+  assert.equal(getPartingShotPool(timedOut, 'alice'), null);
+  assert.equal(getPartingShotPool(timedOut, 'bob'), null);
 });

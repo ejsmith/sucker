@@ -21,6 +21,7 @@ import {
 import { listPendingMultiplayerActions, recoverPendingMultiplayerActions } from '../multiplayer/games';
 import { isTemporarySessionError } from '../multiplayer/sessionRecovery';
 import { reportError } from '../monitoring/exceptionless';
+import { runWithCleanup } from '../ui/runWithCleanup';
 import { actionRequestStatus } from './actionRequestStatus';
 
 type NetworkContextValue = {
@@ -43,6 +44,37 @@ const NetworkContext = createContext<NetworkContextValue>({
 
 const recoveryRetryDelaysMs = [5_000, 15_000, 45_000];
 
+async function loadStoredPendingActions() {
+  // Reading local pending actions must not require an online token refresh.
+  const session = await getStoredSessionSnapshot();
+  return session ? listPendingMultiplayerActions(session.user.id) : [];
+}
+
+type RecoveryPass = { kind: 'signed-out' } | { kind: 'reported' } | { kind: 'finished'; failure: unknown };
+
+async function runRecoveryPass(
+  onStart: () => void,
+  onPending: (pending: ActionRequest[], recovered: RecoveredMultiplayerAction[]) => void,
+): Promise<RecoveryPass> {
+  try {
+    const session = await getCurrentSession();
+    if (!session) {
+      return { kind: 'signed-out' };
+    }
+    onStart();
+    const { recovered, retryableError } = await recoverPendingMultiplayerActions(session.user.id);
+    const pending = await listPendingMultiplayerActions(session.user.id);
+    onPending(pending, recovered);
+    return { kind: 'finished', failure: pending.length > 0 ? retryableError : null };
+  } catch (error) {
+    if (!isTemporarySessionError(error)) {
+      await reportError(error, { Operation: 'RecoverPendingMultiplayerActions' });
+      return { kind: 'reported' };
+    }
+    return { kind: 'finished', failure: error };
+  }
+}
+
 export function NetworkProvider({ children }: { children: ReactNode }) {
   const [networkState, setNetworkState] = useState<NetInfoState | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
@@ -55,50 +87,48 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const isOffline = networkState?.isConnected === false || networkState?.isInternetReachable === false;
 
   const loadPending = useCallback(async () => {
-    try {
-      // Reading local pending actions must not require an online token refresh.
-      const session = await getStoredSessionSnapshot();
-      const pending = session ? await listPendingMultiplayerActions(session.user.id) : [];
-      if (isMounted.current) setPendingActions(pending);
-    } catch (error) {
-      void reportError(error, { Operation: 'LoadPendingMultiplayerActions' });
-    }
+    await loadStoredPendingActions().then(
+      (pending) => {
+        if (isMounted.current) setPendingActions(pending);
+      },
+      (error: unknown) => {
+        void reportError(error, { Operation: 'LoadPendingMultiplayerActions' });
+      },
+    );
   }, []);
 
   const runRecovery = useCallback(async () => {
     clearTimeout(recoveryRetry.current.timer);
-    let failure: unknown = null;
-    try {
-      const session = await getCurrentSession();
-      if (!session) {
-        recoveryRetry.current.attempt = 0;
+    const pass = await runWithCleanup(
+      () =>
+        runRecoveryPass(
+          () => setIsRecovering(true),
+          (pending, recovered) => {
+            if (!isMounted.current) return;
+            setPendingActions(pending);
+            if (recovered.length > 0) {
+              setRecoveredActions((current) => mergeRecoveredActions(current, recovered));
+            }
+          },
+        ),
+      () => {
         if (isMounted.current) {
-          setPendingActions([]);
+          setIsRecovering(false);
         }
-        return;
-      }
-      setIsRecovering(true);
-      const { recovered, retryableError } = await recoverPendingMultiplayerActions(session.user.id);
-      const pending = await listPendingMultiplayerActions(session.user.id);
+      },
+    );
+    if (pass.kind === 'signed-out') {
+      recoveryRetry.current.attempt = 0;
       if (isMounted.current) {
-        setPendingActions(pending);
-        if (recovered.length > 0) {
-          setRecoveredActions((current) => mergeRecoveredActions(current, recovered));
-        }
+        setPendingActions([]);
       }
-      failure = pending.length > 0 ? retryableError : null;
-    } catch (error) {
-      if (!isTemporarySessionError(error)) {
-        recoveryRetry.current.attempt = 0;
-        await reportError(error, { Operation: 'RecoverPendingMultiplayerActions' });
-        return;
-      }
-      failure = error;
-    } finally {
-      if (isMounted.current) {
-        setIsRecovering(false);
-      }
+      return;
     }
+    if (pass.kind === 'reported') {
+      recoveryRetry.current.attempt = 0;
+      return;
+    }
+    const failure = pass.failure;
 
     if (failure === null) {
       recoveryRetry.current.attempt = 0;
@@ -123,9 +153,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   // App resume and connectivity changes often both trigger recovery. Share one
   // pass so they don't consume two retry attempts or orphan a retry timer.
   const recover = useCallback(() => {
-    recoveryInFlight.current ??= runRecovery().finally(() => {
-      recoveryInFlight.current = null;
-    });
+    if (!recoveryInFlight.current) {
+      recoveryInFlight.current = runRecovery().finally(() => {
+        recoveryInFlight.current = null;
+      });
+    }
     return recoveryInFlight.current;
   }, [runRecovery]);
 

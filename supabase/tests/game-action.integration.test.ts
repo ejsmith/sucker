@@ -29,6 +29,7 @@ const supabaseUrl = requireEnv('SUPABASE_URL');
 const anonKey = requireEnv('SUPABASE_ANON_KEY');
 const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const functionUrl = `${supabaseUrl}/functions/v1/game-action`;
+const sweepSecret = requireEnv('INACTIVITY_SWEEP_SECRET');
 const admin = createClient<Database>(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -152,6 +153,20 @@ Deno.test('game-action invite flow enforces auth, RLS, and turn ownership', asyn
     charlie.client.from('games').select('id').eq('id', game.id).maybeSingle(),
   );
   assertEquals(hiddenFromCharlie, null);
+
+  const alicePlayers = await selectMany(alice.client.from('game_players').select('game_id').eq('game_id', game.id));
+  assertEquals(alicePlayers.length, 2);
+  const aliceActions = await selectMany(alice.client.from('turn_actions').select('game_id').eq('game_id', game.id));
+  assertEquals(aliceActions.length > 0, true);
+  for (const table of ['game_players', 'turns', 'turn_actions', 'token_events'] as const) {
+    assertEquals(
+      await selectMany<{ game_id: string }>(charlie.client.from(table).select('game_id').eq('game_id', game.id)),
+      [],
+    );
+  }
+  const aliceGameIds = await selectMany<string>(alice.client.rpc('my_visible_game_ids'));
+  assertEquals(aliceGameIds.includes(game.id), true);
+  assertEquals((await selectMany<string>(charlie.client.rpc('my_visible_game_ids'))).includes(game.id), false);
 
   const players = await selectMany<GamePlayerTokenRow>(
     admin.from('game_players').select('player_id, sucker_tokens').eq('game_id', game.id).order('seat_index'),
@@ -529,6 +544,26 @@ Deno.test('concurrent first matchup completions accumulate both games atomically
     replayed.every((row) => row.games_played === 2),
     true,
   );
+});
+
+Deno.test('week-old completed action requests are deleted and recent ones kept', async () => {
+  const [alice] = await createUsers('expire-requests', ['Alice']);
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = [
+    { created_at: eightDaysAgo, status: 'completed' as const },
+    { created_at: eightDaysAgo, status: 'processing' as const },
+    { created_at: new Date().toISOString(), status: 'completed' as const },
+  ].map((row) => ({ ...row, action_type: 'roll', actor_id: alice.id, request_id: crypto.randomUUID() }));
+  assertNoError((await admin.from('game_action_requests').insert(rows)).error);
+
+  const { data: deleted, error } = await admin.rpc('delete_old_game_action_requests');
+  assertNoError(error);
+  assertEquals((deleted ?? 0) >= 1, true);
+
+  const remaining = await selectMany<{ request_id: string }>(
+    admin.from('game_action_requests').select('request_id').eq('actor_id', alice.id),
+  );
+  assertEquals(remaining.map((row) => row.request_id).sort(), [rows[1].request_id, rows[2].request_id].sort());
 });
 
 Deno.test('game-action request ids prevent replayed mutations and remain private', async () => {
@@ -1807,13 +1842,21 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
           [
             'anything_you_can_do',
             'back_to_back',
+            'cant_stop',
+            'five_alarm_fire',
             'four_score',
             'hat_trick',
             'high_five',
             'natural',
+            'on_a_roll',
             'scratch_fever',
             'seeing_double',
             'six_pack',
+            'sucker_spree_3',
+            'sucker_spree_4',
+            'sucker_spree_5',
+            'sucker_spree_6',
+            'three_peat',
           ],
         );
       }
@@ -1889,10 +1932,12 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   // Every category was scratched, including the game-ending move, so both earn
   // Scratch Fever. The 0-0 tie is a Dead Heat and Double Digits, and the
   // database awards Blitz because the game finished within an hour of its first roll.
+  // Thirteen straight Sucker turns reach the top streak tiers, in this game and
+  // across each player's games.
   const completionFeats = await selectMany<{ feat_key: string; player_id: string }>(
     admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
   );
-  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz']) {
+  for (const featKey of ['scratch_fever', 'dead_heat', 'double_digits', 'blitz', 'perfect_ten', 'sucker_spree_10']) {
     assertEquals(
       {
         earned: [alice.id, bob.id].every((id) =>
@@ -2079,6 +2124,52 @@ Deno.test('parting shots allow one last word each, and recaps stay private', asy
   }
   const shotActions = (await loadActions(gameId)).filter((action) => action.action_type === 'parting_shot');
   assertEquals(shotActions.length, 2);
+});
+
+Deno.test("Sucker Spree counts Sucker turns in a row across all of a player's games", async () => {
+  const [alice, bob] = await createUsers('sucker-spree', ['Alice', 'Bob']);
+  const first = ((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow)
+    .id;
+  const second = ((await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow)
+    .id;
+
+  // The fixed test die rolls a Sucker on every turn that rolls.
+  await scratchAndPass(first, alice, bob, 'ones');
+  await scratchAndPass(first, bob, alice, 'ones');
+  await scratchAndPass(first, alice, bob, 'twos');
+  await scratchAndPass(first, bob, alice, 'twos');
+  // Each player's third Sucker turn in a row lands in the other game.
+  await scratchAndPass(second, alice, bob, 'ones');
+  await scratchAndPass(second, bob, alice, 'ones');
+  // A Sucker Deal without rolling breaks Alice's streak; Bob's fourth goes on.
+  await invokeGameAction(alice, { category: 'threes', gameId: first, type: 'scratch_category' });
+  await invokeGameAction(bob, { gameId: first, type: 'pass_response' });
+  await scratchAndPass(first, bob, alice, 'threes');
+  await scratchAndPass(second, alice, bob, 'twos');
+
+  const spreeFeats = await selectMany<{ feat_key: string; game_id: string; player_id: string }>(
+    admin
+      .from('player_feats')
+      .select('feat_key, game_id, player_id')
+      .in('game_id', [first, second])
+      .like('feat_key', 'sucker_spree_%'),
+  );
+  const earned = (player: TestUser) =>
+    spreeFeats
+      .filter((feat) => feat.player_id === player.id)
+      .map((feat) => `${feat.game_id === first ? 'first' : 'second'}:${feat.feat_key}`)
+      .sort()
+      .join(', ');
+  assertEquals(earned(alice), 'second:sucker_spree_3');
+  assertEquals(earned(bob), 'first:sucker_spree_4, second:sucker_spree_3');
+
+  const turns = await selectMany<TurnRow>(
+    admin.from('turns').select('*').eq('game_id', first).eq('player_id', alice.id).order('turn_index'),
+  );
+  assertEquals(
+    turns.map((turn) => turn.rolled_sucker),
+    [true, true, false],
+  );
 });
 
 Deno.test('game-action creates one rematch and alternates the first player', async () => {
@@ -2359,6 +2450,293 @@ Deno.test('rage quit forfeits to the opponent, publicly salts the quitter, and s
   assertEquals(Number(finalStats.average_score), 10);
 });
 
+Deno.test(
+  'a turn left for 30 days forfeits, even when hidden, and counts like a rage quit without being one',
+  async () => {
+    const [alice, bob, charlie] = await createUsers('turn-timeout', ['Alice', 'Bob', 'Charlie']);
+    // Two earlier played-out games: 30 points total, high 20, one section bonus each.
+    for (const [player, opponent] of [
+      [alice, bob],
+      [bob, alice],
+    ]) {
+      assertNoError(
+        (
+          await admin.from('head_to_head_stats').insert({
+            average_score: 15,
+            games_played: 2,
+            highest_score: 20,
+            losses: 1,
+            opponent_id: opponent.id,
+            player_id: player.id,
+            total_score: 30,
+            upper_bonus_games: 1,
+            wins: 1,
+          })
+        ).error,
+      );
+    }
+    const created = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    const gameId = created.id;
+    assertEquals(created.current_player_id, alice.id);
+    // Alice leads, so only the forfeit can make Bob the winner.
+    const leadingState: GameState = {
+      ...created.state,
+      players: created.state.players.map((player) =>
+        player.id === alice.id ? { ...player, scorecard: { ...player.scorecard, chance: 30 } } : player,
+      ),
+    };
+    assertNoError((await admin.from('games').update({ state: leadingState }).eq('id', gameId)).error);
+
+    // Rolling mid-turn does not restart the clock.
+    const startedAt = (await loadGameRow(gameId)).turn_started_at;
+    const rolled = (await invokeGameAction(alice, { gameId, held: falseHeld, type: 'roll' })).game as GameRow;
+    assertEquals(rolled.turn_started_at, startedAt);
+
+    // Hiding the game does not stop the clock either.
+    await invokeGameAction(alice, { gameId, type: 'remove_game' });
+    await setTurnStartedAt(gameId, daysAgo(29.9));
+    assertEquals((await runInactivitySweep()).forfeited.includes(gameId), false);
+
+    assertEquals((await runInactivitySweep('wrong-secret', 401)).error, 'Unauthorized');
+    assertEquals((await runInactivitySweep(null, 401)).error, 'Unauthorized');
+    // A player cannot send the server's action.
+    const forgedTimeout = await invokeGameAction(bob, { gameId, type: 'turn_timeout' }, 400);
+    assertEquals(forgedTimeout.error, 'Invalid multiplayer action.');
+
+    // Feats earned before the timeout stand; the forfeit adds none.
+    const featsBeforeTimeout = await loadGameFeats(gameId);
+    await setTurnStartedAt(gameId, daysAgo(30.01));
+    const sweep = await runInactivitySweep();
+    assertEquals(sweep.forfeited.includes(gameId), true);
+    assertEquals((await runInactivitySweep()).forfeited.includes(gameId), false);
+
+    const ended = await loadGameRow(gameId);
+    assertEquals(ended.status, 'complete');
+    assertEquals(ended.winner_id, bob.id);
+    assertEquals(ended.current_player_id, null);
+    assertString(ended.completed_at);
+    assertEquals(ended.state.timedOut, { playerId: alice.id });
+    assertEquals(ended.state.rageQuit, undefined);
+    const players = await selectMany<{ hidden_at: string | null; player_id: string }>(
+      admin.from('game_players').select('hidden_at, player_id').eq('game_id', gameId),
+    );
+    assertString(players.find((player) => player.player_id === alice.id)?.hidden_at);
+
+    const timeouts = await selectMany<{ player_id: string }>(
+      admin.from('timeout_forfeits').select('player_id').eq('game_id', gameId),
+    );
+    assertEquals(timeouts, [{ player_id: alice.id }]);
+    // No salt, and players cannot read or write the record directly.
+    const quits = await selectMany<{ game_id: string }>(
+      admin.from('rage_quits').select('game_id').eq('game_id', gameId),
+    );
+    assertEquals(quits.length, 0);
+    const forged = await charlie.client.from('timeout_forfeits').insert({ game_id: gameId, player_id: bob.id });
+    assertEquals(Boolean(forged.error), true);
+    const actions = await loadActions(gameId);
+    assertEquals(
+      actions.filter((action) => action.action_type === 'turn_timeout').map((action) => action.actor_id),
+      [alice.id],
+    );
+
+    const results = await selectMany<GamePlayerResultRow>(
+      admin.from('game_player_results').select('*').eq('game_id', gameId),
+    );
+    assertEquals(results.find((result) => result.player_id === bob.id)?.won, true);
+    assertEquals(results.find((result) => result.player_id === alice.id)?.won, false);
+    // Ratings and streaks move; no game feats are awarded.
+    assertString(String(results.find((result) => result.player_id === alice.id)?.rating_after ?? ''));
+    const standings = await selectMany<Database['public']['Tables']['player_standings']['Row']>(
+      admin.from('player_standings').select('*').in('player_id', [alice.id, bob.id]),
+    );
+    assertEquals(standings.find((row) => row.player_id === bob.id)?.current_win_streak, 1);
+    assertEquals(standings.find((row) => row.player_id === alice.id)?.current_loss_streak, 1);
+    assertEquals(await loadGameFeats(gameId), featsBeforeTimeout);
+
+    const stats = await selectMany<HeadToHeadStatsRow>(
+      admin.from('head_to_head_stats').select('*').in('player_id', [alice.id, bob.id]),
+    );
+    const aliceStats = stats.find((row) => row.player_id === alice.id);
+    const bobStats = stats.find((row) => row.player_id === bob.id);
+    assertEquals([aliceStats?.games_played, aliceStats?.wins, aliceStats?.losses], [3, 1, 2]);
+    assertEquals([bobStats?.games_played, bobStats?.wins, bobStats?.losses], [3, 2, 1]);
+    assertEquals([aliceStats?.rage_quits, bobStats?.rage_quits], [0, 0]);
+    assertEquals([aliceStats?.rage_quit_games, bobStats?.rage_quit_games], [1, 1]);
+    // Alice's 30-point partial game is not a new high, and no average moves.
+    assertEquals([aliceStats?.highest_score, aliceStats?.total_score, Number(aliceStats?.average_score)], [20, 30, 15]);
+    const { data: aliceProfile, error: aliceProfileError } = await charlie.client.rpc('get_profile_stat_rates', {
+      target_profile_id: alice.id,
+    });
+    assertNoError(aliceProfileError);
+    assertEquals(aliceProfile?.[0]?.rage_quits, 0);
+    assertEquals(Number(aliceProfile?.[0]?.average_score), 15);
+    assertEquals(Number(aliceProfile?.[0]?.upper_bonus_pct), 50);
+
+    const { data: history, error: historyError } = await charlie.client.rpc('get_profile_recent_games', {
+      game_limit: 25,
+      target_profile_id: bob.id,
+    });
+    assertNoError(historyError);
+    const historyGame = history?.find((row) => row.game_id === gameId);
+    assertEquals(
+      [historyGame?.timed_out_player_id, historyGame?.rage_quitter_id, historyGame?.winner_id],
+      [alice.id, null, bob.id],
+    );
+    const insult = await invokeGameAction(bob, { gameId, replyId: 'bye-sucker', type: 'rage_quit_reply' }, 400);
+    assertEquals(insult.error, 'Nobody rage quit this game.');
+  },
+);
+
+Deno.test('forfeit warnings go out once each, and passing the turn restarts the clock', async () => {
+  const [alice, bob] = await createUsers('turn-timeout-warnings', ['Alice', 'Bob']);
+  const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+  const warnedHere = (sweep: InactivitySweep) => sweep.warned.filter((warning) => warning.gameId === game.id);
+
+  await setTurnStartedAt(game.id, daysAgo(22.9));
+  assertEquals(warnedHere(await runInactivitySweep()), []);
+
+  await setTurnStartedAt(game.id, daysAgo(23.1));
+  assertEquals(warnedHere(await runInactivitySweep()), [{ daysLeft: 7, gameId: game.id }]);
+  assertEquals(warnedHere(await runInactivitySweep()), []);
+
+  // A turn first seen with under a day left gets only the urgent warning.
+  await setTurnStartedAt(game.id, daysAgo(29.1));
+  assertEquals(warnedHere(await runInactivitySweep()), [{ daysLeft: 1, gameId: game.id }]);
+  assertEquals(warnedHere(await runInactivitySweep()), []);
+  const sent = await selectMany<{ days_left: number }>(
+    admin.from('turn_timeout_warnings').select('days_left').eq('game_id', game.id).order('sent_at'),
+  );
+  assertEquals(
+    sent.map((warning) => warning.days_left),
+    [7, 1],
+  );
+
+  // Alice's turn passes to Bob, whose clock starts now: no warning, no forfeit.
+  const passed = await scratchAndPass(game.id, alice, bob, 'ones');
+  assertEquals(passed.current_player_id, bob.id);
+  const elapsedMs = Date.now() - new Date(passed.turn_started_at).getTime();
+  assertEquals(elapsedMs >= 0 && elapsedMs < 60_000, true);
+  const sweep = await runInactivitySweep();
+  assertEquals(sweep.forfeited.includes(game.id), false);
+  assertEquals(warnedHere(sweep), []);
+  assertEquals((await loadGameRow(game.id)).status, 'active');
+});
+
+Deno.test('a move racing the forfeit sweep and the forfeit never both commit', async () => {
+  for (let round = 0; round < 3; round += 1) {
+    const [alice, bob] = await createUsers(`turn-timeout-race-${round}`, ['Alice', 'Bob']);
+    const game = (await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' })).game as GameRow;
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+    await setTurnStartedAt(game.id, daysAgo(31));
+
+    const [move, sweep] = await Promise.all([
+      fetchJsonWithRetry(
+        functionUrl,
+        {
+          body: JSON.stringify({
+            category: 'ones',
+            gameId: game.id,
+            held: falseHeld,
+            requestId: crypto.randomUUID(),
+            type: 'scratch_category',
+          }),
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${alice.session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          method: 'POST',
+        },
+        200,
+      ),
+      runInactivitySweep(),
+    ]);
+    const moved = move.status === 200;
+    const forfeited = sweep.forfeited.includes(game.id);
+    assertEquals(moved !== forfeited, true);
+
+    const final = await loadGameRow(game.id);
+    const scratches = (await loadActions(game.id)).filter((action) => action.action_type === 'scratch_category');
+    const timeouts = await selectMany<{ game_id: string }>(
+      admin.from('timeout_forfeits').select('game_id').eq('game_id', game.id),
+    );
+    if (moved) {
+      assertEquals(
+        [final.status, final.current_player_id, scratches.length, timeouts.length],
+        ['response_window', bob.id, 1, 0],
+      );
+    } else {
+      assertEquals([final.status, final.winner_id, scratches.length, timeouts.length], ['complete', bob.id, 0, 1]);
+    }
+  }
+});
+
+Deno.test({
+  name: 'game broadcasts reach only the game’s players',
+  // Realtime sockets stay open until the cleanup test closes every client.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const [alice, bob, charlie] = await createUsers('broadcasts', ['Alice', 'Bob', 'Charlie']);
+    const invite = await invokeGameAction(alice, { type: 'create_invite' });
+    const accepted = await invokeGameAction(bob, { inviteCode: invite.inviteCode, type: 'accept_invite' });
+    const game = accepted.game as GameRow;
+    assertEquals(game.current_player_id, alice.id);
+
+    const aliceGame = await joinBroadcastTopic(alice, `game:${game.id}`);
+    const bobList = await joinBroadcastTopic(bob, `player:${bob.id}`);
+    assertEquals(aliceGame.status, 'SUBSCRIBED');
+    assertEquals(bobList.status, 'SUBSCRIBED');
+    assertEquals((await joinBroadcastTopic(charlie, `game:${game.id}`)).status, 'CHANNEL_ERROR');
+    assertEquals((await joinBroadcastTopic(charlie, `player:${bob.id}`)).status, 'CHANNEL_ERROR');
+
+    await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'roll' });
+
+    const gameEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'game');
+    const broadcastGame = gameEvent.payload.game as GameRow;
+    assertEquals(broadcastGame.id, game.id);
+    assertEquals(broadcastGame.state.rollNumber, 1);
+    const actionEvent = await waitForBroadcast(aliceGame.events, (event) => event.event === 'action');
+    assertEquals((actionEvent.payload.action as { action_type: string }).action_type, 'roll');
+
+    await invokeGameAction(alice, { category: 'ones', gameId: game.id, held: falseHeld, type: 'scratch_category' });
+    const listEvent = await waitForBroadcast(bobList.events, (event) => event.event === 'games_changed');
+    assertEquals(listEvent.payload.game_id, game.id);
+    // A roll doesn't change anything a game list shows, so only the finished
+    // turn reached Bob's list.
+    assertEquals(bobList.events.filter((event) => event.event === 'games_changed').length, 1);
+  },
+});
+
+type BroadcastEvent = { event: string; payload: Record<string, unknown> };
+
+async function joinBroadcastTopic(user: TestUser, topic: string) {
+  const events: BroadcastEvent[] = [];
+  await user.client.realtime.setAuth(user.session.access_token);
+  const channel = user.client
+    .channel(topic, { config: { private: true } })
+    .on('broadcast', { event: '*' }, (message) => events.push({ event: message.event, payload: message.payload }));
+  const status = await new Promise<string>((resolve) => {
+    const timer = setTimeout(() => resolve('TIMED_OUT'), 10_000);
+    channel.subscribe((nextStatus) => {
+      if (nextStatus === 'CLOSED') return;
+      clearTimeout(timer);
+      resolve(nextStatus);
+    });
+  });
+  return { events, status };
+}
+
+async function waitForBroadcast(events: BroadcastEvent[], matches: (event: BroadcastEvent) => boolean) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const event = events.find(matches);
+    if (event) return event;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`No matching broadcast among: ${events.map((event) => event.event).join(', ') || 'none'}`);
+}
+
 Deno.test({
   name: 'cleanup Supabase clients',
   sanitizeOps: false,
@@ -2371,6 +2749,48 @@ Deno.test({
     });
   },
 });
+
+type InactivitySweep = { error?: string; forfeited: string[]; warned: Array<{ daysLeft: number; gameId: string }> };
+
+async function runInactivitySweep(secret: string | null = sweepSecret, expectedStatus = 200) {
+  const { body, status } = await fetchJsonWithRetry(
+    functionUrl,
+    {
+      body: JSON.stringify({ type: 'expire_inactive_games' }),
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        'Content-Type': 'application/json',
+        ...(secret === null ? {} : { 'x-inactivity-sweep-secret': secret }),
+      },
+      method: 'POST',
+    },
+    expectedStatus,
+  );
+  if (status !== expectedStatus) {
+    throw new Error(`Expected inactivity sweep ${expectedStatus}, received ${status}: ${JSON.stringify(body)}`);
+  }
+  return body as unknown as InactivitySweep;
+}
+
+async function loadGameFeats(gameId: string) {
+  const feats = await selectMany<{ feat_key: string; player_id: string }>(
+    admin.from('player_feats').select('feat_key, player_id').eq('game_id', gameId),
+  );
+  return feats.map((feat) => `${feat.player_id}:${feat.feat_key}`).sort();
+}
+
+async function setTurnStartedAt(gameId: string, turnStartedAt: string) {
+  assertNoError((await admin.from('games').update({ turn_started_at: turnStartedAt }).eq('id', gameId)).error);
+}
+
+async function loadGameRow(gameId: string) {
+  return await selectSingle<GameRow>(admin.from('games').select('*').eq('id', gameId).single());
+}
+
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString();
+}
 
 async function scratchAndPass(gameId: string, actor: TestUser, responder: TestUser, category: ScoreCategory) {
   await invokeGameAction(actor, { gameId, held: falseHeld, type: 'roll' });

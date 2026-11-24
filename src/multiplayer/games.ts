@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { getRandomBytes } from 'expo-crypto';
 import { supabase } from './supabase';
 import { getCurrentSession } from './auth';
@@ -20,8 +21,9 @@ import {
   toHeldDice,
 } from '../game';
 import { calculateSuckerActionStats, type SuckerStatAction } from '../../shared/stats';
-import { reportError } from '../monitoring/exceptionless';
-import { actionRequestStatus } from '../network/actionRequestStatus';
+import { reportError, reportWarning } from '../monitoring/exceptionless';
+import { actionRequestStatus, slowActionDelayMs } from '../network/actionRequestStatus';
+import { buildSlowActionReport, toActionAttempt, type ActionAttempt } from '../network/slowActionReport';
 import {
   createOrReuseActionRequest,
   createUuidV4,
@@ -30,7 +32,7 @@ import {
   type ActionRequest,
   type RecoveredMultiplayerAction,
 } from './actionRecovery';
-import { createGameListRealtimeTopic, createRealtimeTopic } from './realtimeTopics';
+import { subscribeToPrivateTopic, type RealtimeStatus } from './sharedRealtime';
 import { getTurnTauntScenario, isTauntId, type TauntId } from '../../shared/taunts';
 import { jabCooldownMs } from './jab';
 import { rageQuitSaltDurationMs, type RageQuitReplyId } from '../../shared/rageQuit';
@@ -44,6 +46,7 @@ const seenRemoteTauntKeyPrefix = 'sucker:seen-remote-taunt:v1';
 const seenRageQuitKeyPrefix = 'sucker:seen-rage-quit:v1';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
+const gameActionTimeoutMs = 12_000;
 let pendingStorageOperation: Promise<unknown> = Promise.resolve();
 const recoveryPromises = new Map<string, Promise<PendingActionRecovery>>();
 
@@ -98,7 +101,7 @@ export async function listMyGames() {
   ];
   const completedGameIds = completedGames.map((game) => game.id);
   const [lastNudges, suckerTokensSpent] = await Promise.all([
-    loadLastNudges(currentPlayerIds),
+    loadLastNudges(session.user.id, currentPlayerIds),
     loadSuckerTokensSpent(completedGameIds),
   ]);
   return data.map((game) =>
@@ -300,8 +303,12 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
     );
   }
 
+  const attempts: ActionAttempt[] = [];
+  const startedAt = Date.now();
   try {
-    const result = await actionRequestStatus.run(() => invokeActionRequest<TResult>(request));
+    const result = await actionRequestStatus
+      .run(() => invokeActionRequest<TResult>(request, attempts))
+      .finally(() => reportSlowAction(request.type, Date.now() - startedAt, attempts));
     await removePendingAction(request.requestId);
     return result;
   } catch (error) {
@@ -325,7 +332,25 @@ async function invokeReliableAction<TResult>(action: MultiplayerAction): Promise
   }
 }
 
-async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TResult> {
+// Matches the server-slowness banner, so every report is a slowdown a player saw.
+function reportSlowAction(actionType: string, totalMs: number, attempts: ActionAttempt[]) {
+  if (totalMs < slowActionDelayMs) return;
+  void (async () => {
+    const state = await NetInfo.fetch().catch(() => null);
+    const details = state?.details as { cellularGeneration?: string | null } | null | undefined;
+    const connection = state
+      ? {
+          cellularGeneration: details?.cellularGeneration ?? null,
+          isInternetReachable: state.isInternetReachable,
+          type: state.type,
+        }
+      : null;
+    const report = buildSlowActionReport(actionType, totalMs, attempts, connection);
+    await reportWarning('SlowGameAction', report.message, report.properties);
+  })().catch(() => undefined);
+}
+
+async function invokeActionRequest<TResult>(request: ActionRequest, attempts?: ActionAttempt[]): Promise<TResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     if (attempt > 0) {
@@ -333,7 +358,19 @@ async function invokeActionRequest<TResult>(request: ActionRequest): Promise<TRe
     }
 
     const { actionKey: _actionKey, actorId: _actorId, createdAt: _createdAt, ...body } = request;
-    const { data, error } = await supabase.functions.invoke<TResult>('game-action', { body });
+    const attemptStartedAt = Date.now();
+    const {
+      data,
+      error,
+      response: invokeResponse,
+    } = await supabase.functions.invoke<TResult>('game-action', {
+      body,
+      // Without a limit a dead connection holds the board locked until the OS
+      // gives up (never, on Android). A timed-out move has no status, so it is
+      // retried with the same request id and then recovered.
+      timeout: gameActionTimeoutMs,
+    });
+    attempts?.push(toActionAttempt(Date.now() - attemptStartedAt, invokeResponse));
     if (!error && data) {
       return data;
     }
@@ -591,11 +628,11 @@ export async function passRemoteResponse(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'pass_response' });
 }
 
-export async function useRemoteMulligan(gameId: string) {
+export async function applyRemoteMulligan(gameId: string) {
   return applyMultiplayerAction({ gameId, type: 'mulligan' });
 }
 
-export async function useRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
+export async function throwRemoteSuckerPunch(gameId: string, turnId: string, chanceDie?: DieValue) {
   return applyMultiplayerAction({ chanceDie, chanceProtocol: 'prepared', gameId, turnId, type: 'sucker_punch' });
 }
 
@@ -694,121 +731,87 @@ export async function markRageQuitSeen(gameId: string) {
   await AsyncStorage.setItem(`${seenRageQuitKeyPrefix}:${gameId}`, '1');
 }
 
+// Game changes arrive as database broadcasts on private topics (see the
+// broadcast_game_changes migration). Polling Postgres changes ran every
+// listener's read policy on every write to every game.
 export function subscribeToGameTaunts(
   gameId: string,
   onTaunt: (taunt: RemoteTaunt) => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
   onOpportunityAction?: () => void,
 ) {
-  const channel = supabase
-    .channel(createRealtimeTopic(`game-taunts:${gameId}`))
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        filter: `game_id=eq.${gameId}`,
-        schema: 'public',
-        table: 'turn_actions',
-      },
-      (payload) => {
-        const action = payload.new as TurnActionRow;
-        if (action.action_type !== 'taunt') {
-          if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
-            onOpportunityAction?.();
-          }
-          return;
+  return subscribeToPrivateTopic(
+    `game:${gameId}`,
+    (event, payload) => {
+      if (event !== 'action') return;
+      const action = payload.action as TurnActionRow | undefined;
+      if (!action) return;
+      if (action.action_type !== 'taunt') {
+        if (['score_category', 'scratch_category', 'sucker_punch'].includes(action.action_type)) {
+          onOpportunityAction?.();
         }
+        return;
+      }
 
-        const taunt = toRemoteTaunt(action);
-        if (taunt) {
-          onTaunt(taunt);
-        }
-      },
-    )
-    .subscribe((status, error) => {
+      const taunt = toRemoteTaunt(action);
+      if (taunt) {
+        onTaunt(taunt);
+      }
+    },
+    (status, error) => {
       reportChannelStatus('taunts', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
 export function subscribeToGame(
   gameId: string,
   onChange: (game: ReturnType<typeof toRemoteGameRow>) => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
 ) {
-  const channel = supabase
-    .channel(createRealtimeTopic(`game:${gameId}`))
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        filter: `id=eq.${gameId}`,
-        schema: 'public',
-        table: 'games',
-      },
-      (payload) => {
-        if (payload.new) {
-          onChange(toRemoteGameRow(payload.new as GameRow));
-        }
-      },
-    )
-    .subscribe((status, error) => {
+  return subscribeToPrivateTopic(
+    `game:${gameId}`,
+    (event, payload) => {
+      if (event !== 'game') return;
+      const game = payload.game as GameRow | undefined;
+      if (game) {
+        onChange(toRemoteGameRow(game));
+      }
+    },
+    (status, error) => {
       reportChannelStatus('game', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
 export function subscribeToGameListChanges(
+  profileId: string,
   onChange: () => void,
-  onStatus?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void,
+  onStatus?: (status: RealtimeStatus) => void,
 ) {
-  const channel = supabase
-    .channel(createGameListRealtimeTopic())
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'games',
-      },
-      () => {
-        onChange();
-      },
-    )
-    .subscribe((status, error) => {
+  return subscribeToPrivateTopic(
+    `player:${profileId}`,
+    (event) => {
+      if (event === 'games_changed') onChange();
+    },
+    (status, error) => {
       reportChannelStatus('game list', status, error);
       onStatus?.(status);
-    });
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+    },
+  );
 }
 
-async function loadLastNudges(recipientIds: string[]) {
+async function loadLastNudges(actorId: string, recipientIds: string[]) {
   if (recipientIds.length === 0) {
-    return new Map<string, string>();
-  }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
     return new Map<string, string>();
   }
 
   const { data, error } = await supabase
     .from('turn_actions')
     .select('payload, created_at')
-    .eq('actor_id', user.id)
+    .eq('actor_id', actorId)
     .eq('action_type', 'nudge_turn')
     .in('payload->>targetPlayerId', recipientIds)
     .gte('created_at', new Date(Date.now() - jabCooldownMs).toISOString())
@@ -852,21 +855,32 @@ function toRemoteGameRow(
     state: toGameState(row.state),
     status: row.status,
     sucker_tokens_spent: suckerTokensSpent,
+    turn_started_at: row.turn_started_at,
     updated_at: row.updated_at,
     winner_id: row.winner_id,
   };
 }
 
+// A finished game's token spending never changes, and the list refreshes on
+// every game change and every 15 seconds. Read each game's actions once.
+const completedGameTokensSpent = new Map<string, Record<string, number>>();
+
 async function loadSuckerTokensSpent(gameIds: string[]) {
   const spentByGame = new Map<string, Record<string, number>>();
-  if (gameIds.length === 0) {
+  const missingGameIds: string[] = [];
+  for (const gameId of gameIds) {
+    const cached = completedGameTokensSpent.get(gameId);
+    if (cached) spentByGame.set(gameId, cached);
+    else missingGameIds.push(gameId);
+  }
+  if (missingGameIds.length === 0) {
     return spentByGame;
   }
 
   const { data, error } = await supabase
     .from('turn_actions')
     .select('action_type, actor_id, game_id, payload')
-    .in('game_id', gameIds)
+    .in('game_id', missingGameIds)
     .in('action_type', ['extra_roll', 'mulligan', 'sucker_punch', 'sucker_blocker'])
     .order('created_at', { ascending: true });
 
@@ -881,14 +895,14 @@ async function loadSuckerTokensSpent(gameIds: string[]) {
     actionsByGame.set(action.game_id, actions);
   }
 
-  for (const [gameId, actions] of actionsByGame) {
+  for (const gameId of missingGameIds) {
+    const actions = actionsByGame.get(gameId) ?? [];
     const playerIds = new Set(actions.map((action) => action.actor_id));
-    spentByGame.set(
-      gameId,
-      Object.fromEntries(
-        [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
-      ),
+    const spent = Object.fromEntries(
+      [...playerIds].map((playerId) => [playerId, calculateSuckerActionStats(actions, playerId).sucker_tokens_spent]),
     );
+    completedGameTokensSpent.set(gameId, spent);
+    spentByGame.set(gameId, spent);
   }
 
   return spentByGame;

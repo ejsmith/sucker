@@ -1,8 +1,8 @@
 # End-Game Recap And Parting Shots
 
 When a multiplayer game ends, the Game Over panel shows both players what
-happened and gives each of them a canned last word. Computer games keep the
-plain Game Over panel.
+happened and gives each of them a canned last word. Computer games and
+forfeits keep the plain Game Over panel.
 
 ## Screens
 
@@ -38,6 +38,8 @@ plain Game Over panel.
   older games still show it, and older apps may still send it.
 - **Rage Quit keeps its own rule.** The quitter never gets the last word, and
   the single Rage Quit reply stays as is. Rage-quit games show no recap.
+- **Timeouts get nothing.** A game forfeited by inactivity has no final
+  scores or game feats, so it shows no recap and takes no parting shots.
 - **No time limit.** Shots stay available while the game is in a player's list.
 - Each line clears the recipient's `result_seen_at`, so the game returns to
   their list, and sends them a push.
@@ -60,7 +62,7 @@ numbers live on the recap page.
 
 ## Implementation
 
-- Migration `20261102120000_add_end_game_recap.sql`: the `parting_shot` action
+- Migration `20261124120000_add_end_game_recap.sql`: the `parting_shot` action
   type and `get_game_recap`.
 - `game-action` `parting_shot { gameId, lineId }` appends to
   `state.partingShots` through `commit_game_move`, whose version check keeps

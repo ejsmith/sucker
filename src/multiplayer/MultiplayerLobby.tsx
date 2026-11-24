@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useIsFocused } from 'expo-router';
 import { reportError, reportErrorMessage } from '../monitoring/exceptionless';
 import { loadComputerSession } from '../game/computerSessionStorage';
 import {
@@ -49,10 +49,12 @@ import { categoryLabels, getWinnerId, scoreCategories, totalScore, upperBonus } 
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { PlayerProfilePage, StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
+import { runWithCleanup } from '../ui/runWithCleanup';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { SaltBadge } from '../ui/RageQuit';
 import { getRageQuitReplyText } from '../../shared/rageQuit';
+import { formatTurnTimeoutCountdown, turnTimeoutDays } from '../../shared/turnTimeout';
 import { Pressable } from '../ui/Pressable';
 import { formatRecord } from '../ui/statsFormat';
 import { useNetworkStatus } from '../network/NetworkProvider';
@@ -95,6 +97,37 @@ const gameCardActionHeight = 36;
 const minimumPasswordLength = 8;
 const lobbyHeaderImage = require('../../assets/sucker-lobby-header.png');
 
+// Rebuilt every render on purpose so it always sees the latest lobby state.
+function createPullRefreshResponder({
+  onCancel,
+  onPull,
+  onRefresh,
+  shouldStart,
+}: {
+  onCancel: () => void;
+  onPull: (distance: number) => void;
+  onRefresh: () => void;
+  shouldStart: (gestureState: { dx: number; dy: number }) => boolean;
+}) {
+  return PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gestureState) => shouldStart(gestureState),
+    onMoveShouldSetPanResponderCapture: (_event, gestureState) => shouldStart(gestureState),
+    onPanResponderMove: (_event, gestureState) => {
+      onPull(Math.min(pullRefreshMaxDistance, Math.max(0, gestureState.dy * 0.55)));
+    },
+    onPanResponderRelease: (_event, gestureState) => {
+      const releaseDistance = Math.min(pullRefreshMaxDistance, Math.max(0, gestureState.dy * 0.55));
+      const shouldRefresh = releaseDistance >= pullRefreshTriggerDistance || gestureState.vy > 0.85;
+      if (shouldRefresh) {
+        onRefresh();
+        return;
+      }
+      onCancel();
+    },
+    onPanResponderTerminate: onCancel,
+  });
+}
+
 export function MultiplayerLobby({
   games,
   gamesProfileId,
@@ -115,6 +148,7 @@ export function MultiplayerLobby({
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const isAppActive = useAppActivity();
+  const isFocused = useIsFocused();
   const {
     continueWithApple,
     endSession,
@@ -160,6 +194,10 @@ export function MultiplayerLobby({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullRefreshDistance, setPullRefreshDistance] = useState(0);
   const [isPullRefreshActive, setIsPullRefreshActive] = useState(false);
+  // Bumped by the pull gesture; an effect runs the refresh so the gesture
+  // handlers only touch state.
+  const [pullRefreshRequest, setPullRefreshRequest] = useState(0);
+  const handledPullRefreshRequest = useRef(0);
   const [webPushPromptDismissed, setWebPushPromptDismissed] = useState(readWebPushPromptDismissed);
   const [removeGameToConfirm, setRemoveGameToConfirm] = useState<RemoteGameRow | null>(null);
   const [selectedCompletedGameId, setSelectedCompletedGameId] = useState<string | null>(null);
@@ -220,13 +258,16 @@ export function MultiplayerLobby({
   );
   const isGamesProfileMismatch = Boolean(profileId && gamesProfileId && gamesProfileId !== profileId);
   const visibleGames = useMemo(() => (isGamesProfileMismatch ? [] : games), [games, isGamesProfileMismatch]);
+  // Refetch avatars and salt only when a game is added, removed or changes
+  // status (a rage quit completes it), not on every roll or score.
+  const gameListKey = visibleGames.map((game) => `${game.id}:${game.status}`).join('|');
   const profileAvatars = useProfileAvatars(
     [
       ...visibleGames.flatMap((game) => game.state.players.map((player) => player.id)),
       ...(profileId ? [profileId] : []),
     ],
     Boolean(session) && !isReconnecting && !isSessionUnavailable,
-    visibleGames,
+    gameListKey,
   );
   const saltyProfileIds = useSaltyProfileIds(
     [
@@ -235,7 +276,7 @@ export function MultiplayerLobby({
       ...(profileId ? [profileId] : []),
     ],
     Boolean(session) && !isReconnecting && !isSessionUnavailable,
-    visibleGames,
+    gameListKey,
   );
   const shellStyle = getPhoneStageStyle(windowWidth, windowHeight, {
     fillNarrowViewport: Platform.OS !== 'web' || shouldFillWebViewport(windowWidth),
@@ -369,33 +410,36 @@ export function MultiplayerLobby({
         return refreshGamesInFlight.current;
       }
 
-      const refresh = (async () => {
-        try {
-          const [gamesResult, recordResult] = await Promise.allSettled([
-            onRefreshGames(profileId),
-            getAllTimeOpponentRecord(),
-          ]);
-          if (gamesResult.status === 'rejected') {
-            throw gamesResult.reason;
-          }
-          const nextGames = gamesResult.value;
-          setNow(Date.now());
-          await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId), profileId);
-          if (recordResult.status === 'fulfilled') {
-            setAllTimeOpponentRecord(recordResult.value);
-          } else if (surfaceError) {
-            setMessage(
-              recordResult.reason instanceof Error ? recordResult.reason.message : 'Unable to load all-time record.',
-            );
-          }
-        } catch (refreshError) {
-          if (surfaceError) {
-            setMessage(reportErrorMessage(refreshError, 'Unable to refresh games.'));
-          }
-        } finally {
-          refreshGamesInFlight.current = null;
+      const loadGamesAndRecord = async () => {
+        const [gamesResult, recordResult] = await Promise.allSettled([
+          onRefreshGames(profileId),
+          getAllTimeOpponentRecord(),
+        ]);
+        if (gamesResult.status === 'rejected') {
+          throw gamesResult.reason;
         }
-      })();
+        const nextGames = gamesResult.value;
+        setNow(Date.now());
+        await syncAppBadgeCount(countGamesAwaitingTurn(nextGames, profileId), profileId);
+        if (recordResult.status === 'fulfilled') {
+          setAllTimeOpponentRecord(recordResult.value);
+        } else if (surfaceError) {
+          setMessage(
+            recordResult.reason instanceof Error ? recordResult.reason.message : 'Unable to load all-time record.',
+          );
+        }
+      };
+      const refresh = runWithCleanup(
+        () =>
+          loadGamesAndRecord().catch((refreshError: unknown) => {
+            if (surfaceError) {
+              setMessage(reportErrorMessage(refreshError, 'Unable to refresh games.'));
+            }
+          }),
+        () => {
+          refreshGamesInFlight.current = null;
+        },
+      );
       refreshGamesInFlight.current = refresh;
       return refresh;
     },
@@ -518,7 +562,7 @@ export function MultiplayerLobby({
         if (!selected || !active) return;
         setIsBusy(true);
         setPendingAvatarUri(selected.uri);
-        try {
+        const uploadPendingAvatar = async () => {
           await uploadAvatar(selected.uri, profile.avatar_url);
           if (active) {
             setMessage('Profile photo updated.');
@@ -526,16 +570,21 @@ export function MultiplayerLobby({
             setIsBusy(false);
           }
           await refreshProfile();
-        } catch (pendingError) {
-          if (active) {
-            setMessage(reportErrorMessage(pendingError, 'Unable to recover the selected photo.'));
-          }
-        } finally {
-          if (active) {
-            setPendingAvatarUri(null);
-            setIsBusy(false);
-          }
-        }
+        };
+        await runWithCleanup(
+          () =>
+            uploadPendingAvatar().catch((pendingError: unknown) => {
+              if (active) {
+                setMessage(reportErrorMessage(pendingError, 'Unable to recover the selected photo.'));
+              }
+            }),
+          () => {
+            if (active) {
+              setPendingAvatarUri(null);
+              setIsBusy(false);
+            }
+          },
+        );
       })
       .catch((pendingError: unknown) => {
         if (active) {
@@ -556,12 +605,14 @@ export function MultiplayerLobby({
 
   useEffect(() => {
     // Browser tabs and PWA windows still need live turn counts while hidden.
-    if (!session || (!isAppActive && Platform.OS !== 'web') || isReconnecting || isSessionUnavailable) {
+    // A game screen stacked on top keeps the lobby mounted; it updates the
+    // list itself, so the lobby stops polling until it is focused again.
+    if (!session || !isFocused || (!isAppActive && Platform.OS !== 'web') || isReconnecting || isSessionUnavailable) {
       return;
     }
 
     void refreshGames({ surfaceError: false });
-    const unsubscribe = subscribeToGameListChanges(() => {
+    const unsubscribe = subscribeToGameListChanges(session.user.id, () => {
       if (realtimeRefreshTimer.current) {
         clearTimeout(realtimeRefreshTimer.current);
       }
@@ -579,16 +630,16 @@ export function MultiplayerLobby({
         realtimeRefreshTimer.current = null;
       }
     };
-  }, [isAppActive, isReconnecting, isSessionUnavailable, refreshGames, session]);
+  }, [isAppActive, isFocused, isReconnecting, isSessionUnavailable, refreshGames, session]);
 
   useEffect(() => {
-    if (!isAppActive) {
+    if (!isAppActive || !isFocused) {
       return;
     }
 
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
-  }, [isAppActive]);
+  }, [isAppActive, isFocused]);
 
   useEffect(() => {
     let isMounted = true;
@@ -620,13 +671,13 @@ export function MultiplayerLobby({
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
     setMessage(null);
-    try {
-      await action();
-    } catch (actionError) {
-      setMessage(reportErrorMessage(actionError, 'Something went wrong.', { Operation: 'Lobby action' }));
-    } finally {
-      setIsBusy(false);
-    }
+    await runWithCleanup(
+      () =>
+        action().catch((actionError: unknown) => {
+          setMessage(reportErrorMessage(actionError, 'Something went wrong.', { Operation: 'Lobby action' }));
+        }),
+      () => setIsBusy(false),
+    );
   }
 
   async function handleEnableWebNotifications() {
@@ -647,23 +698,26 @@ export function MultiplayerLobby({
       return;
     }
     setIsRefreshing(true);
-    try {
-      await Promise.all([refreshGames(), waitForVisibleRefresh()]);
-    } finally {
-      setIsRefreshing(false);
-    }
+    await runWithCleanup(
+      () => Promise.all([refreshGames(), waitForVisibleRefresh()]),
+      () => setIsRefreshing(false),
+    );
   }
 
   async function handlePullRefreshGesture() {
     setIsPullRefreshActive(true);
     setPullRefreshDistance(42);
-    try {
-      await handleVisibleRefreshGames();
-    } finally {
+    await runWithCleanup(handleVisibleRefreshGames, () => {
       setIsPullRefreshActive(false);
       setPullRefreshDistance(0);
-    }
+    });
   }
+
+  useEffect(() => {
+    if (pullRefreshRequest === handledPullRefreshRequest.current) return;
+    handledPullRefreshRequest.current = pullRefreshRequest;
+    void handlePullRefreshGesture();
+  });
 
   function handleDismissWebPushPrompt() {
     rememberWebPushPromptDismissed();
@@ -700,13 +754,14 @@ export function MultiplayerLobby({
       const selected = await selectAvatar(source);
       if (!selected) return;
       setPendingAvatarUri(selected.uri);
-      try {
-        await uploadAvatar(selected.uri, profile?.avatar_url);
-        await refreshProfile();
-        setMessage('Profile photo updated.');
-      } finally {
-        setPendingAvatarUri(null);
-      }
+      await runWithCleanup(
+        async () => {
+          await uploadAvatar(selected.uri, profile?.avatar_url);
+          await refreshProfile();
+          setMessage('Profile photo updated.');
+        },
+        () => setPendingAvatarUri(null),
+      );
     });
   }
 
@@ -1164,27 +1219,14 @@ export function MultiplayerLobby({
     const mostlyVertical = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.25;
     return pullingDown && mostlyVertical;
   };
-  const gamesPullRefreshResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gestureState) => shouldStartPullRefreshGesture(gestureState),
-    onMoveShouldSetPanResponderCapture: (_event, gestureState) => shouldStartPullRefreshGesture(gestureState),
-    onPanResponderMove: (_event, gestureState) => {
-      const nextDistance = Math.min(pullRefreshMaxDistance, Math.max(0, gestureState.dy * 0.55));
-      setPullRefreshDistance(nextDistance);
-    },
-    onPanResponderRelease: (_event, gestureState) => {
-      const releaseDistance = Math.min(pullRefreshMaxDistance, Math.max(0, gestureState.dy * 0.55));
-      const shouldRefresh = releaseDistance >= pullRefreshTriggerDistance || gestureState.vy > 0.85;
-      if (shouldRefresh) {
-        void handlePullRefreshGesture();
-        return;
-      }
+  const gamesPullRefreshResponder = createPullRefreshResponder({
+    onCancel: () => {
       setIsPullRefreshActive(false);
       setPullRefreshDistance(0);
     },
-    onPanResponderTerminate: () => {
-      setIsPullRefreshActive(false);
-      setPullRefreshDistance(0);
-    },
+    onPull: setPullRefreshDistance,
+    onRefresh: () => setPullRefreshRequest((request) => request + 1),
+    shouldStart: shouldStartPullRefreshGesture,
   });
 
   if (page === 'completedGames') {
@@ -2231,7 +2273,7 @@ function isWebShareAbort(error: unknown) {
 function getRemoveGameMessage(game: RemoteGameRow) {
   return game.status === 'inviting'
     ? 'This cancels the open invite and removes it from your games list.'
-    : 'This removes the game from your games list. The other player can still see their copy.';
+    : `This removes the game from your games list. It still counts, and you forfeit if you don't play your turn within ${turnTimeoutDays} days.`;
 }
 
 function canOfferWebPushPrompt() {
@@ -2337,13 +2379,13 @@ function ProfileSetupForm({
     if (isSaving || !displayName.trim()) return;
     setIsSaving(true);
     setError(null);
-    try {
-      await onSave({ displayName, username, completeSetup: true });
-    } catch (saveError) {
-      setError(reportErrorMessage(saveError, 'Unable to save your name. Please try again.'));
-    } finally {
-      setIsSaving(false);
-    }
+    await runWithCleanup(
+      () =>
+        onSave({ displayName, username, completeSetup: true }).catch((saveError: unknown) => {
+          setError(reportErrorMessage(saveError, 'Unable to save your name. Please try again.'));
+        }),
+      () => setIsSaving(false),
+    );
   }
 
   return (
@@ -2476,11 +2518,12 @@ function GameListItem({
   const showJab = canJabGame(game, profileId, now);
   const status = getGameStatusLabel(game, profileId);
   const waitPrefix = isMyTurn ? `${opponentName} has waited` : 'You have waited';
+  const forfeitCountdown = isMyTurn ? formatTurnTimeoutCountdown(game.turn_started_at, now) : null;
   const waitText = isUnseenResult
     ? getUnseenResultHint(game, profileId, opponentName)
     : game.status === 'inviting'
       ? `Open invite for ${formatElapsed(now, game.updated_at)}`
-      : `${waitPrefix} ${formatElapsed(now, game.updated_at)}`;
+      : (forfeitCountdown ?? `${waitPrefix} ${formatElapsed(now, game.updated_at)}`);
   const [translateX] = useState(() => new Animated.Value(0));
   const panResponder = useMemo(
     () =>
@@ -2917,12 +2960,16 @@ function getCompletedResultLabel(game: RemoteGameRow, profileId: string) {
   if (rageQuitterId) {
     return rageQuitterId === profileId ? 'You rage quit' : 'They rage quit';
   }
+  const timedOutPlayerId = game.state.timedOut?.playerId;
+  if (timedOutPlayerId) {
+    return timedOutPlayerId === profileId ? 'Out of time' : 'They ran out of time';
+  }
 
   const tone = getCompletedResultTone(game, profileId);
   return tone === 'tie' ? 'Tie' : tone === 'win' ? 'You won' : 'You lost';
 }
 
-// A rage quit decides the winner regardless of the partial scores.
+// A forfeit decides the winner regardless of the partial scores.
 function getCompletedResultTone(game: RemoteGameRow, profileId: string) {
   const winnerId = getWinnerId(game.state);
   if (!winnerId) {

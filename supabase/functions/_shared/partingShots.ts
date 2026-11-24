@@ -1,8 +1,8 @@
-import { getWinnerId, type GameState } from './game.ts';
+import { getForfeiterId, getWinnerId, type GameState } from './game.ts';
 
 // The last word after a played-out game. Each player may send one line, picked
-// from a hand dealt out of the lines for their result. Rage Quit games keep
-// their own single reply instead.
+// from a hand dealt out of the lines for their result. Forfeits get none: Rage
+// Quit games keep their own single reply, and a timed-out player is gone.
 
 export const winnerPartingShots = [
   { id: 'named-after-you', text: 'They named this game after you.' },
@@ -78,7 +78,7 @@ export type PartingShotLineId = PartingShotLine['id'];
 // The server checks against this rather than the hand: an older app may deal
 // differently after the lists grow, and any line for the result is harmless.
 export function getPartingShotPool(game: GameState, playerId: string): readonly PartingShotLine[] | null {
-  if (game.phase !== 'complete' || game.rageQuit || !game.players.some((player) => player.id === playerId)) {
+  if (game.phase !== 'complete' || getForfeiterId(game) || !game.players.some((player) => player.id === playerId)) {
     return null;
   }
   if (game.partingShots?.some((shot) => shot.playerId === playerId)) return null;
