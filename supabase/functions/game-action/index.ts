@@ -249,10 +249,10 @@ Deno.serve(async (request) => {
       );
     }
 
-    const mutationState: ActionMutationState = { mayHaveWritten: false };
+    let mutationState: ActionMutationState = { mayHaveWritten: false };
     try {
       let result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
-      if (mutationState.plan) {
+      for (let attempt = 1; mutationState.plan; attempt += 1) {
         if (!result.game) throw new InternalServerError('A game move must return its game.');
         const plan = mutationState.plan;
         const game = result.game;
@@ -264,11 +264,26 @@ Deno.serve(async (request) => {
           result = await timer.measure('commit', () =>
             commitGameMove(admin, plan, user.id, action.requestId, { ...result, game }),
           );
+          break;
         } catch (commitError) {
           if (isConfirmedRollback(commitError)) mutationState.mayHaveWritten = false;
+          // Both players often answer the end of a game at once. Their lines
+          // never conflict, so replay a parting shot against the newer game
+          // instead of blaming "another device".
+          if (
+            action.type === 'parting_shot' &&
+            attempt < maxPartingShotAttempts &&
+            !mutationState.mayHaveWritten &&
+            isPostgresError(commitError, 'PT409')
+          ) {
+            mutationState = { mayHaveWritten: false };
+            result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
+            continue;
+          }
           throw commitError;
         }
-      } else {
+      }
+      if (!mutationState.plan) {
         await timer.measure('complete', () => completeActionRequest(admin, user.id, action, result, 200));
       }
       timer.logIfSlow(actionType);
@@ -308,6 +323,8 @@ Deno.serve(async (request) => {
     return json({ error: message }, status, timer.toHeaders());
   }
 });
+
+const maxPartingShotAttempts = 3;
 
 async function applyAction(
   admin: DbClient,

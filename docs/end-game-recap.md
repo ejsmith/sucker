@@ -6,20 +6,27 @@ forfeits keep the plain Game Over panel.
 
 ## Screens
 
-- **Game Over panel.** The title says the result and margin ("You lost by 4.").
-  Each score card shows the rating change, and the winner's card is gold. Then:
+- **Game Over panel.** The title says the result and margin ("You won by 4!",
+  "You lost by 4."). Each score card shows the rating change, and the winner's
+  card is gold. The recap parts wait until the server has finished the game, so
+  the final move's own feats and rating are in it. Then:
   - Highlights: up to three feats or defeats as a badge, the feat name, and
-    the owner with the description. The order is your feats, their feats, your
-    defeats, then theirs. "+N more in the recap" opens the recap page.
+    the owner with the description. Feats that tell the story of the result
+    (Blowout, Buzzer Beater, Comeback Kid…) lead and quick trivia (Blitz)
+    trails; otherwise yours come before theirs and feats before defeats. The
+    opponent gets a slot whenever they earned anything. "+N more in the recap"
+    opens the recap page. A failed load can be retried by tapping it.
   - Last words: both players' lines as speech bubbles, in the order said. A
-    button to say yours until you have; once you have, a note if the other
-    player has not spoken yet.
+    button to say yours ("Fire back" once they have spoken) until you have;
+    once you have, a note that you'll hear if they answer.
   - Rematch and Recap. Rage-quit and computer games keep Rematch and Stats.
 - **Trash-talk sheet.** A bottom sheet with the other player's line on top, if
-  they have spoken, and your four dealt lines as radio options. Send stays disabled until a line is picked,
-  since there is no undo. Cancel or the backdrop closes it.
+  they have spoken, and your four dealt lines as radio options. Send stays
+  disabled until a line is picked, since there is no undo. Cancel, the
+  backdrop, Android back, or Escape on the web closes it, and a failed send
+  says so in the sheet.
 - **Recap page ("Tale of the Tape").** A full page over the panel that may
-  scroll. It shows scores and rating changes, mirrored bars for Punches,
+  scroll. Rows where neither player did anything are left out. It shows scores and rating changes, mirrored bars for Punches,
   Moments, and Tokens, every feat and defeat by owner, all parting shots, and
   a Head-to-head stats button.
 
@@ -46,13 +53,13 @@ forfeits keep the plain Game Over panel.
 
 ## Recap
 
-| Section | Content                                                                           | Source                                 |
-| ------- | --------------------------------------------------------------------------------- | -------------------------------------- |
-| Rating  | Each player's rating before and after                                             | `get_game_recap`                       |
-| Feats   | Feats and defeats each player earned this game, including milestones it unlocked  | `get_game_recap` (from `player_feats`) |
-| Punches | Thrown, landed, counterpunches landed, biggest score deleted                      | `turn_actions`, `turns`                |
-| Moments | Best turn, Suckers rolled, Sucker Deals, lead changes, biggest lead               | `turns`, `turn_actions`                |
-| Tokens  | Spent on Extra Rolls, Mulligans, and Punches; earned from Sucker Deals; left over | `turn_actions`, final state            |
+| Section | Content                                                                          | Source                                 |
+| ------- | -------------------------------------------------------------------------------- | -------------------------------------- |
+| Rating  | Each player's rating before and after                                            | `get_game_recap`                       |
+| Feats   | Feats and defeats each player earned this game, including milestones it unlocked | `get_game_recap` (from `player_feats`) |
+| Punches | Thrown, landed, counterpunches landed, biggest score deleted                     | `turn_actions`, `turns`                |
+| Moments | Best turn, Suckers rolled, Sucker Deals, lead changes, biggest lead              | `turns`, `turn_actions`                |
+| Tokens  | Spent on Extra Rolls, Mulligans, and Punches; left over                          | `turn_actions`, final state            |
 
 `get_game_recap(target_game_id)` is participant-only; `player_feats` and other
 players' `game_player_results` stay closed to direct reads. Punches, Moments,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type Ref } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { categoryLabels, type PartingShot, type Player } from '../game';
 import type { PlayerGameRecap, ScoredBox } from '../../shared/gameRecap';
 import { getPartingShotText, type PartingShotLine, type PartingShotLineId } from '../../shared/partingShots';
@@ -13,15 +13,98 @@ const black = 'Inter_900Black';
 const extraBold = 'Inter_800ExtraBold';
 type Unit = (value: number) => number;
 
+// Small print scales with the screen but never below its design size, so it
+// stays readable on the smallest phones.
+function small(unit: Unit, size: number) {
+  return Math.max(size, unit(size));
+}
+
+// The recap page and the trash-talk sheet draw over the Game Over panel, so the
+// Android back button and the web Escape key close them instead of the game.
+function useDismissOnBack(onClose: () => void, enabled = true) {
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    if (!enabled) return;
+    if (Platform.OS === 'web') {
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') close.current();
+      };
+      document.addEventListener('keydown', onKeyDown);
+      return () => document.removeEventListener('keydown', onKeyDown);
+    }
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      close.current();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [enabled]);
+}
+
 type Highlight = RecapFeat & { owner: string; ownerId: string };
 
-// Your feats, then theirs, then your defeats, then theirs.
-export function getRecapHighlights(recap: RemoteGameRecap, home: Player, opponent: Player): Highlight[] {
-  const owned = (player: Player, tone: RecapFeat['tone']) =>
-    (recap.results[player.id]?.feats ?? [])
-      .filter((feat) => feat.tone === tone)
-      .map((feat) => ({ ...feat, owner: player.id === home.id ? 'You' : player.name, ownerId: player.id }));
-  return [...owned(home, 'feat'), ...owned(opponent, 'feat'), ...owned(home, 'defeat'), ...owned(opponent, 'defeat')];
+// Feats that tell the story of the result lead; quick trivia trails.
+const headlineFeatKeys = new Set([
+  'blowout',
+  'blown_out',
+  'buzzer_beater',
+  'walk_off',
+  'last_gasp',
+  'walked_off',
+  'comeback_kid',
+  'choke_artist',
+  'wire_to_wire',
+  'giant_killer',
+  'banana_peel',
+  'photo_finish',
+  'heartbreaker',
+  'dead_heat',
+  'iron_chin',
+  'glass_jaw',
+]);
+const triviaFeatKeys = new Set(['blitz', 'the_long_game']);
+
+function highlightRank(highlight: Highlight) {
+  return headlineFeatKeys.has(highlight.key) ? 0 : triviaFeatKeys.has(highlight.key) ? 2 : 1;
+}
+
+// The best few things that happened, headline feats first, then yours before
+// theirs and feats before defeats. The opponent gets a slot when they earned
+// anything, so the list is never only about you.
+export function getRecapHighlights(
+  recap: RemoteGameRecap,
+  home: Player,
+  opponent: Player,
+  maxShown: number,
+): Highlight[] {
+  const owned = (player: Player) =>
+    (recap.results[player.id]?.feats ?? []).map((feat) => ({
+      ...feat,
+      owner: player.id === home.id ? 'You' : player.name,
+      ownerId: player.id,
+    }));
+  const all = [...owned(home), ...owned(opponent)];
+  const order = (highlight: Highlight) => [
+    highlightRank(highlight),
+    highlight.ownerId === home.id ? 0 : 1,
+    highlight.tone === 'feat' ? 0 : 1,
+  ];
+  const sorted = all
+    .map((highlight, index) => ({ highlight, index }))
+    .sort((left, right) => {
+      const [a, b] = [order(left.highlight), order(right.highlight)];
+      return a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || left.index - right.index;
+    })
+    .map((entry) => entry.highlight);
+
+  const shown = sorted.slice(0, maxShown);
+  const theirBest = sorted.find((highlight) => highlight.ownerId === opponent.id);
+  if (theirBest && maxShown > 1 && !shown.includes(theirBest)) {
+    shown[shown.length - 1] = theirBest;
+  }
+  return [...shown, ...sorted.filter((highlight) => !shown.includes(highlight))];
 }
 
 // "▲ 20 · 1220" under a Game Over score.
@@ -30,20 +113,23 @@ export function RatingChange({ result, unit }: { result: PlayerRecapResult | und
   const after = Math.round(result.ratingAfter);
   const change = after - Math.round(result.ratingBefore);
   const up = change >= 0;
+  const symbol = change > 0 ? '▲' : change < 0 ? '▼' : '±';
 
   return (
     <Text
-      accessibilityLabel={`Rating ${up ? 'up' : 'down'} ${Math.abs(change)} to ${after}`}
+      accessibilityLabel={
+        change === 0 ? `Rating unchanged at ${after}` : `Rating ${up ? 'up' : 'down'} ${Math.abs(change)} to ${after}`
+      }
       maxFontSizeMultiplier={maxFontSizeMultiplier}
       numberOfLines={1}
       style={[
         styles.rating,
         up ? styles.ratingUp : styles.ratingDown,
-        { borderRadius: unit(8), fontSize: unit(11), paddingHorizontal: unit(6), paddingVertical: unit(1) },
+        { borderRadius: unit(8), fontSize: small(unit, 11), paddingHorizontal: unit(6), paddingVertical: unit(1) },
       ]}
       testID="game-over-rating"
     >
-      {up ? '▲' : '▼'} {Math.abs(change)} · {after}
+      {symbol} {Math.abs(change)} · {after}
     </Text>
   );
 }
@@ -73,6 +159,7 @@ export function GameOverHighlights({
   home,
   maxShown,
   onOpenRecap,
+  onRetry,
   opponent,
   recap,
   recapFailed,
@@ -81,30 +168,44 @@ export function GameOverHighlights({
   home: Player;
   maxShown: number;
   onOpenRecap: () => void;
+  onRetry: () => void;
   opponent: Player;
   recap: RemoteGameRecap | null;
   recapFailed: boolean;
   unit: Unit;
 }) {
-  const highlights = recap ? getRecapHighlights(recap, home, opponent) : [];
+  const highlights = recap ? getRecapHighlights(recap, home, opponent, maxShown) : [];
   const shown = highlights.slice(0, maxShown);
   const hidden = highlights.length - shown.length;
 
   return (
     <View style={[styles.highlights, { gap: unit(6) }]} testID="game-recap-highlights">
-      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, { fontSize: unit(11) }]}>
+      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, { fontSize: small(unit, 11) }]}>
         HIGHLIGHTS
       </Text>
-      {!recap ? (
-        <Text
-          maxFontSizeMultiplier={maxFontSizeMultiplier}
-          style={[styles.quiet, { fontSize: unit(12) }]}
+      {recapFailed ? (
+        <Pressable
+          accessibilityLabel="The recap got lost in the mail. Try again."
+          accessibilityRole="button"
+          hitSlop={unit(10)}
+          onPress={onRetry}
+          style={({ pressed }) => pressed && styles.pressed}
           testID="game-recap-loading"
         >
-          {recapFailed ? 'The recap got lost in the mail.' : 'Tallying the damage…'}
+          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 12) }]}>
+            The recap got lost in the mail. <Text style={styles.retryText}>Try again</Text>
+          </Text>
+        </Pressable>
+      ) : !recap ? (
+        <Text
+          maxFontSizeMultiplier={maxFontSizeMultiplier}
+          style={[styles.quiet, { fontSize: small(unit, 12) }]}
+          testID="game-recap-loading"
+        >
+          Tallying the damage…
         </Text>
       ) : shown.length === 0 ? (
-        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: unit(12) }]}>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 12) }]}>
           Nothing to brag about. Nothing to hide.
         </Text>
       ) : (
@@ -124,15 +225,15 @@ export function GameOverHighlights({
                 style={[
                   styles.highlightName,
                   highlight.tone === 'defeat' && styles.defeatText,
-                  { fontSize: unit(13), lineHeight: unit(16) },
+                  { fontSize: small(unit, 13), lineHeight: small(unit, 16) },
                 ]}
               >
                 {highlight.name}
               </Text>
               <Text
                 maxFontSizeMultiplier={maxFontSizeMultiplier}
-                numberOfLines={1}
-                style={[styles.highlightDescription, { fontSize: unit(11), lineHeight: unit(14) }]}
+                numberOfLines={2}
+                style={[styles.highlightDescription, { fontSize: small(unit, 11), lineHeight: small(unit, 14) }]}
               >
                 <Text style={styles.highlightOwner}>{highlight.owner}</Text> · {highlight.description}
               </Text>
@@ -144,12 +245,12 @@ export function GameOverHighlights({
         <Pressable
           accessibilityLabel={`${hidden} more in the recap`}
           accessibilityRole="button"
-          hitSlop={unit(6)}
+          hitSlop={{ bottom: 14, left: 14, right: 14, top: 14 }}
           onPress={onOpenRecap}
           style={({ pressed }) => [styles.moreLink, pressed && styles.pressed]}
           testID="game-recap-more"
         >
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.moreText, { fontSize: unit(12) }]}>
+          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.moreText, { fontSize: small(unit, 12) }]}>
             +{hidden} more in the recap ›
           </Text>
         </Pressable>
@@ -172,13 +273,13 @@ function ShotBubble({ by, mine, shot, unit }: { by: string; mine: boolean; shot:
       <Text
         maxFontSizeMultiplier={maxFontSizeMultiplier}
         numberOfLines={1}
-        style={[styles.bubbleBy, { fontSize: unit(10) }]}
+        style={[styles.bubbleBy, { fontSize: small(unit, 10) }]}
       >
         {by}
       </Text>
       <Text
         maxFontSizeMultiplier={maxFontSizeMultiplier}
-        style={[styles.bubbleText, { fontSize: unit(14), lineHeight: unit(18) }]}
+        style={[styles.bubbleText, { fontSize: Math.max(13, unit(14)), lineHeight: Math.max(17, unit(18)) }]}
       >
         {getPartingShotText(shot.lineId)}
       </Text>
@@ -188,26 +289,36 @@ function ShotBubble({ by, mine, shot, unit }: { by: string; mine: boolean; shot:
 
 // Both players' last words, in the order said, and the way to add yours.
 export function LastWord({
+  buttonRef,
   canSend,
   home,
   onOpenSheet,
   opponentName,
+  sectionRef,
   shots,
   unit,
 }: {
+  buttonRef: Ref<AccessibilityTargetRef>;
   canSend: boolean;
   home: Player;
   onOpenSheet: () => void;
   opponentName: string;
+  sectionRef: Ref<AccessibilityTargetRef>;
   shots: PartingShot[];
   unit: Unit;
 }) {
   if (shots.length === 0 && !canSend) return null;
   const opponentSpoke = shots.some((shot) => shot.playerId !== home.id);
+  const action = opponentSpoke ? 'Fire back' : 'Say your last word';
 
   return (
     <View style={[styles.lastWord, { gap: unit(6) }]} testID="parting-shots">
-      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, { fontSize: unit(11) }]}>
+      <Text
+        accessibilityRole="header"
+        maxFontSizeMultiplier={maxFontSizeMultiplier}
+        ref={sectionRef}
+        style={[styles.label, { fontSize: small(unit, 11) }]}
+      >
         LAST WORDS
       </Text>
       {shots.map((shot) => {
@@ -216,9 +327,10 @@ export function LastWord({
       })}
       {canSend ? (
         <Pressable
-          accessibilityLabel="Say your last word"
+          accessibilityLabel={opponentSpoke ? `Fire back at ${opponentName}` : action}
           accessibilityRole="button"
           onPress={onOpenSheet}
+          ref={buttonRef}
           style={({ pressed }) => [
             styles.talkButton,
             { borderRadius: unit(10), minHeight: Math.max(44, unit(40)) },
@@ -227,18 +339,18 @@ export function LastWord({
           testID="parting-shot-open"
         >
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.talkButtonText, { fontSize: unit(15) }]}>
-            💬 Say your last word
+            💬 {action}
           </Text>
         </Pressable>
       ) : (
         !opponentSpoke && (
           <Text
             maxFontSizeMultiplier={maxFontSizeMultiplier}
-            numberOfLines={1}
-            style={[styles.quiet, { fontSize: unit(11) }]}
+            numberOfLines={2}
+            style={[styles.quiet, { fontSize: small(unit, 11) }]}
             testID="parting-shot-waiting"
           >
-            {opponentName} hasn&apos;t said a word yet.
+            We&apos;ll ping you if {opponentName} fires back.
           </Text>
         )
       )}
@@ -249,6 +361,7 @@ export function LastWord({
 // Picking a line happens in its own sheet, under what the other player said.
 // Pick, then Send, because there is no undo.
 export function PartingShotSheet({
+  failed,
   home,
   isSending,
   lines,
@@ -258,6 +371,7 @@ export function PartingShotSheet({
   shots,
   unit,
 }: {
+  failed: boolean;
   home: Player;
   isSending: boolean;
   lines: readonly PartingShotLine[];
@@ -270,18 +384,25 @@ export function PartingShotSheet({
   const [selected, setSelected] = useState<PartingShotLineId | null>(null);
   const opponentShot = shots.find((shot) => shot.playerId !== home.id);
   const titleRef = useRef<AccessibilityTargetRef | null>(null);
+  const cancelRef = useRef<AccessibilityTargetRef | null>(null);
+  useDismissOnBack(onClose);
   useEffect(() => {
-    const frame = requestAnimationFrame(() => focusAccessibilityTarget(titleRef.current));
+    // A web title can't take focus, so start on Cancel there.
+    const frame = requestAnimationFrame(() =>
+      focusAccessibilityTarget(Platform.OS === 'web' ? cancelRef.current : titleRef.current),
+    );
     return () => cancelAnimationFrame(frame);
   }, []);
+  const title = opponentShot ? 'Fire back' : 'Your last word';
 
   return (
     <View style={styles.sheetHost} testID="parting-shot-sheet-host">
       <Pressable
-        accessibilityLabel="Cancel"
-        accessibilityRole="button"
+        accessible={false}
+        importantForAccessibility="no"
         onPress={onClose}
         style={styles.scrim}
+        tabIndex={-1}
         testID="parting-shot-scrim"
       />
       <View
@@ -308,9 +429,9 @@ export function PartingShotSheet({
           ref={titleRef}
           style={[styles.sheetTitle, { fontSize: unit(22), lineHeight: unit(26) }]}
         >
-          Your last word
+          {title}
         </Text>
-        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: unit(12) }]}>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 12) }]}>
           One shot. No take-backs.
         </Text>
         {opponentShot && <ShotBubble by={opponentName} mine={false} shot={opponentShot} unit={unit} />}
@@ -355,10 +476,22 @@ export function PartingShotSheet({
             );
           })}
         </View>
+        {failed && (
+          <Text
+            accessibilityLiveRegion="polite"
+            maxFontSizeMultiplier={maxFontSizeMultiplier}
+            role="alert"
+            style={[styles.sendError, { fontSize: small(unit, 12) }]}
+            testID="parting-shot-error"
+          >
+            That didn&apos;t send. Try again.
+          </Text>
+        )}
         <View style={[styles.sheetActions, { gap: unit(8), marginTop: unit(4) }]}>
           <Pressable
             accessibilityRole="button"
             onPress={onClose}
+            ref={cancelRef}
             style={({ pressed }) => [
               styles.sheetButton,
               styles.sheetCancel,
@@ -412,7 +545,7 @@ function TapeRowView({ opponentName, row, unit }: { opponentName: string; row: T
   const [homeText, opponentText] = row.text ?? [String(home), String(opponent)];
   const width = (value: number) => (max > 0 ? `${Math.round((value / max) * 100)}%` : '0%') as `${number}%`;
   const valueStyle = [styles.tapeValue, { fontSize: unit(16), lineHeight: unit(19), width: unit(78) }];
-  const detailStyle = [styles.tapeDetail, { fontSize: unit(9), lineHeight: unit(11) }];
+  const detailStyle = [styles.tapeDetail, { fontSize: small(unit, 9), lineHeight: small(unit, 11) }];
 
   return (
     <View
@@ -436,7 +569,7 @@ function TapeRowView({ opponentName, row, unit }: { opponentName: string; row: T
         ) : null}
       </View>
       <View style={[styles.tapeMiddle, { gap: unit(3) }]}>
-        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.tapeLabel, { fontSize: unit(11) }]}>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.tapeLabel, { fontSize: small(unit, 11) }]}>
           {row.label}
         </Text>
         <View style={[styles.tapeBars, { gap: unit(3) }]}>
@@ -477,7 +610,7 @@ function getTapeSections(home: PlayerGameRecap, opponent: PlayerGameRecap) {
     };
   };
 
-  return [
+  const sections = [
     {
       rows: [
         {
@@ -507,12 +640,20 @@ function getTapeSections(home: PlayerGameRecap, opponent: PlayerGameRecap) {
         { label: 'Extra Rolls', values: pair((entry) => entry.tokens.extraRolls) },
         { label: 'Mulligans', values: pair((entry) => entry.tokens.mulligans) },
         { label: 'Punches', values: pair((entry) => entry.tokens.punches) },
-        { label: 'Earned', values: pair((entry) => entry.tokens.earned) },
         { label: 'Left over', values: pair((entry) => entry.tokens.left) },
       ] satisfies TapeRow[],
       title: 'TOKENS',
     },
   ];
+  // Rows where neither player did anything are noise. The swings line keeps
+  // Moments even when its rows are empty.
+  return sections
+    .map((section) => ({ ...section, rows: section.rows.filter(hasTapeValue) }))
+    .filter((section) => section.rows.length > 0 || section.title === 'MOMENTS');
+}
+
+function hasTapeValue(row: TapeRow) {
+  return row.values.some((value) => value > 0) || (row.text ?? []).some((text) => !/^(0|—|0\/0)$/.test(text));
 }
 
 function formatSwings(recap: RemoteGameRecap, home: Player, opponent: Player) {
@@ -525,6 +666,7 @@ function formatSwings(recap: RemoteGameRecap, home: Player, opponent: Player) {
 // The full "tale of the tape", opened on purpose from the Game Over panel. It
 // may scroll, like the Stats page.
 export function RecapPage({
+  canDismiss,
   home,
   homeScore,
   onClose,
@@ -537,6 +679,8 @@ export function RecapPage({
   statsButtonRef,
   unit,
 }: {
+  // False while Stats is open on top, so back closes Stats first.
+  canDismiss: boolean;
   home: Player;
   homeScore: number;
   onClose: () => void;
@@ -550,12 +694,13 @@ export function RecapPage({
   unit: Unit;
 }) {
   const backRef = useRef<AccessibilityTargetRef | null>(null);
+  useDismissOnBack(onClose, canDismiss);
   useEffect(() => {
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(backRef.current));
     return () => cancelAnimationFrame(frame);
   }, []);
   const [mine, theirs] = [home, opponent].map((player) => recap?.players.find((entry) => entry.playerId === player.id));
-  const labelStyle = [styles.label, styles.sectionLabel, { fontSize: unit(11), marginBottom: unit(2) }];
+  const labelStyle = [styles.label, styles.sectionLabel, { fontSize: small(unit, 11), marginBottom: unit(2) }];
   const sectionStyle = [styles.section, { borderRadius: unit(10), gap: unit(8), padding: unit(10) }];
 
   return (
@@ -680,7 +825,7 @@ export function RecapPage({
                               style={[
                                 styles.highlightName,
                                 feat.tone === 'defeat' && styles.defeatText,
-                                { fontSize: unit(13), lineHeight: unit(16) },
+                                { fontSize: small(unit, 13), lineHeight: small(unit, 16) },
                               ]}
                             >
                               {feat.name}
@@ -926,6 +1071,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#0E3A12',
     color: '#7CFF8A',
   },
+  retryText: {
+    color: '#FFD329',
+    textDecorationLine: 'underline',
+  },
   scrim: {
     backgroundColor: 'rgba(5, 0, 0, 0.55)',
     bottom: 0,
@@ -933,6 +1082,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     top: 0,
+  },
+  sendError: {
+    color: '#FF8A80',
+    fontFamily: black,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   section: {
     backgroundColor: '#3A0A0A',

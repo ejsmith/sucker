@@ -2103,18 +2103,18 @@ Deno.test('parting shots allow one last word each, and recaps stay private', asy
   assertEquals(freeText.error, 'Choose one of the available lines.');
 
   await markResultSeen(bob, gameId, finished.updated_at);
-  const shot = (await invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' })).game as GameRow;
-  assertEquals(shot.state.partingShots, [{ lineId: 'scoreboard', playerId: alice.id }]);
-  // Bob already cleared the result, so the shot puts the game back in his list.
-  assertEquals((await loadResultSeen(gameId))[bob.id], false);
-  const again = await invokeGameAction(alice, { gameId, lineId: 'nice-try', type: 'parting_shot' }, 400);
-  assertEquals(again.error, 'You already said your piece.');
-
-  const last = (await invokeGameAction(bob, { gameId, lineId: 'recount', type: 'parting_shot' })).game as GameRow;
-  assertEquals(last.state.partingShots, [
-    { lineId: 'scoreboard', playerId: alice.id },
-    { lineId: 'recount', playerId: bob.id },
+  // Both players often answer at once. A line that loses the commit race is
+  // replayed, so neither is lost.
+  await Promise.all([
+    invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' }),
+    invokeGameAction(bob, { gameId, lineId: 'recount', type: 'parting_shot' }),
   ]);
+  const said = (await loadGameRow(gameId)).state.partingShots ?? [];
+  assertEquals(said.length, 2);
+  assertEquals(said.find((shot) => shot.playerId === alice.id)?.lineId, 'scoreboard');
+  assertEquals(said.find((shot) => shot.playerId === bob.id)?.lineId, 'recount');
+  // Bob already cleared the result, so Alice's line puts the game back in his list.
+  assertEquals((await loadResultSeen(gameId))[bob.id], false);
   for (const [user, lineId] of [
     [alice, 'nice-try'],
     [bob, 'rematch-now'],
@@ -2124,6 +2124,24 @@ Deno.test('parting shots allow one last word each, and recaps stay private', asy
   }
   const shotActions = (await loadActions(gameId)).filter((action) => action.action_type === 'parting_shot');
   assertEquals(shotActions.length, 2);
+
+  // Forfeits take no parting shots.
+  const { partingShots: _said, ...finalState } = (await loadGameRow(gameId)).state;
+  for (const [forfeit, error] of [
+    [{ timedOut: { playerId: bob.id } }, 'Forfeited games get no parting shots.'],
+    [{ rageQuit: { playerId: bob.id } }, 'Rage Quit games get one reply, not parting shots.'],
+  ] as const) {
+    assertNoError(
+      (
+        await admin
+          .from('games')
+          .update({ state: { ...finalState, ...forfeit } })
+          .eq('id', gameId)
+      ).error,
+    );
+    const rejected = await invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
+    assertEquals(rejected.error, error);
+  }
 });
 
 Deno.test("Sucker Spree counts Sucker turns in a row across all of a player's games", async () => {

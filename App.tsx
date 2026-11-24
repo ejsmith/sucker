@@ -1431,6 +1431,8 @@ export function LocalGameScreen({
   const [isSendingPartingShot, setIsSendingPartingShot] = useState(false);
   const [partingShotSheetGameId, setPartingShotSheetGameId] = useState<string | null>(null);
   const [recapPageGameId, setRecapPageGameId] = useState<string | null>(null);
+  const [partingShotFailed, setPartingShotFailed] = useState(false);
+  const [recapAttempt, setRecapAttempt] = useState(0);
   const [gameRecap, setGameRecap] = useState<{
     failed: boolean;
     gameId: string;
@@ -1467,6 +1469,9 @@ export function LocalGameScreen({
   const tokenMenuCloseRef = useRef<ViewRef | null>(null);
   const tokenMenuWasOpen = useRef(false);
   const gameOverStatsButtonRef = useRef<ViewRef | null>(null);
+  const gameOverRecapButtonRef = useRef<ViewRef | null>(null);
+  const partingShotButtonRef = useRef<ViewRef | null>(null);
+  const lastWordsRef = useRef<ViewRef | null>(null);
   const homeAvatarButtonRef = useRef<ViewRef | null>(null);
   const opponentAvatarButtonRef = useRef<ViewRef | null>(null);
   const statsReturnFocusTarget = useRef<'gameOver' | 'homeAvatar' | 'menu' | 'opponentAvatar'>('menu');
@@ -1718,7 +1723,7 @@ export function LocalGameScreen({
         ? 'Out of time.'
         : 'You win!'
       : winnerId === homePlayer.id
-        ? `You win by ${homeScore - opponentScore}!`
+        ? `You won by ${homeScore - opponentScore}!`
         : winnerId
           ? `You lost by ${opponentScore - homeScore}.`
           : 'Tie game!';
@@ -1741,15 +1746,21 @@ export function LocalGameScreen({
     !suckerPunchDialog,
   );
   const rageQuitGameId = isRemoteGame && isGameOver && game.rageQuit ? game.id : null;
-  // Forfeits end without final scores or game feats, so they get no recap.
-  const recapGameId = isRemoteGame && gameOverVisible && !rageQuit && !timedOut ? game.id : null;
+  // Wait for the server to finish the game: the final move shows Game Over
+  // before it commits, and a recap read then would miss the last turn, feats
+  // and rating. Forfeits end without final scores or game feats, so they get
+  // no recap.
+  const isRemoteGameFinished = isRemoteGame && remoteStatus === 'complete';
+  const recapGameId = isRemoteGameFinished && gameOverVisible && !rageQuit && !timedOut ? game.id : null;
   const loadRecap = useRef(remoteHandlers?.onLoadRecap);
   // Declared before the effect that reads it, so it updates first.
   useEffect(() => {
     loadRecap.current = remoteHandlers?.onLoadRecap;
   }, [remoteHandlers?.onLoadRecap]);
-  const partingShotHand = isRemoteGame && myProfileId ? getPartingShotHand(game, myProfileId) : null;
+  const partingShotHand = isRemoteGameFinished && myProfileId ? getPartingShotHand(game, myProfileId) : null;
   const showRecap = Boolean(recapGameId);
+  const isRecapOverlayOpen =
+    showRecap && (recapPageGameId === game.id || (Boolean(partingShotHand) && partingShotSheetGameId === game.id));
   const currentRecap = gameRecap?.gameId === game.id ? gameRecap.recap : null;
   const recapFailed = Boolean(gameRecap?.gameId === game.id && gameRecap.failed);
 
@@ -1771,7 +1782,7 @@ export function LocalGameScreen({
     return () => {
       isCurrent = false;
     };
-  }, [recapGameId]);
+  }, [recapAttempt, recapGameId]);
 
   useEffect(() => {
     if (!rageQuitGameId) {
@@ -3335,14 +3346,35 @@ export function LocalGameScreen({
     );
   }
 
+  function openPartingShotSheet() {
+    setPartingShotFailed(false);
+    setPartingShotSheetGameId(game.id);
+  }
+
+  function closePartingShotSheet(returnFocusTarget = partingShotButtonRef) {
+    setPartingShotSheetGameId(null);
+    requestAnimationFrame(() => focusAccessibilityTarget(returnFocusTarget.current));
+  }
+
+  function closeRecapPage() {
+    setRecapPageGameId(null);
+    requestAnimationFrame(() => focusAccessibilityTarget(gameOverRecapButtonRef.current));
+  }
+
   async function handlePartingShot(lineId: PartingShotLineId) {
     if (!remoteHandlers || isSendingPartingShot) return;
     setIsSendingPartingShot(true);
+    setPartingShotFailed(false);
     const sent = await runWithCleanup(
       () => remoteHandlers.onPartingShot(lineId),
       () => setIsSendingPartingShot(false),
     );
-    if (sent) setPartingShotSheetGameId(null);
+    if (!sent) {
+      setPartingShotFailed(true);
+      return;
+    }
+    // The button that opened the sheet is gone, so land on the line just sent.
+    closePartingShotSheet(lastWordsRef);
   }
 
   async function handleRematch() {
@@ -3644,7 +3676,7 @@ export function LocalGameScreen({
           ref={screenRef}
           style={[styles.screen, gameLayout.styles.screen, gameStageStyle, devViewportStageOffset]}
           testID="game-screen"
-          {...(showStatsPage ? {} : backSwipeResponder.panHandlers)}
+          {...(showStatsPage || isRecapOverlayOpen ? {} : backSwipeResponder.panHandlers)}
         >
           <BackgroundDicePattern floatValue={bgFloat} />
           <View style={[styles.topBar, gameLayout.styles.topBar]} testID="game-top-bar">
@@ -5029,16 +5061,19 @@ export function LocalGameScreen({
                       home={homePlayer}
                       maxShown={3}
                       onOpenRecap={() => setRecapPageGameId(game.id)}
+                      onRetry={() => setRecapAttempt((attempt) => attempt + 1)}
                       opponent={opponentPlayer}
                       recap={currentRecap}
                       recapFailed={recapFailed}
                       unit={gameLayout.unit}
                     />
                     <LastWord
-                      home={homePlayer}
-                      onOpenSheet={() => setPartingShotSheetGameId(game.id)}
-                      opponentName={opponentPlayer.name}
+                      buttonRef={partingShotButtonRef}
                       canSend={Boolean(partingShotHand)}
+                      home={homePlayer}
+                      onOpenSheet={openPartingShotSheet}
+                      opponentName={opponentPlayer.name}
+                      sectionRef={lastWordsRef}
                       shots={game.partingShots ?? []}
                       unit={gameLayout.unit}
                     />
@@ -5084,7 +5119,7 @@ export function LocalGameScreen({
                     accessibilityLabel={showRecap ? 'Open the game recap' : 'View game stats'}
                     accessibilityRole="button"
                     onPress={() => (showRecap ? setRecapPageGameId(game.id) : handleOpenStats('gameOver'))}
-                    ref={showRecap ? undefined : gameOverStatsButtonRef}
+                    ref={showRecap ? gameOverRecapButtonRef : gameOverStatsButtonRef}
                     style={({ pressed }) => [
                       styles.gameOverSecondaryButton,
                       gameLayout.styles.gameOverSecondaryButton,
@@ -5104,9 +5139,10 @@ export function LocalGameScreen({
               </View>
               {showRecap && recapPageGameId === game.id && (
                 <RecapPage
+                  canDismiss={!showStatsPage}
                   home={homePlayer}
                   homeScore={homeScore}
-                  onClose={() => setRecapPageGameId(null)}
+                  onClose={closeRecapPage}
                   onOpenStats={() => handleOpenStats('gameOver')}
                   opponent={opponentPlayer}
                   opponentScore={opponentScore}
@@ -5120,9 +5156,10 @@ export function LocalGameScreen({
               {showRecap && partingShotHand && partingShotSheetGameId === game.id && (
                 <PartingShotSheet
                   home={homePlayer}
+                  failed={partingShotFailed}
                   isSending={isSendingPartingShot}
                   key={game.id}
-                  onClose={() => setPartingShotSheetGameId(null)}
+                  onClose={() => closePartingShotSheet()}
                   onSend={(lineId) => void handlePartingShot(lineId)}
                   opponentName={opponentPlayer.name}
                   lines={partingShotHand}

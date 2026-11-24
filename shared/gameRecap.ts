@@ -71,7 +71,9 @@ export function buildGameRecap({
         punches: {
           biggestHit: highestBox(
             landed.flatMap((action) => {
-              const turn = turnsById.get(String(payloadValue(action.payload, 'targetTurnId')));
+              // Older punches name their target as turnId.
+              const targetId = payloadValue(action.payload, 'targetTurnId') ?? payloadValue(action.payload, 'turnId');
+              const turn = turnsById.get(String(targetId));
               return turn ? [turn] : [];
             }),
           ),
