@@ -2006,11 +2006,11 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   );
 });
 
-Deno.test('parting shots allow one shot and one comeback each, and recaps stay private', async () => {
+Deno.test('parting shots allow one last word each, and recaps stay private', async () => {
   const [alice, bob, charlie] = await createUsers('parting-shots', ['Alice', 'Bob', 'Charlie']);
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
   const gameId = (created.game as GameRow).id;
-  const early = await invokeGameAction(alice, { gameId, lineId: 'gg-mostly', type: 'parting_shot' }, 400);
+  const early = await invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
   assertEquals(early.error, 'Parting shots wait until the game is over.');
 
   // Every box but Chance is filled, and Alice is up by 3.
@@ -2052,33 +2052,33 @@ Deno.test('parting shots allow one shot and one comeback each, and recaps stay p
   const outsider = await charlie.client.rpc('get_game_recap', { target_game_id: gameId });
   assertEquals(outsider.error?.code, '42501');
 
-  const wrongSet = await invokeGameAction(bob, { gameId, lineId: 'gg-mostly', type: 'parting_shot' }, 400);
+  const wrongSet = await invokeGameAction(bob, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
   assertEquals(wrongSet.error, 'Choose one of the available lines.');
   const freeText = await invokeGameAction(bob, { gameId, lineId: 'You stink', type: 'parting_shot' }, 400);
   assertEquals(freeText.error, 'Choose one of the available lines.');
 
   await markResultSeen(bob, gameId, finished.updated_at);
-  const shot = (await invokeGameAction(alice, { gameId, lineId: 'gg-mostly', type: 'parting_shot' })).game as GameRow;
-  assertEquals(shot.state.partingShots, [{ kind: 'shot', lineId: 'gg-mostly', playerId: alice.id }]);
+  const shot = (await invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' })).game as GameRow;
+  assertEquals(shot.state.partingShots, [{ lineId: 'scoreboard', playerId: alice.id }]);
   // Bob already cleared the result, so the shot puts the game back in his list.
   assertEquals((await loadResultSeen(gameId))[bob.id], false);
-  const again = await invokeGameAction(alice, { gameId, lineId: 'thanks-tokens', type: 'parting_shot' }, 400);
+  const again = await invokeGameAction(alice, { gameId, lineId: 'nice-try', type: 'parting_shot' }, 400);
   assertEquals(again.error, 'You already said your piece.');
 
-  await invokeGameAction(bob, { gameId, lineId: 'cute', type: 'parting_shot' });
-  await invokeGameAction(bob, { gameId, lineId: 'rematch-now', type: 'parting_shot' });
-  const last = (await invokeGameAction(alice, { gameId, lineId: 'says-the-sucker', type: 'parting_shot' }))
-    .game as GameRow;
-  assertEquals(
-    last.state.partingShots?.map((entry) => `${entry.playerId === alice.id ? 'alice' : 'bob'}:${entry.kind}`),
-    ['alice:shot', 'bob:comeback', 'bob:shot', 'alice:comeback'],
-  );
-  for (const user of [alice, bob]) {
-    const done = await invokeGameAction(user, { gameId, lineId: 'cute', type: 'parting_shot' }, 400);
+  const last = (await invokeGameAction(bob, { gameId, lineId: 'recount', type: 'parting_shot' })).game as GameRow;
+  assertEquals(last.state.partingShots, [
+    { lineId: 'scoreboard', playerId: alice.id },
+    { lineId: 'recount', playerId: bob.id },
+  ]);
+  for (const [user, lineId] of [
+    [alice, 'nice-try'],
+    [bob, 'rematch-now'],
+  ] as const) {
+    const done = await invokeGameAction(user, { gameId, lineId, type: 'parting_shot' }, 400);
     assertEquals(done.error, 'You already said your piece.');
   }
   const shotActions = (await loadActions(gameId)).filter((action) => action.action_type === 'parting_shot');
-  assertEquals(shotActions.length, 4);
+  assertEquals(shotActions.length, 2);
 });
 
 Deno.test('game-action creates one rematch and alternates the first player', async () => {

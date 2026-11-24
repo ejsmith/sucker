@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Ref } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { categoryLabels, type PartingShot, type Player } from '../game';
 import type { PlayerGameRecap, ScoredBox } from '../../shared/gameRecap';
-import { getPartingShotText, type PartingShotLineId, type PartingShotOptions } from '../../shared/partingShots';
+import { getPartingShotText, type PartingShotLine, type PartingShotLineId } from '../../shared/partingShots';
 import type { PlayerRecapResult, RecapFeat, RemoteGameRecap } from '../multiplayer/gameRecap';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon } from './ControlIcon';
@@ -186,36 +186,37 @@ function ShotBubble({ by, mine, shot, unit }: { by: string; mine: boolean; shot:
   );
 }
 
-// The latest line said and one clear way to answer it.
+// Both players' last words, in the order said, and the way to add yours.
 export function LastWord({
+  canSend,
   home,
   onOpenSheet,
   opponentName,
-  options,
   shots,
   unit,
 }: {
+  canSend: boolean;
   home: Player;
   onOpenSheet: () => void;
   opponentName: string;
-  options: PartingShotOptions | null;
   shots: PartingShot[];
   unit: Unit;
 }) {
-  const latest = shots.at(-1);
-  if (!latest && !options) return null;
-  const mine = latest?.playerId === home.id;
+  if (shots.length === 0 && !canSend) return null;
+  const opponentSpoke = shots.some((shot) => shot.playerId !== home.id);
 
   return (
     <View style={[styles.lastWord, { gap: unit(6) }]} testID="parting-shots">
-      {latest && (
-        <View testID="parting-shot-latest">
-          <ShotBubble by={mine ? 'You' : opponentName} mine={mine} shot={latest} unit={unit} />
-        </View>
-      )}
-      {options ? (
+      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, { fontSize: unit(11) }]}>
+        LAST WORDS
+      </Text>
+      {shots.map((shot) => {
+        const mine = shot.playerId === home.id;
+        return <ShotBubble by={mine ? 'You' : opponentName} key={shot.playerId} mine={mine} shot={shot} unit={unit} />;
+      })}
+      {canSend ? (
         <Pressable
-          accessibilityLabel={options.kind === 'comeback' ? `Fire back at ${opponentName}` : 'Get the last word'}
+          accessibilityLabel="Say your last word"
           accessibilityRole="button"
           onPress={onOpenSheet}
           style={({ pressed }) => [
@@ -226,41 +227,48 @@ export function LastWord({
           testID="parting-shot-open"
         >
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.talkButtonText, { fontSize: unit(15) }]}>
-            💬 {options.kind === 'comeback' ? 'Fire back' : 'Get the last word'}
+            💬 Say your last word
           </Text>
         </Pressable>
       ) : (
-        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: unit(11) }]}>
-          {mine ? 'You said your piece.' : 'They got the last word.'}
-        </Text>
+        !opponentSpoke && (
+          <Text
+            maxFontSizeMultiplier={maxFontSizeMultiplier}
+            numberOfLines={1}
+            style={[styles.quiet, { fontSize: unit(11) }]}
+            testID="parting-shot-waiting"
+          >
+            {opponentName} hasn&apos;t said a word yet.
+          </Text>
+        )
       )}
     </View>
   );
 }
 
-// Picking a line happens in its own sheet with the line being answered on top.
+// Picking a line happens in its own sheet, under what the other player said.
 // Pick, then Send, because there is no undo.
 export function PartingShotSheet({
   home,
   isSending,
+  lines,
   onClose,
   onSend,
   opponentName,
-  options,
   shots,
   unit,
 }: {
   home: Player;
   isSending: boolean;
+  lines: readonly PartingShotLine[];
   onClose: () => void;
   onSend: (lineId: PartingShotLineId) => void;
   opponentName: string;
-  options: PartingShotOptions;
   shots: PartingShot[];
   unit: Unit;
 }) {
   const [selected, setSelected] = useState<PartingShotLineId | null>(null);
-  const answering = options.kind === 'comeback' ? shots.findLast((shot) => shot.playerId !== home.id) : undefined;
+  const opponentShot = shots.find((shot) => shot.playerId !== home.id);
   const titleRef = useRef<AccessibilityTargetRef | null>(null);
   useEffect(() => {
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(titleRef.current));
@@ -300,14 +308,14 @@ export function PartingShotSheet({
           ref={titleRef}
           style={[styles.sheetTitle, { fontSize: unit(22), lineHeight: unit(26) }]}
         >
-          {options.kind === 'comeback' ? 'Fire back' : 'Get the last word'}
+          Your last word
         </Text>
         <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: unit(12) }]}>
-          {options.kind === 'comeback' ? 'One comeback. Make it count.' : 'One shot. No take-backs.'}
+          One shot. No take-backs.
         </Text>
-        {answering && <ShotBubble by={opponentName} mine={false} shot={answering} unit={unit} />}
+        {opponentShot && <ShotBubble by={opponentName} mine={false} shot={opponentShot} unit={unit} />}
         <View accessibilityRole="radiogroup" style={{ gap: unit(6) }}>
-          {options.lines.map((line) => {
+          {lines.map((line) => {
             const isSelected = selected === line.id;
             return (
               <Pressable
@@ -699,7 +707,7 @@ export function RecapPage({
                 {shots.map((shot) => (
                   <ShotBubble
                     by={shot.playerId === home.id ? 'You' : opponent.name}
-                    key={`${shot.playerId}-${shot.kind}`}
+                    key={shot.playerId}
                     mine={shot.playerId === home.id}
                     shot={shot}
                     unit={unit}

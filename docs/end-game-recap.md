@@ -11,11 +11,12 @@ plain Game Over panel.
   - Highlights: up to three feats or defeats as a badge, the feat name, and
     the owner with the description. The order is your feats, their feats, your
     defeats, then theirs. "+N more in the recap" opens the recap page.
-  - The latest parting shot as a speech bubble, and one button to answer it
-    ("Fire back" or "Get the last word").
+  - Last words: both players' lines as speech bubbles, in the order said. A
+    button to say yours until you have; once you have, a note if the other
+    player has not spoken yet.
   - Rematch and Recap. Rage-quit and computer games keep Rematch and Stats.
-- **Trash-talk sheet.** A bottom sheet with the line being answered on top and
-  the four lines as radio options. Send stays disabled until a line is picked,
+- **Trash-talk sheet.** A bottom sheet with the other player's line on top, if
+  they have spoken, and your four dealt lines as radio options. Send stays disabled until a line is picked,
   since there is no undo. Cancel or the backdrop closes it.
 - **Recap page ("Tale of the Tape").** A full page over the panel that may
   scroll. It shows scores and rating changes, mirrored bars for Punches,
@@ -26,11 +27,15 @@ plain Game Over panel.
 
 - **Canned lines only.** Same approach as taunts and Rage Quit replies, so there
   is still no moderation surface (see `community-leaderboards.md`). Lines live in
-  `shared/partingShots.ts`: winner, loser, and tie shots, plus comebacks.
-- **One shot and one comeback each.** A player picks a shot from the lines for
-  their result. Once the other player's shot lands, they may send one comeback.
-  A waiting comeback is offered before their own shot. A game holds at most
-  four lines, in the order sent.
+  `shared/partingShots.ts`: separate winner, loser, and tie lists.
+- **One last word each.** A player sends one line, and that's it. A game holds at
+  most two lines, in the order sent.
+- **A random hand.** Each player is offered four lines drawn from the list for
+  their result. The draw is seeded by game and player, so it differs from game
+  to game but can't be redrawn by reopening the sheet or switching devices. The
+  server accepts any line for the player's result, so growing the lists can't
+  break an older app whose draw comes out differently. Never remove a line id:
+  older games still show it, and older apps may still send it.
 - **Rage Quit keeps its own rule.** The quitter never gets the last word, and
   the single Rage Quit reply stays as is. Rage-quit games show no recap.
 - **No time limit.** Shots stay available while the game is in a player's list.
@@ -58,8 +63,8 @@ numbers live on the recap page.
 - Migration `20261102120000_add_end_game_recap.sql`: the `parting_shot` action
   type and `get_game_recap`.
 - `game-action` `parting_shot { gameId, lineId }` appends to
-  `state.partingShots` through `commit_game_move`, whose version check keeps the
-  cap race-safe across devices, as with Rage Quit replies.
+  `state.partingShots` through `commit_game_move`, whose version check keeps
+  one line per player race-safe across devices, as with Rage Quit replies.
 - `shared/partingShots.ts` is mirrored into `supabase/functions/_shared`;
   `tests/partingShots.test.cjs` keeps the copies in step.
 - `src/ui/GameRecap.tsx` renders the recap; `src/multiplayer/gameRecap.ts`

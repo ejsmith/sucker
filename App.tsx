@@ -128,7 +128,7 @@ import { DieFace } from './src/ui/DieFace';
 import { rageQuitRematchCooldownMs, RageQuitDialog } from './src/ui/RageQuit';
 import { getTableFlipBoardStyle, getTableFlipTrayStyle, runTableFlip, TableFlipDebris } from './src/ui/TableFlip';
 import { getRageQuitReplyText, rageQuitReplies, type RageQuitReplyId } from './shared/rageQuit';
-import { getPartingShotOptions, type PartingShotLineId } from './shared/partingShots';
+import { getPartingShotHand, type PartingShotLineId } from './shared/partingShots';
 import { loadGameRecap, type RemoteGameRecap } from './src/multiplayer/gameRecap';
 import { GameOverHighlights, LastWord, PartingShotSheet, RatingChange, RecapPage } from './src/ui/GameRecap';
 import { useHaptics } from './src/haptics/HapticsProvider';
@@ -1649,7 +1649,7 @@ export function LocalGameScreen({
   const recapGameId = isRemoteGame && gameOverVisible && !rageQuit ? game.id : null;
   const loadRecap = useRef(remoteHandlers?.onLoadRecap);
   loadRecap.current = remoteHandlers?.onLoadRecap;
-  const partingShotOptions = isRemoteGame && myProfileId ? getPartingShotOptions(game, myProfileId) : null;
+  const partingShotHand = isRemoteGame && myProfileId ? getPartingShotHand(game, myProfileId) : null;
   const showRecap = Boolean(recapGameId);
   const currentRecap = gameRecap?.gameId === game.id ? gameRecap.recap : null;
   const recapFailed = Boolean(gameRecap?.gameId === game.id && gameRecap.failed);
@@ -5007,7 +5007,7 @@ export function LocalGameScreen({
                       home={homePlayer}
                       onOpenSheet={() => setPartingShotSheetGameId(game.id)}
                       opponentName={opponentPlayer.name}
-                      options={partingShotOptions}
+                      canSend={Boolean(partingShotHand)}
                       shots={game.partingShots ?? []}
                       unit={gameLayout.unit}
                     />
@@ -5086,15 +5086,15 @@ export function LocalGameScreen({
                   unit={gameLayout.unit}
                 />
               )}
-              {showRecap && partingShotOptions && partingShotSheetGameId === game.id && (
+              {showRecap && partingShotHand && partingShotSheetGameId === game.id && (
                 <PartingShotSheet
                   home={homePlayer}
                   isSending={isSendingPartingShot}
-                  key={`${game.id}-${partingShotOptions.kind}`}
+                  key={game.id}
                   onClose={() => setPartingShotSheetGameId(null)}
                   onSend={(lineId) => void handlePartingShot(lineId)}
                   opponentName={opponentPlayer.name}
-                  options={partingShotOptions}
+                  lines={partingShotHand}
                   shots={game.partingShots ?? []}
                   unit={gameLayout.unit}
                 />

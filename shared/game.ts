@@ -38,10 +38,9 @@ export type RageQuit = {
   replyId?: string;
 };
 
-// Canned end-game trash talk, in the order sent. Each player gets one shot and
-// one comeback to the other's shot. Lines are cataloged in partingShots.ts.
+// Canned end-game trash talk, in the order sent. Each player gets one line.
+// Lines are cataloged in partingShots.ts.
 export type PartingShot = {
-  kind: 'shot' | 'comeback';
   lineId: string;
   playerId: string;
 };
@@ -620,11 +619,8 @@ function toPartingShots(value: unknown, players: Player[]): PartingShot[] {
     if (!players.some((player) => player.id === playerId)) {
       throw new Error('Stored game has invalid parting shot player.');
     }
-    if (shot.kind !== 'shot' && shot.kind !== 'comeback') {
-      throw new Error('Stored game has invalid parting shot kind.');
-    }
 
-    return { kind: shot.kind, lineId: toString(shot.lineId, 'Stored game has invalid parting shot line.'), playerId };
+    return { lineId: toString(shot.lineId, 'Stored game has invalid parting shot line.'), playerId };
   });
 }
 

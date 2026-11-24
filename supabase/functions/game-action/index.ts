@@ -64,7 +64,7 @@ import {
 } from '../_shared/monitoring.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
 import {
-  getPartingShotOptions,
+  getPartingShotPool,
   getPartingShotText,
   isPartingShotLineId,
   type PartingShotLineId,
@@ -788,10 +788,9 @@ function buildNotificationContent(
     };
   }
   if (action.type === 'parting_shot') {
-    const shot = game.state.partingShots?.at(-1);
     return {
       body: getPartingShotText(action.lineId),
-      title: shot?.kind === 'comeback' ? `${actorName} fired back` : `${actorName} got the last word`,
+      title: `${actorName}'s last word`,
     };
   }
   if (action.type === 'rage_quit_reply') {
@@ -1844,21 +1843,20 @@ async function sendPartingShot(
   if (game.state.rageQuit) {
     throw new Error('Rage Quit games get one reply, not parting shots.');
   }
-  const options = getPartingShotOptions(game.state, actorId);
-  if (!options) {
+  const pool = getPartingShotPool(game.state, actorId);
+  if (!pool) {
     throw new Error('You already said your piece.');
   }
-  if (!options.lines.some((line) => line.id === lineId)) {
+  if (!pool.some((line) => line.id === lineId)) {
     throw new Error('Choose one of the available lines.');
   }
 
-  // The game version check keeps each player to one shot and one comeback
-  // across devices.
+  // The game version check keeps each player to one line across devices.
   const recipientId = game.state.players.find((player) => player.id !== actorId)!.id;
   const updatedGame = stageGameMove(mutationState, game, {
     state: {
       ...game.state,
-      partingShots: [...(game.state.partingShots ?? []), { kind: options.kind, lineId, playerId: actorId }],
+      partingShots: [...(game.state.partingShots ?? []), { lineId, playerId: actorId }],
     },
   });
   // The recipient has not seen this yet, so the game goes back into their list.
@@ -1868,7 +1866,7 @@ async function sendPartingShot(
     data: { result_seen_at: null },
     match: { game_id: gameId, player_id: recipientId },
   });
-  await insertAction(admin, gameId, actorId, 'parting_shot', { kind: options.kind, lineId }, mutationState.plan);
+  await insertAction(admin, gameId, actorId, 'parting_shot', { lineId }, mutationState.plan);
   return { game: updatedGame, notificationProfileIds: [recipientId] };
 }
 
