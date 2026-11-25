@@ -672,6 +672,7 @@ export type Database = {
         Returns: {
           avatar_url: string | null;
           display_name: string;
+          game_id: string | null;
           is_me: boolean;
           player_id: string;
           rank: number;
@@ -713,12 +714,7 @@ export type Database = {
       };
       get_game_recap: {
         Args: { target_game_id: string };
-        Returns: {
-          feat_keys: string[];
-          player_id: string;
-          rating_after: number | null;
-          rating_before: number | null;
-        }[];
+        Returns: Json;
       };
       get_player_feats: {
         Args: { target_profile_id: string };

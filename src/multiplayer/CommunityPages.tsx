@@ -18,6 +18,7 @@ export function LeaderboardPanel({
   error,
   isLoading,
   onBoardChange,
+  onOpenGame,
   onOpenPlayer,
   rows,
 }: {
@@ -25,6 +26,8 @@ export function LeaderboardPanel({
   error: string | null;
   isLoading: boolean;
   onBoardChange: (board: LeaderboardBoard) => void;
+  // Score boards link each score to the game that set it.
+  onOpenGame?: (row: LeaderboardRow) => void;
   onOpenPlayer: (profileId: string) => void;
   rows: LeaderboardRow[];
 }) {
@@ -76,30 +79,47 @@ export function LeaderboardPanel({
           return (
             <View key={row.player_id}>
               {skipped && <Text style={styles.gap}>•••</Text>}
-              <Pressable
-                accessibilityLabel={`${row.display_name}, rank ${row.rank}`}
-                onPress={() => onOpenPlayer(row.player_id)}
-                style={({ pressed }) => [styles.row, row.is_me && styles.rowMine, pressed && styles.pressed]}
-                testID={`leaderboard-row-${row.player_id}`}
-              >
-                <Text style={[styles.rank, row.rank <= 3 && styles.rankTop]}>{row.rank}</Text>
-                <PlayerAvatar avatarUrl={row.avatar_url} name={row.display_name} size={32} />
-                <View style={styles.rowText}>
-                  <Text numberOfLines={1} style={styles.name}>
-                    {row.display_name}
-                    {row.is_me ? ' (you)' : ''}
-                  </Text>
-                  {row.username && (
-                    <Text numberOfLines={1} style={styles.username}>
-                      @{row.username}
+              <View style={[styles.row, row.is_me && styles.rowMine]}>
+                <Pressable
+                  accessibilityLabel={`${row.display_name}, rank ${row.rank}`}
+                  onPress={() => onOpenPlayer(row.player_id)}
+                  style={({ pressed }) => [styles.rowPlayer, pressed && styles.pressed]}
+                  testID={`leaderboard-row-${row.player_id}`}
+                >
+                  <Text style={[styles.rank, row.rank <= 3 && styles.rankTop]}>{row.rank}</Text>
+                  <PlayerAvatar avatarUrl={row.avatar_url} name={row.display_name} size={32} />
+                  <View style={styles.rowText}>
+                    <Text numberOfLines={1} style={styles.name}>
+                      {row.display_name}
+                      {row.is_me ? ' (you)' : ''}
                     </Text>
+                    {row.username && (
+                      <Text numberOfLines={1} style={styles.username}>
+                        @{row.username}
+                      </Text>
+                    )}
+                  </View>
+                  {!(onOpenGame && row.game_id) && (
+                    <View style={styles.valueBlock}>
+                      <Text style={styles.value}>{formatLeaderboardValue(board, row.value)}</Text>
+                      <Text style={styles.sample}>{formatSampleSize(board, row.sample_size)}</Text>
+                    </View>
                   )}
-                </View>
-                <View style={styles.valueBlock}>
-                  <Text style={styles.value}>{formatLeaderboardValue(board, row.value)}</Text>
-                  <Text style={styles.sample}>{formatSampleSize(board, row.sample_size)}</Text>
-                </View>
-              </Pressable>
+                </Pressable>
+                {onOpenGame && row.game_id ? (
+                  <Pressable
+                    accessibilityHint="Opens the game"
+                    accessibilityLabel={`${row.display_name}'s best game, ${formatLeaderboardValue(board, row.value)} points`}
+                    accessibilityRole="button"
+                    onPress={() => onOpenGame(row)}
+                    style={({ pressed }) => [styles.valueButton, pressed && styles.pressed]}
+                    testID={`leaderboard-game-${row.player_id}`}
+                  >
+                    <Text style={styles.value}>{formatLeaderboardValue(board, row.value)}</Text>
+                    <Text style={styles.valueLink}>See game ›</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
           );
         })
@@ -368,6 +388,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#3A0A05',
     borderColor: '#FFD329',
   },
+  rowPlayer: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 44,
+  },
   rowText: {
     flex: 1,
   },
@@ -443,5 +470,22 @@ const styles = StyleSheet.create({
   },
   valueBlock: {
     alignItems: 'flex-end',
+  },
+  valueButton: {
+    alignItems: 'center',
+    backgroundColor: '#3A0A05',
+    borderColor: '#FFB000',
+    borderRadius: 8,
+    borderWidth: 2,
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 76,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  valueLink: {
+    color: '#FFD76B',
+    fontSize: 10,
+    fontWeight: '800',
   },
 });

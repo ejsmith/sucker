@@ -1,11 +1,10 @@
-import type { Database } from '../../shared/database.types';
 import { featCatalog, isFeatKey, type FeatDefinition, type FeatKey } from '../../shared/feats';
-import type { GameState } from '../../shared/game';
+import { toGameState, type GameState } from '../../shared/game';
 import { buildGameRecap, type GameRecap, type GameRecapTurn } from '../../shared/gameRecap';
-import type { SuckerStatAction, SuckerStatActionType } from '../../shared/stats';
+import type { SuckerStatAction } from '../../shared/stats';
+import { isTauntId, type TauntId } from '../../shared/taunts';
+import { getSafeAvatarUrl } from './profiles';
 import { supabase } from './supabase';
-
-type GameRecapRow = Database['public']['Functions']['get_game_recap']['Returns'][number];
 
 export type RecapFeat = FeatDefinition & { key: FeatKey };
 
@@ -15,55 +14,96 @@ export type PlayerRecapResult = {
   ratingBefore: number | null;
 };
 
-export type RemoteGameRecap = GameRecap & {
-  results: Record<string, PlayerRecapResult>;
+export type RecapProfile = {
+  avatarUrl: string | null;
+  id: string;
+  name: string;
+  username: string | null;
 };
 
-const recapActionTypes: SuckerStatActionType[] = [
-  'extra_roll',
-  'roll',
-  'mulligan',
-  'sucker_punch',
-  'sucker_blocker',
-  'score_category',
-  'scratch_category',
-];
+// A taunt sent during the game. Its turn is the one it answered: the sender's
+// own turn, or the turn they punched.
+export type RecapTaunt = {
+  actorId: string;
+  createdAt: string;
+  tauntId: TauntId;
+  turnId: string | null;
+};
 
-export async function loadGameRecap(gameId: string, game: GameState): Promise<RemoteGameRecap> {
-  const [turns, actions, recap] = await Promise.all([
-    supabase
-      .from('turns')
-      .select('id, category, dice, extra_rolls, mulligans, player_id, roll_count, score, status, turn_index')
-      .eq('game_id', gameId)
-      .order('turn_index', { ascending: true }),
-    supabase
-      .from('turn_actions')
-      .select('action_type, actor_id, payload')
-      .eq('game_id', gameId)
-      .in('action_type', recapActionTypes)
-      .order('created_at', { ascending: true }),
-    supabase.rpc('get_game_recap', { target_game_id: gameId }),
-  ]);
-  if (turns.error) throw turns.error;
-  if (actions.error) throw actions.error;
-  if (recap.error) throw recap.error;
+export type RemoteGameRecap = GameRecap & {
+  completedAt: string | null;
+  game: GameState;
+  id: string;
+  profiles: Record<string, RecapProfile>;
+  results: Record<string, PlayerRecapResult>;
+  taunts: RecapTaunt[];
+  turns: GameRecapTurn[];
+};
 
-  const rows = (recap.data ?? []) as GameRecapRow[];
+type RecapPayload = {
+  actions?: (SuckerStatAction & { created_at: string; turn_id: string | null })[];
+  game: { completed_at: string | null; id: string; state: unknown };
+  players?: {
+    avatar_url: string | null;
+    display_name: string;
+    feat_keys: string[] | null;
+    player_id: string;
+    rating_after: number | string | null;
+    rating_before: number | string | null;
+    username: string | null;
+  }[];
+  turns?: GameRecapTurn[];
+};
+
+// Any finished game, read whole in one call: the player's own, or one opened
+// from a leaderboard or someone else's profile.
+export async function loadGameRecap(gameId: string): Promise<RemoteGameRecap> {
+  const { data, error } = await supabase.rpc('get_game_recap', { target_game_id: gameId });
+  if (error) throw error;
+
+  const payload = data as unknown as RecapPayload;
+  const game = toGameState(payload.game.state);
+  const actions = payload.actions ?? [];
+  const turns = payload.turns ?? [];
+  const players = payload.players ?? [];
+  const toRating = (value: number | string | null) => (value === null ? null : Number(value));
+
   return {
-    ...buildGameRecap({
-      actions: (actions.data ?? []) as SuckerStatAction[],
-      players: game.players,
-      turns: (turns.data ?? []) as GameRecapTurn[],
-    }),
+    ...buildGameRecap({ actions, players: game.players, turns }),
+    completedAt: payload.game.completed_at,
+    game,
+    id: payload.game.id,
+    profiles: Object.fromEntries(
+      game.players.map((player) => {
+        const row = players.find((candidate) => candidate.player_id === player.id);
+        return [
+          player.id,
+          {
+            avatarUrl: getSafeAvatarUrl(row?.avatar_url, player.id),
+            id: player.id,
+            name: row?.display_name ?? player.name,
+            username: row?.username ?? null,
+          },
+        ];
+      }),
+    ),
     results: Object.fromEntries(
-      rows.map((row) => [
+      players.map((row) => [
         row.player_id,
         {
-          feats: row.feat_keys.filter(isFeatKey).map((key) => ({ ...featCatalog[key], key })),
-          ratingAfter: row.rating_after === null ? null : Number(row.rating_after),
-          ratingBefore: row.rating_before === null ? null : Number(row.rating_before),
+          feats: (row.feat_keys ?? []).filter(isFeatKey).map((key) => ({ ...featCatalog[key], key })),
+          ratingAfter: toRating(row.rating_after),
+          ratingBefore: toRating(row.rating_before),
         },
       ]),
     ),
+    taunts: actions.flatMap((action) => {
+      if (action.action_type !== ('taunt' as string)) return [];
+      const tauntId = (action.payload as { tauntId?: unknown } | null)?.tauntId;
+      return isTauntId(tauntId)
+        ? [{ actorId: action.actor_id, createdAt: action.created_at, tauntId, turnId: action.turn_id }]
+        : [];
+    }),
+    turns,
   };
 }

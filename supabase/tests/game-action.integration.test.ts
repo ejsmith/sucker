@@ -2058,7 +2058,7 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
   );
 });
 
-Deno.test('parting shots allow one last word each, and recaps stay private', async () => {
+Deno.test('parting shots allow one last word each, and finished games open to every player', async () => {
   const [alice, bob, charlie] = await createUsers('parting-shots', ['Alice', 'Bob', 'Charlie']);
   const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
   const gameId = (created.game as GameRow).id;
@@ -2080,29 +2080,61 @@ Deno.test('parting shots allow one last word each, and recaps stay private', asy
     })),
   };
   assertNoError((await admin.from('games').update({ state: nearlyDone }).eq('id', gameId)).error);
+  // Unfinished games stay private, even to their players.
+  assertEquals((await alice.client.rpc('get_game_recap', { target_game_id: gameId })).error?.code, 'P0002');
   await scratchAndPass(gameId, alice, bob, 'chance');
   const finished = await scratchAndPass(gameId, bob, alice, 'chance');
   assertEquals(finished.status, 'complete');
   assertEquals(finished.winner_id, alice.id);
 
-  const { data: recap, error: recapError } = await alice.client.rpc('get_game_recap', { target_game_id: gameId });
+  type RecapPayload = {
+    actions: { action_type: string; actor_id: string }[];
+    game: { id: string; state: GameState };
+    players: {
+      display_name: string;
+      feat_keys: string[];
+      player_id: string;
+      rating_after: number | null;
+      rating_before: number | null;
+    }[];
+    turns: { category: string; player_id: string; score: number }[];
+  };
+  const { data: recapData, error: recapError } = await alice.client.rpc('get_game_recap', { target_game_id: gameId });
   assertNoError(recapError);
+  const recap = recapData as unknown as RecapPayload;
+  assertEquals(recap.game.id, gameId);
   assertEquals(
-    recap?.map((row) => row.player_id),
-    [alice.id, bob.id],
+    recap.players.map((row) => [row.player_id, row.display_name]),
+    [
+      [alice.id, 'Alice'],
+      [bob.id, 'Bob'],
+    ],
   );
   assertEquals(
-    recap?.every((row) => row.rating_before !== null && row.rating_after !== null),
+    recap.players.every((row) => row.rating_before !== null && row.rating_after !== null),
     true,
   );
-  assertEquals(Number(recap?.[0].rating_after) > Number(recap?.[0].rating_before), true);
+  assertEquals(Number(recap.players[0].rating_after) > Number(recap.players[0].rating_before), true);
   // The fixed test die rolls five 1s on each first roll.
   assertEquals(
-    recap?.every((row) => row.feat_keys.includes('natural')),
+    recap.players.every((row) => row.feat_keys.includes('natural')),
     true,
   );
+  assertEquals(
+    recap.turns.map((turn) => [turn.player_id, turn.category]),
+    [
+      [alice.id, 'chance'],
+      [bob.id, 'chance'],
+    ],
+  );
+  // A finished game is open to any signed-in player, like the scores on the
+  // boards; the leaderboard links each best score to its game.
   const outsider = await charlie.client.rpc('get_game_recap', { target_game_id: gameId });
-  assertEquals(outsider.error?.code, '42501');
+  assertNoError(outsider.error);
+  assertEquals((outsider.data as unknown as RecapPayload).game.id, gameId);
+  const board = await alice.client.rpc('get_leaderboard', { board: 'all_time_high_score', max_rows: 100 });
+  assertNoError(board.error);
+  assertEquals(board.data?.find((row) => row.player_id === alice.id)?.game_id, gameId);
 
   const wrongSet = await invokeGameAction(bob, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
   assertEquals(wrongSet.error, 'Choose one of the available lines.');

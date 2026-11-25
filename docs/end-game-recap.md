@@ -26,9 +26,30 @@ forfeits keep the plain Game Over panel.
   backdrop, Android back, or Escape on the web closes it, and a failed send
   says so in the sheet.
 - **Recap page ("Tale of the Tape").** A full page over the panel that may
-  scroll. Rows where neither player did anything are left out. It shows scores and rating changes, mirrored bars for Punches,
-  Moments, and Tokens, every feat and defeat by owner, all parting shots, and
-  a Head-to-head stats button.
+  scroll. Rows where neither player did anything are left out. It shows scores
+  and rating changes, mirrored bars for Punches, Moments, and Tokens, every feat
+  and defeat by owner, the game's trash talk, and a Head-to-head stats button.
+- **Game Recap page.** Any finished multiplayer game, opened from Completed
+  Games, a This Week or All Time leaderboard score ("See game ›"), or a
+  player's Recent games. One page in all three places:
+  - A matchup card: both players with avatar, final score (the winner's in
+    gold), and rating change, then the result ("You won by 142!", "Bob won by
+    9.", "Bob rage quit.") and date. Tapping a player opens their profile; back
+    returns to the game.
+  - Tabs. **Scorecard**: the game screen's own category tiles with both
+    players' boxes, the better score in each row in gold, a +50 badge on
+    Sucker bonuses, the upper bonus (or progress toward 63), and the totals.
+    The column heads are the players' avatars, in the matchup's order.
+    **Recap**: the Tale of the Tape numbers and feats. **Trash Talk**: below.
+  - Your own games add Head-to-head and Rematch.
+  - Your side is on the left when you played. Otherwise the subject's side is:
+    the leaderboard player, or the profile you came from.
+- **Trash Talk.** Everything said, oldest first, as speech bubbles (the left
+  side's on the right, like messages): each taunt with its round and what it
+  answered ("Round 7 · after 25 on Full house", "after landing a Sucker
+  Punch"), then a Rage Quit and its reply or a timeout, then both last words.
+  A round is a player's nth box, so a punched or mulliganed turn and its replay
+  share one.
 
 ## Rules
 
@@ -61,11 +82,18 @@ forfeits keep the plain Game Over panel.
 | Moments | Best turn, Suckers rolled, Sucker Deals, lead changes, biggest lead              | `turns`, `turn_actions`                |
 | Tokens  | Spent on Extra Rolls, Mulligans, and Punches; points bought; left over; splurges | `turn_actions`, `turns`, final state   |
 
-`get_game_recap(target_game_id)` is participant-only; `player_feats` and other
-players' `game_player_results` stay closed to direct reads. Punches, Moments,
-and Tokens are built in the app by `shared/gameRecap.ts` from turns and actions
-a participant can already read. The Game Over panel itself never scrolls; the
-numbers live on the recap page.
+`get_game_recap(target_game_id)` returns a finished game whole, as JSON: the
+final state, both players with profile, rating change, and feats, every turn,
+and the stat and taunt actions. Finished games are open to any signed-in
+player, like the scores on the boards and in profile histories; unfinished
+games are not open to anyone, players included. Tables stay closed to direct
+reads by others. Punches, Moments, and Tokens are built in the app by
+`shared/gameRecap.ts`, and the trash talk by `src/game/trashTalk.ts`. The Game
+Over panel itself never scrolls; the numbers live on the recap page.
+
+`get_leaderboard` returns a `game_id` on the score boards: the first game in
+which the player reached their best score, under the same rules as the board
+(no forfeits; this week only on This Week).
 
 ## Turn Spend
 
@@ -86,7 +114,10 @@ bought nothing.
 ## Implementation
 
 - Migration `20261124120000_add_end_game_recap.sql`: the `parting_shot` action
-  type, `get_game_recap`, and the turn spend columns.
+  type, `get_game_recap`, the turn spend columns, and `get_leaderboard`'s
+  `game_id`.
+- `src/ui/PastGame.tsx` is the Game Recap page; `src/ui/CategoryTile.tsx`
+  holds the category tiles it shares with the game screen.
 - `src/game/turnSpend.ts` writes the spend lines for the turn reveal and recap.
 - `game-action` `parting_shot { gameId, lineId }` appends to
   `state.partingShots` through `commit_game_move`, whose version check keeps
@@ -94,7 +125,8 @@ bought nothing.
 - `shared/partingShots.ts` is mirrored into `supabase/functions/_shared`;
   `tests/partingShots.test.cjs` keeps the copies in step.
 - `src/ui/GameRecap.tsx` renders the recap; `src/multiplayer/gameRecap.ts`
-  loads it once per finished game. Parting shots arrive with the game itself.
+  loads it once per finished game. During the game's own Game Over, parting
+  shots come from the live game, so new ones appear without a reload.
 
 ## Possible Follow-Ups
 

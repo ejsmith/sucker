@@ -3,6 +3,7 @@ import { BackHandler, Image, Platform, ScrollView, StyleSheet, Text, View } from
 import { categoryLabels, type PartingShot, type Player } from '../game';
 import type { PlayerGameRecap, ScoredBox } from '../../shared/gameRecap';
 import { getPartingShotText, type PartingShotLine, type PartingShotLineId } from '../../shared/partingShots';
+import type { TrashTalkEntry } from '../game/trashTalk';
 import { describeTurnSpend } from '../game/turnSpend';
 import type { PlayerRecapResult, RecapFeat, RemoteGameRecap } from '../multiplayer/gameRecap';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
@@ -263,9 +264,26 @@ export function GameOverHighlights({
 }
 
 function ShotBubble({ by, mine, shot, unit }: { by: string; mine: boolean; shot: PartingShot; unit: Unit }) {
+  return <TalkBubble by={by} mine={mine} text={getPartingShotText(shot.lineId)} unit={unit} />;
+}
+
+// One thing a player said. The home player's lines sit on the right.
+function TalkBubble({
+  by,
+  mine,
+  note,
+  text,
+  unit,
+}: {
+  by: string;
+  mine: boolean;
+  note?: string | null;
+  text: string;
+  unit: Unit;
+}) {
   return (
     <View
-      accessibilityLabel={`${by} said: ${getPartingShotText(shot.lineId)}`}
+      accessibilityLabel={`${by} said: ${text}${note ? `. ${note}` : ''}`}
       accessible
       style={[
         styles.bubble,
@@ -284,8 +302,69 @@ function ShotBubble({ by, mine, shot, unit }: { by: string; mine: boolean; shot:
         maxFontSizeMultiplier={maxFontSizeMultiplier}
         style={[styles.bubbleText, { fontSize: Math.max(13, unit(14)), lineHeight: Math.max(17, unit(18)) }]}
       >
-        {getPartingShotText(shot.lineId)}
+        {text}
       </Text>
+    </View>
+  );
+}
+
+// Everything said during a game, oldest first, with when each line landed.
+export function TrashTalkLog({
+  entries,
+  home,
+  homeName,
+  opponentName,
+  unit,
+}: {
+  entries: TrashTalkEntry[];
+  home: Player;
+  // "You" when the viewer played this game.
+  homeName: string;
+  opponentName: string;
+  unit: Unit;
+}) {
+  if (entries.length === 0) {
+    return (
+      <Text
+        maxFontSizeMultiplier={maxFontSizeMultiplier}
+        style={[styles.quiet, { fontSize: small(unit, 12) }]}
+        testID="trash-talk-empty"
+      >
+        Not a word. Strictly business.
+      </Text>
+    );
+  }
+
+  return (
+    <View style={{ gap: unit(10) }} testID="trash-talk">
+      {entries.map((entry) => {
+        if (entry.kind === 'event') {
+          return (
+            <Text
+              key={entry.key}
+              maxFontSizeMultiplier={maxFontSizeMultiplier}
+              style={[styles.talkEvent, { fontSize: small(unit, 12) }]}
+            >
+              {entry.text}
+            </Text>
+          );
+        }
+        const mine = entry.playerId === home.id;
+        return (
+          <View key={entry.key} style={[mine ? styles.talkLineMine : styles.talkLineTheirs, { gap: unit(3) }]}>
+            {entry.note ? (
+              <Text
+                maxFontSizeMultiplier={maxFontSizeMultiplier}
+                numberOfLines={1}
+                style={[styles.talkNote, mine && styles.textRight, { fontSize: small(unit, 10) }]}
+              >
+                {entry.note}
+              </Text>
+            ) : null}
+            <TalkBubble by={mine ? homeName : opponentName} mine={mine} text={entry.text} unit={unit} />
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -542,7 +621,17 @@ type TapeRow = {
   text?: [home: string, opponent: string];
 };
 
-function TapeRowView({ opponentName, row, unit }: { opponentName: string; row: TapeRow; unit: Unit }) {
+function TapeRowView({
+  homeName,
+  opponentName,
+  row,
+  unit,
+}: {
+  homeName: string;
+  opponentName: string;
+  row: TapeRow;
+  unit: Unit;
+}) {
   const [home, opponent] = row.values;
   const max = Math.max(home, opponent);
   const [homeText, opponentText] = row.text ?? [String(home), String(opponent)];
@@ -552,7 +641,7 @@ function TapeRowView({ opponentName, row, unit }: { opponentName: string; row: T
 
   return (
     <View
-      accessibilityLabel={`${row.label}: you ${homeText}${row.detail?.[0] ? ` ${row.detail[0]}` : ''}, ${opponentName} ${opponentText}${row.detail?.[1] ? ` ${row.detail[1]}` : ''}`}
+      accessibilityLabel={`${row.label}: ${homeName} ${homeText}${row.detail?.[0] ? ` ${row.detail[0]}` : ''}, ${opponentName} ${opponentText}${row.detail?.[1] ? ` ${row.detail[1]}` : ''}`}
       accessible
       style={[styles.tapeRow, { gap: unit(8) }]}
       testID={`recap-tape-${row.label.toLowerCase().replace(/\s+/g, '-')}`}
@@ -671,9 +760,15 @@ function formatBoughtWith(entry: PlayerGameRecap) {
 }
 
 // Each player's priciest turn, told as a story.
-function getSplurgeLines(home: Player, mine: PlayerGameRecap, opponent: Player, theirs: PlayerGameRecap) {
+function getSplurgeLines(
+  home: Player,
+  homeName: string,
+  mine: PlayerGameRecap,
+  opponent: Player,
+  theirs: PlayerGameRecap,
+) {
   return [
-    { entry: mine, player: home, subject: 'You' },
+    { entry: mine, player: home, subject: homeName },
     { entry: theirs, player: opponent, subject: opponent.name },
   ].flatMap(({ entry, player, subject }) => {
     const splurge = entry.tokens.biggestSplurge;
@@ -686,11 +781,133 @@ function hasTapeValue(row: TapeRow) {
   return row.values.some((value) => value > 0) || (row.text ?? []).some((text) => !/^(0|—|0\/0)$/.test(text));
 }
 
-function formatSwings(recap: RemoteGameRecap, home: Player, opponent: Player) {
+function formatSwings(recap: RemoteGameRecap, home: Player, homeName: string, opponent: Player) {
   const changes = `${recap.leadChanges} lead change${recap.leadChanges === 1 ? '' : 's'}`;
   if (!recap.biggestLead) return changes;
-  const leader = recap.biggestLead.playerId === home.id ? 'You' : opponent.name;
+  const leader = recap.biggestLead.playerId === home.id ? homeName : opponent.name;
   return `${changes} · Biggest lead: ${leader} by ${recap.biggestLead.points}`;
+}
+
+// The numbers: punches, moments, tokens, then every feat and defeat.
+export function RecapTape({
+  home,
+  homeName,
+  opponent,
+  recap,
+  unit,
+}: {
+  home: Player;
+  // "You" when the viewer played this game.
+  homeName: string;
+  opponent: Player;
+  recap: RemoteGameRecap;
+  unit: Unit;
+}) {
+  const [mine, theirs] = [home, opponent].map((player) => recap.players.find((entry) => entry.playerId === player.id));
+  if (!mine || !theirs) return null;
+  const labelStyle = [styles.label, styles.sectionLabel, { fontSize: small(unit, 11), marginBottom: unit(2) }];
+  const sectionStyle = [styles.section, { borderRadius: unit(10), gap: unit(8), padding: unit(10) }];
+
+  return (
+    <>
+      {getTapeSections(mine, theirs).map((section) => (
+        <View key={section.title} style={sectionStyle}>
+          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
+            {section.title}
+          </Text>
+          {section.rows.map((row) => (
+            <TapeRowView homeName={homeName} key={row.label} opponentName={opponent.name} row={row} unit={unit} />
+          ))}
+          {section.title === 'MOMENTS' && (
+            <Text
+              maxFontSizeMultiplier={maxFontSizeMultiplier}
+              style={[styles.quiet, { fontSize: unit(11) }]}
+              testID="game-recap-swings"
+            >
+              {formatSwings(recap, home, homeName, opponent)}
+            </Text>
+          )}
+          {section.title === 'TOKENS' &&
+            getSplurgeLines(home, homeName, mine, opponent, theirs).map(({ line, playerId }) => (
+              <View key={playerId} style={[styles.splurgeRow, { gap: unit(6) }]}>
+                <Image
+                  source={suckerTokenImage}
+                  style={[
+                    styles.splurgeToken,
+                    { height: small(unit, 16), marginTop: small(unit, 0.5), width: small(unit, 16) },
+                  ]}
+                />
+                <Text
+                  maxFontSizeMultiplier={maxFontSizeMultiplier}
+                  style={[styles.splurge, { fontSize: small(unit, 12), lineHeight: small(unit, 17) }]}
+                  testID={`recap-splurge-${playerId === home.id ? 'home' : 'opponent'}`}
+                >
+                  {line}
+                </Text>
+              </View>
+            ))}
+        </View>
+      ))}
+      <View style={sectionStyle} testID="recap-page-feats">
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
+          FEATS & DEFEATS
+        </Text>
+        {[home, opponent].map((player) => {
+          const feats = [...(recap.results[player.id]?.feats ?? [])].sort((left, right) =>
+            left.tone === right.tone ? 0 : left.tone === 'feat' ? -1 : 1,
+          );
+          return (
+            <View key={player.id} style={{ gap: unit(6) }}>
+              <Text
+                maxFontSizeMultiplier={maxFontSizeMultiplier}
+                numberOfLines={1}
+                style={[styles.featOwner, { fontSize: unit(12) }]}
+              >
+                {player.id === home.id ? homeName : player.name}
+              </Text>
+              {feats.length === 0 ? (
+                <Text
+                  maxFontSizeMultiplier={maxFontSizeMultiplier}
+                  style={[styles.quiet, styles.textLeft, { fontSize: unit(12) }]}
+                >
+                  Nothing this game.
+                </Text>
+              ) : (
+                feats.map((feat) => (
+                  <View
+                    accessibilityLabel={`${feat.tone === 'feat' ? 'Feat' : 'Defeat'}: ${feat.name}. ${feat.description}`}
+                    accessible
+                    key={feat.key}
+                    style={[styles.highlightRow, { gap: unit(8) }]}
+                  >
+                    <FeatBadge size={unit(22)} tone={feat.tone} />
+                    <View style={styles.highlightText}>
+                      <Text
+                        maxFontSizeMultiplier={maxFontSizeMultiplier}
+                        style={[
+                          styles.highlightName,
+                          feat.tone === 'defeat' && styles.defeatText,
+                          { fontSize: small(unit, 13), lineHeight: small(unit, 16) },
+                        ]}
+                      >
+                        {feat.name}
+                      </Text>
+                      <Text
+                        maxFontSizeMultiplier={maxFontSizeMultiplier}
+                        style={[styles.highlightDescription, { fontSize: unit(11), lineHeight: unit(14) }]}
+                      >
+                        {feat.description}
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </>
+  );
 }
 
 // The full "tale of the tape", opened on purpose from the Game Over panel. It
@@ -705,8 +922,8 @@ export function RecapPage({
   opponentScore,
   recap,
   recapFailed,
-  shots,
   statsButtonRef,
+  trashTalk,
   unit,
 }: {
   // False while Stats is open on top, so back closes Stats first.
@@ -719,8 +936,8 @@ export function RecapPage({
   opponentScore: number;
   recap: RemoteGameRecap | null;
   recapFailed: boolean;
-  shots: PartingShot[];
   statsButtonRef: Ref<AccessibilityTargetRef>;
+  trashTalk: TrashTalkEntry[];
   unit: Unit;
 }) {
   const backRef = useRef<AccessibilityTargetRef | null>(null);
@@ -729,7 +946,7 @@ export function RecapPage({
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(backRef.current));
     return () => cancelAnimationFrame(frame);
   }, []);
-  const [mine, theirs] = [home, opponent].map((player) => recap?.players.find((entry) => entry.playerId === player.id));
+  const loaded = recap?.players.some((entry) => entry.playerId === home.id) ? recap : null;
   const labelStyle = [styles.label, styles.sectionLabel, { fontSize: small(unit, 11), marginBottom: unit(2) }];
   const sectionStyle = [styles.section, { borderRadius: unit(10), gap: unit(8), padding: unit(10) }];
 
@@ -791,122 +1008,19 @@ export function RecapPage({
         ))}
       </View>
       <ScrollView contentContainerStyle={{ gap: unit(10), paddingBottom: unit(8) }} style={styles.pageScroll}>
-        {!recap || !mine || !theirs ? (
+        {!loaded ? (
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: unit(13) }]}>
             {recapFailed ? 'The recap got lost in the mail.' : 'Tallying the damage…'}
           </Text>
         ) : (
           <>
-            {getTapeSections(mine, theirs).map((section) => (
-              <View key={section.title} style={sectionStyle}>
+            <RecapTape home={home} homeName="You" opponent={opponent} recap={loaded} unit={unit} />
+            {trashTalk.length > 0 && (
+              <View style={sectionStyle} testID="recap-page-trash-talk">
                 <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
-                  {section.title}
+                  TRASH TALK
                 </Text>
-                {section.rows.map((row) => (
-                  <TapeRowView key={row.label} opponentName={opponent.name} row={row} unit={unit} />
-                ))}
-                {section.title === 'MOMENTS' && (
-                  <Text
-                    maxFontSizeMultiplier={maxFontSizeMultiplier}
-                    style={[styles.quiet, { fontSize: unit(11) }]}
-                    testID="game-recap-swings"
-                  >
-                    {formatSwings(recap, home, opponent)}
-                  </Text>
-                )}
-                {section.title === 'TOKENS' &&
-                  getSplurgeLines(home, mine, opponent, theirs).map(({ line, playerId }) => (
-                    <View key={playerId} style={[styles.splurgeRow, { gap: unit(6) }]}>
-                      <Image
-                        source={suckerTokenImage}
-                        style={[
-                          styles.splurgeToken,
-                          { height: small(unit, 16), marginTop: small(unit, 0.5), width: small(unit, 16) },
-                        ]}
-                      />
-                      <Text
-                        maxFontSizeMultiplier={maxFontSizeMultiplier}
-                        style={[styles.splurge, { fontSize: small(unit, 12), lineHeight: small(unit, 17) }]}
-                        testID={`recap-splurge-${playerId === home.id ? 'home' : 'opponent'}`}
-                      >
-                        {line}
-                      </Text>
-                    </View>
-                  ))}
-              </View>
-            ))}
-            <View style={sectionStyle} testID="recap-page-feats">
-              <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
-                FEATS & DEFEATS
-              </Text>
-              {[home, opponent].map((player) => {
-                const feats = [...(recap.results[player.id]?.feats ?? [])].sort((left, right) =>
-                  left.tone === right.tone ? 0 : left.tone === 'feat' ? -1 : 1,
-                );
-                return (
-                  <View key={player.id} style={{ gap: unit(6) }}>
-                    <Text
-                      maxFontSizeMultiplier={maxFontSizeMultiplier}
-                      numberOfLines={1}
-                      style={[styles.featOwner, { fontSize: unit(12) }]}
-                    >
-                      {player.id === home.id ? 'You' : player.name}
-                    </Text>
-                    {feats.length === 0 ? (
-                      <Text
-                        maxFontSizeMultiplier={maxFontSizeMultiplier}
-                        style={[styles.quiet, styles.textLeft, { fontSize: unit(12) }]}
-                      >
-                        Nothing this game.
-                      </Text>
-                    ) : (
-                      feats.map((feat) => (
-                        <View
-                          accessibilityLabel={`${feat.tone === 'feat' ? 'Feat' : 'Defeat'}: ${feat.name}. ${feat.description}`}
-                          accessible
-                          key={feat.key}
-                          style={[styles.highlightRow, { gap: unit(8) }]}
-                        >
-                          <FeatBadge size={unit(22)} tone={feat.tone} />
-                          <View style={styles.highlightText}>
-                            <Text
-                              maxFontSizeMultiplier={maxFontSizeMultiplier}
-                              style={[
-                                styles.highlightName,
-                                feat.tone === 'defeat' && styles.defeatText,
-                                { fontSize: small(unit, 13), lineHeight: small(unit, 16) },
-                              ]}
-                            >
-                              {feat.name}
-                            </Text>
-                            <Text
-                              maxFontSizeMultiplier={maxFontSizeMultiplier}
-                              style={[styles.highlightDescription, { fontSize: unit(11), lineHeight: unit(14) }]}
-                            >
-                              {feat.description}
-                            </Text>
-                          </View>
-                        </View>
-                      ))
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-            {shots.length > 0 && (
-              <View style={sectionStyle} testID="recap-page-shots">
-                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
-                  LAST WORDS
-                </Text>
-                {shots.map((shot) => (
-                  <ShotBubble
-                    by={shot.playerId === home.id ? 'You' : opponent.name}
-                    key={shot.playerId}
-                    mine={shot.playerId === home.id}
-                    shot={shot}
-                    unit={unit}
-                  />
-                ))}
+                <TrashTalkLog entries={trashTalk} home={home} homeName="You" opponentName={opponent.name} unit={unit} />
               </View>
             )}
           </>
@@ -1097,6 +1211,24 @@ const styles = StyleSheet.create({
     fontFamily: extraBold,
     opacity: 0.8,
     textAlign: 'center',
+  },
+  talkEvent: {
+    color: '#FFF3C2',
+    fontFamily: black,
+    opacity: 0.75,
+    textAlign: 'center',
+  },
+  talkLineMine: {
+    alignItems: 'flex-end',
+  },
+  talkLineTheirs: {
+    alignItems: 'flex-start',
+  },
+  talkNote: {
+    color: '#FFD329',
+    fontFamily: extraBold,
+    opacity: 0.85,
+    paddingHorizontal: 4,
   },
   splurge: {
     color: '#FFF3C2',

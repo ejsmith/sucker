@@ -48,6 +48,7 @@ import {
   type ComputerTurnResult,
   type LocalPendingTurn,
 } from './src/game/computer';
+import { buildTrashTalk } from './src/game/trashTalk';
 import { describeTurnSpend } from './src/game/turnSpend';
 import { reportError, reportErrorMessage, setMonitoringGame } from './src/monitoring/exceptionless';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
@@ -127,6 +128,9 @@ import { PlayerAvatar } from './src/ui/PlayerAvatar';
 import { focusAccessibilityTarget } from './src/ui/accessibilityFocus';
 import { RulesDialog } from './src/ui/RulesDialog';
 import { DieFace } from './src/ui/DieFace';
+import { createBoxShadowStyle, usesLegacyAndroidShadowFallback } from './src/ui/boxShadow';
+import { CategoryTileFace, upperCategories } from './src/ui/CategoryTile';
+import { GameLayoutContext, useGameLayout } from './src/ui/gameLayoutContext';
 import { rageQuitRematchCooldownMs, RageQuitDialog } from './src/ui/RageQuit';
 import { getTableFlipBoardStyle, getTableFlipTrayStyle, runTableFlip, TableFlipDebris } from './src/ui/TableFlip';
 import { getRageQuitReplyText, rageQuitReplies, type RageQuitReplyId } from './shared/rageQuit';
@@ -182,7 +186,6 @@ type OpponentTurnReveal = {
   top: number;
 };
 
-const GameLayoutContext = createContext<GameLayout | null>(null);
 const absoluteFillStyle = {
   bottom: 0,
   left: 0,
@@ -191,14 +194,6 @@ const absoluteFillStyle = {
   top: 0,
 };
 
-function useGameLayout() {
-  const layout = useContext(GameLayoutContext);
-  if (!layout) {
-    throw new Error('Game layout components must be rendered inside GameLayoutContext.');
-  }
-
-  return layout;
-}
 function concealActiveOpponentDice(game: GameState, myProfileId?: string | null): GameState {
   const currentPlayerId = game.players[game.currentPlayerIndex]?.id;
   if (!myProfileId || game.phase === 'complete' || currentPlayerId === myProfileId || game.rollNumber === 0) {
@@ -308,7 +303,6 @@ type NextTurnPrompt = {
 };
 let remoteGameRequestId = 0;
 const playerNames = ['You', 'Computer'];
-const upperCategories: ScoreCategory[] = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'];
 const lowerCategories: ScoreCategory[] = [
   'threeOfAKind',
   'fourOfAKind',
@@ -319,13 +313,10 @@ const lowerCategories: ScoreCategory[] = [
   'chance',
 ];
 
-const suckerScorecardWordmarkImage = require('./assets/sucker-scorecard-wordmark.png');
-const suckerLobbyHeaderImage = require('./assets/sucker-lobby-header.png');
 const suckerGameBannerImage = require('./assets/sucker-game-header-clean.png');
 const gameFontBlack = 'Inter_900Black';
 const gameFontExtraBold = 'Inter_800ExtraBold';
 const gameMaxFontSizeMultiplier = 1.2;
-const usesLegacyAndroidShadowFallback = Platform.OS === 'android' && Platform.Version < 28;
 const suckerTokenImage = require('./assets/sucker-token.png');
 const suckerPunchLandedImage = require('./assets/sucker-punch-landed.png');
 const suckerPunchBlockedImage = require('./assets/sucker-punch-blocked.png');
@@ -1259,7 +1250,7 @@ export function RemoteGameScreen({
     onRageQuit: () => runRemoteAction(() => rageQuitRemoteGame(remoteGame.id), { showNextTurns: false }),
     onRageQuitReply: (replyId) =>
       runRemoteAction(() => replyToRemoteRageQuit(remoteGame.id, replyId), { showNextTurns: false }),
-    onLoadRecap: () => loadGameRecap(remoteGame.id, remoteGame.state),
+    onLoadRecap: () => loadGameRecap(remoteGame.id),
     onPartingShot: (lineId) =>
       runRemoteAction(() => sendRemotePartingShot(remoteGame.id, lineId), { showNextTurns: false }),
   };
@@ -5178,8 +5169,12 @@ export function LocalGameScreen({
                   opponentScore={opponentScore}
                   recap={currentRecap}
                   recapFailed={recapFailed}
-                  shots={game.partingShots ?? []}
                   statsButtonRef={gameOverStatsButtonRef}
+                  trashTalk={buildTrashTalk({
+                    game,
+                    taunts: currentRecap?.taunts ?? [],
+                    turns: currentRecap?.turns ?? [],
+                  })}
                   unit={gameLayout.unit}
                 />
               )}
@@ -5995,21 +5990,7 @@ function ScoreCell({
           pressed && styles.pressed,
         ]}
       >
-        <View style={[styles.categoryTileFrame, layout.styles.categoryTileFrame]}>
-          <View pointerEvents="none" style={[styles.categoryTileShadow, layout.styles.categoryTileShadow]} />
-          <View
-            style={[
-              styles.categoryTile,
-              layout.styles.categoryTile,
-              category === 'sucker' && styles.suckerCategoryTile,
-              highlighted && styles.selectedCategoryTile,
-            ]}
-          >
-            <View style={[styles.tileGloss, layout.styles.tileGloss]} />
-            <View style={[styles.tileGlossFade, layout.styles.tileGlossFade]} />
-            <CategoryTile category={category} />
-          </View>
-        </View>
+        <CategoryTileFace category={category} highlighted={highlighted} />
       </Pressable>
       <Animated.View
         style={[
@@ -6288,128 +6269,6 @@ function scalePosition(position: Readonly<Record<string, number | string>>, layo
   );
 }
 
-function CategoryTile({ category }: { category: ScoreCategory }) {
-  const layout = useGameLayout();
-  const upperIndex = upperCategories.indexOf(category);
-
-  if (upperIndex >= 0) {
-    const face = (upperIndex + 1) as DieValue;
-    return <DieFace face={face} style={styles.categoryDiePips} variant="pips" />;
-  }
-
-  switch (category) {
-    case 'threeOfAKind':
-      return (
-        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
-          3x
-        </Text>
-      );
-    case 'fourOfAKind':
-      return (
-        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.kindText, layout.styles.kindText]}>
-          4x
-        </Text>
-      );
-    case 'fullHouse':
-      return <FullHouseIcon />;
-    case 'smallStraight':
-      return <StraightIcon label="SMALL" cardCount={3} />;
-    case 'largeStraight':
-      return <StraightIcon label="LARGE" cardCount={4} />;
-    case 'sucker':
-      return <SuckerIcon />;
-    case 'chance':
-      return (
-        <Text maxFontSizeMultiplier={gameMaxFontSizeMultiplier} style={[styles.chanceText, layout.styles.chanceText]}>
-          ?
-        </Text>
-      );
-    default:
-      return null;
-  }
-}
-
-function FullHouseIcon() {
-  const layout = useGameLayout();
-  return (
-    <View style={[styles.fullHouseIcon, { height: layout.unit(42), width: layout.unit(44) }]}>
-      <View
-        style={[
-          styles.houseRoof,
-          {
-            borderBottomWidth: layout.unit(18),
-            borderLeftWidth: layout.unit(21),
-            borderRightWidth: layout.unit(21),
-          },
-        ]}
-      />
-      <View style={[styles.houseBody, { height: layout.unit(20), width: layout.unit(34) }]}>
-        <View
-          style={[
-            styles.houseDoor,
-            {
-              borderTopLeftRadius: layout.unit(4),
-              borderTopRightRadius: layout.unit(4),
-              height: layout.unit(13),
-              width: layout.unit(8),
-            },
-          ]}
-        />
-      </View>
-    </View>
-  );
-}
-
-function StraightIcon({ label, cardCount }: { label: string; cardCount: 3 | 4 }) {
-  const layout = useGameLayout();
-  const cards = [...Array(cardCount)];
-  const fanCardWidth = layout.unit(17);
-  const fanCardSpread = layout.unit(7);
-  const fanWidth = fanCardWidth + (cardCount - 1) * fanCardSpread;
-
-  return (
-    <View style={[styles.straightIcon, { height: layout.unit(48), width: layout.unit(52) }]}>
-      <View style={[styles.cardFan, { height: layout.unit(30), width: fanWidth }]}>
-        {cards.map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.fanCard,
-              {
-                left: index * fanCardSpread,
-                top: Math.abs(index - (cardCount - 1) / 2) * layout.unit(3),
-                transform: [{ rotate: `${(index - (cardCount - 1) / 2) * 13}deg` }],
-                borderRadius: layout.unit(3),
-                borderWidth: layout.strokeWidth(2),
-                height: layout.unit(25),
-                width: fanCardWidth,
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.fanCardCorner,
-                { borderRadius: layout.unit(2), height: layout.unit(5), width: layout.unit(5) },
-              ]}
-            />
-          </View>
-        ))}
-      </View>
-      <Text
-        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-        style={[
-          styles.straightLabel,
-          { bottom: layout.unit(1), fontSize: layout.unit(9), lineHeight: layout.unit(10) },
-          label === 'LARGE' && styles.largeStraightLabel,
-          label === 'LARGE' && { fontSize: layout.unit(8) },
-        ]}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 function DevViewportPresetControls({
   activePresetKey,
   onSelect,
@@ -6460,32 +6319,6 @@ function DevViewportPresetControls({
   );
 }
 
-function SuckerIcon() {
-  return <SuckerWordmark variant="tile" />;
-}
-
-function SuckerWordmark({ variant }: { variant: 'header' | 'tile' }) {
-  const layout = useGameLayout();
-  const isHeader = variant === 'header';
-
-  return (
-    <View
-      style={[
-        styles.suckerWordmark,
-        isHeader ? styles.headerSuckerWordmark : styles.tileSuckerWordmark,
-        isHeader
-          ? { height: layout.unit(44), width: layout.unit(168) }
-          : { height: layout.unit(44), width: layout.unit(68) },
-      ]}
-    >
-      <Image
-        source={isHeader ? suckerLobbyHeaderImage : suckerScorecardWordmarkImage}
-        style={styles.suckerWordmarkImage}
-      />
-    </View>
-  );
-}
-
 function GameBackChevronIcon({ size, testID }: { size: number; testID?: string }) {
   return (
     <Svg height={size} testID={testID} viewBox="0 0 24 24" width={size}>
@@ -6508,17 +6341,6 @@ function GameBackChevronIcon({ size, testID }: { size: number; testID?: string }
       />
     </Svg>
   );
-}
-
-function createBoxShadowStyle(offsetX: number, offsetY: number, blurRadius: number, color: string): ViewStyle {
-  if (usesLegacyAndroidShadowFallback) {
-    const extent = Math.max(Math.abs(offsetX), Math.abs(offsetY), blurRadius);
-    return extent === 0 ? {} : { elevation: Math.max(1, Math.ceil(extent)) };
-  }
-
-  return {
-    boxShadow: [{ blurRadius, color, offsetX, offsetY }],
-  };
 }
 
 const styles = StyleSheet.create({
@@ -6982,77 +6804,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'visible',
     width: 64,
-  },
-  categoryTileFrame: {
-    height: 54,
-    position: 'relative',
-    width: 54,
-  },
-  categoryTileShadow: {
-    backgroundColor: '#5A1308',
-    borderRadius: 12,
-    height: 54,
-    left: 3,
-    opacity: 0.5,
-    position: 'absolute',
-    top: 4,
-    width: 54,
-  },
-  categoryTile: {
-    alignItems: 'center',
-    backgroundColor: '#F12D22',
-    borderColor: '#FFF3C2',
-    borderRadius: 12,
-    borderWidth: 3,
-    justifyContent: 'center',
-    height: 54,
-    overflow: 'hidden',
-    width: 54,
-  },
-  selectedCategoryTile: {
-    borderColor: '#FFD329',
-  },
-  suckerCategoryTile: {
-    overflow: 'visible',
-    zIndex: 2,
-  },
-  tileGloss: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    height: 17,
-    left: 5,
-    opacity: 0.23,
-    position: 'absolute',
-    right: 5,
-    top: 3,
-  },
-  tileGlossFade: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    height: 8,
-    left: 9,
-    opacity: 0.08,
-    position: 'absolute',
-    right: 9,
-    top: 18,
-  },
-  categoryDiePips: {
-    height: '112%',
-    width: '112%',
-    zIndex: 1,
-  },
-  kindText: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontFamily: gameFontBlack,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  chanceText: {
-    color: '#FFFFFF',
-    fontSize: 34,
-    fontFamily: gameFontBlack,
-    fontWeight: '900',
   },
   compactScoreBoxText: {
     fontSize: 28,
@@ -8283,100 +8034,6 @@ const styles = StyleSheet.create({
     textShadowColor: '#050505',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 0,
-  },
-  fullHouseIcon: {
-    alignItems: 'center',
-    height: 42,
-    justifyContent: 'center',
-    width: 44,
-  },
-  houseRoof: {
-    borderBottomColor: '#FFFFFF',
-    borderBottomWidth: 18,
-    borderLeftColor: 'transparent',
-    borderLeftWidth: 21,
-    borderRightColor: 'transparent',
-    borderRightWidth: 21,
-    height: 0,
-    marginBottom: -1,
-    width: 0,
-  },
-  houseBody: {
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    height: 21,
-    justifyContent: 'flex-end',
-    width: 32,
-  },
-  houseDoor: {
-    backgroundColor: '#F12D22',
-    height: 11,
-    width: 8,
-  },
-  straightIcon: {
-    alignItems: 'center',
-    height: 50,
-    justifyContent: 'center',
-    width: 58,
-  },
-  cardFan: {
-    height: 28,
-    position: 'relative',
-    width: 52,
-  },
-  fanCard: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#F7E9D0',
-    borderWidth: 1,
-    borderRadius: 4,
-    height: 25,
-    position: 'absolute',
-    ...createBoxShadowStyle(1, 1, 0, 'rgba(122, 64, 29, 0.25)'),
-    top: 0,
-    width: 17,
-  },
-  fanCardCorner: {
-    backgroundColor: '#F12D22',
-    borderRadius: 2,
-    height: 4,
-    left: 3,
-    opacity: 0.9,
-    position: 'absolute',
-    top: 3,
-    width: 4,
-  },
-  straightLabel: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontFamily: gameFontBlack,
-    fontWeight: '900',
-    letterSpacing: 0,
-    marginTop: 2,
-    textShadowColor: '#7A401D',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 0,
-  },
-  largeStraightLabel: {
-    transform: [{ translateY: 1 }],
-  },
-  suckerWordmark: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  headerSuckerWordmark: {
-    height: 48,
-    marginTop: -1,
-    width: 242,
-  },
-  tileSuckerWordmark: {
-    height: 24,
-    width: 68,
-  },
-  suckerWordmarkImage: {
-    height: '100%',
-    resizeMode: 'contain',
-    width: '100%',
   },
   disabledButton: {
     opacity: 0.55,
