@@ -44,7 +44,6 @@ type TurnActionRow = Database['public']['Tables']['turn_actions']['Row'];
 const pendingActionsKey = 'sucker:pending-multiplayer-actions:v2';
 const seenRemoteTauntKeyPrefix = 'sucker:seen-remote-taunt:v1';
 const seenRageQuitKeyPrefix = 'sucker:seen-rage-quit:v1';
-const seenLastWordKeyPrefix = 'sucker:seen-last-word:v1';
 const pendingActionMaxAgeMs = 5 * 60_000;
 const retryDelaysMs = [350, 900];
 const gameActionTimeoutMs = 12_000;
@@ -723,16 +722,6 @@ export async function markRemoteGameResultSeen(gameId: string, seenUpdatedAt: st
   if (error) throw error;
 }
 
-// A last word counts as seen once its Game Over panel or a rematch showed it,
-// so a rematch doesn't announce a line already read. Per device.
-export async function hasSeenLastWord(gameId: string, playerId: string) {
-  return (await AsyncStorage.getItem(`${seenLastWordKeyPrefix}:${gameId}:${playerId}`)) === '1';
-}
-
-export async function markLastWordSeen(gameId: string, playerId: string) {
-  await AsyncStorage.setItem(`${seenLastWordKeyPrefix}:${gameId}:${playerId}`, '1');
-}
-
 // Each device plays the table flip once.
 export async function hasSeenRageQuit(gameId: string) {
   return (await AsyncStorage.getItem(`${seenRageQuitKeyPrefix}:${gameId}`)) === '1';
@@ -863,7 +852,6 @@ function toRemoteGameRow(
     id: row.id,
     last_turn_id: row.last_turn_id,
     last_nudged_at: lastNudgedAt,
-    rematch_of_game_id: row.rematch_of_game_id ?? null,
     state: toGameState(row.state),
     status: row.status,
     sucker_tokens_spent: suckerTokensSpent,

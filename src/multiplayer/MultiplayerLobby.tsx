@@ -2676,9 +2676,13 @@ function GameListItem({
               <View style={lobbyStyles.jabButtonPlaceholder} />
             </View>
           </View>
-          <Text style={lobbyStyles.waitText} testID={`game-hint-${game.id}`}>
-            {waitText}
-          </Text>
+          {isUnseenResult && game.state.partingShots?.length ? (
+            <LastWordsPreview game={game} opponentName={opponentName} profileId={profileId} />
+          ) : (
+            <Text style={lobbyStyles.waitText} testID={`game-hint-${game.id}`}>
+              {waitText}
+            </Text>
+          )}
         </Pressable>
         {showJab && (
           <Pressable
@@ -2771,6 +2775,7 @@ function CompletedGameListItem({
             <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
           </View>
         </View>
+        <LastWordsPreview game={game} opponentName={opponentName} profileId={profileId} />
         <View style={lobbyStyles.completedGameFooter}>
           <Text numberOfLines={1} style={lobbyStyles.waitText}>
             {formatCompletedDate(game.completed_at ?? game.updated_at)}
@@ -2785,6 +2790,38 @@ function CompletedGameListItem({
       >
         <Text style={lobbyStyles.completedRematchText}>Rematch</Text>
       </Pressable>
+    </View>
+  );
+}
+
+// Both players' last words, in the order said. A finished game that a last
+// word brought back to the games list shows these instead of a hint.
+function LastWordsPreview({
+  game,
+  opponentName,
+  profileId,
+}: {
+  game: RemoteGameRow;
+  opponentName: string;
+  profileId: string;
+}) {
+  const shots = game.state.partingShots ?? [];
+  if (shots.length === 0) return null;
+  return (
+    <View style={lobbyStyles.lastWords} testID={`last-words-${game.id}`}>
+      {shots.map((shot) => {
+        const speaker = shot.playerId === profileId ? 'You' : opponentName;
+        return (
+          <Text
+            accessibilityLabel={`${speaker} said: ${getPartingShotText(shot.lineId)}`}
+            key={shot.playerId}
+            numberOfLines={2}
+            style={lobbyStyles.lastWordLine}
+          >
+            <Text style={lobbyStyles.lastWordSpeaker}>💬 {speaker}: </Text>“{getPartingShotText(shot.lineId)}”
+          </Text>
+        );
+      })}
     </View>
   );
 }
@@ -2958,11 +2995,6 @@ function getUnseenResultHint(game: RemoteGameRow, profileId: string, opponentNam
   }
   if (rageQuit && rageQuit.playerId !== profileId && !rageQuit.replyId) {
     return 'Tap to send an insult.';
-  }
-  // A last word brings a finished game back; say what it was.
-  const shot = game.state.partingShots?.find((candidate) => candidate.playerId !== profileId);
-  if (shot) {
-    return `${opponentName}: “${getPartingShotText(shot.lineId)}”`;
   }
 
   return 'Tap to see the final score.';
@@ -3398,6 +3430,18 @@ const lobbyStyles = StyleSheet.create({
   completedDetailActionButton: {
     flex: 1,
     width: 'auto',
+  },
+  lastWordLine: {
+    color: '#4A1A08',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  lastWords: {
+    gap: 2,
+    paddingTop: 6,
+  },
+  lastWordSpeaker: {
+    fontWeight: '900',
   },
   completedDetailActionsStack: {
     gap: 8,
