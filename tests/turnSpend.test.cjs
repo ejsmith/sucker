@@ -39,7 +39,7 @@ test('stored games reject a malformed turn spend', () => {
   assert.throws(() => toGameState({ ...game, turnSpend: 3 }), /turn spend/);
 });
 
-test('the turn reveal says what the tokens bought', () => {
+test('the turn reveal says what the tokens bought, never what they were for', () => {
   const turn = (category, score, extraRolls, mulligans, dice = [1, 2, 3, 4, 6]) => ({
     category,
     dice,
@@ -49,18 +49,13 @@ test('the turn reveal says what the tokens bought', () => {
 
   assert.equal(describeTurnSpend(turn('chance', 16, 0, 0)), null);
   assert.equal(describeTurnSpend({ ...turn('chance', 16, 0, 0), spend: null }), null);
-  assert.equal(
-    describeTurnSpend(turn('sucker', 50, 2, 1, [6, 6, 6, 6, 6])),
-    'Burned 5 tokens chasing a Sucker and got it!',
-  );
-  // A Sucker in another box still counts as catching one.
-  assert.equal(
-    describeTurnSpend(turn('fives', 75, 1, 0, [5, 5, 5, 5, 5])),
-    'Burned 1 token chasing a Sucker and got it!',
-  );
-  assert.equal(describeTurnSpend(turn('sucker', 0, 4, 0)), 'Burned 4 tokens chasing a Sucker. No dice.');
+  assert.equal(describeTurnSpend(turn('sucker', 50, 2, 1, [6, 6, 6, 6, 6])), 'Spent 5 tokens and rolled a Sucker!');
+  // A Sucker in another box still counts.
+  assert.equal(describeTurnSpend(turn('fives', 75, 1, 0, [5, 5, 5, 5, 5])), 'Spent 1 token and rolled a Sucker!');
+  assert.equal(describeTurnSpend(turn('sucker', 0, 4, 0)), 'Burned 4 tokens for nothing.');
   assert.equal(describeTurnSpend(turn('largeStraight', 0, 3, 0)), 'Burned 3 tokens for nothing.');
-  // A Sucker Deal never rolled, so its leftover dice mean nothing.
+  // A Sucker thrown away for a 0, or a Sucker Deal's leftover dice, is still nothing.
+  assert.equal(describeTurnSpend(turn('threes', 0, 2, 0, [2, 2, 2, 2, 2])), 'Burned 2 tokens for nothing.');
   assert.equal(describeTurnSpend(turn('ones', 0, 0, 1, [1, 1, 1, 1, 1])), 'Burned 3 tokens for nothing.');
   assert.equal(describeTurnSpend(turn('chance', 28, 2, 1)), 'Spent 5 tokens on 2 Extra Rolls + a Mulligan.');
   assert.equal(describeTurnSpend(turn('chance', 28, 1, 0)), 'Spent 1 token on an Extra Roll.');
@@ -77,9 +72,9 @@ test('the recap tells each splurge with its result', () => {
 
   assert.equal(
     describeTurnSpend(turn('sucker', 50, 5, 0, [2, 2, 2, 2, 2]), 'You'),
-    'You burned 5 tokens chasing a Sucker and got it!',
+    'You spent 5 tokens and rolled a Sucker for 50!',
   );
-  assert.equal(describeTurnSpend(turn('sucker', 0, 5, 0), 'Bob'), 'Bob burned 5 tokens chasing a Sucker. No dice.');
+  assert.equal(describeTurnSpend(turn('sucker', 0, 5, 0), 'Bob'), 'Bob burned 5 tokens for a 0 on Sucker.');
   assert.equal(describeTurnSpend(turn('fours', 0, 3, 0), 'Bob'), 'Bob burned 3 tokens for a 0 on Fours.');
   assert.equal(describeTurnSpend(turn('chance', 28, 2, 1), 'You'), 'You spent 5 tokens for 28 on Chance.');
 });

@@ -76,13 +76,12 @@ into the replay, so the mulliganed row is skipped; a punched turn's spend
 bought nothing.
 
 - **Turn reveal.** Under "<name> played <score> on <box>", a second line when
-  the turn cost tokens: "Burned 5 tokens chasing a Sucker and got it!", "…No
-  dice.", "Burned 3 tokens for nothing.", or "Spent 5 tokens on 2 Extra Rolls
-  - a Mulligan." Final dice that are a Sucker count as catching one; a Sucker
-    box turn without one is a miss.
+  the turn cost tokens. It states facts, never what the player was going for:
+  "Burned 5 tokens for nothing." (scored 0), "Spent 5 tokens and rolled a
+  Sucker!", or "Spent 5 tokens on 2 Extra Rolls + a Mulligan."
 - **Tale of the Tape.** Tokens adds **Points bought** (points from turns that
   cost tokens, with what they cost) and one line per player on their priciest
-  turn, e.g. "Test Player 2 burned 5 tokens chasing a Sucker. No dice."
+  turn, e.g. "Test Player 2 burned 5 tokens for a 0 on Sucker."
 
 ## Implementation
 
