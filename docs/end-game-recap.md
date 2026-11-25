@@ -33,7 +33,7 @@ forfeits keep the plain Game Over panel.
   While more is below, a fade and a "More ↓" button sit at the bottom (phones
   hide the scroll bar until you scroll); native also flashes the scroll bar.
 - **Games list and Completed Games.** Every row of a finished game shows both
-  players' last words, in the order said (`💬 You: "Scoreboard, Sucker."`). A
+  players' last words, in the order said (`💬 You: "Scoreboard, Sucker."`, `💬 Them: "I demand a recount."`). A
   game a last word brought back to the games list shows them in place of its
   hint. Players often rematch before the other side has spoken, so this is
   where a late line, and the way to answer it, is found; the rematch itself

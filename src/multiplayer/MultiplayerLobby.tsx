@@ -2810,10 +2810,12 @@ function LastWordsPreview({
   return (
     <View style={lobbyStyles.lastWords} testID={`last-words-${game.id}`}>
       {shots.map((shot) => {
-        const speaker = shot.playerId === profileId ? 'You' : opponentName;
+        const mine = shot.playerId === profileId;
+        // The row already names them; "Them" keeps both lines the same width.
+        const speaker = mine ? 'You' : 'Them';
         return (
           <Text
-            accessibilityLabel={`${speaker} said: ${getPartingShotText(shot.lineId)}`}
+            accessibilityLabel={`${mine ? 'You' : opponentName} said: ${getPartingShotText(shot.lineId)}`}
             key={shot.playerId}
             numberOfLines={2}
             style={lobbyStyles.lastWordLine}
