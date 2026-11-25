@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type Ref } from 'react';
-import { BackHandler, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { categoryLabels, type PartingShot, type Player } from '../game';
 import type { PlayerGameRecap, ScoredBox } from '../../shared/gameRecap';
 import { getPartingShotText, type PartingShotLine, type PartingShotLineId } from '../../shared/partingShots';
@@ -8,6 +8,8 @@ import type { PlayerRecapResult, RecapFeat, RemoteGameRecap } from '../multiplay
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon } from './ControlIcon';
 import { Pressable } from './Pressable';
+
+const suckerTokenImage = require('../../assets/sucker-token.png');
 
 const maxFontSizeMultiplier = 1.2;
 const black = 'Inter_900Black';
@@ -814,14 +816,22 @@ export function RecapPage({
                 )}
                 {section.title === 'TOKENS' &&
                   getSplurgeLines(home, mine, opponent, theirs).map(({ line, playerId }) => (
-                    <Text
-                      key={playerId}
-                      maxFontSizeMultiplier={maxFontSizeMultiplier}
-                      style={[styles.splurge, { fontSize: small(unit, 12), lineHeight: small(unit, 16) }]}
-                      testID={`recap-splurge-${playerId === home.id ? 'home' : 'opponent'}`}
-                    >
-                      🪙 {line}
-                    </Text>
+                    <View key={playerId} style={[styles.splurgeRow, { gap: unit(6) }]}>
+                      <Image
+                        source={suckerTokenImage}
+                        style={[
+                          styles.splurgeToken,
+                          { height: small(unit, 16), marginTop: small(unit, 0.5), width: small(unit, 16) },
+                        ]}
+                      />
+                      <Text
+                        maxFontSizeMultiplier={maxFontSizeMultiplier}
+                        style={[styles.splurge, { fontSize: small(unit, 12), lineHeight: small(unit, 17) }]}
+                        testID={`recap-splurge-${playerId === home.id ? 'home' : 'opponent'}`}
+                      >
+                        {line}
+                      </Text>
+                    </View>
                   ))}
               </View>
             ))}
@@ -1090,7 +1100,15 @@ const styles = StyleSheet.create({
   },
   splurge: {
     color: '#FFF3C2',
+    flex: 1,
     fontFamily: extraBold,
+  },
+  splurgeRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+  },
+  splurgeToken: {
+    resizeMode: 'contain',
   },
   radio: {
     borderColor: '#8F3B10',

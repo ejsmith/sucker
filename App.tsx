@@ -4659,15 +4659,21 @@ export function LocalGameScreen({
                     </Text>
                   </Text>
                   {opponentTurnReveal.spendText ? (
-                    <Text
-                      adjustsFontSizeToFit
-                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
-                      numberOfLines={1}
-                      style={[styles.opponentTurnRevealSpend, gameLayout.styles.opponentTurnRevealSpend]}
-                      testID="opponent-turn-reveal-spend"
-                    >
-                      🪙 {opponentTurnReveal.spendText}
-                    </Text>
+                    <View style={[styles.opponentTurnRevealSpendRow, gameLayout.styles.opponentTurnRevealSpendRow]}>
+                      <Image
+                        source={suckerTokenImage}
+                        style={[styles.opponentTurnRevealSpendToken, gameLayout.styles.opponentTurnRevealSpendToken]}
+                      />
+                      <Text
+                        adjustsFontSizeToFit
+                        maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                        numberOfLines={1}
+                        style={[styles.opponentTurnRevealSpend, gameLayout.styles.opponentTurnRevealSpend]}
+                        testID="opponent-turn-reveal-spend"
+                      >
+                        {opponentTurnReveal.spendText}
+                      </Text>
+                    </View>
                   ) : null}
                 </Animated.View>
               </View>
@@ -7374,8 +7380,20 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 0,
   },
+  opponentTurnRevealSpendRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+    maxWidth: '100%',
+  },
+  opponentTurnRevealSpendToken: {
+    height: 17,
+    resizeMode: 'contain',
+    width: 17,
+  },
   opponentTurnRevealSpend: {
     color: '#FFD329',
+    flexShrink: 1,
     fontSize: 13,
     fontFamily: gameFontBlack,
     fontWeight: '900',
