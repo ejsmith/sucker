@@ -1387,8 +1387,13 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertEquals(firstScore.status, 'response_window');
   assertString(firstScore.last_turn_id);
   assertPlayerTokens(firstScore, alice.id, startingSuckerTokens - suckerTokenCosts.extraRoll);
+  const firstTurn = await loadTurn(firstScore.last_turn_id);
+  assertEquals([firstTurn.extra_rolls, firstTurn.mulligans], [1, 0]);
+  assertEquals(firstScore.state.turnSpend, undefined);
 
   const mulligan = (await invokeGameAction(alice, { gameId: game.id, type: 'mulligan' })).game as GameRow;
+  // The replay carries what the mulliganed turn already cost.
+  assertEquals(mulligan.state.turnSpend, { extraRolls: 1, mulligans: 1 });
   assertEquals(mulligan.status, 'active');
   assertEquals(mulligan.current_player_id, alice.id);
   assertPlayerTokens(mulligan, alice.id, startingSuckerTokens - suckerTokenCosts.extraRoll - suckerTokenCosts.mulligan);
@@ -1405,6 +1410,8 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   ).game as GameRow;
   assertEquals(secondScore.status, 'response_window');
   assertString(secondScore.last_turn_id);
+  const secondTurn = await loadTurn(secondScore.last_turn_id);
+  assertEquals([secondTurn.extra_rolls, secondTurn.mulligans], [1, 1]);
 
   await invokeGameAction(bob, { gameId: game.id, turnId: secondScore.last_turn_id, type: 'prepare_sucker_punch' });
 
@@ -1420,6 +1427,8 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertPlayerTokens(punched, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
   assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'punched');
   assertEquals(punched.state.players.find((player) => player.id === alice.id)?.scorecard.ones, null);
+  // The replay of a punched turn starts with nothing bought.
+  assertEquals(punched.state.turnSpend, undefined);
 
   await invokeGameAction(bob, { gameId: game.id, tauntId: 'sucker-punched', type: 'taunt' });
 
@@ -1449,6 +1458,15 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertEquals(actionPayloadValue(punchAction?.payload, 'landed'), true);
   assertEquals(actionPayloadValue(punchAction?.payload, 'chanceDie'), 6);
   assertEquals(actionPayloadValue(punchAction?.payload, 'chancePercent'), 75);
+
+  // A Sucker Deal records what was bought before it, and never rolled.
+  await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'extra_roll' });
+  const dealt = (
+    await invokeGameAction(alice, { category: 'twos', gameId: game.id, held: falseHeld, type: 'scratch_category' })
+  ).game as GameRow;
+  const dealtTurn = await loadTurn(dealt.last_turn_id);
+  assertEquals([dealtTurn.extra_rolls, dealtTurn.mulligans, dealtTurn.roll_count, dealtTurn.score], [1, 0, 0, 0]);
+  assertEquals(dealt.state.turnSpend, undefined);
 });
 
 Deno.test('a missed punch persists a two-token counterpunch, including retries and token accounting', async () => {
@@ -2049,6 +2067,131 @@ Deno.test('game-action scratches, pass responses, game completion, and stats are
     actions.filter((action) => action.action_type === 'pass_response').length,
     scoreCategories.length * 2 - 1,
   );
+});
+
+Deno.test('parting shots allow one last word each, and finished games open to every player', async () => {
+  const [alice, bob, charlie] = await createUsers('parting-shots', ['Alice', 'Bob', 'Charlie']);
+  const created = await invokeGameAction(alice, { opponentProfileId: bob.id, type: 'create_game' });
+  const gameId = (created.game as GameRow).id;
+  const early = await invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
+  assertEquals(early.error, 'Parting shots wait until the game is over.');
+
+  // Every box but Chance is filled, and Alice is up by 3.
+  const startingState = (created.game as GameRow).state;
+  const nearlyDone: GameState = {
+    ...startingState,
+    players: startingState.players.map((player) => ({
+      ...player,
+      scorecard: Object.fromEntries(
+        scoreCategories.map((category) => [
+          category,
+          category === 'chance' ? null : category === 'ones' && player.id === alice.id ? 3 : 0,
+        ]),
+      ) as GameState['players'][number]['scorecard'],
+    })),
+  };
+  assertNoError((await admin.from('games').update({ state: nearlyDone }).eq('id', gameId)).error);
+  // Unfinished games stay private, even to their players.
+  assertEquals((await alice.client.rpc('get_game_recap', { target_game_id: gameId })).error?.code, 'P0002');
+  await scratchAndPass(gameId, alice, bob, 'chance');
+  const finished = await scratchAndPass(gameId, bob, alice, 'chance');
+  assertEquals(finished.status, 'complete');
+  assertEquals(finished.winner_id, alice.id);
+
+  type RecapPayload = {
+    actions: { action_type: string; actor_id: string }[];
+    game: { id: string; state: GameState };
+    players: {
+      display_name: string;
+      feat_keys: string[];
+      player_id: string;
+      rating_after: number | null;
+      rating_before: number | null;
+    }[];
+    turns: { category: string; player_id: string; score: number }[];
+  };
+  const { data: recapData, error: recapError } = await alice.client.rpc('get_game_recap', { target_game_id: gameId });
+  assertNoError(recapError);
+  const recap = recapData as unknown as RecapPayload;
+  assertEquals(recap.game.id, gameId);
+  assertEquals(
+    recap.players.map((row) => [row.player_id, row.display_name]),
+    [
+      [alice.id, 'Alice'],
+      [bob.id, 'Bob'],
+    ],
+  );
+  assertEquals(
+    recap.players.every((row) => row.rating_before !== null && row.rating_after !== null),
+    true,
+  );
+  assertEquals(Number(recap.players[0].rating_after) > Number(recap.players[0].rating_before), true);
+  // The fixed test die rolls five 1s on each first roll.
+  assertEquals(
+    recap.players.every((row) => row.feat_keys.includes('natural')),
+    true,
+  );
+  assertEquals(
+    recap.turns.map((turn) => [turn.player_id, turn.category]),
+    [
+      [alice.id, 'chance'],
+      [bob.id, 'chance'],
+    ],
+  );
+  // A finished game is open to any signed-in player, like the scores on the
+  // boards; the leaderboard links each best score to its game.
+  const outsider = await charlie.client.rpc('get_game_recap', { target_game_id: gameId });
+  assertNoError(outsider.error);
+  assertEquals((outsider.data as unknown as RecapPayload).game.id, gameId);
+  const board = await alice.client.rpc('get_leaderboard', { board: 'all_time_high_score', max_rows: 100 });
+  assertNoError(board.error);
+  assertEquals(board.data?.find((row) => row.player_id === alice.id)?.game_id, gameId);
+
+  const wrongSet = await invokeGameAction(bob, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
+  assertEquals(wrongSet.error, 'Choose one of the available lines.');
+  const freeText = await invokeGameAction(bob, { gameId, lineId: 'You stink', type: 'parting_shot' }, 400);
+  assertEquals(freeText.error, 'Choose one of the available lines.');
+
+  await markResultSeen(bob, gameId, finished.updated_at);
+  // Both players often answer at once. A line that loses the commit race is
+  // replayed, so neither is lost.
+  await Promise.all([
+    invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' }),
+    invokeGameAction(bob, { gameId, lineId: 'recount', type: 'parting_shot' }),
+  ]);
+  const said = (await loadGameRow(gameId)).state.partingShots ?? [];
+  assertEquals(said.length, 2);
+  assertEquals(said.find((shot) => shot.playerId === alice.id)?.lineId, 'scoreboard');
+  assertEquals(said.find((shot) => shot.playerId === bob.id)?.lineId, 'recount');
+  // Bob already cleared the result, so Alice's line puts the game back in his list.
+  assertEquals((await loadResultSeen(gameId))[bob.id], false);
+  for (const [user, lineId] of [
+    [alice, 'nice-try'],
+    [bob, 'rematch-now'],
+  ] as const) {
+    const done = await invokeGameAction(user, { gameId, lineId, type: 'parting_shot' }, 400);
+    assertEquals(done.error, 'You already said your piece.');
+  }
+  const shotActions = (await loadActions(gameId)).filter((action) => action.action_type === 'parting_shot');
+  assertEquals(shotActions.length, 2);
+
+  // Forfeits take no parting shots.
+  const { partingShots: _said, ...finalState } = (await loadGameRow(gameId)).state;
+  for (const [forfeit, error] of [
+    [{ timedOut: { playerId: bob.id } }, 'Forfeited games get no parting shots.'],
+    [{ rageQuit: { playerId: bob.id } }, 'Rage Quit games get one reply, not parting shots.'],
+  ] as const) {
+    assertNoError(
+      (
+        await admin
+          .from('games')
+          .update({ state: { ...finalState, ...forfeit } })
+          .eq('id', gameId)
+      ).error,
+    );
+    const rejected = await invokeGameAction(alice, { gameId, lineId: 'scoreboard', type: 'parting_shot' }, 400);
+    assertEquals(rejected.error, error);
+  }
 });
 
 Deno.test("Sucker Spree counts Sucker turns in a row across all of a player's games", async () => {

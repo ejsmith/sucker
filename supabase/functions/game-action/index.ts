@@ -8,8 +8,10 @@ import { discardRequestBody } from '../_shared/discardRequestBody.ts';
 import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import { readLocalTestHook } from '../_shared/testHooks.ts';
 import {
+  addTurnSpend,
   createEmptyScorecard,
   applySuckerPunchOpportunity,
+  clearTurnSpend,
   clearRevengePunchDiscount,
   expireCounterPunch,
   getSuckerPunchCost,
@@ -33,6 +35,7 @@ import {
   type SuckerPunchOutcome,
   suckerTokenCosts,
   timeOutGame,
+  type TurnSpend,
   toDice,
   toGameState,
   toHeldDice,
@@ -72,6 +75,12 @@ import {
   reportServerError,
 } from '../_shared/monitoring.ts';
 import { getRageQuitReplyText, isRageQuitReplyId, type RageQuitReplyId } from '../_shared/rageQuit.ts';
+import {
+  getPartingShotPool,
+  getPartingShotText,
+  isPartingShotLineId,
+  type PartingShotLineId,
+} from '../_shared/partingShots.ts';
 import {
   buildTurnTimeoutNotification,
   buildTurnTimeoutWarning,
@@ -141,7 +150,8 @@ type ActionInput =
   | { type: 'sucker_punch'; chanceDie?: DieValue; chanceProtocol?: 'prepared'; gameId: string; turnId: string }
   | { type: 'sucker_blocker'; gameId: string; turnId: string }
   | { type: 'rage_quit'; gameId: string }
-  | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId };
+  | { type: 'rage_quit_reply'; gameId: string; replyId: RageQuitReplyId }
+  | { type: 'parting_shot'; gameId: string; lineId: PartingShotLineId };
 type Action = ActionInput & { requestId: string };
 // Server-initiated: the sweep forfeits a turn left unfinished too long. Players
 // can never send it.
@@ -242,10 +252,10 @@ Deno.serve(async (request) => {
       );
     }
 
-    const mutationState: ActionMutationState = { mayHaveWritten: false };
+    let mutationState: ActionMutationState = { mayHaveWritten: false };
     try {
       let result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
-      if (mutationState.plan) {
+      for (let attempt = 1; mutationState.plan; attempt += 1) {
         if (!result.game) throw new InternalServerError('A game move must return its game.');
         const plan = mutationState.plan;
         const game = result.game;
@@ -257,11 +267,26 @@ Deno.serve(async (request) => {
           result = await timer.measure('commit', () =>
             commitGameMove(admin, plan, user.id, action.requestId, { ...result, game }),
           );
+          break;
         } catch (commitError) {
           if (isConfirmedRollback(commitError)) mutationState.mayHaveWritten = false;
+          // Both players often answer the end of a game at once. Their lines
+          // never conflict, so replay a parting shot against the newer game
+          // instead of blaming "another device".
+          if (
+            action.type === 'parting_shot' &&
+            attempt < maxPartingShotAttempts &&
+            !mutationState.mayHaveWritten &&
+            isPostgresError(commitError, 'PT409')
+          ) {
+            mutationState = { mayHaveWritten: false };
+            result = await timer.measure('action', () => applyAction(admin, user.id, action, mutationState));
+            continue;
+          }
           throw commitError;
         }
-      } else {
+      }
+      if (!mutationState.plan) {
         await timer.measure('complete', () => completeActionRequest(admin, user.id, action, result, 200));
       }
       timer.logIfSlow(actionType);
@@ -301,6 +326,8 @@ Deno.serve(async (request) => {
     return json({ error: message }, status, timer.toHeaders());
   }
 });
+
+const maxPartingShotAttempts = 3;
 
 async function applyAction(
   admin: DbClient,
@@ -369,6 +396,8 @@ async function applyAction(
       return rageQuitRemoteGame(admin, actorId, action.gameId, mutationState);
     case 'rage_quit_reply':
       return replyToRageQuit(admin, actorId, action.gameId, action.replyId, mutationState);
+    case 'parting_shot':
+      return sendPartingShot(admin, actorId, action.gameId, action.lineId, mutationState);
     default:
       return assertNever(action);
   }
@@ -804,6 +833,14 @@ function buildNotificationContent(
       title: `${actorName} flipped the table!`,
     };
   }
+  if (action.type === 'parting_shot') {
+    // The second line answers the first.
+    const answered = game.state.partingShots?.some((shot) => shot.playerId !== actorId);
+    return {
+      body: getPartingShotText(action.lineId),
+      title: answered ? `${actorName} fired back` : `${actorName}'s last word`,
+    };
+  }
   if (action.type === 'rage_quit_reply') {
     return {
       body: getRageQuitReplyText(action.replyId),
@@ -1040,6 +1077,13 @@ function toAction(value: unknown): Action {
         throw new Error('Choose one of the available replies.');
       }
       return { gameId: readString(action, 'gameId'), replyId, requestId, type };
+    }
+    case 'parting_shot': {
+      const lineId = readString(action, 'lineId');
+      if (!isPartingShotLineId(lineId)) {
+        throw new Error('Choose one of the available lines.');
+      }
+      return { gameId: readString(action, 'gameId'), lineId, requestId, type };
     }
     default:
       throw new Error('Invalid multiplayer action.');
@@ -1660,7 +1704,7 @@ async function scoreRemoteTurn(
     scoreCategories.every((scoreCategory) => player.scorecard[scoreCategory] !== null),
   );
   const nextState: GameState = {
-    ...expireCounterPunch(state, complete ? (state.counterPunchPlayerId ?? actorId) : actorId),
+    ...clearTurnSpend(expireCounterPunch(state, complete ? (state.counterPunchPlayerId ?? actorId) : actorId)),
     currentPlayerIndex: complete ? state.currentPlayerIndex : (state.currentPlayerIndex + 1) % players.length,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
@@ -1679,8 +1723,10 @@ async function scoreRemoteTurn(
     id: crypto.randomUUID(),
     category,
     dice: state.dice,
+    extra_rolls: state.turnSpend?.extraRolls ?? 0,
     game_id: gameId,
     held: turnHeld,
+    mulligans: state.turnSpend?.mulligans ?? 0,
     player_id: actorId,
     roll_count: state.rollNumber,
     rolled_sucker: rolledSucker,
@@ -1843,6 +1889,50 @@ async function replyToRageQuit(
   });
   await insertAction(admin, gameId, actorId, 'rage_quit_reply', { replyId }, mutationState.plan);
   return { game: updatedGame, notificationProfileIds: [rageQuit.playerId] };
+}
+
+async function sendPartingShot(
+  admin: DbClient,
+  actorId: string,
+  gameId: string,
+  lineId: PartingShotLineId,
+  mutationState: ActionMutationState,
+) {
+  const game = await loadGameForActor(admin, gameId, actorId);
+  if (game.status !== 'complete') {
+    throw new Error('Parting shots wait until the game is over.');
+  }
+  if (game.state.rageQuit) {
+    throw new Error('Rage Quit games get one reply, not parting shots.');
+  }
+  if (game.state.timedOut) {
+    throw new Error('Forfeited games get no parting shots.');
+  }
+  const pool = getPartingShotPool(game.state, actorId);
+  if (!pool) {
+    throw new Error('You already said your piece.');
+  }
+  if (!pool.some((line) => line.id === lineId)) {
+    throw new Error('Choose one of the available lines.');
+  }
+
+  // The game version check keeps each player to one line across devices.
+  const recipientId = game.state.players.find((player) => player.id !== actorId)!.id;
+  const updatedGame = stageGameMove(mutationState, game, {
+    state: {
+      ...game.state,
+      partingShots: [...(game.state.partingShots ?? []), { lineId, playerId: actorId }],
+    },
+  });
+  // The recipient has not seen this yet, so the game goes back into their list.
+  mutationState.plan!.writes.push({
+    table: 'game_players',
+    operation: 'update',
+    data: { result_seen_at: null },
+    match: { game_id: gameId, player_id: recipientId },
+  });
+  await insertAction(admin, gameId, actorId, 'parting_shot', { lineId }, mutationState.plan);
+  return { game: updatedGame, notificationProfileIds: [recipientId] };
 }
 
 // Inactivity forfeits run hourly from pg_cron through pg_net. The request
@@ -2084,7 +2174,13 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   }
 
   const nextState = turn
-    ? removeScoredTurn(expireCounterPunch(state, actorId), turn, actorId, -suckerTokenCosts.mulligan)
+    ? removeScoredTurn(
+        expireCounterPunch(state, actorId),
+        turn,
+        actorId,
+        -suckerTokenCosts.mulligan,
+        addTurnSpend({ extraRolls: turn.extra_rolls ?? 0, mulligans: turn.mulligans ?? 0 }, 'mulligans'),
+      )
     : mulliganCurrentTurn(state);
   const updatedGame = stageGameMove(mutationState, game, {
     current_player_id: actorId,
@@ -2376,7 +2472,15 @@ function findPlayer(state: GameState, playerId: string): Player {
   return player;
 }
 
-function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tokenDelta: number): GameState {
+// A Mulligan replays the turn with what it already cost; a punched turn
+// replays from nothing.
+function removeScoredTurn(
+  state: GameState,
+  turn: TurnRow,
+  playerId: string,
+  tokenDelta: number,
+  turnSpend?: TurnSpend,
+): GameState {
   const category = toScoreCategory(turn.category);
   const playerIndex = state.players.findIndex((player) => player.id === playerId);
   if (playerIndex < 0) {
@@ -2400,7 +2504,8 @@ function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tok
   });
 
   return {
-    ...state,
+    ...clearTurnSpend(state),
+    ...(turnSpend ? { turnSpend } : {}),
     currentPlayerIndex: playerIndex,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
@@ -2506,6 +2611,7 @@ function purchaseExtraRoll(state: GameState, actorId: string, submittedHeld?: Ga
     ...updatePlayerTokens(state, actorId, -suckerTokenCosts.extraRoll),
     extraRollsAvailable: Math.max(0, state.extraRollsAvailable ?? 0) + 1,
     held: normalizeHeld(submittedHeld, state.held),
+    turnSpend: addTurnSpend(state.turnSpend, 'extraRolls'),
   };
 }
 

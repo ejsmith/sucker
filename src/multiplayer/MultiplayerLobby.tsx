@@ -45,7 +45,7 @@ import type { LocalTestPlayer } from './auth';
 import { AppleSignInButton } from './AppleSignInButton';
 import type { ProfileInput, RemoteGameRow } from './types';
 import { canJabGame } from './jab';
-import { categoryLabels, getWinnerId, scoreCategories, totalScore, upperBonus } from '../game';
+import { getWinnerId, totalScore } from '../game';
 import { getPhoneStageStyle, shouldFillWebViewport } from '../ui/phoneStage';
 import { PlayerProfilePage, StatsPage } from '../ui/StatsPage';
 import { useAppActivity } from '../ui/useAppActivity';
@@ -53,6 +53,7 @@ import { runWithCleanup } from '../ui/runWithCleanup';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { SaltBadge } from '../ui/RageQuit';
+import { getPartingShotHand, getPartingShotText } from '../../shared/partingShots';
 import { getRageQuitReplyText } from '../../shared/rageQuit';
 import { formatTurnTimeoutCountdown, turnTimeoutDays } from '../../shared/turnTimeout';
 import { Pressable } from '../ui/Pressable';
@@ -66,6 +67,7 @@ import {
   type LeaderboardRow,
 } from './community';
 import { LeaderboardPanel } from './CommunityPages';
+import { PastGameView, type PastGameTab } from '../ui/PastGame';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -78,6 +80,7 @@ type LobbyPage =
   | 'completedGameDetail'
   | 'completedGameStats'
   | 'community'
+  | 'pastGame'
   | 'playerProfile';
 type WebNotificationPermission = 'default' | 'denied' | 'granted';
 const publicInviteBaseUrl = 'https://play.sucker.games/invite';
@@ -186,7 +189,6 @@ export function MultiplayerLobby({
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
   const [completedGameStats, setCompletedGameStats] = useState<HeadToHeadStatsSnapshot | null>(null);
-  const [completedGamePlayerStatsTarget, setCompletedGamePlayerStatsTarget] = useState<'opponent' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
@@ -215,6 +217,16 @@ export function MultiplayerLobby({
     rows: LeaderboardRow[];
   } | null>(null);
   const [playerProfileId, setPlayerProfileId] = useState<string | null>(null);
+  // Where a player profile came from, and what is already known about them.
+  const [playerProfileOrigin, setPlayerProfileOrigin] = useState<{
+    avatarUrl: string | null;
+    name: string | null;
+    returnPage: LobbyPage;
+  }>({ avatarUrl: null, name: null, returnPage: 'community' });
+  // A finished game opened from a leaderboard score.
+  const [pastGame, setPastGame] = useState<{ gameId: string; subjectId: string } | null>(null);
+  // The Game Recap tab, kept while a player profile is open on top of it.
+  const [pastGameTab, setPastGameTab] = useState<PastGameTab>('scorecard');
   // A game screen asks for a leaderboard through the route. Adjust state while
   // rendering, as React recommends for props that drive state.
   const [handledLeaderboardRequest, setHandledLeaderboardRequest] = useState<LeaderboardBoard | null>(null);
@@ -535,7 +547,15 @@ export function MultiplayerLobby({
         return true;
       }
       if (page === 'playerProfile') {
+        setPage(playerProfileOrigin.returnPage);
+        return true;
+      }
+      if (page === 'pastGame') {
         setPage('community');
+        return true;
+      }
+      if (page === 'completedGameDetail') {
+        setPage('completedGames');
         return true;
       }
       if (page !== 'games') {
@@ -545,7 +565,7 @@ export function MultiplayerLobby({
       return false;
     });
     return () => subscription.remove();
-  }, [avatarPickerVisible, page, removeGameToConfirm, setPage]);
+  }, [avatarPickerVisible, page, playerProfileOrigin.returnPage, removeGameToConfirm, setPage]);
 
   useEffect(() => {
     if (!isLoading && !isRestoringSession && !isSessionUnavailable && !session) {
@@ -1191,7 +1211,17 @@ export function MultiplayerLobby({
   const selectedCompletedGame = selectedCompletedGameId
     ? visibleGames.find((game) => game.id === selectedCompletedGameId && game.status === 'complete')
     : null;
-  async function handleOpenCompletedGameStats(game: RemoteGameRow, playerStatsTarget: 'opponent' | null) {
+  function openPlayerProfile(
+    player: { avatarUrl: string | null; id: string; name: string | null },
+    returnPage: LobbyPage,
+  ) {
+    setMessage(null);
+    setPlayerProfileId(player.id);
+    setPlayerProfileOrigin({ avatarUrl: player.avatarUrl, name: player.name, returnPage });
+    setPage('playerProfile');
+  }
+
+  async function handleOpenCompletedGameStats(game: RemoteGameRow) {
     const { opponent } = getGamePlayers(game, activeProfileId);
     if (!opponent) {
       setMessage('Stats are unavailable for this game.');
@@ -1200,7 +1230,6 @@ export function MultiplayerLobby({
 
     await runAction(async () => {
       setCompletedGameStats(await getHeadToHeadStats(opponent.id));
-      setCompletedGamePlayerStatsTarget(playerStatsTarget);
       setSelectedCompletedGameId(game.id);
       setPage('completedGameStats');
     });
@@ -1293,6 +1322,7 @@ export function MultiplayerLobby({
                 key={game.id}
                 onOpenGame={(completedGame) => {
                   setSelectedCompletedGameId(completedGame.id);
+                  setPastGameTab('scorecard');
                   setPage('completedGameDetail');
                 }}
                 onRematchGame={handleRematchGame}
@@ -1318,20 +1348,26 @@ export function MultiplayerLobby({
       >
         <SuckerLobbyTitle />
         {renderConnectionNotice()}
-        <ScreenHeader title="Score Card" onBack={() => setPage('completedGames')} />
+        <ScreenHeader title="Game Recap" onBack={() => setPage('completedGames')} />
 
         {selectedCompletedGame ? (
-          <CompletedGameScorecard
-            avatarUrl={profileAvatars[getGamePlayers(selectedCompletedGame, activeProfileId).opponent?.id ?? '']}
-            game={selectedCompletedGame}
-            isBusy={isBusy || isLoading}
-            onOpenPlayerStats={(game) => void handleOpenCompletedGameStats(game, 'opponent')}
-            onOpenStats={(game) => void handleOpenCompletedGameStats(game, null)}
-            onRematchGame={handleRematchGame}
-            isOpponentSalty={saltyProfileIds.has(
-              getGamePlayers(selectedCompletedGame, activeProfileId).opponent?.id ?? '',
-            )}
-            profileId={activeProfileId}
+          <PastGameView
+            footer={
+              <CompletedGameActions
+                game={selectedCompletedGame}
+                isBusy={isBusy || isLoading}
+                onOpenGame={onOpenGame}
+                onOpenStats={(game) => void handleOpenCompletedGameStats(game)}
+                onRematchGame={handleRematchGame}
+                profileId={activeProfileId}
+              />
+            }
+            gameId={selectedCompletedGame.id}
+            key={selectedCompletedGame.id}
+            onOpenPlayer={(player) => openPlayerProfile(player, 'completedGameDetail')}
+            onTabChange={setPastGameTab}
+            tab={pastGameTab}
+            viewerId={activeProfileId}
           />
         ) : (
           <View style={lobbyStyles.panel}>
@@ -1376,7 +1412,7 @@ export function MultiplayerLobby({
             opponentOverallStats={completedGameStats?.opponentOverall ?? null}
             opponentScore={totalScore(opponent.scorecard)}
             opponentStats={completedGameStats?.opponent ?? null}
-            playerStatsTarget={completedGamePlayerStatsTarget}
+            playerStatsTarget={null}
             stats={completedGameStats?.mine ?? null}
             statsKind="headToHead"
           />
@@ -1420,37 +1456,71 @@ export function MultiplayerLobby({
           error={leaderboard?.board === leaderboardBoard ? leaderboard.error : null}
           isLoading={leaderboard?.board !== leaderboardBoard}
           onBoardChange={setLeaderboardBoard}
-          onOpenPlayer={(playerId) => {
+          onOpenGame={(row) => {
+            if (!row.game_id) return;
             setMessage(null);
-            setPlayerProfileId(playerId);
-            setPage('playerProfile');
+            setPastGame({ gameId: row.game_id, subjectId: row.player_id });
+            setPastGameTab('scorecard');
+            setPage('pastGame');
+          }}
+          onOpenPlayer={(playerId) => {
+            const row = leaderboard?.rows.find((candidate) => candidate.player_id === playerId);
+            openPlayerProfile(
+              { avatarUrl: row?.avatar_url ?? null, id: playerId, name: row?.display_name ?? null },
+              'community',
+            );
           }}
           rows={leaderboard?.board === leaderboardBoard ? leaderboard.rows : []}
         />
         <Text style={lobbyStyles.message}>
-          Only multiplayer games count. Tap a player to see their stats and feats.
+          {leaderboardBoard === 'weekly_high_score' || leaderboardBoard === 'all_time_high_score'
+            ? 'Only multiplayer games count. Tap a score to see that game, or a player for their stats and feats.'
+            : 'Only multiplayer games count. Tap a player to see their stats and feats.'}
         </Text>
       </ScrollView>,
     );
   }
 
+  if (page === 'pastGame' && pastGame) {
+    return renderShell(
+      <ScrollView
+        contentContainerStyle={[lobbyStyles.scrollContent, scrollSafeAreaStyle]}
+        showsVerticalScrollIndicator={false}
+        style={lobbyStyles.scroll}
+        testID="leaderboard-game-page"
+      >
+        <SuckerLobbyTitle />
+        {renderConnectionNotice()}
+        <ScreenHeader title="Game Recap" onBack={() => setPage('community')} />
+        <PastGameView
+          gameId={pastGame.gameId}
+          key={pastGame.gameId}
+          onOpenPlayer={(player) => openPlayerProfile(player, 'pastGame')}
+          onTabChange={setPastGameTab}
+          subjectId={pastGame.subjectId}
+          tab={pastGameTab}
+          viewerId={activeProfileId}
+        />
+      </ScrollView>,
+    );
+  }
+
   if (page === 'playerProfile' && playerProfileId) {
-    const row = leaderboard?.rows.find((candidate) => candidate.player_id === playerProfileId);
     return renderShell(
       <View style={lobbyStyles.fullPageContent} testID="player-profile-safe-host">
         <PlayerProfilePage
           currentUserProfileId={profileId ?? undefined}
           nestedBackHandlerRef={completedGameStatsBackHandler}
-          onClose={() => setPage('community')}
+          onClose={() => setPage(playerProfileOrigin.returnPage)}
           onOpenLeaderboard={openLeaderboard}
           onStartGameAgainst={async (opponentProfileId) => {
             const result = await createGameAgainst(opponentProfileId);
             await refreshGames({ surfaceError: false });
             onOpenGame(result.game.id);
           }}
-          profileAvatarUrl={row?.avatar_url ?? profileAvatars[playerProfileId]}
+          profileAvatarUrl={playerProfileOrigin.avatarUrl ?? profileAvatars[playerProfileId]}
           profileId={playerProfileId}
-          profileName={row?.display_name ?? 'Player'}
+          profileName={playerProfileOrigin.name ?? 'Player'}
         />
       </View>,
       false,
@@ -2606,9 +2676,13 @@ function GameListItem({
               <View style={lobbyStyles.jabButtonPlaceholder} />
             </View>
           </View>
-          <Text style={lobbyStyles.waitText} testID={`game-hint-${game.id}`}>
-            {waitText}
-          </Text>
+          {isUnseenResult && game.state.partingShots?.length ? (
+            <LastWordsPreview game={game} opponentName={opponentName} profileId={profileId} />
+          ) : (
+            <Text style={lobbyStyles.waitText} testID={`game-hint-${game.id}`}>
+              {waitText}
+            </Text>
+          )}
         </Pressable>
         {showJab && (
           <Pressable
@@ -2701,6 +2775,7 @@ function CompletedGameListItem({
             <Text style={lobbyStyles.scorePillText}>{opponentScore}</Text>
           </View>
         </View>
+        <LastWordsPreview game={game} opponentName={opponentName} profileId={profileId} />
         <View style={lobbyStyles.completedGameFooter}>
           <Text numberOfLines={1} style={lobbyStyles.waitText}>
             {formatCompletedDate(game.completed_at ?? game.updated_at)}
@@ -2719,129 +2794,76 @@ function CompletedGameListItem({
   );
 }
 
-function CompletedGameScorecard({
-  avatarUrl,
+// Both players' last words, in the order said. A finished game that a last
+// word brought back to the games list shows these instead of a hint.
+function LastWordsPreview({
+  game,
+  opponentName,
+  profileId,
+}: {
+  game: RemoteGameRow;
+  opponentName: string;
+  profileId: string;
+}) {
+  const shots = game.state.partingShots ?? [];
+  if (shots.length === 0) return null;
+  return (
+    <View style={lobbyStyles.lastWords} testID={`last-words-${game.id}`}>
+      {shots.map((shot) => {
+        const mine = shot.playerId === profileId;
+        // The row already names them; "Them" keeps both lines the same width.
+        const speaker = mine ? 'You' : 'Them';
+        return (
+          <Text
+            accessibilityLabel={`${mine ? 'You' : opponentName} said: ${getPartingShotText(shot.lineId)}`}
+            key={shot.playerId}
+            numberOfLines={2}
+            style={lobbyStyles.lastWordLine}
+          >
+            <Text style={lobbyStyles.lastWordSpeaker}>💬 {speaker}: </Text>“{getPartingShotText(shot.lineId)}”
+          </Text>
+        );
+      })}
+    </View>
+  );
+}
+
+// What a player can do from their own finished game. A last word not yet said
+// can still go out from the game itself.
+function CompletedGameActions({
   game,
   isBusy,
-  isOpponentSalty,
-  onOpenPlayerStats,
+  onOpenGame,
   onOpenStats,
   onRematchGame,
   profileId,
 }: {
-  avatarUrl?: string | null;
   game: RemoteGameRow;
   isBusy: boolean;
-  isOpponentSalty: boolean;
-  onOpenPlayerStats: (game: RemoteGameRow) => void;
+  onOpenGame: (gameId: string) => void;
   onOpenStats: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
   profileId: string;
 }) {
-  const { me, opponent } = getGamePlayers(game, profileId);
-  if (!me || !opponent) {
-    return (
-      <View style={lobbyStyles.panel}>
-        <View style={lobbyStyles.emptyState}>
-          <Text style={lobbyStyles.emptyTitle}>Scorecard unavailable</Text>
-          <Text style={lobbyStyles.emptyBody}>This completed game is missing player data.</Text>
-        </View>
-      </View>
-    );
-  }
-
-  const myScore = totalScore(me.scorecard);
-  const opponentScore = totalScore(opponent.scorecard);
-  const resultTone = getCompletedResultTone(game, profileId);
-
+  const canSpeak = Boolean(getPartingShotHand(game.state, profileId));
+  const theySpoke = Boolean(game.state.partingShots?.some((shot) => shot.playerId !== profileId));
   return (
-    <View
-      style={[
-        lobbyStyles.panel,
-        resultTone === 'win' && lobbyStyles.completedDetailWin,
-        resultTone === 'loss' && lobbyStyles.completedDetailLoss,
-        resultTone === 'tie' && lobbyStyles.completedDetailTie,
-      ]}
-    >
-      <View style={lobbyStyles.completedScoreHeader}>
+    <View style={lobbyStyles.completedDetailActionsStack}>
+      {canSpeak && (
         <Pressable
-          accessibilityLabel={`View ${opponent.name}'s stats`}
-          onPress={() => void onOpenPlayerStats(game)}
-          style={({ pressed }) => [lobbyStyles.completedScorePlayer, pressed && lobbyStyles.pressed]}
-          testID={`completed-scorecard-opponent-${game.id}`}
-        >
-          <PlayerAvatar avatarUrl={avatarUrl} decorative name={opponent.name} size={48} />
-          <View style={lobbyStyles.completedScoreTitleBlock}>
-            <View style={lobbyStyles.nameRow}>
-              <Text numberOfLines={1} style={[lobbyStyles.completedScoreTitle, lobbyStyles.nameRowText]}>
-                {opponent.name}
-              </Text>
-              {isOpponentSalty && <SaltBadge />}
-            </View>
-            <Text style={lobbyStyles.completedScoreDate}>
-              {formatCompletedDate(game.completed_at ?? game.updated_at)}
-            </Text>
-          </View>
-        </Pressable>
-        <Text
-          style={[
-            lobbyStyles.resultBadge,
-            resultTone === 'win' && lobbyStyles.resultBadgeWin,
-            resultTone === 'loss' && lobbyStyles.resultBadgeLoss,
-            resultTone === 'tie' && lobbyStyles.resultBadgeTie,
+          accessibilityRole="button"
+          disabled={isBusy}
+          onPress={() => onOpenGame(game.id)}
+          style={({ pressed }) => [
+            lobbyStyles.lastWordButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
           ]}
+          testID={`last-word-completed-detail-${game.id}`}
         >
-          {getCompletedResultLabel(game, profileId)}
-        </Text>
-      </View>
-
-      <View style={lobbyStyles.statGrid}>
-        <StatTile label="You" value={String(myScore)} />
-        <StatTile label="Them" value={String(opponentScore)} />
-      </View>
-
-      <View style={lobbyStyles.scorecardTable}>
-        <View style={[lobbyStyles.scorecardRow, lobbyStyles.scorecardHeaderRow]}>
-          <Text style={[lobbyStyles.scorecardCategoryText, lobbyStyles.scorecardHeaderText]}>Category</Text>
-          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>You</Text>
-          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>Them</Text>
-        </View>
-        {scoreCategories.map((category) => (
-          <ScorecardComparisonRow
-            key={category}
-            label={categoryLabels[category]}
-            themValue={formatScorecardScore(opponent.scorecard[category])}
-            youValue={formatScorecardScore(me.scorecard[category])}
-          />
-        ))}
-        <ScorecardComparisonRow
-          emphasized
-          label="Upper bonus"
-          themValue={String(upperBonus(opponent.scorecard))}
-          youValue={String(upperBonus(me.scorecard))}
-        />
-        <ScorecardComparisonRow emphasized label="Total" themValue={String(opponentScore)} youValue={String(myScore)} />
-      </View>
-
-      <View style={lobbyStyles.scorecardTable}>
-        <View style={[lobbyStyles.scorecardRow, lobbyStyles.scorecardHeaderRow]}>
-          <Text style={[lobbyStyles.scorecardCategoryText, lobbyStyles.scorecardHeaderText]}>Sucker tokens</Text>
-          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>You</Text>
-          <Text style={[lobbyStyles.scorecardValueText, lobbyStyles.scorecardHeaderText]}>Them</Text>
-        </View>
-        <ScorecardComparisonRow
-          label="Used"
-          themValue={String(game.sucker_tokens_spent[opponent.id] ?? 0)}
-          youValue={String(game.sucker_tokens_spent[me.id] ?? 0)}
-        />
-        <ScorecardComparisonRow
-          emphasized
-          label="Leftover"
-          themValue={String(opponent.suckerTokens)}
-          youValue={String(me.suckerTokens)}
-        />
-      </View>
-
+          <Text style={lobbyStyles.lastWordButtonText}>💬 {theySpoke ? 'Fire back' : 'Say your last word'}</Text>
+        </Pressable>
+      )}
       <View style={lobbyStyles.completedDetailActions}>
         <Pressable
           disabled={isBusy}
@@ -2853,7 +2875,7 @@ function CompletedGameScorecard({
           ]}
           testID={`stats-completed-detail-${game.id}`}
         >
-          <Text style={lobbyStyles.completedStatsText}>Stats</Text>
+          <Text style={lobbyStyles.completedStatsText}>Head-to-head</Text>
         </Pressable>
         <Pressable
           disabled={isBusy}
@@ -2869,28 +2891,6 @@ function CompletedGameScorecard({
           <Text style={lobbyStyles.primaryButtonText}>Rematch</Text>
         </Pressable>
       </View>
-    </View>
-  );
-}
-
-function ScorecardComparisonRow({
-  emphasized = false,
-  label,
-  themValue,
-  youValue,
-}: {
-  emphasized?: boolean;
-  label: string;
-  themValue: string;
-  youValue: string;
-}) {
-  return (
-    <View style={[lobbyStyles.scorecardRow, emphasized && lobbyStyles.scorecardTotalRow]}>
-      <Text numberOfLines={1} style={[lobbyStyles.scorecardCategoryText, emphasized && lobbyStyles.scorecardTotalText]}>
-        {label}
-      </Text>
-      <Text style={[lobbyStyles.scorecardValueText, emphasized && lobbyStyles.scorecardTotalText]}>{youValue}</Text>
-      <Text style={[lobbyStyles.scorecardValueText, emphasized && lobbyStyles.scorecardTotalText]}>{themValue}</Text>
     </View>
   );
 }
@@ -3036,10 +3036,6 @@ function formatWinRate(record: AllTimeOpponentRecord) {
   }
 
   return `${Math.round((record.wins / record.gamesPlayed) * 100)}%`;
-}
-
-function formatScorecardScore(value: number | null) {
-  return value === null ? '-' : String(value);
 }
 
 function formatCompletedDate(value: string) {
@@ -3433,23 +3429,44 @@ const lobbyStyles = StyleSheet.create({
     backgroundColor: '#F1FFD8',
     borderColor: '#2F8F3E',
   },
-  completedDetailLoss: {
-    borderColor: '#F05A4A',
-  },
   completedDetailActionButton: {
     flex: 1,
     width: 'auto',
+  },
+  lastWordLine: {
+    color: '#4A1A08',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  lastWords: {
+    gap: 2,
+    paddingTop: 6,
+  },
+  lastWordSpeaker: {
+    fontWeight: '900',
+  },
+  completedDetailActionsStack: {
+    gap: 8,
+    width: '100%',
+  },
+  lastWordButton: {
+    alignItems: 'center',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  lastWordButtonText: {
+    color: '#FFD329',
+    fontSize: 16,
+    fontWeight: '900',
   },
   completedDetailActions: {
     flexDirection: 'row',
     gap: 8,
     width: '100%',
-  },
-  completedDetailTie: {
-    borderColor: '#FFB000',
-  },
-  completedDetailWin: {
-    borderColor: '#7DD957',
   },
   completedRematchButton: {
     alignItems: 'center',
@@ -3470,36 +3487,6 @@ const lobbyStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     textTransform: 'uppercase',
-  },
-  completedScoreDate: {
-    color: '#FFF3C2',
-    fontSize: 12,
-    fontWeight: '800',
-    opacity: 0.86,
-  },
-  completedScoreHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'space-between',
-  },
-  completedScorePlayer: {
-    alignItems: 'center',
-    borderRadius: 10,
-    flex: 1,
-    flexDirection: 'row',
-    gap: 9,
-    minHeight: 48,
-    minWidth: 0,
-  },
-  completedScoreTitle: {
-    color: '#FFD329',
-    fontSize: 19,
-    fontWeight: '900',
-  },
-  completedScoreTitleBlock: {
-    flex: 1,
-    gap: 2,
   },
   completedStatsButton: {
     alignItems: 'center',
@@ -3987,54 +3974,6 @@ const lobbyStyles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: 8,
-  },
-  scorecardCategoryText: {
-    color: '#FFF3C2',
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  scorecardHeaderRow: {
-    backgroundColor: '#8F3B10',
-    borderBottomWidth: 0,
-  },
-  scorecardHeaderText: {
-    color: '#FFD329',
-    fontSize: 11,
-    textTransform: 'uppercase',
-  },
-  scorecardRow: {
-    alignItems: 'center',
-    borderBottomColor: '#8F3B10',
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: 8,
-    minHeight: 30,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-  scorecardTable: {
-    backgroundColor: '#3A0A05',
-    borderColor: '#8F3B10',
-    borderRadius: 8,
-    borderWidth: 2,
-    overflow: 'hidden',
-    width: '100%',
-  },
-  scorecardTotalRow: {
-    backgroundColor: '#FFF3C2',
-    borderBottomWidth: 0,
-  },
-  scorecardTotalText: {
-    color: '#210505',
-    fontSize: 13,
-  },
-  scorecardValueText: {
-    color: '#FFF3C2',
-    fontSize: 13,
-    fontWeight: '900',
-    textAlign: 'center',
-    width: 54,
   },
   screenHeader: {
     alignItems: 'center',

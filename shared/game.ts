@@ -38,9 +38,23 @@ export type RageQuit = {
   replyId?: string;
 };
 
+// Canned end-game trash talk, in the order sent. Each player gets one line.
+// Lines are cataloged in partingShots.ts.
+export type PartingShot = {
+  lineId: string;
+  playerId: string;
+};
+
 // A forfeit by inactivity: this player let their turn run out. Not a rage quit.
 export type TimedOut = {
   playerId: string;
+};
+
+// What the current player has bought so far this turn. Cleared when the turn
+// is scored; mulliganing a scored turn carries its spend into the replay.
+export type TurnSpend = {
+  extraRolls: number;
+  mulligans: number;
 };
 
 export type GameState = {
@@ -56,7 +70,9 @@ export type GameState = {
   rollNumber: number;
   phase: GamePhase;
   rageQuit?: RageQuit;
+  partingShots?: PartingShot[];
   timedOut?: TimedOut;
+  turnSpend?: TurnSpend;
 };
 
 export const scoreCategories: ScoreCategory[] = [
@@ -344,6 +360,7 @@ export function purchaseExtraRoll(game: GameState): GameState {
     ...expireCounterPunch(game, currentPlayer.id),
     extraRollsAvailable: Math.max(0, game.extraRollsAvailable ?? 0) + 1,
     players: updateCurrentPlayerTokens(game, -suckerTokenCosts.extraRoll),
+    turnSpend: addTurnSpend(game.turnSpend, 'extraRolls'),
   };
 }
 
@@ -361,7 +378,25 @@ export function mulliganCurrentTurn(game: GameState): GameState {
     phase: 'rolling',
     players: updateCurrentPlayerTokens(game, -suckerTokenCosts.mulligan),
     rollNumber: 0,
+    turnSpend: addTurnSpend(game.turnSpend, 'mulligans'),
   };
+}
+
+export function addTurnSpend(spend: TurnSpend | undefined, item: keyof TurnSpend): TurnSpend {
+  const current = spend ?? { extraRolls: 0, mulligans: 0 };
+  return { ...current, [item]: current[item] + 1 };
+}
+
+export function getTurnSpendTokens(spend: TurnSpend | null | undefined): number {
+  return spend ? spend.extraRolls * suckerTokenCosts.extraRoll + spend.mulligans * suckerTokenCosts.mulligan : 0;
+}
+
+// The next turn starts with nothing bought.
+export function clearTurnSpend(game: GameState): GameState {
+  if (!game.turnSpend) return game;
+  const next = { ...game };
+  delete next.turnSpend;
+  return next;
 }
 
 export function scoreCategory(dice: Dice, category: ScoreCategory): number {
@@ -484,13 +519,17 @@ export function toGameState(value: unknown): GameState {
     throw new Error('Stored game has invalid counterpunch cost.');
   }
   const rageQuit = game.rageQuit === undefined ? undefined : toRageQuit(game.rageQuit, players);
+  const partingShots = game.partingShots === undefined ? undefined : toPartingShots(game.partingShots, players);
   const timedOut = game.timedOut === undefined ? undefined : toTimedOut(game.timedOut, players);
+  const turnSpend = game.turnSpend === undefined ? undefined : toTurnSpend(game.turnSpend);
 
   return {
     ...(typeof counterPunchPlayerId === 'string' ? { counterPunchPlayerId } : {}),
     ...(counterPunchCost === 1 || counterPunchCost === 2 ? { counterPunchCost } : {}),
     ...(rageQuit ? { rageQuit } : {}),
+    ...(partingShots ? { partingShots } : {}),
     ...(timedOut ? { timedOut } : {}),
+    ...(turnSpend ? { turnSpend } : {}),
     currentPlayerIndex,
     dice: toDice(game.dice),
     extraRollsAvailable: toOptionalNonNegativeInteger(
@@ -535,9 +574,11 @@ function applyScore(
   const nextGame = expireCounterPunch(game, game.players[game.currentPlayerIndex].id);
 
   return {
-    ...(complete && nextGame.counterPunchPlayerId
-      ? expireCounterPunch(nextGame, nextGame.counterPunchPlayerId)
-      : nextGame),
+    ...clearTurnSpend(
+      complete && nextGame.counterPunchPlayerId
+        ? expireCounterPunch(nextGame, nextGame.counterPunchPlayerId)
+        : nextGame,
+    ),
     players: complete ? players.map(clearRevengePunchDiscount) : players,
     currentPlayerIndex: complete ? game.currentPlayerIndex : (game.currentPlayerIndex + 1) % game.players.length,
     dice: [1, 1, 1, 1, 1],
@@ -633,6 +674,18 @@ function toRageQuit(value: unknown, players: Player[]): RageQuit {
   };
 }
 
+function toPartingShots(value: unknown, players: Player[]): PartingShot[] {
+  return toArray(value, 'Stored game has invalid parting shots.').map((item) => {
+    const shot = toRecord(item, 'Stored game has invalid parting shot.');
+    const playerId = toString(shot.playerId, 'Stored game has invalid parting shot player.');
+    if (!players.some((player) => player.id === playerId)) {
+      throw new Error('Stored game has invalid parting shot player.');
+    }
+
+    return { lineId: toString(shot.lineId, 'Stored game has invalid parting shot line.'), playerId };
+  });
+}
+
 function toTimedOut(value: unknown, players: Player[]): TimedOut {
   const timedOut = toRecord(value, 'Stored game has invalid timeout.');
   const playerId = toString(timedOut.playerId, 'Stored game has invalid timeout player.');
@@ -641,6 +694,14 @@ function toTimedOut(value: unknown, players: Player[]): TimedOut {
   }
 
   return { playerId };
+}
+
+function toTurnSpend(value: unknown): TurnSpend {
+  const spend = toRecord(value, 'Stored game has invalid turn spend.');
+  return {
+    extraRolls: toNonNegativeInteger(spend.extraRolls, 'Stored game has invalid turn spend.'),
+    mulligans: toNonNegativeInteger(spend.mulligans, 'Stored game has invalid turn spend.'),
+  };
 }
 
 function toScorecard(value: unknown): Scorecard {

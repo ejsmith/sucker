@@ -371,6 +371,7 @@ Game Events
 - Opponent saw you rage quit. (Their insult.)
 - Your turn is waiting. (Inactivity warning at 7 days and 1 day left.)
 - Opponent ran out of time. (Inactivity forfeit, sent to both players.)
+- Opponent's last word. / Opponent fired back. (Their parting shot after a played-out game.)
 
 ⸻
 
@@ -379,6 +380,18 @@ Games List
 - A finished game stays in your games list, sorted with the games waiting on your turn, until you open it and see the final result. Then it moves to Completed Games.
 - This lasts up to 7 days after the game ends. Older unseen results go straight to Completed Games.
 - Seeing a result on one device clears it on your other devices the next time they refresh.
+- A last word from the opponent puts the game back in your list until you open it, within the same 7 days.
+
+⸻
+
+Game Over: Last Words And Game Recap
+
+Details live in docs/end-game-recap.md.
+
+- After a played-out multiplayer game, each player may send one canned last word, picked from four lines dealt for their result (win, loss, or tie). There is no free text and no undo. Forfeited games (rage quit or timeout) get no last words; Rage Quit keeps its single reply.
+- The Game Over panel shows the result and margin, rating changes, highlight feats, and both last words. Recap opens the Tale of the Tape: punches, moments, token spending, feats and defeats, and the game's trash talk.
+- When the opponent's turn cost tokens, the turn reveal adds one factual line about it ("Spent 5 tokens on 2 Extra Rolls and a Mulligan.", "Burned 3 tokens for nothing."). It never guesses what the player was going for.
+- Any finished multiplayer game opens as a Game Recap page from Completed Games, a leaderboard score, or a player's recent games: the matchup, the final scorecard, the Tale of the Tape, and the trash talk. Finished games are visible to every signed-in player; games in progress are not.
 
 ⸻
 

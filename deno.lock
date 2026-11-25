@@ -12,6 +12,9 @@
     "packageJson": {
       "dependencies": [
         "npm:@axe-core/playwright@^4.13.0",
+        "npm:@babel/core@^7.29.13",
+        "npm:@babel/plugin-syntax-jsx@^7.29.7",
+        "npm:@babel/preset-typescript@^7.29.7",
         "npm:@exceptionless/react-native@^3.2.1",
         "npm:@expo-google-fonts/inter@~0.4.2",
         "npm:@expo/metro-runtime@~57.0.17",

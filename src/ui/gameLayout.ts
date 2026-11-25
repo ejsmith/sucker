@@ -221,6 +221,17 @@ export function createGameLayout(stageWidth: number, stageHeight: number) {
         paddingHorizontal: unit(8),
         paddingVertical: unit(4),
       },
+      opponentTurnRevealSpend: {
+        fontSize: unit(13),
+        lineHeight: unit(17),
+      },
+      opponentTurnRevealSpendRow: {
+        gap: unit(4),
+      },
+      opponentTurnRevealSpendToken: {
+        height: unit(17),
+        width: unit(17),
+      },
       opponentTurnRevealText: {
         fontSize: unit(15),
         lineHeight: unit(20),

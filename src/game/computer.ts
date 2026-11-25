@@ -22,6 +22,7 @@ import {
   type GameState,
   type ScoreCategory,
   type SuckerPunchOutcome,
+  type TurnSpend,
 } from './index';
 
 export const computerPlayerIndex = 1;
@@ -50,10 +51,13 @@ export type ComputerTurnResult = {
   };
   scoreAnimation?: {
     category: ScoreCategory;
+    // A Sucker Deal: the box was sacrificed before rolling.
+    dealt: boolean;
     dice: GameState['dice'];
     hadSuckerBonus: boolean;
     score: number;
     scorerIndex: number;
+    spend: TurnSpend | null;
   };
 };
 
@@ -223,10 +227,12 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
     pendingTurn,
     scoreAnimation: {
       category,
+      dealt: false,
       dice: game.dice,
       hadSuckerBonus,
       score,
       scorerIndex,
+      spend: game.turnSpend ?? null,
     },
   };
 }
@@ -253,10 +259,12 @@ export function scratchLocalTurn(game: GameState, category: ScoreCategory): Comp
           },
     scoreAnimation: {
       category,
+      dealt: game.rollNumber === 0,
       dice: game.dice,
       hadSuckerBonus: false,
       score: 0,
       scorerIndex,
+      spend: game.turnSpend ?? null,
     },
   };
 }

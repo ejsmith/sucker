@@ -1,12 +1,5 @@
 export type TauntScenario =
-  | 'base'
-  | 'four-kind'
-  | 'full-house'
-  | 'punch-landed'
-  | 'punch-missed'
-  | 'scratch'
-  | 'straight'
-  | 'sucker-roll';
+  'base' | 'four-kind' | 'full-house' | 'punch-landed' | 'punch-missed' | 'scratch' | 'straight' | 'sucker-roll';
 
 export const baseTaunts = [
   { id: 'who-is-sucker', scenario: 'base', text: "Who's the Sucker now?" },

@@ -152,10 +152,12 @@ export type Database = {
           category: string;
           created_at: string;
           dice: number[];
+          extra_rolls: number | null;
           finalized_at: string | null;
           game_id: string;
           held: boolean[];
           id: string;
+          mulligans: number | null;
           player_id: string;
           roll_count: number;
           rolled_sucker: boolean;
@@ -166,10 +168,12 @@ export type Database = {
         Insert: {
           category: string;
           dice: number[];
+          extra_rolls?: number | null;
           finalized_at?: string | null;
           game_id: string;
           held: boolean[];
           id?: string;
+          mulligans?: number | null;
           player_id: string;
           roll_count: number;
           rolled_sucker?: boolean;
@@ -201,7 +205,8 @@ export type Database = {
             | 'taunt'
             | 'rage_quit'
             | 'rage_quit_reply'
-            | 'turn_timeout';
+            | 'turn_timeout'
+            | 'parting_shot';
           actor_id: string;
           created_at: string;
           game_id: string;
@@ -227,7 +232,8 @@ export type Database = {
             | 'taunt'
             | 'rage_quit'
             | 'rage_quit_reply'
-            | 'turn_timeout';
+            | 'turn_timeout'
+            | 'parting_shot';
           actor_id: string;
           game_id: string;
           id?: string;
@@ -666,6 +672,7 @@ export type Database = {
         Returns: {
           avatar_url: string | null;
           display_name: string;
+          game_id: string | null;
           is_me: boolean;
           player_id: string;
           rank: number;
@@ -704,6 +711,10 @@ export type Database = {
           username: string | null;
           wins: number;
         }[];
+      };
+      get_game_recap: {
+        Args: { target_game_id: string };
+        Returns: Json;
       };
       get_player_feats: {
         Args: { target_profile_id: string };
