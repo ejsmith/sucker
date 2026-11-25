@@ -834,9 +834,11 @@ function buildNotificationContent(
     };
   }
   if (action.type === 'parting_shot') {
+    // The second line answers the first.
+    const answered = game.state.partingShots?.some((shot) => shot.playerId !== actorId);
     return {
       body: getPartingShotText(action.lineId),
-      title: `${actorName}'s last word`,
+      title: answered ? `${actorName} fired back` : `${actorName}'s last word`,
     };
   }
   if (action.type === 'rage_quit_reply') {

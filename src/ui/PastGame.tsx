@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import {
   categoryLabels,
-  getForfeiterId,
   getWinnerId,
   scoreCategories,
   totalScore,
@@ -12,6 +11,7 @@ import {
   type Player,
   type ScoreCategory,
 } from '../../shared/game';
+import { describeGameResult } from '../game/gameResult';
 import { buildTrashTalk } from '../game/trashTalk';
 import { reportError } from '../monitoring/exceptionless';
 import { loadGameRecap, type RecapProfile, type RemoteGameRecap } from '../multiplayer/gameRecap';
@@ -30,7 +30,11 @@ const lowerCategories = scoreCategories.filter((category) => !upperCategories.in
 // The scorecard's tiles at the game screen's smallest scale.
 const scorecardLayout = createGameLayout(gameDesignWidth * 0.75, gameMinimumContentHeight * 0.75);
 
-type PastGameTab = 'scorecard' | 'recap' | 'talk';
+export type PastGameTab = 'scorecard' | 'recap' | 'talk';
+
+// Finished games barely change (only last words arrive later), so a game seen
+// earlier this session shows at once while a fresh copy loads.
+const recentRecaps = new Map<string, RemoteGameRecap>();
 
 // A finished game, opened from game history, a leaderboard score, or a
 // player's recent games: who won, the final scorecard, the recap numbers, and
@@ -40,28 +44,48 @@ export function PastGameView({
   footer,
   gameId,
   onOpenPlayer,
+  onTabChange,
   subjectId,
+  tab: shownTab,
   viewerId,
 }: {
   footer?: ReactNode;
   gameId: string;
   onOpenPlayer?: (profile: RecapProfile) => void;
+  // Hosts that unmount the page (to open a profile) keep the tab for the way back.
+  onTabChange?: (tab: PastGameTab) => void;
   subjectId?: string | null;
+  tab?: PastGameTab;
   viewerId: string | null;
 }) {
-  const [loaded, setLoaded] = useState<{ failed: boolean; gameId: string; recap: RemoteGameRecap | null } | null>(null);
+  const [loaded, setLoaded] = useState<{ failed: boolean; gameId: string; recap: RemoteGameRecap | null } | null>(
+    () => {
+      const recap = recentRecaps.get(gameId);
+      return recap ? { failed: false, gameId, recap } : null;
+    },
+  );
   const [attempt, setAttempt] = useState(0);
-  const [tab, setTab] = useState<PastGameTab>('scorecard');
+  const [ownTab, setOwnTab] = useState<PastGameTab>('scorecard');
+  const tab = shownTab ?? ownTab;
+  const setTab = (next: PastGameTab) => {
+    setOwnTab(next);
+    onTabChange?.(next);
+  };
 
   useEffect(() => {
     let active = true;
     loadGameRecap(gameId).then(
       (recap) => {
+        recentRecaps.set(gameId, recap);
         if (active) setLoaded({ failed: false, gameId, recap });
       },
       (error: unknown) => {
         void reportError(error, { GameId: gameId, Operation: 'Load past game' });
-        if (active) setLoaded({ failed: true, gameId, recap: null });
+        // A copy already on screen beats an error.
+        if (active)
+          setLoaded((shown) =>
+            shown?.recap && shown.gameId === gameId ? shown : { failed: true, gameId, recap: null },
+          );
       },
     );
     return () => {
@@ -113,7 +137,12 @@ export function PastGameView({
   const viewerPlayed = home.id === viewerId;
   const homeName = viewerPlayed ? 'You' : (recap.profiles[home.id]?.name ?? home.name);
   const opponentName = recap.profiles[opponent.id]?.name ?? opponent.name;
-  const trashTalk = buildTrashTalk({ game, taunts: recap.taunts, turns: recap.turns });
+  const trashTalk = buildTrashTalk({
+    game,
+    nameOf: (playerId) => (playerId === home.id ? homeName : opponentName),
+    taunts: recap.taunts,
+    turns: recap.turns,
+  });
 
   return (
     <View style={styles.view} testID="past-game">
@@ -126,7 +155,7 @@ export function PastGameView({
         recap={recap}
         viewerPlayed={viewerPlayed}
       />
-      <View accessibilityRole="tablist" style={styles.tabs}>
+      <View accessibilityLabel="Game recap sections" accessibilityRole="tablist" style={styles.tabs}>
         {(
           [
             { key: 'scorecard', label: 'Scorecard' },
@@ -167,7 +196,31 @@ export function PastGameView({
       )}
       {tab === 'recap' && (
         <View style={styles.tape} testID="past-game-recap">
-          <RecapTape home={home} homeName={homeName} opponent={opponent} recap={recap} unit={unit} />
+          {/* The bars below are colored by side; name each side the same way. */}
+          <View style={styles.legend}>
+            <Text
+              maxFontSizeMultiplier={maxFontSizeMultiplier}
+              numberOfLines={1}
+              style={[styles.legendName, styles.legendHome]}
+            >
+              ● {homeName}
+            </Text>
+            <Text
+              maxFontSizeMultiplier={maxFontSizeMultiplier}
+              numberOfLines={1}
+              style={[styles.legendName, styles.legendOpponent]}
+            >
+              {opponentName} ●
+            </Text>
+          </View>
+          <RecapTape
+            home={home}
+            homeName={homeName}
+            opponent={opponent}
+            opponentName={opponentName}
+            recap={recap}
+            unit={unit}
+          />
         </View>
       )}
       {tab === 'talk' && (
@@ -198,8 +251,6 @@ function Matchup({
   viewerPlayed: boolean;
 }) {
   const winnerId = getWinnerId(game);
-  const nameOf = (player: Player) =>
-    viewerPlayed && player.id === home.id ? 'You' : (recap.profiles[player.id]?.name ?? player.name);
 
   return (
     <View style={[styles.card, styles.matchup]} testID="past-game-matchup">
@@ -240,7 +291,12 @@ function Matchup({
         })}
       </View>
       <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.result} testID="past-game-result">
-        {describeResult(game, home, opponent, nameOf)}
+        {describeGameResult({
+          game,
+          nameOf: (playerId) =>
+            recap.profiles[playerId]?.name ?? game.players.find((player) => player.id === playerId)?.name ?? 'Opponent',
+          viewerId: viewerPlayed ? home.id : null,
+        })}
       </Text>
       {completedAt ? (
         <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.date}>
@@ -249,21 +305,6 @@ function Matchup({
       ) : null}
     </View>
   );
-}
-
-function describeResult(game: GameState, home: Player, opponent: Player, nameOf: (player: Player) => string) {
-  const forfeiterId = getForfeiterId(game);
-  const forfeiter = game.players.find((player) => player.id === forfeiterId);
-  if (forfeiter) return `${nameOf(forfeiter)} ${game.rageQuit ? 'rage quit' : 'ran out of time'}.`;
-
-  const winnerId = getWinnerId(game);
-  if (!winnerId) return 'Tie game!';
-  const [winner, loser] = winnerId === home.id ? [home, opponent] : [opponent, home];
-  const margin = totalScore(winner.scorecard) - totalScore(loser.scorecard);
-  const winnerName = nameOf(winner);
-  if (winnerName === 'You') return `You won by ${margin}!`;
-  if (nameOf(loser) === 'You') return `You lost by ${margin}.`;
-  return `${winnerName} won by ${margin}.`;
 }
 
 function PastScorecard({
@@ -296,7 +337,8 @@ function PastScorecard({
       <View style={[styles.card, styles.scorecard]} testID="past-game-scorecard">
         <View style={styles.scoreHeader}>
           <View style={styles.scoreHeaderSpacer} />
-          {/* Same order as the matchup above; names would not fit. */}
+          {/* Same order as the matchup above, so the columns stay named after
+              it scrolls away. */}
           {[
             { label: homeName, player: home },
             { label: opponentName, player: opponent },
@@ -308,13 +350,17 @@ function PastScorecard({
                 name={profiles[player.id]?.name ?? player.name}
                 size={28}
               />
+              <Text maxFontSizeMultiplier={maxFontSizeMultiplier} numberOfLines={1} style={styles.columnName}>
+                {label}
+              </Text>
             </View>
           ))}
         </View>
         {upperCategories.map(row)}
         <View
-          accessibilityLabel={`Upper bonus: ${homeName} ${upperBonus(home.scorecard)}, ${opponentName} ${upperBonus(opponent.scorecard)}`}
+          accessibilityLabel={`Upper bonus: ${homeName} ${describeUpperBonus(home)}, ${opponentName} ${describeUpperBonus(opponent)}`}
           accessible
+          role="group"
           style={[styles.scoreRow, styles.bonusRow]}
         >
           <View style={styles.rowLabelWide}>
@@ -390,6 +436,7 @@ function ScoreRow({
     <View
       accessibilityLabel={`${categoryLabels[category]}: ${homeName} ${format(homeScore)}, ${opponentName} ${format(opponentScore)}`}
       accessible
+      role="group"
       style={styles.scoreRow}
       testID={`past-game-row-${category}`}
     >
@@ -398,7 +445,7 @@ function ScoreRow({
       </View>
       <Text
         maxFontSizeMultiplier={maxFontSizeMultiplier}
-        numberOfLines={1}
+        numberOfLines={2}
         style={[styles.rowLabel, styles.rowLabelFill]}
       >
         {categoryLabels[category]}
@@ -429,6 +476,11 @@ function ScoreRow({
       ))}
     </View>
   );
+}
+
+function describeUpperBonus(player: Player) {
+  const bonus = upperBonus(player.scorecard);
+  return bonus > 0 ? `earned ${bonus}` : `${upperSectionBaseScore(player.scorecard)} of 63`;
 }
 
 function formatDate(value: string) {
@@ -490,6 +542,12 @@ const styles = StyleSheet.create({
   },
   columnHead: {
     alignItems: 'center',
+    gap: 2,
+  },
+  columnName: {
+    color: '#FFD329',
+    fontFamily: black,
+    fontSize: 11,
   },
   date: {
     color: '#FFF3C2',
@@ -508,6 +566,24 @@ const styles = StyleSheet.create({
     fontFamily: black,
     fontSize: 15,
     textAlign: 'center',
+  },
+  legend: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  legendHome: {
+    color: '#FFD329',
+  },
+  legendName: {
+    flexShrink: 1,
+    fontFamily: black,
+    fontSize: 14,
+  },
+  legendOpponent: {
+    color: '#FF8A80',
+    textAlign: 'right',
   },
   loading: {
     alignItems: 'center',

@@ -1427,6 +1427,8 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertPlayerTokens(punched, bob.id, startingSuckerTokens - suckerTokenCosts.suckerPunch);
   assertEquals((await loadTurn(secondScore.last_turn_id)).status, 'punched');
   assertEquals(punched.state.players.find((player) => player.id === alice.id)?.scorecard.ones, null);
+  // The replay of a punched turn starts with nothing bought.
+  assertEquals(punched.state.turnSpend, undefined);
 
   await invokeGameAction(bob, { gameId: game.id, tauntId: 'sucker-punched', type: 'taunt' });
 
@@ -1456,6 +1458,15 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertEquals(actionPayloadValue(punchAction?.payload, 'landed'), true);
   assertEquals(actionPayloadValue(punchAction?.payload, 'chanceDie'), 6);
   assertEquals(actionPayloadValue(punchAction?.payload, 'chancePercent'), 75);
+
+  // A Sucker Deal records what was bought before it, and never rolled.
+  await invokeGameAction(alice, { gameId: game.id, held: falseHeld, type: 'extra_roll' });
+  const dealt = (
+    await invokeGameAction(alice, { category: 'twos', gameId: game.id, held: falseHeld, type: 'scratch_category' })
+  ).game as GameRow;
+  const dealtTurn = await loadTurn(dealt.last_turn_id);
+  assertEquals([dealtTurn.extra_rolls, dealtTurn.mulligans, dealtTurn.roll_count, dealtTurn.score], [1, 0, 0, 0]);
+  assertEquals(dealt.state.turnSpend, undefined);
 });
 
 Deno.test('a missed punch persists a two-token counterpunch, including retries and token accounting', async () => {

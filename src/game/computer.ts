@@ -51,6 +51,8 @@ export type ComputerTurnResult = {
   };
   scoreAnimation?: {
     category: ScoreCategory;
+    // A Sucker Deal: the box was sacrificed before rolling.
+    dealt: boolean;
     dice: GameState['dice'];
     hadSuckerBonus: boolean;
     score: number;
@@ -225,6 +227,7 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
     pendingTurn,
     scoreAnimation: {
       category,
+      dealt: false,
       dice: game.dice,
       hadSuckerBonus,
       score,
@@ -256,6 +259,7 @@ export function scratchLocalTurn(game: GameState, category: ScoreCategory): Comp
           },
     scoreAnimation: {
       category,
+      dealt: game.rollNumber === 0,
       dice: game.dice,
       hadSuckerBonus: false,
       score: 0,

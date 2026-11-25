@@ -57,9 +57,14 @@ test('the turn reveal says what the tokens bought, never what they were for', ()
   // A Sucker thrown away for a 0, or a Sucker Deal's leftover dice, is still nothing.
   assert.equal(describeTurnSpend(turn('threes', 0, 2, 0, [2, 2, 2, 2, 2])), 'Burned 2 tokens for nothing.');
   assert.equal(describeTurnSpend(turn('ones', 0, 0, 1, [1, 1, 1, 1, 1])), 'Burned 3 tokens for nothing.');
-  assert.equal(describeTurnSpend(turn('chance', 28, 2, 1)), 'Spent 5 tokens on 2 Extra Rolls + a Mulligan.');
+  assert.equal(describeTurnSpend(turn('chance', 28, 2, 1)), 'Spent 5 tokens on 2 Extra Rolls and a Mulligan.');
   assert.equal(describeTurnSpend(turn('chance', 28, 1, 0)), 'Spent 1 token on an Extra Roll.');
   assert.equal(describeTurnSpend(turn('chance', 28, 0, 2)), 'Spent 6 tokens on 2 Mulligans.');
+  // A Sucker Deal earns a token; it isn't nothing.
+  assert.equal(
+    describeTurnSpend({ ...turn('largeStraight', 0, 0, 1), dealt: true, dice: null }),
+    'Spent 3 tokens, then took a Sucker Deal.',
+  );
 });
 
 test('the recap tells each splurge with its result', () => {
@@ -77,4 +82,17 @@ test('the recap tells each splurge with its result', () => {
   assert.equal(describeTurnSpend(turn('sucker', 0, 5, 0), 'Bob'), 'Bob burned 5 tokens for a 0 on Sucker.');
   assert.equal(describeTurnSpend(turn('fours', 0, 3, 0), 'Bob'), 'Bob burned 3 tokens for a 0 on Fours.');
   assert.equal(describeTurnSpend(turn('chance', 28, 2, 1), 'You'), 'You spent 5 tokens for 28 on Chance.');
+  assert.equal(
+    describeTurnSpend({ ...turn('largeStraight', 0, 0, 1), dealt: true, dice: null }, 'Bob'),
+    'Bob spent 3 tokens, then took a Sucker Deal on Large straight.',
+  );
+  // A punched turn's score was wiped; the line says so.
+  assert.equal(
+    describeTurnSpend({ ...turn('fullHouse', 25, 0, 1), punched: true }, 'Alice'),
+    'Alice spent 3 tokens for 25 on Full house, then got punched.',
+  );
+  assert.equal(
+    describeTurnSpend({ ...turn('sucker', 50, 2, 0, [6, 6, 6, 6, 6]), punched: true }, 'Alice'),
+    'Alice spent 2 tokens and rolled a Sucker for 50, then got punched.',
+  );
 });

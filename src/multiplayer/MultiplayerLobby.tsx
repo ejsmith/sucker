@@ -66,7 +66,7 @@ import {
   type LeaderboardRow,
 } from './community';
 import { LeaderboardPanel } from './CommunityPages';
-import { PastGameView } from '../ui/PastGame';
+import { PastGameView, type PastGameTab } from '../ui/PastGame';
 
 type SearchProfile = Awaited<ReturnType<typeof searchProfiles>>[number];
 type HeadToHeadStatsSnapshot = Awaited<ReturnType<typeof getHeadToHeadStats>>;
@@ -188,7 +188,6 @@ export function MultiplayerLobby({
   const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
   const [allTimeOpponentRecord, setAllTimeOpponentRecord] = useState<AllTimeOpponentRecord | null>(null);
   const [completedGameStats, setCompletedGameStats] = useState<HeadToHeadStatsSnapshot | null>(null);
-  const [completedGamePlayerStatsTarget, setCompletedGamePlayerStatsTarget] = useState<'opponent' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
@@ -225,6 +224,8 @@ export function MultiplayerLobby({
   }>({ avatarUrl: null, name: null, returnPage: 'community' });
   // A finished game opened from a leaderboard score.
   const [pastGame, setPastGame] = useState<{ gameId: string; subjectId: string } | null>(null);
+  // The Game Recap tab, kept while a player profile is open on top of it.
+  const [pastGameTab, setPastGameTab] = useState<PastGameTab>('scorecard');
   // A game screen asks for a leaderboard through the route. Adjust state while
   // rendering, as React recommends for props that drive state.
   const [handledLeaderboardRequest, setHandledLeaderboardRequest] = useState<LeaderboardBoard | null>(null);
@@ -1219,7 +1220,7 @@ export function MultiplayerLobby({
     setPage('playerProfile');
   }
 
-  async function handleOpenCompletedGameStats(game: RemoteGameRow, playerStatsTarget: 'opponent' | null) {
+  async function handleOpenCompletedGameStats(game: RemoteGameRow) {
     const { opponent } = getGamePlayers(game, activeProfileId);
     if (!opponent) {
       setMessage('Stats are unavailable for this game.');
@@ -1228,7 +1229,6 @@ export function MultiplayerLobby({
 
     await runAction(async () => {
       setCompletedGameStats(await getHeadToHeadStats(opponent.id));
-      setCompletedGamePlayerStatsTarget(playerStatsTarget);
       setSelectedCompletedGameId(game.id);
       setPage('completedGameStats');
     });
@@ -1321,6 +1321,7 @@ export function MultiplayerLobby({
                 key={game.id}
                 onOpenGame={(completedGame) => {
                   setSelectedCompletedGameId(completedGame.id);
+                  setPastGameTab('scorecard');
                   setPage('completedGameDetail');
                 }}
                 onRematchGame={handleRematchGame}
@@ -1354,13 +1355,15 @@ export function MultiplayerLobby({
               <CompletedGameActions
                 game={selectedCompletedGame}
                 isBusy={isBusy || isLoading}
-                onOpenStats={(game) => void handleOpenCompletedGameStats(game, null)}
+                onOpenStats={(game) => void handleOpenCompletedGameStats(game)}
                 onRematchGame={handleRematchGame}
               />
             }
             gameId={selectedCompletedGame.id}
             key={selectedCompletedGame.id}
             onOpenPlayer={(player) => openPlayerProfile(player, 'completedGameDetail')}
+            onTabChange={setPastGameTab}
+            tab={pastGameTab}
             viewerId={activeProfileId}
           />
         ) : (
@@ -1406,7 +1409,7 @@ export function MultiplayerLobby({
             opponentOverallStats={completedGameStats?.opponentOverall ?? null}
             opponentScore={totalScore(opponent.scorecard)}
             opponentStats={completedGameStats?.opponent ?? null}
-            playerStatsTarget={completedGamePlayerStatsTarget}
+            playerStatsTarget={null}
             stats={completedGameStats?.mine ?? null}
             statsKind="headToHead"
           />
@@ -1454,6 +1457,7 @@ export function MultiplayerLobby({
             if (!row.game_id) return;
             setMessage(null);
             setPastGame({ gameId: row.game_id, subjectId: row.player_id });
+            setPastGameTab('scorecard');
             setPage('pastGame');
           }}
           onOpenPlayer={(playerId) => {
@@ -1489,7 +1493,9 @@ export function MultiplayerLobby({
           gameId={pastGame.gameId}
           key={pastGame.gameId}
           onOpenPlayer={(player) => openPlayerProfile(player, 'pastGame')}
+          onTabChange={setPastGameTab}
           subjectId={pastGame.subjectId}
+          tab={pastGameTab}
           viewerId={activeProfileId}
         />
       </ScrollView>,

@@ -334,6 +334,8 @@ const computerThinkingDelayMs = 2400;
 const computerScorePreviewDelayMs = 0;
 const computerScoreRevealDurationMs = 520;
 const computerScoreRevealPauseMs = 2000;
+// Time to read the reveal's token-spend line, when it has one.
+const spendLineReadMs = 1000;
 const computerScoreAnimationDurationMs = 950;
 const suckerBlockedNoticeDurationMs = 1700;
 const suckerPunchNoticeDurationMs = 1700;
@@ -2814,7 +2816,7 @@ export function LocalGameScreen({
         useNativeDriver: true,
       }),
     );
-    await wait(computerScoreRevealPauseMs);
+    await wait(computerScoreRevealPauseMs + (spendText ? spendLineReadMs : 0));
     setOpponentTurnReveal(null);
 
     const flyingDice = dice.map((face, index) => {
@@ -2880,7 +2882,7 @@ export function LocalGameScreen({
       return;
     }
 
-    const { category, dice, hadSuckerBonus, score, scorerIndex, spend } = result.scoreAnimation;
+    const { category, dealt, dice, hadSuckerBonus, score, scorerIndex, spend } = result.scoreAnimation;
     setLocalPendingTurn(null);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
@@ -2899,7 +2901,7 @@ export function LocalGameScreen({
         displayScore,
         playerName: result.game.players[scorerIndex]?.name ?? 'Opponent',
         scoreId: `computer-score-${category}-${Date.now()}`,
-        spendText: describeTurnSpend({ category, dice, score, spend }),
+        spendText: describeTurnSpend({ category, dealt, dice, score, spend }),
         targetRef,
       });
 
@@ -2999,6 +3001,7 @@ export function LocalGameScreen({
       scoreId: `remote-score-${turn.id}`,
       spendText: describeTurnSpend({
         category: turn.category,
+        dealt: turn.roll_count === 0,
         dice: turn.roll_count > 0 ? turn.dice : null,
         score: turn.score,
         spend: turn.spend,
@@ -5165,6 +5168,7 @@ export function LocalGameScreen({
                   homeScore={homeScore}
                   onClose={closeRecapPage}
                   onOpenStats={() => handleOpenStats('gameOver')}
+                  onRetry={() => setRecapAttempt((attempt) => attempt + 1)}
                   opponent={opponentPlayer}
                   opponentScore={opponentScore}
                   recap={currentRecap}
@@ -5172,6 +5176,7 @@ export function LocalGameScreen({
                   statsButtonRef={gameOverStatsButtonRef}
                   trashTalk={buildTrashTalk({
                     game,
+                    nameOf: (playerId) => (playerId === homePlayer.id ? 'You' : opponentPlayer.name),
                     taunts: currentRecap?.taunts ?? [],
                     turns: currentRecap?.turns ?? [],
                   })}

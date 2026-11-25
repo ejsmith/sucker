@@ -22,7 +22,7 @@ import {
   type PlayerRanking,
 } from '../multiplayer/community';
 import { PlayerFeatsCard, PlayerRankingsCard } from '../multiplayer/CommunityPages';
-import { PastGameView } from './PastGame';
+import { PastGameView, type PastGameTab } from './PastGame';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon, CloseIcon } from './ControlIcon';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -278,6 +278,7 @@ type PlayerStatsPageName = 'detail' | 'games' | 'stats';
 type PlayerProfileSection = 'defeats' | 'feats' | 'headToHead' | 'ranks' | 'stats';
 
 type PlayerStatsRoute = {
+  gameTab: PastGameTab;
   games: ProfileRecentGame[];
   page: PlayerStatsPageName;
   profile: PlayerStatsProfile;
@@ -435,6 +436,7 @@ function PlayerStatsPage({
   const [page, setPage] = useState<PlayerStatsPageName>('stats');
   const [routeStack, setRouteStack] = useState<PlayerStatsRoute[]>([]);
   const [selectedGame, setSelectedGame] = useState<ProfileRecentGame | null>(null);
+  const [gameTab, setGameTab] = useState<PastGameTab>('scorecard');
   const [section, setSection] = useState<PlayerProfileSection>('stats');
   const [community, setCommunity] = useState<PlayerCommunity | null>(null);
   const backButtonRef = useRef<AccessibilityTargetRef | null>(null);
@@ -520,7 +522,7 @@ function PlayerStatsPage({
     await loadPlayerStatsProfile(player.id, currentUserProfileId, player).then(
       (nextProfile) => {
         finishNavigation();
-        setRouteStack((stack) => [...stack, { games, page, profile: visibleProfile, section, selectedGame }]);
+        setRouteStack((stack) => [...stack, { gameTab, games, page, profile: visibleProfile, section, selectedGame }]);
         setActiveProfile(nextProfile);
         setGames([]);
         setSelectedGame(null);
@@ -552,6 +554,7 @@ function PlayerStatsPage({
       setPage(previousRoute.page);
       setSection(previousRoute.section);
       setSelectedGame(previousRoute.selectedGame);
+      setGameTab(previousRoute.gameTab);
       return;
     }
     onClose();
@@ -655,6 +658,7 @@ function PlayerStatsPage({
           message={message}
           onOpenGame={(game) => {
             setSelectedGame(game);
+            setGameTab('scorecard');
             setPage('detail');
           }}
         />
@@ -668,8 +672,16 @@ function PlayerStatsPage({
           <PastGameView
             gameId={selectedGame.gameId}
             key={selectedGame.gameId}
-            onOpenPlayer={isLoading ? undefined : (player) => void openPlayer(player)}
+            onOpenPlayer={
+              isLoading
+                ? undefined
+                : (player) =>
+                    // This is already their profile; go back to it rather than stack a copy.
+                    player.id === visibleProfile.id ? setPage('stats') : void openPlayer(player)
+            }
+            onTabChange={setGameTab}
             subjectId={visibleProfile.id}
+            tab={gameTab}
             viewerId={currentUserProfileId ?? null}
           />
           {message ? (

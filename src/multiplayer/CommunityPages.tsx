@@ -109,7 +109,7 @@ export function LeaderboardPanel({
                 {onOpenGame && row.game_id ? (
                   <Pressable
                     accessibilityHint="Opens the game"
-                    accessibilityLabel={`${row.display_name}'s best game, ${formatLeaderboardValue(board, row.value)} points`}
+                    accessibilityLabel={`${row.display_name}'s best game${board === 'weekly_high_score' ? ' this week' : ''}, ${formatLeaderboardValue(board, row.value)} points`}
                     accessibilityRole="button"
                     onPress={() => onOpenGame(row)}
                     style={({ pressed }) => [styles.valueButton, pressed && styles.pressed]}

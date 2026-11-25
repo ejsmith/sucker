@@ -23,8 +23,9 @@ export type GameRecapTurn = SuckerStatTurn & {
 
 export type ScoredBox = { category: ScoreCategory; score: number };
 
-// The turn a player spent the most Extra Roll and Mulligan tokens on.
-export type Splurge = ScoredBox & { dice: Dice | null; spend: TurnSpend };
+// The turn a player spent the most Extra Roll and Mulligan tokens on. A
+// Sucker Deal never rolled; a punched turn's score was wiped.
+export type Splurge = ScoredBox & { dealt: boolean; dice: Dice | null; punched: boolean; spend: TurnSpend };
 
 export type PlayerGameRecap = {
   playerId: string;
@@ -40,7 +41,6 @@ export type PlayerGameRecap = {
     suckersRolled: number;
   };
   tokens: {
-    earned: number;
     extraRolls: number;
     left: number;
     mulligans: number;
@@ -103,10 +103,9 @@ export function buildGameRecap({
         moments: {
           bestTurn: highestBox(effectiveTurns.filter((turn) => turn.player_id === player.id)),
           suckerDeals,
-          suckersRolled: own.filter((action) => action.action_type === 'roll' && isFiveOfAKind(action.payload)).length,
+          suckersRolled: countSuckerRolls(own),
         },
         tokens: {
-          earned: suckerDeals,
           extraRolls,
           left: player.suckerTokens,
           mulligans,
@@ -119,8 +118,10 @@ export function buildGameRecap({
   };
 }
 
-// Lead changes count only when a different player takes a real lead; a tie
-// in between does not change who led last.
+// Scores are compared only at the end of a round, when both players have
+// filled the same number of boxes; mid-round, whoever just played is always a
+// box ahead. Lead changes count only when a different player takes a real
+// lead; a tie in between does not change who led last.
 function scoreSwings(turns: SuckerStatTurn[], players: Player[]) {
   const [first, second] = players;
   if (!first || !second) return { biggestLead: null, leadChanges: 0 };
@@ -134,6 +135,8 @@ function scoreSwings(turns: SuckerStatTurn[], players: Player[]) {
     const scorecard = scorecards[turn.player_id];
     if (!scorecard) continue;
     scorecard[toScoreCategory(turn.category)] = turn.score;
+    const filled = (playerId: string) => Object.values(scorecards[playerId]).filter((score) => score !== null).length;
+    if (filled(first.id) !== filled(second.id)) continue;
 
     const lead = totalScore(scorecards[first.id]) - totalScore(scorecards[second.id]);
     if (lead === 0) continue;
@@ -149,7 +152,8 @@ function scoreSwings(turns: SuckerStatTurn[], players: Player[]) {
 }
 
 // A Mulligan carries a turn's spend into its replay, so only the replay counts.
-// A punched turn's tokens bought nothing.
+// A punched turn's tokens bought nothing, so it never scores points bought, and
+// it loses a tie for the biggest splurge.
 function spendOnTurns(turns: GameRecapTurn[]): Pick<PlayerGameRecap['tokens'], 'biggestSplurge' | 'bought'> {
   const tracked = turns.flatMap((turn) =>
     turn.status !== 'mulliganed' && typeof turn.extra_rolls === 'number' && typeof turn.mulligans === 'number'
@@ -162,14 +166,17 @@ function spendOnTurns(turns: GameRecapTurn[]): Pick<PlayerGameRecap['tokens'], '
   const biggest = paid.reduce<(typeof paid)[number] | null>((top, entry) => {
     if (!top) return entry;
     const [tokens, topTokens] = [getTurnSpendTokens(entry.spend), getTurnSpendTokens(top.spend)];
-    return tokens > topTokens || (tokens === topTokens && entry.turn.score > top.turn.score) ? entry : top;
+    const kept = (candidate: typeof entry) => (candidate.turn.status === 'punched' ? -1 : candidate.turn.score);
+    return tokens > topTokens || (tokens === topTokens && kept(entry) > kept(top)) ? entry : top;
   }, null);
 
   return {
     biggestSplurge: biggest
       ? {
           category: toScoreCategory(biggest.turn.category),
+          dealt: biggest.turn.roll_count === 0,
           dice: biggest.turn.dice && (biggest.turn.roll_count ?? 1) > 0 ? toDice(biggest.turn.dice) : null,
+          punched: biggest.turn.status === 'punched',
           score: biggest.turn.score,
           spend: biggest.spend,
         }
@@ -189,9 +196,22 @@ function highestBox(turns: SuckerStatTurn[]): ScoredBox | null {
   return best ? { category: toScoreCategory(best.category), score: best.score } : null;
 }
 
-function isFiveOfAKind(payload: unknown) {
-  const dice = payloadValue(payload, 'dice');
-  return Array.isArray(dice) && dice.length === 5 && dice.every((die) => die === dice[0]);
+// Rolling again with all five dice held repeats the same Sucker; it counts once.
+function countSuckerRolls(actions: SuckerStatAction[]) {
+  let count = 0;
+  let previous: string | null = null;
+  for (const action of actions) {
+    if (action.action_type !== 'roll') {
+      if (action.action_type !== 'extra_roll') previous = null;
+      continue;
+    }
+    const dice = payloadValue(action.payload, 'dice');
+    const sucker =
+      Array.isArray(dice) && dice.length === 5 && dice.every((die) => die === dice[0]) ? dice.join() : null;
+    if (sucker && sucker !== previous) count += 1;
+    previous = sucker;
+  }
+  return count;
 }
 
 function payloadValue(payload: unknown, key: string) {

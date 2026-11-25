@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type Ref } from 'react';
+import { useEffect, useRef, useState, type Ref, type RefObject } from 'react';
 import { BackHandler, Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { categoryLabels, type PartingShot, type Player } from '../game';
+import { categoryLabels, suckerTokenCosts, type PartingShot, type Player } from '../game';
 import type { PlayerGameRecap, ScoredBox } from '../../shared/gameRecap';
 import { getPartingShotText, type PartingShotLine, type PartingShotLineId } from '../../shared/partingShots';
 import type { TrashTalkEntry } from '../game/trashTalk';
@@ -45,6 +45,26 @@ function useDismissOnBack(onClose: () => void, enabled = true) {
     });
     return () => subscription.remove();
   }, [enabled]);
+}
+
+// On the web, keep keyboard focus inside an open overlay. Tabbing out of either
+// end, or a click on something behind it, brings focus back inside.
+function useWebFocusTrap(ref: RefObject<View | null>, enabled = true) {
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !enabled || typeof document === 'undefined') return;
+    const keepFocusInside = (event: FocusEvent) => {
+      const container = ref.current as unknown as HTMLElement | null;
+      const target = event.target as Node | null;
+      if (!container || !target || container.contains(target)) return;
+      const focusable = [
+        ...container.querySelectorAll<HTMLElement>('[tabindex]:not([tabindex="-1"]), button, [href], input'),
+      ].filter((node) => !node.hasAttribute('disabled') && node.getAttribute('aria-disabled') !== 'true');
+      const cameFromBefore = Boolean(container.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING);
+      (cameFromBefore ? focusable.at(-1) : focusable[0])?.focus();
+    };
+    document.addEventListener('focusin', keepFocusInside);
+    return () => document.removeEventListener('focusin', keepFocusInside);
+  }, [enabled, ref]);
 }
 
 type Highlight = RecapFeat & { owner: string; ownerId: string };
@@ -184,7 +204,11 @@ export function GameOverHighlights({
 
   return (
     <View style={[styles.highlights, { gap: unit(6) }]} testID="game-recap-highlights">
-      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, { fontSize: small(unit, 11) }]}>
+      <Text
+        accessibilityRole="header"
+        maxFontSizeMultiplier={maxFontSizeMultiplier}
+        style={[styles.label, { fontSize: small(unit, 11) }]}
+      >
         HIGHLIGHTS
       </Text>
       {recapFailed ? (
@@ -193,7 +217,7 @@ export function GameOverHighlights({
           accessibilityRole="button"
           hitSlop={unit(10)}
           onPress={onRetry}
-          style={({ pressed }) => pressed && styles.pressed}
+          style={({ pressed }) => [styles.webHitArea, pressed && styles.pressed]}
           testID="game-recap-loading"
         >
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 12) }]}>
@@ -251,7 +275,7 @@ export function GameOverHighlights({
           accessibilityRole="button"
           hitSlop={{ bottom: 14, left: 14, right: 14, top: 14 }}
           onPress={onOpenRecap}
-          style={({ pressed }) => [styles.moreLink, pressed && styles.pressed]}
+          style={({ pressed }) => [styles.moreLink, styles.webHitArea, pressed && styles.pressed]}
           testID="game-recap-more"
         >
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.moreText, { fontSize: small(unit, 12) }]}>
@@ -285,6 +309,7 @@ function TalkBubble({
     <View
       accessibilityLabel={`${by} said: ${text}${note ? `. ${note}` : ''}`}
       accessible
+      role="group"
       style={[
         styles.bubble,
         mine ? styles.bubbleMine : styles.bubbleTheirs,
@@ -476,6 +501,8 @@ export function PartingShotSheet({
     return () => cancelAnimationFrame(frame);
   }, []);
   const title = opponentShot ? 'Fire back' : 'Your last word';
+  const sheetRef = useRef<View | null>(null);
+  useWebFocusTrap(sheetRef);
 
   return (
     <View style={styles.sheetHost} testID="parting-shot-sheet-host">
@@ -488,8 +515,11 @@ export function PartingShotSheet({
         testID="parting-shot-scrim"
       />
       <View
+        accessibilityLabel={title}
         accessibilityViewIsModal
+        aria-modal
         onAccessibilityEscape={onClose}
+        ref={sheetRef}
         role="dialog"
         style={[
           styles.sheet,
@@ -517,7 +547,7 @@ export function PartingShotSheet({
           One shot. No take-backs.
         </Text>
         {opponentShot && <ShotBubble by={opponentName} mine={false} shot={opponentShot} unit={unit} />}
-        <View accessibilityRole="radiogroup" style={{ gap: unit(6) }}>
+        <View accessibilityLabel="Lines" accessibilityRole="radiogroup" style={{ gap: unit(6) }}>
           {lines.map((line) => {
             const isSelected = selected === line.id;
             return (
@@ -525,6 +555,7 @@ export function PartingShotSheet({
                 accessibilityLabel={line.text}
                 accessibilityRole="radio"
                 accessibilityState={{ checked: isSelected, disabled: isSending }}
+                aria-checked={isSelected}
                 disabled={isSending}
                 key={line.id}
                 onPress={() => setSelected(line.id)}
@@ -637,12 +668,13 @@ function TapeRowView({
   const [homeText, opponentText] = row.text ?? [String(home), String(opponent)];
   const width = (value: number) => (max > 0 ? `${Math.round((value / max) * 100)}%` : '0%') as `${number}%`;
   const valueStyle = [styles.tapeValue, { fontSize: unit(16), lineHeight: unit(19), width: unit(78) }];
-  const detailStyle = [styles.tapeDetail, { fontSize: small(unit, 9), lineHeight: small(unit, 11) }];
+  const detailStyle = [styles.tapeDetail, { fontSize: small(unit, 10), lineHeight: small(unit, 12) }];
 
   return (
     <View
       accessibilityLabel={`${row.label}: ${homeName} ${homeText}${row.detail?.[0] ? ` ${row.detail[0]}` : ''}, ${opponentName} ${opponentText}${row.detail?.[1] ? ` ${row.detail[1]}` : ''}`}
       accessible
+      role="group"
       style={[styles.tapeRow, { gap: unit(8) }]}
       testID={`recap-tape-${row.label.toLowerCase().replace(/\s+/g, '-')}`}
     >
@@ -730,11 +762,22 @@ function getTapeSections(home: PlayerGameRecap, opponent: PlayerGameRecap) {
       rows: [
         { label: 'Spent', values: pair((entry) => entry.tokens.spent) },
         { label: 'Extra Rolls', values: pair((entry) => entry.tokens.extraRolls) },
-        { label: 'Mulligans', values: pair((entry) => entry.tokens.mulligans) },
-        { label: 'Punches', values: pair((entry) => entry.tokens.punches) },
+        {
+          detail: [
+            formatUsed(home.tokens.mulligans / suckerTokenCosts.mulligan),
+            formatUsed(opponent.tokens.mulligans / suckerTokenCosts.mulligan),
+          ],
+          label: 'Mulligans',
+          values: pair((entry) => entry.tokens.mulligans),
+        },
+        {
+          detail: [formatThrown(home.punches.thrown), formatThrown(opponent.punches.thrown)],
+          label: 'Punches',
+          values: pair((entry) => entry.tokens.punches),
+        },
         {
           detail: [formatBoughtWith(home), formatBoughtWith(opponent)],
-          label: 'Points bought',
+          label: 'Paid-turn points',
           text: [formatBought(home), formatBought(opponent)],
           values: pair((entry) => entry.tokens.bought?.points ?? 0),
         },
@@ -756,7 +799,16 @@ function formatBought(entry: PlayerGameRecap) {
 
 function formatBoughtWith(entry: PlayerGameRecap) {
   const tokens = entry.tokens.bought?.tokens ?? 0;
-  return tokens ? `with ${tokens} token${tokens === 1 ? '' : 's'}` : '';
+  return tokens ? `for ${tokens} token${tokens === 1 ? '' : 's'}` : '';
+}
+
+// Token rows count tokens; these say what they paid for.
+function formatUsed(count: number) {
+  return count > 0 ? `${count} used` : '';
+}
+
+function formatThrown(count: number) {
+  return count > 0 ? `${count} thrown` : '';
 }
 
 // Each player's priciest turn, told as a story.
@@ -792,7 +844,8 @@ function formatSwings(recap: RemoteGameRecap, home: Player, homeName: string, op
 export function RecapTape({
   home,
   homeName,
-  opponent,
+  opponent: player,
+  opponentName = player.name,
   recap,
   unit,
 }: {
@@ -800,9 +853,12 @@ export function RecapTape({
   // "You" when the viewer played this game.
   homeName: string;
   opponent: Player;
+  // Their current profile name, when it may differ from the one in the game.
+  opponentName?: string;
   recap: RemoteGameRecap;
   unit: Unit;
 }) {
+  const opponent = { ...player, name: opponentName };
   const [mine, theirs] = [home, opponent].map((player) => recap.players.find((entry) => entry.playerId === player.id));
   if (!mine || !theirs) return null;
   const labelStyle = [styles.label, styles.sectionLabel, { fontSize: small(unit, 11), marginBottom: unit(2) }];
@@ -812,7 +868,7 @@ export function RecapTape({
     <>
       {getTapeSections(mine, theirs).map((section) => (
         <View key={section.title} style={sectionStyle}>
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
+          <Text accessibilityRole="header" maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
             {section.title}
           </Text>
           {section.rows.map((row) => (
@@ -821,7 +877,7 @@ export function RecapTape({
           {section.title === 'MOMENTS' && (
             <Text
               maxFontSizeMultiplier={maxFontSizeMultiplier}
-              style={[styles.quiet, { fontSize: unit(11) }]}
+              style={[styles.quiet, { fontSize: small(unit, 11) }]}
               testID="game-recap-swings"
             >
               {formatSwings(recap, home, homeName, opponent)}
@@ -849,7 +905,7 @@ export function RecapTape({
         </View>
       ))}
       <View style={sectionStyle} testID="recap-page-feats">
-        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
+        <Text accessibilityRole="header" maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
           FEATS & DEFEATS
         </Text>
         {[home, opponent].map((player) => {
@@ -861,14 +917,14 @@ export function RecapTape({
               <Text
                 maxFontSizeMultiplier={maxFontSizeMultiplier}
                 numberOfLines={1}
-                style={[styles.featOwner, { fontSize: unit(12) }]}
+                style={[styles.featOwner, { fontSize: small(unit, 12) }]}
               >
                 {player.id === home.id ? homeName : player.name}
               </Text>
               {feats.length === 0 ? (
                 <Text
                   maxFontSizeMultiplier={maxFontSizeMultiplier}
-                  style={[styles.quiet, styles.textLeft, { fontSize: unit(12) }]}
+                  style={[styles.quiet, styles.textLeft, { fontSize: small(unit, 12) }]}
                 >
                   Nothing this game.
                 </Text>
@@ -894,7 +950,10 @@ export function RecapTape({
                       </Text>
                       <Text
                         maxFontSizeMultiplier={maxFontSizeMultiplier}
-                        style={[styles.highlightDescription, { fontSize: unit(11), lineHeight: unit(14) }]}
+                        style={[
+                          styles.highlightDescription,
+                          { fontSize: small(unit, 11), lineHeight: small(unit, 14) },
+                        ]}
                       >
                         {feat.description}
                       </Text>
@@ -918,6 +977,7 @@ export function RecapPage({
   homeScore,
   onClose,
   onOpenStats,
+  onRetry,
   opponent,
   opponentScore,
   recap,
@@ -932,6 +992,7 @@ export function RecapPage({
   homeScore: number;
   onClose: () => void;
   onOpenStats: () => void;
+  onRetry: () => void;
   opponent: Player;
   opponentScore: number;
   recap: RemoteGameRecap | null;
@@ -941,7 +1002,9 @@ export function RecapPage({
   unit: Unit;
 }) {
   const backRef = useRef<AccessibilityTargetRef | null>(null);
+  const pageRef = useRef<View | null>(null);
   useDismissOnBack(onClose, canDismiss);
+  useWebFocusTrap(pageRef, canDismiss);
   useEffect(() => {
     const frame = requestAnimationFrame(() => focusAccessibilityTarget(backRef.current));
     return () => cancelAnimationFrame(frame);
@@ -954,7 +1017,9 @@ export function RecapPage({
     <View
       accessibilityLabel="Tale of the Tape"
       accessibilityViewIsModal
+      aria-modal
       onAccessibilityEscape={onClose}
+      ref={pageRef}
       role="dialog"
       style={[styles.page, { gap: unit(10), padding: unit(14) }]}
       testID="recap-page"
@@ -993,7 +1058,7 @@ export function RecapPage({
             <Text
               maxFontSizeMultiplier={maxFontSizeMultiplier}
               numberOfLines={1}
-              style={[styles.versusName, index === 1 && styles.textRight, { fontSize: unit(12) }]}
+              style={[styles.versusName, index === 1 && styles.textRight, { fontSize: small(unit, 12) }]}
             >
               {side.name}
             </Text>
@@ -1009,15 +1074,29 @@ export function RecapPage({
       </View>
       <ScrollView contentContainerStyle={{ gap: unit(10), paddingBottom: unit(8) }} style={styles.pageScroll}>
         {!loaded ? (
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: unit(13) }]}>
-            {recapFailed ? 'The recap got lost in the mail.' : 'Tallying the damage…'}
-          </Text>
+          recapFailed ? (
+            <Pressable
+              accessibilityLabel="The recap got lost in the mail. Try again."
+              accessibilityRole="button"
+              onPress={onRetry}
+              style={({ pressed }) => [styles.pageRetry, pressed && styles.pressed]}
+              testID="recap-page-retry"
+            >
+              <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 13) }]}>
+                The recap got lost in the mail. <Text style={styles.retryText}>Try again</Text>
+              </Text>
+            </Pressable>
+          ) : (
+            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 13) }]}>
+              Tallying the damage…
+            </Text>
+          )
         ) : (
           <>
             <RecapTape home={home} homeName="You" opponent={opponent} recap={loaded} unit={unit} />
             {trashTalk.length > 0 && (
               <View style={sectionStyle} testID="recap-page-trash-talk">
-                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
+                <Text accessibilityRole="header" maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
                   TRASH TALK
                 </Text>
                 <TrashTalkLog entries={trashTalk} home={home} homeName="You" opponentName={opponent.name} unit={unit} />
@@ -1152,6 +1231,16 @@ const styles = StyleSheet.create({
   moreLink: {
     alignSelf: 'flex-start',
   },
+  // hitSlop is native-only; on the web, grow the target without moving the
+  // layout, since the Game Over panel must not scroll.
+  webHitArea: Platform.select({
+    default: {},
+    web: { marginVertical: -14, paddingVertical: 14 },
+  }),
+  pageRetry: {
+    justifyContent: 'center',
+    minHeight: 44,
+  },
   moreText: {
     color: '#FFD329',
     fontFamily: black,
@@ -1243,7 +1332,8 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
   },
   radio: {
-    borderColor: '#8F3B10',
+    // At least 3:1 against the option, so an empty choice still reads.
+    borderColor: '#C8753A',
     borderWidth: 2,
   },
   radioSelected: {

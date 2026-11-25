@@ -33,7 +33,10 @@ add constraint turn_actions_action_type_check check (
     'turn_timeout',
     'parting_shot'
   )
-);
+) not valid;
+
+-- Checked separately so game actions keep flowing while existing rows are read.
+alter table public.turn_actions validate constraint turn_actions_action_type_check;
 
 -- One finished game, told in full: the final state, both players with their
 -- rating change and feats, every turn, and the actions the recap and trash

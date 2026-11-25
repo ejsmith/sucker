@@ -2,7 +2,7 @@ import { featCatalog, isFeatKey, type FeatDefinition, type FeatKey } from '../..
 import { toGameState, type GameState } from '../../shared/game';
 import { buildGameRecap, type GameRecap, type GameRecapTurn } from '../../shared/gameRecap';
 import type { SuckerStatAction } from '../../shared/stats';
-import { isTauntId, type TauntId } from '../../shared/taunts';
+import { isTauntId, type TauntId, type TauntScenario } from '../../shared/taunts';
 import { getSafeAvatarUrl } from './profiles';
 import { supabase } from './supabase';
 
@@ -26,6 +26,8 @@ export type RecapProfile = {
 export type RecapTaunt = {
   actorId: string;
   createdAt: string;
+  // The moment it answered, as offered when sent.
+  scenario: TauntScenario | null;
   tauntId: TauntId;
   turnId: string | null;
 };
@@ -40,8 +42,14 @@ export type RemoteGameRecap = GameRecap & {
   turns: GameRecapTurn[];
 };
 
+type RecapAction = Omit<SuckerStatAction, 'action_type'> & {
+  action_type: SuckerStatAction['action_type'] | 'taunt';
+  created_at: string;
+  turn_id: string | null;
+};
+
 type RecapPayload = {
-  actions?: (SuckerStatAction & { created_at: string; turn_id: string | null })[];
+  actions?: RecapAction[];
   game: { completed_at: string | null; id: string; state: unknown };
   players?: {
     avatar_url: string | null;
@@ -69,7 +77,11 @@ export async function loadGameRecap(gameId: string): Promise<RemoteGameRecap> {
   const toRating = (value: number | string | null) => (value === null ? null : Number(value));
 
   return {
-    ...buildGameRecap({ actions, players: game.players, turns }),
+    ...buildGameRecap({
+      actions: actions.filter((action): action is RecapAction & SuckerStatAction => action.action_type !== 'taunt'),
+      players: game.players,
+      turns,
+    }),
     completedAt: payload.game.completed_at,
     game,
     id: payload.game.id,
@@ -98,10 +110,18 @@ export async function loadGameRecap(gameId: string): Promise<RemoteGameRecap> {
       ]),
     ),
     taunts: actions.flatMap((action) => {
-      if (action.action_type !== ('taunt' as string)) return [];
-      const tauntId = (action.payload as { tauntId?: unknown } | null)?.tauntId;
-      return isTauntId(tauntId)
-        ? [{ actorId: action.actor_id, createdAt: action.created_at, tauntId, turnId: action.turn_id }]
+      if (action.action_type !== 'taunt') return [];
+      const payload = (action.payload ?? {}) as { scenario?: unknown; tauntId?: unknown };
+      return isTauntId(payload.tauntId)
+        ? [
+            {
+              actorId: action.actor_id,
+              createdAt: action.created_at,
+              scenario: typeof payload.scenario === 'string' ? (payload.scenario as TauntScenario) : null,
+              tauntId: payload.tauntId,
+              turnId: action.turn_id,
+            },
+          ]
         : [];
     }),
     turns,

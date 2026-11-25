@@ -2,11 +2,13 @@ import { categoryLabels, toScoreCategory, type GameState } from '../../shared/ga
 import type { GameRecapTurn } from '../../shared/gameRecap';
 import { getPartingShotText } from '../../shared/partingShots';
 import { getRageQuitReplyText } from '../../shared/rageQuit';
-import { taunts, type TauntId } from '../../shared/taunts';
+import { taunts, type TauntId, type TauntScenario } from '../../shared/taunts';
 
 export type TrashTalkTaunt = {
   actorId: string;
   createdAt: string;
+  // The moment it answered, as offered when sent. Older taunts may lack it.
+  scenario?: TauntScenario | null;
   tauntId: TauntId;
   turnId: string | null;
 };
@@ -21,14 +23,16 @@ export type TrashTalkEntry =
 // reply, a timeout, or the players' last words.
 export function buildTrashTalk({
   game,
+  nameOf = (playerId) => game.players.find((player) => player.id === playerId)?.name ?? 'Opponent',
   taunts: sent,
   turns,
 }: {
   game: GameState;
+  // How the page names each player, e.g. "You" for the viewer.
+  nameOf?: (playerId: string) => string;
   taunts: TrashTalkTaunt[];
   turns: GameRecapTurn[];
 }): TrashTalkEntry[] {
-  const nameOf = (playerId: string) => game.players.find((player) => player.id === playerId)?.name ?? 'Opponent';
   const entries: TrashTalkEntry[] = [...sent]
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     .map((taunt, index) => ({
@@ -82,12 +86,18 @@ function describeTauntMoment(taunt: TrashTalkTaunt, turns: GameRecapTurn[]) {
         other.status !== 'punched' &&
         other.status !== 'mulliganed',
     ).length;
-  // A taunt on the other player's turn followed a punch at it.
+  // A taunt on the other player's turn followed a punch at it. The scenario
+  // saved with the taunt says how the punch went; older taunts fall back to
+  // whether the turn ended up punched.
+  const box = categoryLabels[toScoreCategory(turn.category)];
+  const landed = taunt.scenario ? taunt.scenario === 'punch-landed' : turn.status === 'punched';
   const moment =
     turn.player_id !== taunt.actorId
-      ? turn.status === 'punched'
+      ? landed
         ? 'after landing a Sucker Punch'
         : 'after a missed Sucker Punch'
-      : `after ${turn.score} on ${categoryLabels[toScoreCategory(turn.category)]}`;
+      : turn.roll_count === 0
+        ? `after a Sucker Deal on ${box}`
+        : `after ${turn.score} on ${box}`;
   return `Round ${round} · ${moment}`;
 }

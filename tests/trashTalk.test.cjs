@@ -52,6 +52,31 @@ test('taunts come in the order sent, with the round and what they answered', () 
   ]);
 });
 
+test('a taunt says how its punch went, as saved when sent, and names a Sucker Deal', () => {
+  const talk = buildTrashTalk({
+    game,
+    nameOf: (playerId) => (playerId === 'alice' ? 'You' : 'Bobby'),
+    taunts: [
+      // The turn was later punched by someone else; this punch missed.
+      { ...taunt('alice', '2026-11-25T10:00:00Z', 'beat-that', 't2'), scenario: 'punch-missed' },
+      taunt('bob', '2026-11-25T10:01:00Z', 'start-scratching', 't6'),
+    ],
+    turns: [...turns, { ...turn('t6', 6, 'bob', 'fours', 0), roll_count: 0 }],
+  });
+
+  assert.deepEqual(
+    talk.map((entry) => entry.note),
+    ['Round 1 · after a missed Sucker Punch', 'Round 3 · after a Sucker Deal on Fours'],
+  );
+  const quit = buildTrashTalk({
+    game: { ...game, rageQuit: { playerId: 'alice' } },
+    nameOf: (playerId) => (playerId === 'alice' ? 'You' : 'Bobby'),
+    taunts: [],
+    turns,
+  });
+  assert.deepEqual(lines(quit), [['event', null, 'You rage quit.', null]]);
+});
+
 test('the end of the game follows: a rage quit and its reply, or both last words', () => {
   const quit = buildTrashTalk({
     game: { ...game, rageQuit: { playerId: 'bob', replyId: 'need-tissue' } },
