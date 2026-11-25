@@ -3,6 +3,7 @@ import { BackHandler, Platform, ScrollView, StyleSheet, Text, View } from 'react
 import { categoryLabels, type PartingShot, type Player } from '../game';
 import type { PlayerGameRecap, ScoredBox } from '../../shared/gameRecap';
 import { getPartingShotText, type PartingShotLine, type PartingShotLineId } from '../../shared/partingShots';
+import { describeTurnSpend } from '../game/turnSpend';
 import type { PlayerRecapResult, RecapFeat, RemoteGameRecap } from '../multiplayer/gameRecap';
 import { focusAccessibilityTarget, type AccessibilityTargetRef } from './accessibilityFocus';
 import { BackChevronIcon } from './ControlIcon';
@@ -640,6 +641,12 @@ function getTapeSections(home: PlayerGameRecap, opponent: PlayerGameRecap) {
         { label: 'Extra Rolls', values: pair((entry) => entry.tokens.extraRolls) },
         { label: 'Mulligans', values: pair((entry) => entry.tokens.mulligans) },
         { label: 'Punches', values: pair((entry) => entry.tokens.punches) },
+        {
+          detail: [formatBoughtWith(home), formatBoughtWith(opponent)],
+          label: 'Points bought',
+          text: [formatBought(home), formatBought(opponent)],
+          values: pair((entry) => entry.tokens.bought?.points ?? 0),
+        },
         { label: 'Left over', values: pair((entry) => entry.tokens.left) },
       ] satisfies TapeRow[],
       title: 'TOKENS',
@@ -650,6 +657,27 @@ function getTapeSections(home: PlayerGameRecap, opponent: PlayerGameRecap) {
   return sections
     .map((section) => ({ ...section, rows: section.rows.filter(hasTapeValue) }))
     .filter((section) => section.rows.length > 0 || section.title === 'MOMENTS');
+}
+
+function formatBought(entry: PlayerGameRecap) {
+  return entry.tokens.bought?.tokens ? String(entry.tokens.bought.points) : '—';
+}
+
+function formatBoughtWith(entry: PlayerGameRecap) {
+  const tokens = entry.tokens.bought?.tokens ?? 0;
+  return tokens ? `with ${tokens} token${tokens === 1 ? '' : 's'}` : '';
+}
+
+// Each player's priciest turn, told as a story.
+function getSplurgeLines(home: Player, mine: PlayerGameRecap, opponent: Player, theirs: PlayerGameRecap) {
+  return [
+    { entry: mine, player: home, subject: 'You' },
+    { entry: theirs, player: opponent, subject: opponent.name },
+  ].flatMap(({ entry, player, subject }) => {
+    const splurge = entry.tokens.biggestSplurge;
+    const line = splurge ? describeTurnSpend(splurge, subject) : null;
+    return line ? [{ line, playerId: player.id }] : [];
+  });
 }
 
 function hasTapeValue(row: TapeRow) {
@@ -784,6 +812,17 @@ export function RecapPage({
                     {formatSwings(recap, home, opponent)}
                   </Text>
                 )}
+                {section.title === 'TOKENS' &&
+                  getSplurgeLines(home, mine, opponent, theirs).map(({ line, playerId }) => (
+                    <Text
+                      key={playerId}
+                      maxFontSizeMultiplier={maxFontSizeMultiplier}
+                      style={[styles.splurge, { fontSize: small(unit, 12), lineHeight: small(unit, 16) }]}
+                      testID={`recap-splurge-${playerId === home.id ? 'home' : 'opponent'}`}
+                    >
+                      🪙 {line}
+                    </Text>
+                  ))}
               </View>
             ))}
             <View style={sectionStyle} testID="recap-page-feats">
@@ -1048,6 +1087,10 @@ const styles = StyleSheet.create({
     fontFamily: extraBold,
     opacity: 0.8,
     textAlign: 'center',
+  },
+  splurge: {
+    color: '#FFF3C2',
+    fontFamily: extraBold,
   },
   radio: {
     borderColor: '#8F3B10',

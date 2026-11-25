@@ -58,8 +58,66 @@ test('the recap tallies punches, moments, and the token ledger for each player',
   // A punched turn never counts as anyone's best turn.
   assert.deepEqual(bob.moments, { bestTurn: null, suckerDeals: 1, suckersRolled: 1 });
   assert.deepEqual(alice.moments, { bestTurn: { category: 'sucker', score: 50 }, suckerDeals: 0, suckersRolled: 1 });
-  assert.deepEqual(alice.tokens, { earned: 0, extraRolls: 1, left: 4, mulligans: 3, punches: 5, spent: 9 });
-  assert.deepEqual(bob.tokens, { earned: 1, extraRolls: 0, left: 9, mulligans: 0, punches: 3, spent: 3 });
+  // These turns predate per-turn spend, so there is no splurge to tell.
+  assert.deepEqual(alice.tokens, {
+    biggestSplurge: null,
+    bought: null,
+    earned: 0,
+    extraRolls: 1,
+    left: 4,
+    mulligans: 3,
+    punches: 5,
+    spent: 9,
+  });
+  assert.deepEqual(bob.tokens, {
+    biggestSplurge: null,
+    bought: null,
+    earned: 1,
+    extraRolls: 0,
+    left: 9,
+    mulligans: 0,
+    punches: 3,
+    spent: 3,
+  });
+});
+
+test("the recap finds each player's biggest splurge and what their paid turns scored", () => {
+  const spent = (id, turnIndex, playerId, category, score, spend, extra = {}) => ({
+    ...turn(id, turnIndex, playerId, category, score, extra.status),
+    dice: extra.dice ?? [1, 2, 3, 4, 6],
+    extra_rolls: spend[0],
+    mulligans: spend[1],
+    roll_count: extra.rollCount ?? 4,
+  });
+  const recap = buildGameRecap({
+    actions: [],
+    players,
+    turns: [
+      spent('t1', 1, 'alice', 'chance', 22, [2, 0]),
+      // Mulliganed, then replayed with its spend carried forward.
+      spent('t2', 2, 'bob', 'sucker', 0, [3, 0], { status: 'mulliganed' }),
+      spent('t3', 3, 'bob', 'sucker', 50, [3, 1], { dice: [4, 4, 4, 4, 4] }),
+      spent('t4', 4, 'alice', 'fullHouse', 25, [0, 1], { status: 'punched' }),
+      spent('t5', 5, 'alice', 'ones', 3, [0, 0]),
+    ],
+  });
+  const [alice, bob] = recap.players;
+
+  assert.deepEqual(alice.tokens.biggestSplurge, {
+    category: 'fullHouse',
+    dice: [1, 2, 3, 4, 6],
+    score: 25,
+    spend: { extraRolls: 0, mulligans: 1 },
+  });
+  // The punched Full House bought nothing.
+  assert.deepEqual(alice.tokens.bought, { points: 22, tokens: 5 });
+  assert.deepEqual(bob.tokens.biggestSplurge, {
+    category: 'sucker',
+    dice: [4, 4, 4, 4, 4],
+    score: 50,
+    spend: { extraRolls: 3, mulligans: 1 },
+  });
+  assert.deepEqual(bob.tokens.bought, { points: 50, tokens: 6 });
 });
 
 test('lead changes skip ties and track the biggest lead either way', () => {

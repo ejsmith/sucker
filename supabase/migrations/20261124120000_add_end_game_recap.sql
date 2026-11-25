@@ -1,6 +1,12 @@
 -- End-game recap: canned parting shots after a played-out game, and one read
 -- of what each player earned in it. See docs/end-game-recap.md.
 
+-- What each turn cost: Extra Rolls and Mulligans bought on it, including the
+-- Mulligans that replayed it. Null on turns from before this was kept.
+alter table public.turns
+add column extra_rolls integer check (extra_rolls >= 0),
+add column mulligans integer check (mulligans >= 0);
+
 alter table public.turn_actions
 drop constraint turn_actions_action_type_check;
 

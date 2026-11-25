@@ -920,6 +920,10 @@ function toRemoteTurnRow(row: TurnRow): RemoteTurnRow {
     player_id: row.player_id,
     roll_count: row.roll_count,
     score: row.score,
+    spend:
+      row.extra_rolls === null || row.mulligans === null
+        ? null
+        : { extraRolls: row.extra_rolls, mulligans: row.mulligans },
     status: row.status,
     turn_index: row.turn_index,
   };

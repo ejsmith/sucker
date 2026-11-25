@@ -152,10 +152,12 @@ export type Database = {
           category: string;
           created_at: string;
           dice: number[];
+          extra_rolls: number | null;
           finalized_at: string | null;
           game_id: string;
           held: boolean[];
           id: string;
+          mulligans: number | null;
           player_id: string;
           roll_count: number;
           rolled_sucker: boolean;
@@ -166,10 +168,12 @@ export type Database = {
         Insert: {
           category: string;
           dice: number[];
+          extra_rolls?: number | null;
           finalized_at?: string | null;
           game_id: string;
           held: boolean[];
           id?: string;
+          mulligans?: number | null;
           player_id: string;
           roll_count: number;
           rolled_sucker?: boolean;

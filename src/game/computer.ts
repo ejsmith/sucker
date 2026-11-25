@@ -22,6 +22,7 @@ import {
   type GameState,
   type ScoreCategory,
   type SuckerPunchOutcome,
+  type TurnSpend,
 } from './index';
 
 export const computerPlayerIndex = 1;
@@ -54,6 +55,7 @@ export type ComputerTurnResult = {
     hadSuckerBonus: boolean;
     score: number;
     scorerIndex: number;
+    spend: TurnSpend | null;
   };
 };
 
@@ -227,6 +229,7 @@ export function scoreLocalTurn(game: GameState, category: ScoreCategory): Comput
       hadSuckerBonus,
       score,
       scorerIndex,
+      spend: game.turnSpend ?? null,
     },
   };
 }
@@ -257,6 +260,7 @@ export function scratchLocalTurn(game: GameState, category: ScoreCategory): Comp
       hadSuckerBonus: false,
       score: 0,
       scorerIndex,
+      spend: game.turnSpend ?? null,
     },
   };
 }

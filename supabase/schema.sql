@@ -92,6 +92,10 @@ create table public.turns (
   -- Rolled a Sucker at any point after the turn's last Mulligan. Sucker Spree
   -- feats read it across a player's games.
   rolled_sucker boolean not null default false,
+  -- What the turn cost: Extra Rolls and Mulligans bought on it, including
+  -- the Mulligans that replayed it. Null on turns from before this was kept.
+  extra_rolls integer check (extra_rolls >= 0),
+  mulligans integer check (mulligans >= 0),
   unique (game_id, turn_index)
 );
 

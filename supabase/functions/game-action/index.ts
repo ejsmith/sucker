@@ -8,8 +8,10 @@ import { discardRequestBody } from '../_shared/discardRequestBody.ts';
 import { buildScoredTurnNotification } from '../_shared/turnNotification.ts';
 import { readLocalTestHook } from '../_shared/testHooks.ts';
 import {
+  addTurnSpend,
   createEmptyScorecard,
   applySuckerPunchOpportunity,
+  clearTurnSpend,
   clearRevengePunchDiscount,
   expireCounterPunch,
   getSuckerPunchCost,
@@ -33,6 +35,7 @@ import {
   type SuckerPunchOutcome,
   suckerTokenCosts,
   timeOutGame,
+  type TurnSpend,
   toDice,
   toGameState,
   toHeldDice,
@@ -1699,7 +1702,7 @@ async function scoreRemoteTurn(
     scoreCategories.every((scoreCategory) => player.scorecard[scoreCategory] !== null),
   );
   const nextState: GameState = {
-    ...expireCounterPunch(state, complete ? (state.counterPunchPlayerId ?? actorId) : actorId),
+    ...clearTurnSpend(expireCounterPunch(state, complete ? (state.counterPunchPlayerId ?? actorId) : actorId)),
     currentPlayerIndex: complete ? state.currentPlayerIndex : (state.currentPlayerIndex + 1) % players.length,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
@@ -1718,8 +1721,10 @@ async function scoreRemoteTurn(
     id: crypto.randomUUID(),
     category,
     dice: state.dice,
+    extra_rolls: state.turnSpend?.extraRolls ?? 0,
     game_id: gameId,
     held: turnHeld,
+    mulligans: state.turnSpend?.mulligans ?? 0,
     player_id: actorId,
     roll_count: state.rollNumber,
     rolled_sucker: rolledSucker,
@@ -2167,7 +2172,13 @@ async function mulliganTurn(admin: DbClient, actorId: string, gameId: string, mu
   }
 
   const nextState = turn
-    ? removeScoredTurn(expireCounterPunch(state, actorId), turn, actorId, -suckerTokenCosts.mulligan)
+    ? removeScoredTurn(
+        expireCounterPunch(state, actorId),
+        turn,
+        actorId,
+        -suckerTokenCosts.mulligan,
+        addTurnSpend({ extraRolls: turn.extra_rolls ?? 0, mulligans: turn.mulligans ?? 0 }, 'mulligans'),
+      )
     : mulliganCurrentTurn(state);
   const updatedGame = stageGameMove(mutationState, game, {
     current_player_id: actorId,
@@ -2459,7 +2470,15 @@ function findPlayer(state: GameState, playerId: string): Player {
   return player;
 }
 
-function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tokenDelta: number): GameState {
+// A Mulligan replays the turn with what it already cost; a punched turn
+// replays from nothing.
+function removeScoredTurn(
+  state: GameState,
+  turn: TurnRow,
+  playerId: string,
+  tokenDelta: number,
+  turnSpend?: TurnSpend,
+): GameState {
   const category = toScoreCategory(turn.category);
   const playerIndex = state.players.findIndex((player) => player.id === playerId);
   if (playerIndex < 0) {
@@ -2483,7 +2502,8 @@ function removeScoredTurn(state: GameState, turn: TurnRow, playerId: string, tok
   });
 
   return {
-    ...state,
+    ...clearTurnSpend(state),
+    ...(turnSpend ? { turnSpend } : {}),
     currentPlayerIndex: playerIndex,
     dice: [1, 1, 1, 1, 1],
     extraRollsAvailable: 0,
@@ -2589,6 +2609,7 @@ function purchaseExtraRoll(state: GameState, actorId: string, submittedHeld?: Ga
     ...updatePlayerTokens(state, actorId, -suckerTokenCosts.extraRoll),
     extraRollsAvailable: Math.max(0, state.extraRollsAvailable ?? 0) + 1,
     held: normalizeHeld(submittedHeld, state.held),
+    turnSpend: addTurnSpend(state.turnSpend, 'extraRolls'),
   };
 }
 

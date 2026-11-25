@@ -1,16 +1,30 @@
 import {
   createEmptyScorecard,
+  getTurnSpendTokens,
   suckerTokenCosts,
+  toDice,
   toScoreCategory,
   totalScore,
+  type Dice,
   type Player,
   type ScoreCategory,
+  type TurnSpend,
 } from './game';
 import { calculateSuckerActionStats, getEffectiveStatTurns, type SuckerStatAction, type SuckerStatTurn } from './stats';
 
-export type GameRecapTurn = SuckerStatTurn & { id: string };
+export type GameRecapTurn = SuckerStatTurn & {
+  dice?: number[];
+  // Null on turns from before spend was kept.
+  extra_rolls?: number | null;
+  id: string;
+  mulligans?: number | null;
+  roll_count?: number;
+};
 
 export type ScoredBox = { category: ScoreCategory; score: number };
+
+// The turn a player spent the most Extra Roll and Mulligan tokens on.
+export type Splurge = ScoredBox & { dice: Dice | null; spend: TurnSpend };
 
 export type PlayerGameRecap = {
   playerId: string;
@@ -32,6 +46,10 @@ export type PlayerGameRecap = {
     mulligans: number;
     punches: number;
     spent: number;
+    // Points from turns that cost tokens, and what those turns cost. Null
+    // when the game's turns predate spend tracking.
+    bought: { points: number; tokens: number } | null;
+    biggestSplurge: Splurge | null;
   };
 };
 
@@ -94,6 +112,7 @@ export function buildGameRecap({
           mulligans,
           punches: stats.sucker_tokens_spent - extraRolls - mulligans,
           spent: stats.sucker_tokens_spent,
+          ...spendOnTurns(turns.filter((turn) => turn.player_id === player.id)),
         },
       };
     }),
@@ -127,6 +146,39 @@ function scoreSwings(turns: SuckerStatTurn[], players: Player[]) {
   }
 
   return { biggestLead, leadChanges };
+}
+
+// A Mulligan carries a turn's spend into its replay, so only the replay counts.
+// A punched turn's tokens bought nothing.
+function spendOnTurns(turns: GameRecapTurn[]): Pick<PlayerGameRecap['tokens'], 'biggestSplurge' | 'bought'> {
+  const tracked = turns.flatMap((turn) =>
+    turn.status !== 'mulliganed' && typeof turn.extra_rolls === 'number' && typeof turn.mulligans === 'number'
+      ? [{ spend: { extraRolls: turn.extra_rolls, mulligans: turn.mulligans }, turn }]
+      : [],
+  );
+  if (tracked.length === 0) return { biggestSplurge: null, bought: null };
+
+  const paid = tracked.filter(({ spend }) => getTurnSpendTokens(spend) > 0);
+  const biggest = paid.reduce<(typeof paid)[number] | null>((top, entry) => {
+    if (!top) return entry;
+    const [tokens, topTokens] = [getTurnSpendTokens(entry.spend), getTurnSpendTokens(top.spend)];
+    return tokens > topTokens || (tokens === topTokens && entry.turn.score > top.turn.score) ? entry : top;
+  }, null);
+
+  return {
+    biggestSplurge: biggest
+      ? {
+          category: toScoreCategory(biggest.turn.category),
+          dice: biggest.turn.dice && (biggest.turn.roll_count ?? 1) > 0 ? toDice(biggest.turn.dice) : null,
+          score: biggest.turn.score,
+          spend: biggest.spend,
+        }
+      : null,
+    bought: {
+      points: paid.reduce((total, { turn }) => total + (turn.status === 'punched' ? 0 : turn.score), 0),
+      tokens: paid.reduce((total, { spend }) => total + getTurnSpendTokens(spend), 0),
+    },
+  };
 }
 
 function highestBox(turns: SuckerStatTurn[]): ScoredBox | null {

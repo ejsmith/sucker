@@ -1387,8 +1387,13 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   assertEquals(firstScore.status, 'response_window');
   assertString(firstScore.last_turn_id);
   assertPlayerTokens(firstScore, alice.id, startingSuckerTokens - suckerTokenCosts.extraRoll);
+  const firstTurn = await loadTurn(firstScore.last_turn_id);
+  assertEquals([firstTurn.extra_rolls, firstTurn.mulligans], [1, 0]);
+  assertEquals(firstScore.state.turnSpend, undefined);
 
   const mulligan = (await invokeGameAction(alice, { gameId: game.id, type: 'mulligan' })).game as GameRow;
+  // The replay carries what the mulliganed turn already cost.
+  assertEquals(mulligan.state.turnSpend, { extraRolls: 1, mulligans: 1 });
   assertEquals(mulligan.status, 'active');
   assertEquals(mulligan.current_player_id, alice.id);
   assertPlayerTokens(mulligan, alice.id, startingSuckerTokens - suckerTokenCosts.extraRoll - suckerTokenCosts.mulligan);
@@ -1405,6 +1410,8 @@ Deno.test('game-action persists extra roll, mulligan, and sucker punch chance st
   ).game as GameRow;
   assertEquals(secondScore.status, 'response_window');
   assertString(secondScore.last_turn_id);
+  const secondTurn = await loadTurn(secondScore.last_turn_id);
+  assertEquals([secondTurn.extra_rolls, secondTurn.mulligans], [1, 1]);
 
   await invokeGameAction(bob, { gameId: game.id, turnId: secondScore.last_turn_id, type: 'prepare_sucker_punch' });
 

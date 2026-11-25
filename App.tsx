@@ -48,6 +48,7 @@ import {
   type ComputerTurnResult,
   type LocalPendingTurn,
 } from './src/game/computer';
+import { describeTurnSpend } from './src/game/turnSpend';
 import { reportError, reportErrorMessage, setMonitoringGame } from './src/monitoring/exceptionless';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
@@ -175,6 +176,8 @@ type OpponentTurnReveal = {
   categoryLabel: string;
   playerName: string;
   score: number;
+  // What the turn's tokens bought, under the score line.
+  spendText: string | null;
   progress: Animated.Value;
   top: number;
 };
@@ -2760,6 +2763,7 @@ export function LocalGameScreen({
     displayScore,
     playerName,
     scoreId,
+    spendText,
     targetRef,
   }: {
     category: ScoreCategory;
@@ -2767,6 +2771,7 @@ export function LocalGameScreen({
     displayScore: number;
     playerName: string;
     scoreId: string;
+    spendText: string | null;
     targetRef: ViewRef | null | undefined;
   }) {
     const [screenRect, boardRect, targetRect] = await Promise.all([
@@ -2805,6 +2810,7 @@ export function LocalGameScreen({
       categoryLabel: formatScoreRevealCategory(category),
       playerName,
       score: displayScore,
+      spendText,
       progress: revealProgress,
       top: revealTop,
     });
@@ -2883,7 +2889,7 @@ export function LocalGameScreen({
       return;
     }
 
-    const { category, dice, hadSuckerBonus, score, scorerIndex } = result.scoreAnimation;
+    const { category, dice, hadSuckerBonus, score, scorerIndex, spend } = result.scoreAnimation;
     setLocalPendingTurn(null);
     setSelectedCategory(null);
     setIsChoosingSuckerDeal(false);
@@ -2902,6 +2908,7 @@ export function LocalGameScreen({
         displayScore,
         playerName: result.game.players[scorerIndex]?.name ?? 'Opponent',
         scoreId: `computer-score-${category}-${Date.now()}`,
+        spendText: describeTurnSpend({ category, dice, score, spend }),
         targetRef,
       });
 
@@ -2999,6 +3006,12 @@ export function LocalGameScreen({
       displayScore,
       playerName: scorer?.name ?? 'Opponent',
       scoreId: `remote-score-${turn.id}`,
+      spendText: describeTurnSpend({
+        category: turn.category,
+        dice: turn.roll_count > 0 ? turn.dice : null,
+        score: turn.score,
+        spend: turn.spend,
+      }),
       targetRef: opponentScoreRefs.current[turn.category],
     });
 
@@ -4645,6 +4658,17 @@ export function LocalGameScreen({
                       {opponentTurnReveal.categoryLabel}
                     </Text>
                   </Text>
+                  {opponentTurnReveal.spendText ? (
+                    <Text
+                      adjustsFontSizeToFit
+                      maxFontSizeMultiplier={gameMaxFontSizeMultiplier}
+                      numberOfLines={1}
+                      style={[styles.opponentTurnRevealSpend, gameLayout.styles.opponentTurnRevealSpend]}
+                      testID="opponent-turn-reveal-spend"
+                    >
+                      🪙 {opponentTurnReveal.spendText}
+                    </Text>
+                  ) : null}
                 </Animated.View>
               </View>
             </View>
@@ -7345,6 +7369,17 @@ const styles = StyleSheet.create({
     fontFamily: gameFontBlack,
     fontWeight: '900',
     lineHeight: 20,
+    textAlign: 'center',
+    textShadowColor: '#050505',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 0,
+  },
+  opponentTurnRevealSpend: {
+    color: '#FFD329',
+    fontSize: 13,
+    fontFamily: gameFontBlack,
+    fontWeight: '900',
+    lineHeight: 17,
     textAlign: 'center',
     textShadowColor: '#050505',
     textShadowOffset: { width: 1, height: 1 },

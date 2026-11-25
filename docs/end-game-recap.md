@@ -59,7 +59,7 @@ forfeits keep the plain Game Over panel.
 | Feats   | Feats and defeats each player earned this game, including milestones it unlocked | `get_game_recap` (from `player_feats`) |
 | Punches | Thrown, landed, counterpunches landed, biggest score deleted                     | `turn_actions`, `turns`                |
 | Moments | Best turn, Suckers rolled, Sucker Deals, lead changes, biggest lead              | `turns`, `turn_actions`                |
-| Tokens  | Spent on Extra Rolls, Mulligans, and Punches; left over                          | `turn_actions`, final state            |
+| Tokens  | Spent on Extra Rolls, Mulligans, and Punches; points bought; left over; splurges | `turn_actions`, `turns`, final state   |
 
 `get_game_recap(target_game_id)` is participant-only; `player_feats` and other
 players' `game_player_results` stay closed to direct reads. Punches, Moments,
@@ -67,10 +67,28 @@ and Tokens are built in the app by `shared/gameRecap.ts` from turns and actions
 a participant can already read. The Game Over panel itself never scrolls; the
 numbers live on the recap page.
 
+## Turn Spend
+
+Every turn records what it cost: `turns.extra_rolls` and `turns.mulligans`
+(null on turns from before this). `state.turnSpend` counts purchases during the
+turn and clears when it is scored. Mulliganing a scored turn carries its spend
+into the replay, so the mulliganed row is skipped; a punched turn's spend
+bought nothing.
+
+- **Turn reveal.** Under "<name> played <score> on <box>", a second line when
+  the turn cost tokens: "Burned 5 tokens chasing a Sucker and got it!", "…No
+  dice.", "Burned 3 tokens for nothing.", or "Spent 5 tokens on 2 Extra Rolls
+  - a Mulligan." Final dice that are a Sucker count as catching one; a Sucker
+    box turn without one is a miss.
+- **Tale of the Tape.** Tokens adds **Points bought** (points from turns that
+  cost tokens, with what they cost) and one line per player on their priciest
+  turn, e.g. "Test Player 2 burned 5 tokens chasing a Sucker. No dice."
+
 ## Implementation
 
 - Migration `20261124120000_add_end_game_recap.sql`: the `parting_shot` action
-  type and `get_game_recap`.
+  type, `get_game_recap`, and the turn spend columns.
+- `src/game/turnSpend.ts` writes the spend lines for the turn reveal and recap.
 - `game-action` `parting_shot { gameId, lineId }` appends to
   `state.partingShots` through `commit_game_move`, whose version check keeps
   one line per player race-safe across devices, as with Rage Quit replies.

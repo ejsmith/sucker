@@ -33,7 +33,7 @@ export async function loadGameRecap(gameId: string, game: GameState): Promise<Re
   const [turns, actions, recap] = await Promise.all([
     supabase
       .from('turns')
-      .select('id, category, player_id, score, status, turn_index')
+      .select('id, category, dice, extra_rolls, mulligans, player_id, roll_count, score, status, turn_index')
       .eq('game_id', gameId)
       .order('turn_index', { ascending: true }),
     supabase
