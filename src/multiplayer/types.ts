@@ -17,6 +17,8 @@ export type RemoteGameRow = {
   last_turn_id: string | null;
   // Latest Jab this viewer sent to current_player_id across all games.
   last_nudged_at: string | null;
+  // The finished game this one is a rematch of.
+  rematch_of_game_id?: string | null;
   state: GameState;
   status: RemoteGameStatus;
   sucker_tokens_spent: Record<string, number>;

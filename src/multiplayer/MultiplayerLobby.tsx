@@ -53,6 +53,7 @@ import { runWithCleanup } from '../ui/runWithCleanup';
 import { useKeyboardStableWindowDimensions } from '../ui/useKeyboardStableWindowDimensions';
 import { PlayerAvatar } from '../ui/PlayerAvatar';
 import { SaltBadge } from '../ui/RageQuit';
+import { getPartingShotHand, getPartingShotText } from '../../shared/partingShots';
 import { getRageQuitReplyText } from '../../shared/rageQuit';
 import { formatTurnTimeoutCountdown, turnTimeoutDays } from '../../shared/turnTimeout';
 import { Pressable } from '../ui/Pressable';
@@ -1355,8 +1356,10 @@ export function MultiplayerLobby({
               <CompletedGameActions
                 game={selectedCompletedGame}
                 isBusy={isBusy || isLoading}
+                onOpenGame={onOpenGame}
                 onOpenStats={(game) => void handleOpenCompletedGameStats(game)}
                 onRematchGame={handleRematchGame}
+                profileId={activeProfileId}
               />
             }
             gameId={selectedCompletedGame.id}
@@ -2786,45 +2789,69 @@ function CompletedGameListItem({
   );
 }
 
-// What a player can do from their own finished game.
+// What a player can do from their own finished game. A last word not yet said
+// can still go out from the game itself.
 function CompletedGameActions({
   game,
   isBusy,
+  onOpenGame,
   onOpenStats,
   onRematchGame,
+  profileId,
 }: {
   game: RemoteGameRow;
   isBusy: boolean;
+  onOpenGame: (gameId: string) => void;
   onOpenStats: (game: RemoteGameRow) => void;
   onRematchGame: (game: RemoteGameRow) => void;
+  profileId: string;
 }) {
+  const canSpeak = Boolean(getPartingShotHand(game.state, profileId));
+  const theySpoke = Boolean(game.state.partingShots?.some((shot) => shot.playerId !== profileId));
   return (
-    <View style={lobbyStyles.completedDetailActions}>
-      <Pressable
-        disabled={isBusy}
-        onPress={() => void onOpenStats(game)}
-        style={({ pressed }) => [
-          lobbyStyles.completedStatsButton,
-          isBusy && lobbyStyles.primaryButtonDisabled,
-          pressed && lobbyStyles.pressed,
-        ]}
-        testID={`stats-completed-detail-${game.id}`}
-      >
-        <Text style={lobbyStyles.completedStatsText}>Head-to-head</Text>
-      </Pressable>
-      <Pressable
-        disabled={isBusy}
-        onPress={() => void onRematchGame(game)}
-        style={({ pressed }) => [
-          lobbyStyles.primaryButton,
-          lobbyStyles.completedDetailActionButton,
-          isBusy && lobbyStyles.primaryButtonDisabled,
-          pressed && lobbyStyles.pressed,
-        ]}
-        testID={`rematch-completed-detail-${game.id}`}
-      >
-        <Text style={lobbyStyles.primaryButtonText}>Rematch</Text>
-      </Pressable>
+    <View style={lobbyStyles.completedDetailActionsStack}>
+      {canSpeak && (
+        <Pressable
+          accessibilityRole="button"
+          disabled={isBusy}
+          onPress={() => onOpenGame(game.id)}
+          style={({ pressed }) => [
+            lobbyStyles.lastWordButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`last-word-completed-detail-${game.id}`}
+        >
+          <Text style={lobbyStyles.lastWordButtonText}>💬 {theySpoke ? 'Fire back' : 'Say your last word'}</Text>
+        </Pressable>
+      )}
+      <View style={lobbyStyles.completedDetailActions}>
+        <Pressable
+          disabled={isBusy}
+          onPress={() => void onOpenStats(game)}
+          style={({ pressed }) => [
+            lobbyStyles.completedStatsButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`stats-completed-detail-${game.id}`}
+        >
+          <Text style={lobbyStyles.completedStatsText}>Head-to-head</Text>
+        </Pressable>
+        <Pressable
+          disabled={isBusy}
+          onPress={() => void onRematchGame(game)}
+          style={({ pressed }) => [
+            lobbyStyles.primaryButton,
+            lobbyStyles.completedDetailActionButton,
+            isBusy && lobbyStyles.primaryButtonDisabled,
+            pressed && lobbyStyles.pressed,
+          ]}
+          testID={`rematch-completed-detail-${game.id}`}
+        >
+          <Text style={lobbyStyles.primaryButtonText}>Rematch</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -2931,6 +2958,11 @@ function getUnseenResultHint(game: RemoteGameRow, profileId: string, opponentNam
   }
   if (rageQuit && rageQuit.playerId !== profileId && !rageQuit.replyId) {
     return 'Tap to send an insult.';
+  }
+  // A last word brings a finished game back; say what it was.
+  const shot = game.state.partingShots?.find((candidate) => candidate.playerId !== profileId);
+  if (shot) {
+    return `${opponentName}: “${getPartingShotText(shot.lineId)}”`;
   }
 
   return 'Tap to see the final score.';
@@ -3366,6 +3398,24 @@ const lobbyStyles = StyleSheet.create({
   completedDetailActionButton: {
     flex: 1,
     width: 'auto',
+  },
+  completedDetailActionsStack: {
+    gap: 8,
+    width: '100%',
+  },
+  lastWordButton: {
+    alignItems: 'center',
+    borderColor: '#FFD329',
+    borderRadius: 10,
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  lastWordButtonText: {
+    color: '#FFD329',
+    fontSize: 16,
+    fontWeight: '900',
   },
   completedDetailActions: {
     flexDirection: 'row',

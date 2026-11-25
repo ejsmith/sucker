@@ -1003,6 +1003,10 @@ export function RecapPage({
 }) {
   const backRef = useRef<AccessibilityTargetRef | null>(null);
   const pageRef = useRef<View | null>(null);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const [scrollExtent, setScrollExtent] = useState({ content: 0, offset: 0, viewport: 0 });
+  const hasMoreBelow =
+    scrollExtent.viewport > 0 && scrollExtent.content - scrollExtent.viewport - scrollExtent.offset > 24;
   useDismissOnBack(onClose, canDismiss);
   useWebFocusTrap(pageRef, canDismiss);
   useEffect(() => {
@@ -1010,6 +1014,14 @@ export function RecapPage({
     return () => cancelAnimationFrame(frame);
   }, []);
   const loaded = recap?.players.some((entry) => entry.playerId === home.id) ? recap : null;
+  const isLoaded = Boolean(loaded);
+  // Native scroll bars only appear while scrolling; flash them once the
+  // numbers are in.
+  useEffect(() => {
+    if (!isLoaded || Platform.OS === 'web') return;
+    const timer = setTimeout(() => scrollRef.current?.flashScrollIndicators(), 400);
+    return () => clearTimeout(timer);
+  }, [isLoaded]);
   const labelStyle = [styles.label, styles.sectionLabel, { fontSize: small(unit, 11), marginBottom: unit(2) }];
   const sectionStyle = [styles.section, { borderRadius: unit(10), gap: unit(8), padding: unit(10) }];
 
@@ -1072,55 +1084,113 @@ export function RecapPage({
           </View>
         ))}
       </View>
-      <ScrollView contentContainerStyle={{ gap: unit(10), paddingBottom: unit(8) }} style={styles.pageScroll}>
-        {!loaded ? (
-          recapFailed ? (
-            <Pressable
-              accessibilityLabel="The recap got lost in the mail. Try again."
-              accessibilityRole="button"
-              onPress={onRetry}
-              style={({ pressed }) => [styles.pageRetry, pressed && styles.pressed]}
-              testID="recap-page-retry"
-            >
+      <View style={styles.pageScroll}>
+        <ScrollView
+          contentContainerStyle={{ gap: unit(10), paddingBottom: unit(8) }}
+          onContentSizeChange={(_width, height) => setScrollExtent((extent) => ({ ...extent, content: height }))}
+          onLayout={(event) => {
+            const viewport = event.nativeEvent.layout.height;
+            setScrollExtent((extent) => ({ ...extent, viewport }));
+          }}
+          onScroll={(event) => {
+            const offset = event.nativeEvent.contentOffset.y;
+            setScrollExtent((extent) => ({ ...extent, offset }));
+          }}
+          ref={scrollRef}
+          scrollEventThrottle={32}
+          style={styles.pageScroll}
+        >
+          {!loaded ? (
+            recapFailed ? (
+              <Pressable
+                accessibilityLabel="The recap got lost in the mail. Try again."
+                accessibilityRole="button"
+                onPress={onRetry}
+                style={({ pressed }) => [styles.pageRetry, pressed && styles.pressed]}
+                testID="recap-page-retry"
+              >
+                <Text
+                  maxFontSizeMultiplier={maxFontSizeMultiplier}
+                  style={[styles.quiet, { fontSize: small(unit, 13) }]}
+                >
+                  The recap got lost in the mail. <Text style={styles.retryText}>Try again</Text>
+                </Text>
+              </Pressable>
+            ) : (
               <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 13) }]}>
-                The recap got lost in the mail. <Text style={styles.retryText}>Try again</Text>
+                Tallying the damage…
+              </Text>
+            )
+          ) : (
+            <>
+              <RecapTape home={home} homeName="You" opponent={opponent} recap={loaded} unit={unit} />
+              {trashTalk.length > 0 && (
+                <View style={sectionStyle} testID="recap-page-trash-talk">
+                  <Text accessibilityRole="header" maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
+                    TRASH TALK
+                  </Text>
+                  <TrashTalkLog
+                    entries={trashTalk}
+                    home={home}
+                    homeName="You"
+                    opponentName={opponent.name}
+                    unit={unit}
+                  />
+                </View>
+              )}
+            </>
+          )}
+          <Pressable
+            accessibilityLabel="Head-to-head stats"
+            accessibilityRole="button"
+            onPress={onOpenStats}
+            ref={statsButtonRef}
+            style={({ pressed }) => [
+              styles.statsLink,
+              { borderRadius: unit(10), minHeight: Math.max(44, unit(48)) },
+              pressed && styles.pressed,
+            ]}
+            testID="game-over-stats-button"
+          >
+            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.statsLinkText, { fontSize: unit(16) }]}>
+              Head-to-head stats ›
+            </Text>
+          </Pressable>
+        </ScrollView>
+        {hasMoreBelow && (
+          // Phones show no scrollbar until you scroll, so say there's more.
+          <View pointerEvents="box-none" style={styles.moreBelow}>
+            <View pointerEvents="none" style={[styles.moreBelowFade, { height: unit(48) }]}>
+              {[0.15, 0.4, 0.65, 0.9].map((opacity) => (
+                <View key={opacity} style={[styles.moreBelowBand, { opacity }]} />
+              ))}
+            </View>
+            <Pressable
+              accessibilityLabel="Scroll down for more"
+              accessibilityRole="button"
+              onPress={() =>
+                scrollRef.current?.scrollTo({
+                  animated: true,
+                  y: scrollExtent.offset + scrollExtent.viewport * 0.8,
+                })
+              }
+              style={({ pressed }) => [
+                styles.moreBelowButton,
+                { borderRadius: unit(16), bottom: unit(8), minHeight: 32, paddingHorizontal: unit(14) },
+                pressed && styles.pressed,
+              ]}
+              testID="recap-page-more-below"
+            >
+              <Text
+                maxFontSizeMultiplier={maxFontSizeMultiplier}
+                style={[styles.moreBelowText, { fontSize: small(unit, 12) }]}
+              >
+                More ↓
               </Text>
             </Pressable>
-          ) : (
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.quiet, { fontSize: small(unit, 13) }]}>
-              Tallying the damage…
-            </Text>
-          )
-        ) : (
-          <>
-            <RecapTape home={home} homeName="You" opponent={opponent} recap={loaded} unit={unit} />
-            {trashTalk.length > 0 && (
-              <View style={sectionStyle} testID="recap-page-trash-talk">
-                <Text accessibilityRole="header" maxFontSizeMultiplier={maxFontSizeMultiplier} style={labelStyle}>
-                  TRASH TALK
-                </Text>
-                <TrashTalkLog entries={trashTalk} home={home} homeName="You" opponentName={opponent.name} unit={unit} />
-              </View>
-            )}
-          </>
+          </View>
         )}
-        <Pressable
-          accessibilityLabel="Head-to-head stats"
-          accessibilityRole="button"
-          onPress={onOpenStats}
-          ref={statsButtonRef}
-          style={({ pressed }) => [
-            styles.statsLink,
-            { borderRadius: unit(10), minHeight: Math.max(44, unit(48)) },
-            pressed && styles.pressed,
-          ]}
-          testID="game-over-stats-button"
-        >
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.statsLinkText, { fontSize: unit(16) }]}>
-            Head-to-head stats ›
-          </Text>
-        </Pressable>
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -1283,6 +1353,33 @@ const styles = StyleSheet.create({
   },
   pageScroll: {
     flex: 1,
+  },
+  moreBelow: {
+    alignItems: 'center',
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  moreBelowBand: {
+    backgroundColor: '#8F0000',
+    flex: 1,
+  },
+  moreBelowButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFD329',
+    borderColor: '#210505',
+    borderWidth: 2,
+    justifyContent: 'center',
+    position: 'absolute',
+  },
+  moreBelowFade: {
+    alignSelf: 'stretch',
+  },
+  moreBelowText: {
+    color: '#210505',
+    fontFamily: black,
+    fontWeight: '900',
   },
   pageTitle: {
     color: '#FFF3C2',

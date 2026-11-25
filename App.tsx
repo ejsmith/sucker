@@ -50,6 +50,7 @@ import {
 } from './src/game/computer';
 import { buildTrashTalk } from './src/game/trashTalk';
 import { describeTurnSpend } from './src/game/turnSpend';
+import { PreviousLastWord } from './src/ui/PreviousLastWord';
 import { reportError, reportErrorMessage, setMonitoringGame } from './src/monitoring/exceptionless';
 import type { DieValue, GameState, ScoreCategory, SuckerPunchOutcome } from './src/game';
 import { getComputerStats, recordComputerGameResult } from './src/multiplayer/computerStats';
@@ -70,6 +71,7 @@ import {
   hasSeenRageQuit,
   hasSeenRemoteTaunt,
   hasPendingMultiplayerAction,
+  markLastWordSeen,
   markRageQuitSeen,
   markRemoteGameResultSeen,
   markRemoteTauntSeen,
@@ -1269,6 +1271,7 @@ export function RemoteGameScreen({
       onOpenNextTurnGame={openNextTurnGame}
       onRemoteResultSeen={markResultSeen}
       onStartGameAgainst={startGameAgainst}
+      previousGameId={remoteGame.rematch_of_game_id ?? null}
       remoteError={error}
       remoteGame={remoteGame.state}
       remoteHandlers={handlers}
@@ -1334,6 +1337,7 @@ export function LocalGameScreen({
   onOpenNextTurnGame,
   onRemoteResultSeen,
   onStartGameAgainst,
+  previousGameId,
   remoteError,
   remoteGame,
   remoteHandlers,
@@ -1369,6 +1373,8 @@ export function LocalGameScreen({
   remoteTaunt?: RemoteTaunt | null;
   remoteTauntOpportunity?: RemoteTauntOpportunity | null;
   remoteStatus?: RemoteGameStatus;
+  // The game this one is a rematch of, whose last words may still land.
+  previousGameId?: string | null;
 }) {
   const { height: windowHeight, width: windowWidth } = useKeyboardStableWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
@@ -1754,6 +1760,15 @@ export function LocalGameScreen({
     loadRecap.current = remoteHandlers?.onLoadRecap;
   }, [remoteHandlers?.onLoadRecap]);
   const partingShotHand = isRemoteGameFinished && myProfileId ? getPartingShotHand(game, myProfileId) : null;
+  // The other player's last word, once shown here, needn't be announced again
+  // in a rematch.
+  const shownOpponentShotPlayerId =
+    isRemoteGameFinished && gameOverVisible
+      ? (game.partingShots?.find((shot) => shot.playerId !== myProfileId)?.playerId ?? null)
+      : null;
+  useEffect(() => {
+    if (shownOpponentShotPlayerId) void markLastWordSeen(game.id, shownOpponentShotPlayerId);
+  }, [game.id, shownOpponentShotPlayerId]);
   const showRecap = Boolean(recapGameId);
   const isRecapOverlayOpen =
     showRecap && (recapPageGameId === game.id || (Boolean(partingShotHand) && partingShotSheetGameId === game.id));
@@ -4145,6 +4160,10 @@ export function LocalGameScreen({
                 </View>
               </View>
             </View>
+          )}
+
+          {isRemoteGame && previousGameId && myProfileId && remoteStatus !== 'complete' && (
+            <PreviousLastWord myProfileId={myProfileId} previousGameId={previousGameId} unit={gameLayout.unit} />
           )}
 
           {visibleIncomingTaunt && !isTauntPickerOpen && remoteStatus !== 'complete' && (

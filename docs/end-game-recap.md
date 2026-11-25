@@ -30,6 +30,19 @@ forfeits keep the plain Game Over panel.
   scroll. Rows where neither player did anything are left out. It shows scores
   and rating changes, mirrored bars for Punches, Moments, and Tokens, every feat
   and defeat by owner, the game's trash talk, and a Head-to-head stats button.
+  While more is below, a fade and a "More ↓" button sit at the bottom (phones
+  hide the scroll bar until you scroll); native also flashes the scroll bar.
+- **Last words after a rematch.** Players often rematch before the other side
+  has spoken. In a rematch, the other player's last word on the game before
+  appears as a card under the player strip ("Bob's last word · last game") with
+  Fire back, which opens the same sheet over the rematch, and a close button.
+  It shows once per device: seeing the line on that game's Game Over panel, or
+  closing or answering the card, marks it seen, and also marks that game's
+  result seen so it doesn't return to the games list.
+- **Games list.** A finished game brought back by a last word shows the line
+  on its row (`Bob: "I demand a recount."`), as Rage Quit replies do.
+- **Completed Games.** Opened from there, a game you can still speak on adds
+  "Say your last word" (or "Fire back"), which opens the game screen.
 - **Game Recap page.** Any finished multiplayer game, opened from Completed
   Games, a This Week or All Time leaderboard score ("See game ›"), or a
   player's Recent games. One page in all three places:
